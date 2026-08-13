@@ -895,9 +895,9 @@ export const documentationFaqs: DocumentationFaq[] = [
     keywords: ["segunda via", "reimprimir cupom", "copia", "duplicata do cupom", "via extra"]
   },
   {
-    question: "A logo sumiu no cupom impresso, mas aparece na tela.",
+    question: "A logo, o numero do cupom ou o telefone nao saem no papel, mas aparecem na tela.",
     answer:
-      "Ate a versao anterior o cupom era montado na largura da pagina que o driver informava, entao a logo, o COD e o COPIA NRO — que saem centralizados — caiam fora da faixa do papel de 80 mm e nao imprimiam. Isso foi corrigido: o cupom agora e montado na largura do papel, sem depender do driver. Se depois de atualizar a logo ainda sair fraca, o motivo e outro: a termica imprime em preto e branco puro e logo de cor clara vira papel em branco. A tela de impressao mostra a previa em preto e branco e avisa quando a logo sairia vazia — nesse caso use uma versao com tracos escuros sobre fundo claro.",
+      'Na tela de impressao, em "Tipo de impressora", escolha "Windows instalada - termica (texto direto ESC/POS)" e salve o perfil. No modo grafico quem desenha o cupom no papel e o driver da impressora, e o driver de termica costuma perder justamente o cabecalho — a logo, o COD e o COPIA NRO, que saem centralizados. No modo texto direto a impressora recebe o cupom pronto e imprime exatamente o que a previa mostra. Duas outras causas valem a conferida: (1) o telefone de contato so sai depois de clicar em "Salvar perfil" — enquanto houver alteracao nao salva, a tela avisa em cima da previa; (2) a termica imprime em preto e branco puro, entao logo de cor clara vira papel em branco — a previa mostra a logo como ela sai e avisa quando ficaria vazia.',
     category: "impressao",
     sectionId: "printing",
     keywords: [
@@ -907,13 +907,19 @@ export const documentationFaqs: DocumentationFaq[] = [
       "logo apagada",
       "cupom sem logo",
       "cupom sem numero",
-      "cupom cortado"
+      "cupom sem telefone",
+      "cupom cortado",
+      "esc/pos",
+      "escpos",
+      "texto direto",
+      "bematech",
+      "mp-4200"
     ]
   },
   {
     question: "Como coloco o telefone da pedreira no cupom?",
     answer:
-      'Em Configuracoes > Impressao (F7) existe o campo "Telefone da pedreira no cupom". O numero digitado sai no rodape como "CONTATO: ...", para o cliente falar com a pedreira depois de sair da balanca. O campo vale nos dois modelos (padrao e personalizado) e, se ficar em branco, o cupom nao mostra nenhuma linha de contato.',
+      'Em Configuracoes > Impressao (F7) existe o campo "Telefone da pedreira no cupom". O numero digitado sai no rodape como "CONTATO: ...", para o cliente falar com a pedreira depois de sair da balanca. Digitar nao basta: clique em "Salvar perfil" — a previa desenha o formulario, mas quem imprime e o perfil salvo, e enquanto os dois estiverem diferentes a tela avisa em cima da previa. O campo vale nos dois modelos (padrao e personalizado) e, se ficar em branco, o cupom nao mostra nenhuma linha de contato.',
     category: "impressao",
     sectionId: "printing",
     keywords: [
@@ -932,6 +938,24 @@ export const documentationFaqs: DocumentationFaq[] = [
     category: "impressao",
     sectionId: "printing",
     keywords: ["cod", "copia nro", "numero do cupom", "codigo da operacao", "entender o cupom"]
+  },
+  {
+    question: "Mudei a fonte e o tamanho do cupom, mas o papel quase nao mudou.",
+    answer:
+      "Isso e da impressora, e a previa ja mostra o resultado real. No modo texto direto (ESC/POS) a termica nao tem fonte em px: ela tem duas fontes embutidas e so sabe dobrar o tamanho. Entao os controles saem em degraus — ate 9 px, ou escolhendo a fonte condensada, o cupom usa a fonte menor da impressora (cabem mais colunas e o divisor acompanha); de 15 px para cima o texto sai com altura dobrada; entre um e outro fica o tamanho normal. Entrelinha, negrito, alinhamento da logo, tamanho do cabecalho e destaque dos numeros funcionam do mesmo jeito, em degraus. O texto nunca sai com largura dobrada no corpo do cupom porque isso cortaria as colunas pela metade e desalinharia os pesos e valores. Se voce precisa de controle fino de fonte, use o modo grafico — mas ai quem desenha o cupom e o driver da impressora, e em termica ele costuma perder a logo e o numero do cupom.",
+    category: "impressao",
+    sectionId: "printing",
+    keywords: [
+      "fonte do cupom",
+      "tamanho da fonte",
+      "personalizacao",
+      "layout do cupom",
+      "cupom nao muda",
+      "entrelinha",
+      "negrito",
+      "esc/pos",
+      "texto direto"
+    ]
   },
 
   // --- Nuvem --------------------------------------------------------------

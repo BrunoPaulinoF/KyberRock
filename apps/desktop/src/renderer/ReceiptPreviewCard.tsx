@@ -5,14 +5,33 @@ import {
   DEFAULT_RECEIPT_TEMPLATE_CONFIG,
   fitReceiptBodyFontSizePx,
   isReceiptRuleLine,
+  receiptBodyStartIndex,
   receiptContentWidthMm,
+  receiptCopyNumberLine,
+  receiptEscPosFontSizePx,
+  receiptEscPosLayout,
+  receiptEscPosRenderLine,
   receiptOperationCodeLine,
+  splitReceiptNumbers,
   RECEIPT_FONT_STACKS,
   RECEIPT_PAPER_MARGIN_MM,
+  type ReceiptDocument,
+  type ReceiptEscPosRenderedLine,
   type ReceiptTemplateConfig
 } from "@kyberrock/print-templates";
 
 import type { ReceiptLogoConfig } from "../services/printing";
+
+/**
+ * Como o cupom sera impresso — e, portanto, como a previa precisa desenha-lo.
+ *
+ * - `graphic`: a impressora do Windows recebe HTML e o driver desenha (cabecalho grafico).
+ * - `escpos`: a impressora recebe os bytes ESC/POS prontos e imprime texto em 48 colunas com
+ *   a logo como imagem de 1 bit. O papel NAO tem o cabecalho grafico, entao a previa tambem
+ *   nao pode ter: era exatamente essa diferenca que fazia a tela prometer um cupom e o papel
+ *   entregar outro.
+ */
+export type ReceiptPreviewMode = "graphic" | "escpos";
 
 /**
  * Previa do cupom na tela de impressao. Usa o MESMO construtor do cupom impresso
@@ -23,11 +42,16 @@ import type { ReceiptLogoConfig } from "../services/printing";
 export function ReceiptPreviewCard({
   config,
   logo,
-  paperWidthMm = 80
+  paperWidthMm = 80,
+  mode = "graphic",
+  unsavedChanges = false
 }: {
   config: ReceiptTemplateConfig;
   logo: ReceiptLogoConfig;
   paperWidthMm?: number;
+  mode?: ReceiptPreviewMode;
+  /** Ha edicao no formulario que ainda nao foi gravada no perfil que imprime. */
+  unsavedChanges?: boolean;
 }) {
   // Compara os dois modelos sem precisar salvar: a aba comeca no modelo selecionado.
   const [tab, setTab] = useState<"selected" | "default">("selected");
@@ -68,9 +92,33 @@ export function ReceiptPreviewCard({
         </div>
       </div>
       <p style={{ margin: 0, fontSize: "11px", color: "var(--kr-muted)" }}>
-        Atualiza em tempo real conforme voce configura. Dados de exemplo — a impressao usa os dados
-        reais da operacao.
+        {mode === "escpos"
+          ? "Modo texto direto (ESC/POS): o papel sai exatamente assim — a impressora imprime o cupom que montamos, sem o driver do Windows redesenhar nada."
+          : "Modo grafico: quem desenha o cupom no papel e o driver da impressora, entao o resultado pode sair diferente desta previa."}{" "}
+        Dados de exemplo — a impressao usa os dados reais da operacao.
       </p>
+      {/*
+        A previa mostra o FORMULARIO; quem imprime e o perfil SALVO. Sem este aviso, digitar o
+        telefone de contato (ou trocar a logo) e mandar imprimir mostrava o cupom certo na tela
+        e imprimia o antigo no papel — sem nada na tela explicando por que.
+      */}
+      {unsavedChanges ? (
+        <p
+          style={{
+            margin: 0,
+            padding: "8px 10px",
+            borderRadius: "8px",
+            border: "1px solid var(--kr-warning-border, #b45309)",
+            background: "var(--kr-warning-surface, rgba(180, 83, 9, 0.12))",
+            color: "var(--kr-text-strong)",
+            fontSize: "11px",
+            fontWeight: 700
+          }}
+        >
+          Alteracoes ainda nao salvas. O cupom impresso continua saindo com o perfil anterior ate
+          voce clicar em &quot;Salvar perfil&quot;.
+        </p>
+      ) : null}
       {/*
         Bloco (nao flex) de proposito: num container flex que rola, o item filho fica com
         a altura da caixa (`align-items: stretch`) e o texto do cupom vazava para fora do
@@ -88,7 +136,12 @@ export function ReceiptPreviewCard({
           background: "var(--kr-scroll-track)"
         }}
       >
-        <ReceiptPaper config={effectiveConfig} logo={logo} paperWidthMm={paperWidthMm} />
+        <ReceiptPaper
+          config={effectiveConfig}
+          logo={logo}
+          paperWidthMm={paperWidthMm}
+          mode={mode}
+        />
       </div>
     </div>
   );
@@ -132,11 +185,13 @@ function PreviewTab({
 function ReceiptPaper({
   config,
   logo,
-  paperWidthMm
+  paperWidthMm,
+  mode
 }: {
   config: ReceiptTemplateConfig;
   logo: ReceiptLogoConfig;
   paperWidthMm: number;
+  mode: ReceiptPreviewMode;
 }) {
   // A data de exemplo e fixa para a previa nao "piscar" a cada render.
   const document = useMemo(
@@ -144,6 +199,10 @@ function ReceiptPaper({
     [config]
   );
   const style = document.style;
+
+  if (mode === "escpos") {
+    return <EscPosPaper document={document} logo={logo} paperWidthMm={paperWidthMm} />;
+  }
   const header = document.header;
   // Faixa util e tamanho das linhas decorativas saem das MESMAS funcoes do HTML de
   // impressao: a previa quebra linha (ou nao) exatamente como o papel.
@@ -280,7 +339,7 @@ function ReceiptPaper({
             letterSpacing: "0.04em"
           }}
         >
-          COPIA NRO {header.receiptNumberLabel}
+          {receiptCopyNumberLine(header.receiptNumberLabel)}
         </div>
       ) : null}
       {header.copyLabel ? (
@@ -299,6 +358,155 @@ function ReceiptPaper({
         {renderPreviewBody(document.bodyLines, style, ruleFontSizePx)}
       </pre>
     </div>
+  );
+}
+
+/**
+ * Papel do modo texto direto (ESC/POS) — o que a termica realmente imprime.
+ *
+ * A aparencia escolhida na tela nao e copiada, e TRADUZIDA: a impressora tem duas fontes
+ * embutidas e multiplicadores inteiros, nao um corpo em px. Quem traduz e
+ * `receiptEscPosLayout`, e o codificador dos bytes le a mesma traducao — a previa desenha
+ * exatamente o que a impressora vai receber, linha por linha, por `receiptEscPosRenderLine`.
+ */
+function EscPosPaper({
+  document,
+  logo,
+  paperWidthMm
+}: {
+  document: ReceiptDocument;
+  logo: ReceiptLogoConfig;
+  paperWidthMm: number;
+}) {
+  const layout = receiptEscPosLayout(document.style, paperWidthMm);
+  const fontSizePx = receiptEscPosFontSizePx(paperWidthMm, layout.columns);
+  const showLogo = document.style.showLogo && Boolean(logo.dataUrl);
+  const bodyStartIndex = receiptBodyStartIndex(document);
+  // A entrelinha da impressora e em pontos, medida contra a altura do caractere.
+  const lineHeight = layout.lineSpacingDots / (layout.charHeightDots * layout.bodyHeightScale);
+
+  return (
+    <div
+      style={{
+        width: `${paperWidthMm}mm`,
+        maxWidth: "100%",
+        margin: "0 auto",
+        background: "#fff",
+        color: "#000",
+        padding: `${RECEIPT_PAPER_MARGIN_MM}mm`,
+        boxShadow: "0 1px 6px rgba(0,0,0,0.25)",
+        fontFamily: RECEIPT_FONT_STACKS.monospace,
+        fontSize: `${fontSizePx}px`,
+        boxSizing: "border-box",
+        overflow: "hidden"
+      }}
+    >
+      {showLogo ? (
+        <div
+          style={{
+            display: "flex",
+            justifyContent:
+              layout.logoAlignment === "left"
+                ? "flex-start"
+                : layout.logoAlignment === "right"
+                  ? "flex-end"
+                  : "center",
+            marginBottom: "4px"
+          }}
+        >
+          <img
+            src={logo.dataUrl ?? ""}
+            alt="Logo do cupom"
+            style={{
+              width: `${logo.widthMm}mm`,
+              height: `${logo.heightMm}mm`,
+              objectFit: logo.fit,
+              // A termica e de 1 bit: a previa avisa que o papel nao tem tons de cinza.
+              filter: "grayscale(1) contrast(2)"
+            }}
+          />
+        </div>
+      ) : null}
+      <pre style={{ margin: 0, font: "inherit", whiteSpace: "pre" }}>
+        {document.lines.map((line, index) => (
+          <EscPosLine
+            key={index}
+            line={receiptEscPosRenderLine(line, layout, index >= bodyStartIndex)}
+            numberHeightScale={layout.numberHeightScale}
+            lineHeight={lineHeight}
+          />
+        ))}
+      </pre>
+    </div>
+  );
+}
+
+function EscPosLine({
+  line,
+  numberHeightScale,
+  lineHeight
+}: {
+  line: ReceiptEscPosRenderedLine;
+  numberHeightScale: 1 | 2;
+  lineHeight: number;
+}) {
+  const content = line.emphasizeNumbers
+    ? splitReceiptNumbers(line.text).map((part, index) =>
+        part.isNumber ? (
+          <EscPosGlyphs key={index} heightScale={numberHeightScale}>
+            {part.text}
+          </EscPosGlyphs>
+        ) : (
+          part.text
+        )
+      )
+    : line.text || " ";
+
+  return (
+    <div
+      style={{
+        textAlign: line.align,
+        // A altura dupla come duas linhas de papel; a entrelinha da impressora ja considera
+        // isso, entao a previa reserva o mesmo espaco.
+        lineHeight: lineHeight * Math.max(line.heightScale, numberHeightScale),
+        fontWeight: line.bold ? 700 : undefined
+      }}
+    >
+      <EscPosGlyphs widthScale={line.widthScale} heightScale={line.heightScale}>
+        {content}
+      </EscPosGlyphs>
+    </div>
+  );
+}
+
+/**
+ * Caracteres nos multiplicadores da impressora. `GS ! n` estica o DESENHO do caractere, e nao
+ * troca por uma fonte maior — `scale` reproduz isso, e mantem a largura da coluna quando so a
+ * altura dobra.
+ */
+function EscPosGlyphs({
+  children,
+  widthScale = 1,
+  heightScale = 1
+}: {
+  children: React.ReactNode;
+  widthScale?: 1 | 2;
+  heightScale?: 1 | 2;
+}) {
+  if (widthScale === 1 && heightScale === 1) {
+    return <>{children}</>;
+  }
+
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        transform: `scale(${widthScale}, ${heightScale})`,
+        transformOrigin: "center"
+      }}
+    >
+      {children}
+    </span>
   );
 }
 

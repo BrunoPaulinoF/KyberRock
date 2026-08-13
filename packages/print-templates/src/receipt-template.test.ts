@@ -8,12 +8,22 @@ import {
   DEFAULT_RECEIPT_STYLE,
   DEFAULT_RECEIPT_TEMPLATE_CONFIG,
   fitReceiptBodyFontSizePx,
+  isReceiptEmphasizedHeaderLine,
+  isReceiptEscPosCenteredLine,
   isReceiptRuleLine,
   NON_FISCAL_SALE_LABEL,
   normalizeReceiptTemplateConfig,
+  receiptBodyStartIndex,
   receiptContentWidthMm,
+  receiptCopyNumberLine,
+  receiptEscPosFontSizePx,
+  receiptEscPosLayout,
+  receiptEscPosRenderLine,
+  receiptOperationCodeLine,
+  splitReceiptNumbers,
   RECEIPT_LINE_WIDTH,
-  resolveReceiptTemplateConfig
+  resolveReceiptTemplateConfig,
+  type ReceiptStyle
 } from "./receipt-template";
 
 describe("buildReceiptLines", () => {
@@ -545,6 +555,233 @@ describe("geometria do papel", () => {
   it("nao mexe nas fontes proporcionais, que nao tem grade de colunas", () => {
     expect(fitReceiptBodyFontSizePx(16, "sans", receiptContentWidthMm(80))).toBe(16);
     expect(fitReceiptBodyFontSizePx(16, "condensed", receiptContentWidthMm(80))).toBe(16);
+  });
+});
+
+/**
+ * Regras do cabecalho compartilhadas pelos TRES renderizadores (texto ESC/POS, HTML da
+ * impressora do Windows e previa da tela). Cada uma tinha copia solta em algum deles, e foi
+ * essa copia que ja deixou a previa mostrar um cupom e o papel sair outro.
+ */
+describe("cabecalho compartilhado", () => {
+  it("monta as duas linhas do topo a partir de um lugar so", () => {
+    expect(receiptOperationCodeLine("000755")).toBe("COD 000755");
+    expect(receiptCopyNumberLine("000000882-4")).toBe("COPIA NRO 000000882-4");
+  });
+
+  it("reconhece as linhas que saem em destaque", () => {
+    expect(isReceiptEmphasizedHeaderLine(receiptOperationCodeLine("000755"))).toBe(true);
+    expect(isReceiptEmphasizedHeaderLine(receiptCopyNumberLine("000000882-4"))).toBe(true);
+    // O cupom em texto puro ja vem centralizado com espacos.
+    expect(isReceiptEmphasizedHeaderLine("          COD 000755")).toBe(true);
+    expect(isReceiptEmphasizedHeaderLine("1a VIA")).toBe(false);
+    expect(isReceiptEmphasizedHeaderLine("CODIGO.: OP-1")).toBe(false);
+  });
+
+  it("reconhece as linhas que a impressora centraliza sozinha", () => {
+    expect(isReceiptEscPosCenteredLine("          COD 000755")).toBe(true);
+    expect(isReceiptEscPosCenteredLine("1a VIA")).toBe(true);
+    expect(isReceiptEscPosCenteredLine(NON_FISCAL_SALE_LABEL)).toBe(true);
+    expect(isReceiptEscPosCenteredLine("AGRADECEMOS PELA PREFERENCIA! VOLTE SEMPRE")).toBe(true);
+    // Linha de dado, alinhada a esquerda: tem ":" e/ou minuscula.
+    expect(isReceiptEscPosCenteredLine("Cliente: Cliente Exemplo")).toBe(false);
+    expect(isReceiptEscPosCenteredLine("CODIGO.: OP-1")).toBe(false);
+    expect(isReceiptEscPosCenteredLine("")).toBe(false);
+    // Resto de uma linha quebrada (o final do telefone de contato) segue a primeira metade,
+    // na esquerda — centralizar so ele deixava o contato torto no papel.
+    expect(isReceiptEscPosCenteredLine("99648-0471")).toBe(false);
+  });
+
+  it("centraliza a via junto com o resto do cabecalho", () => {
+    // O "a" minusculo de "1a VIA" a derrubava do teste generico, e ela era a unica linha do
+    // cabecalho que saia na esquerda no papel enquanto aparecia centralizada na tela.
+    expect(isReceiptEscPosCenteredLine("1a VIA")).toBe(true);
+    expect(isReceiptEscPosCenteredLine("2a VIA")).toBe(true);
+    expect(isReceiptEscPosCenteredLine("Assinatura do Cliente")).toBe(false);
+  });
+
+  it("da a previa do cupom ESC/POS o corpo que faz as colunas caberem no papel", () => {
+    // A grade da impressora precisa caber na faixa util (papel - 2 x margem).
+    for (const [paperWidthMm, columns] of [
+      [80, 48],
+      [80, 64],
+      [58, 32]
+    ]) {
+      const fontSizePx = receiptEscPosFontSizePx(paperWidthMm, columns);
+      const widthMm = ((columns * 0.55 * fontSizePx) / 96) * 25.4;
+      expect(widthMm).toBeLessThanOrEqual(receiptContentWidthMm(paperWidthMm) + 0.01);
+    }
+
+    // Mais colunas na mesma faixa de papel = caractere menor.
+    expect(receiptEscPosFontSizePx(80, RECEIPT_LINE_WIDTH)).toBeGreaterThan(
+      receiptEscPosFontSizePx(80, 64)
+    );
+    expect(receiptEscPosFontSizePx(80, RECEIPT_LINE_WIDTH)).toBeGreaterThan(
+      receiptEscPosFontSizePx(58, RECEIPT_LINE_WIDTH)
+    );
+  });
+});
+
+/**
+ * A personalizacao da tela precisa CHEGAR na termica. Ela nao tem corpo em px nem entrelinha
+ * fracionaria: tem duas fontes embutidas e multiplicadores inteiros, e `receiptEscPosLayout`
+ * e quem traduz uma coisa na outra — para o codificador e a previa lerem a mesma decisao.
+ */
+describe("aparencia no cupom ESC/POS", () => {
+  const style = (overrides: Partial<ReceiptStyle> = {}): ReceiptStyle => ({
+    ...DEFAULT_RECEIPT_STYLE,
+    ...overrides
+  });
+
+  it("mantem o cupom padrao na fonte A, 48 colunas", () => {
+    const layout = receiptEscPosLayout(DEFAULT_RECEIPT_STYLE, 80);
+
+    expect(layout).toMatchObject({
+      font: "A",
+      columns: RECEIPT_LINE_WIDTH,
+      charWidthDots: 12,
+      charHeightDots: 24,
+      bodyHeightScale: 1,
+      bold: false,
+      // O cabecalho grafico ja destacava COD e COPIA NRO; o padrao mantem isso no papel.
+      headerHeightScale: 2,
+      headerWidthScale: 1,
+      numberHeightScale: 1
+    });
+  });
+
+  it("corpo maior dobra a altura, e nunca a largura", () => {
+    const layout = receiptEscPosLayout(style({ fontSizePx: 16 }), 80);
+
+    // Largura dupla cortaria as 48 colunas pela metade e o cupom e escrito em grade fixa.
+    expect(layout.bodyHeightScale).toBe(2);
+    expect(layout.columns).toBe(RECEIPT_LINE_WIDTH);
+    expect(receiptEscPosRenderLine("Cliente: X", layout)).toMatchObject({
+      widthScale: 1,
+      heightScale: 2
+    });
+  });
+
+  it("corpo menor (e a fonte condensada) trocam para a fonte B, que cabe mais colunas", () => {
+    for (const menor of [style({ fontSizePx: 8 }), style({ fontFamily: "condensed" })]) {
+      const layout = receiptEscPosLayout(menor, 80);
+
+      expect(layout.font).toBe("B");
+      expect(layout.columns).toBe(64);
+      expect(layout.charWidthDots).toBe(9);
+    }
+
+    expect(receiptEscPosLayout(style({ fontSizePx: 8 }), 58).columns).toBe(42);
+  });
+
+  it("estica o divisor ate a largura real da fonte", () => {
+    // Um divisor de 48 tracos deixaria um vao branco na direita do papel na fonte B.
+    const fonteB = receiptEscPosLayout(style({ fontFamily: "condensed" }), 80);
+    const divisor = "-".repeat(RECEIPT_LINE_WIDTH);
+
+    expect(receiptEscPosRenderLine(divisor, fonteB)).toMatchObject({
+      text: "-".repeat(64),
+      rule: true
+    });
+    // A linha de assinatura e decorativa do mesmo jeito, com o caractere dela.
+    expect(receiptEscPosRenderLine("_".repeat(RECEIPT_LINE_WIDTH), fonteB).text).toBe(
+      "_".repeat(64)
+    );
+  });
+
+  it("leva negrito, entrelinha e alinhamento da logo para a impressora", () => {
+    const layout = receiptEscPosLayout(
+      style({ boldBody: true, lineHeight: 2, logoAlignment: "left" }),
+      80
+    );
+
+    expect(layout.bold).toBe(true);
+    expect(layout.logoAlignment).toBe("left");
+    // Entrelinha em pontos, contra a altura do caractere da fonte A (24).
+    expect(layout.lineSpacingDots).toBe(48);
+    expect(receiptEscPosRenderLine("Cliente: X", layout).bold).toBe(true);
+  });
+
+  it("destaca o cabecalho na largura dupla so quando a linha continua cabendo", () => {
+    const layout = receiptEscPosLayout(style({ fontSizePx: 10, headerFontSizePx: 24 }), 80);
+    expect(layout.headerWidthScale).toBe(2);
+
+    // 21 caracteres em largura dupla ocupam 42 das 48 colunas: cabe.
+    expect(receiptEscPosRenderLine("COPIA NRO 000000882-4", layout)).toMatchObject({
+      widthScale: 2,
+      heightScale: 2,
+      align: "center",
+      bold: true
+    });
+
+    // Uma linha longa demais volta para a largura simples em vez de sair truncada.
+    expect(receiptEscPosRenderLine("COD 0001234567890123456789012345", layout).widthScale).toBe(1);
+  });
+
+  it("aumenta so os numeros quando o operador pediu numeros maiores", () => {
+    const layout = receiptEscPosLayout(style({ fontSizePx: 10, numberFontSizePx: 16 }), 80);
+    expect(layout.numberHeightScale).toBe(2);
+
+    const linha = receiptEscPosRenderLine("LIQUIDO: 6,500 <TON>", layout);
+    expect(linha.emphasizeNumbers).toBe(true);
+    expect(splitReceiptNumbers(linha.text)).toEqual([
+      { text: "LIQUIDO: ", isNumber: false },
+      { text: "6,500", isNumber: true },
+      { text: " <TON>", isNumber: false }
+    ]);
+
+    // Numeros MENORES que o corpo nao tem como sair: a impressora so multiplica.
+    expect(receiptEscPosLayout(style({ fontSizePx: 13, numberFontSizePx: 12 }), 80)).toMatchObject({
+      numberHeightScale: 1
+    });
+  });
+
+  it("nao exagera um ajuste fino de tamanho, que a impressora so sabe dobrar", () => {
+    const layout = receiptEscPosLayout(style({ fontSizePx: 12, headerFontSizePx: 13 }), 80);
+
+    expect(layout.headerHeightScale).toBe(1);
+    expect(layout.bodyHeightScale).toBe(1);
+  });
+
+  /**
+   * Corpo 16 e cabecalho no padrao 14 dao razao 0,875: pela razao pura o COD sairia MENOR que
+   * o resto do cupom — justamente a linha que existe para se destacar.
+   */
+  it("nunca deixa o cabecalho menor que o corpo", () => {
+    const layout = receiptEscPosLayout(style({ fontSizePx: 16 }), 80);
+
+    expect(layout.bodyHeightScale).toBe(2);
+    expect(layout.headerHeightScale).toBe(2);
+    expect(receiptEscPosRenderLine("COD 000755", layout).heightScale).toBe(2);
+  });
+
+  /**
+   * O destaque dos numeros vale para pesos e valores, nao para a data do cabecalho nem para o
+   * "1" de "1a VIA". No HTML isso nunca aconteceu porque o cabecalho e desenhado fora do
+   * `<pre>`; no texto puro os dois moram na mesma lista de linhas.
+   */
+  it("aumenta os numeros so no corpo do cupom", () => {
+    const document = buildReceiptDocument(baseInput(), {
+      ...DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+      mode: "custom",
+      fontSizePx: 10,
+      numberFontSizePx: 16
+    });
+    const layout = receiptEscPosLayout(document.style, 80);
+    const bodyStartIndex = receiptBodyStartIndex(document);
+
+    expect(bodyStartIndex).toBeGreaterThan(0);
+    expect(document.lines.length - bodyStartIndex).toBe(document.bodyLines.length);
+
+    const naoDestacadas = document.lines
+      .slice(0, bodyStartIndex)
+      .map((line) => receiptEscPosRenderLine(line, layout, false));
+    expect(naoDestacadas.every((line) => !line.emphasizeNumbers)).toBe(true);
+
+    const destacadas = document.lines
+      .slice(bodyStartIndex)
+      .map((line) => receiptEscPosRenderLine(line, layout, true));
+    expect(destacadas.some((line) => line.emphasizeNumbers)).toBe(true);
   });
 });
 

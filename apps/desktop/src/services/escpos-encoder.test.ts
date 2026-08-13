@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_RECEIPT_STYLE,
+  receiptEscPosLayout,
+  type ReceiptStyle
+} from "@kyberrock/print-templates";
+
+import {
   countRasterBlackDots,
   encodeEscPos,
   isRasterBlank,
@@ -44,6 +50,135 @@ describe("encodeEscPos", () => {
 
   it("keeps the receipt identical when there is no logo configured", () => {
     expect(encodeEscPos(["CUPOM"], 80, null).equals(encodeEscPos(["CUPOM"], 80))).toBe(true);
+  });
+
+  /**
+   * Na previa o codigo da operacao e o numero do cupom saem grandes e em negrito. Impressos
+   * como texto comum, eram duas linhas iguais a todas as outras no meio do papel — e sao
+   * justamente as duas que o operador procura no cupom em maos.
+   */
+  describe("destaque do cabecalho", () => {
+    it("dobra a altura e liga o negrito no codigo da operacao e no numero do cupom", () => {
+      for (const line of ["COD 000123", "COPIA NRO 000000882-4"]) {
+        const bytes = [...encodeEscPos([line], 80)];
+        const text = findSequence(bytes, [...Buffer.from(line, "ascii")]);
+
+        // GS ! 1 (altura dupla) e ESC E 1 (negrito) antes do texto...
+        expect(findSequence(bytes, [0x1d, 0x21, 0x01])).toBeGreaterThanOrEqual(0);
+        expect(findSequence(bytes, [0x1d, 0x21, 0x01])).toBeLessThan(text);
+        expect(findSequence(bytes, [0x1b, 0x45, 0x01])).toBeLessThan(text);
+        // ...e desligados depois, para o resto do cupom voltar ao normal.
+        expect(findSequence(bytes.slice(text), [0x1d, 0x21, 0x00])).toBeGreaterThanOrEqual(0);
+        expect(findSequence(bytes.slice(text), [0x1b, 0x45, 0x00])).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it("nao aumenta o resto do cupom", () => {
+      const bytes = [...encodeEscPos(["PEDREIRA IBIUNA", "AGRADECEMOS PELA PREFERENCIA"], 80)];
+
+      expect(findSequence(bytes, [0x1d, 0x21, 0x01])).toBe(-1);
+    });
+
+    // Largura dupla cortaria a linha para 24 colunas e o numero do cupom ja usa 21.
+    it("nao dobra a largura, para o numero do cupom nao ser truncado", () => {
+      const bytes = [...encodeEscPos(["COPIA NRO 000000882-4"], 80)];
+
+      expect(findSequence(bytes, [0x1d, 0x21, 0x11])).toBe(-1);
+      expect(findSequence(bytes, [0x1d, 0x21, 0x10])).toBe(-1);
+    });
+  });
+
+  /**
+   * A aparencia escolhida na tela de impressao existia so no caminho grafico: o codificador
+   * ignorava o estilo e mandava tudo na fonte padrao. Agora cada controle vira comando.
+   */
+  describe("personalizacao", () => {
+    const style = (overrides: Partial<ReceiptStyle>): ReceiptStyle => ({
+      ...DEFAULT_RECEIPT_STYLE,
+      ...overrides
+    });
+    const encode = (lines: string[], overrides: Partial<ReceiptStyle>, paperWidthMm = 80) =>
+      encodeEscPos(lines, paperWidthMm, null, receiptEscPosLayout(style(overrides), paperWidthMm));
+
+    it("troca a fonte embutida da impressora (ESC M)", () => {
+      // ESC M 0 = fonte A (12x24), ESC M 1 = fonte B (9x17).
+      expect(findSequence([...encode(["X"], {})], [0x1b, 0x4d, 0x00])).toBeGreaterThanOrEqual(0);
+      expect(
+        findSequence([...encode(["X"], { fontFamily: "condensed" })], [0x1b, 0x4d, 0x01])
+      ).toBeGreaterThanOrEqual(0);
+    });
+
+    it("leva a entrelinha configurada (ESC 3 n, em pontos)", () => {
+      // 2 x 24 pontos da fonte A.
+      expect(
+        findSequence([...encode(["X"], { lineHeight: 2 })], [0x1b, 0x33, 48])
+      ).toBeGreaterThanOrEqual(0);
+      // Padrao (1,28) arredonda para 31 pontos, junto do padrao da impressora.
+      expect(findSequence([...encode(["X"], {})], [0x1b, 0x33, 31])).toBeGreaterThanOrEqual(0);
+    });
+
+    it("liga o negrito do corpo (ESC E)", () => {
+      const semNegrito = [...encode(["Cliente: X"], {})];
+      const comNegrito = [...encode(["Cliente: X"], { boldBody: true })];
+      const texto = findSequence(comNegrito, [...Buffer.from("Cliente: X", "ascii")]);
+
+      expect(findSequence(comNegrito, [0x1b, 0x45, 0x01])).toBeLessThan(texto);
+      // Sem negrito, a linha do corpo continua saindo com ESC E 0 antes do texto.
+      expect(
+        findSequence(
+          semNegrito.slice(0, findSequence(semNegrito, [...Buffer.from("Cliente: X", "ascii")])),
+          [0x1b, 0x45, 0x01]
+        )
+      ).toBe(-1);
+    });
+
+    it("dobra a altura do corpo quando o operador pede corpo maior", () => {
+      const bytes = [...encode(["Cliente: X"], { fontSizePx: 16 })];
+      const texto = findSequence(bytes, [...Buffer.from("Cliente: X", "ascii")]);
+
+      // GS ! 0x01: altura dupla, largura simples — a grade de colunas continua valendo.
+      expect(findSequence(bytes, [0x1d, 0x21, 0x01])).toBeLessThan(texto);
+      expect(findSequence(bytes, [0x1d, 0x21, 0x11])).toBe(-1);
+    });
+
+    it("estica o divisor ate a largura real da fonte", () => {
+      const divisor = "-".repeat(48);
+      const fonteB = encode([divisor], { fontFamily: "condensed" });
+
+      expect(fonteB.includes(Buffer.from("-".repeat(64), "ascii"))).toBe(true);
+      expect(encode([divisor], {}).includes(Buffer.from("-".repeat(64), "ascii"))).toBe(false);
+    });
+
+    it("aumenta so os numeros dentro da linha", () => {
+      const bytes = [...encode(["LIQUIDO: 6,500 <TON>"], { fontSizePx: 10, numberFontSizePx: 16 })];
+      const rotulo = findSequence(bytes, [...Buffer.from("LIQUIDO: ", "ascii")]);
+      const numero = findSequence(bytes, [...Buffer.from("6,500", "ascii")]);
+      const unidade = findSequence(bytes, [...Buffer.from(" <TON>", "ascii")]);
+
+      expect(rotulo).toBeGreaterThanOrEqual(0);
+      // O aumento entra antes do numero e sai antes do texto seguinte.
+      const aumento = findSequence(bytes.slice(rotulo, numero), [0x1d, 0x21, 0x01]);
+      expect(aumento).toBeGreaterThanOrEqual(0);
+      expect(findSequence(bytes.slice(numero, unidade), [0x1d, 0x21, 0x00])).toBeGreaterThanOrEqual(
+        0
+      );
+    });
+
+    it("imprime a logo no alinhamento configurado", () => {
+      const logo = packRasterImage(bgraPixels(16, 8, [0, 0, 0, 255]), 16, 8);
+      const bytes = [
+        ...encodeEscPos(
+          ["CUPOM"],
+          80,
+          logo,
+          receiptEscPosLayout(style({ logoAlignment: "left" }), 80)
+        )
+      ];
+      const raster = findSequence(bytes, [0x1d, 0x76, 0x30, 0x00]);
+
+      // ESC a 0 (esquerda) imediatamente antes do bit image.
+      expect(bytes.slice(raster - 3, raster)).toEqual([0x1b, 0x61, 0x00]);
+    });
   });
 
   /**

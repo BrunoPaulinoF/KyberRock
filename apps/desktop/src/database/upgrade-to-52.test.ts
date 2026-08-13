@@ -8,52 +8,44 @@ import { runDesktopMigrations } from "./migrate";
 import { DESKTOP_MIGRATIONS } from "./migrations";
 import { openDesktopDatabase, type DesktopDatabase } from "./sqlite";
 import { ensureInitialDesktopIdentity } from "../services/bootstrap";
-import {
-  resolveCustomerFutureBillingNfe,
-  setCustomerFutureBillingInvoice
-} from "../services/customer-future-billing";
+import { getActiveReceiptPrintProfile } from "../services/printing";
 
 /**
- * O caminho de atualizacao real do release seguinte: a balanca esta na 51, com cadastro e
- * pesagens em uso, e o instalador novo sobe para a 52 — a tabela das notas de venda para
- * entrega futura. Os demais testes migram banco vazio.
+ * A migracao 52 RECONSTROI a `print_profiles` (o SQLite nao altera CHECK no lugar), e a
+ * tabela guarda a logo do cupom e a personalizacao inteira da pedreira. Reconstrucao que
+ * perde linha aqui e a pedreira imprimindo sem logo no dia seguinte — por isso este caminho
+ * de atualizacao tem teste proprio, com dados dentro.
  */
 describe("atualizacao de um banco em uso (51 -> 52)", () => {
-  it("aplica a migracao 52 sobre um banco com dados sem perder nada", () => {
+  it("preserva o perfil de cupom salvo, com logo e personalizacao", () => {
     const database = openDesktopDatabase({ databasePath: ":memory:" });
 
     try {
       const previous = DESKTOP_MIGRATIONS.filter((migration) => migration.version <= 51);
       runDesktopMigrations(database, previous);
       expect(previous.at(-1)?.version).toBe(51);
-      seedCadastro(database);
+      const deviceId = seedPrintProfile(database);
 
       const applied = runDesktopMigrations(database);
       expect(applied.map((migration) => migration.version)).toContain(52);
 
-      // Nada mudou para o operador: sem nota cadastrada, nenhuma pesagem sai carimbada.
-      expect(resolveCustomerFutureBillingNfe(database, "cust-1", "prod-1")).toBeNull();
-      expect(
-        database.prepare("SELECT trade_name FROM customers WHERE id = 'cust-1'").pluck().get()
-      ).toBe("Concessionaria");
-
-      // E a tabela nova ja funciona no banco atualizado.
-      setCustomerFutureBillingInvoice(database, {
-        customerId: "cust-1",
-        productId: "prod-1",
-        nfeNumber: "12345"
+      const profile = getActiveReceiptPrintProfile(database, deviceId);
+      expect(profile).toMatchObject({
+        id: "profile-1",
+        printerType: "windows",
+        windowsPrinterName: "MP-4200 TH",
+        paperWidthMm: 80,
+        copies: 2,
+        cutPaper: true,
+        isActive: true
       });
-      expect(resolveCustomerFutureBillingNfe(database, "cust-1", "prod-1")).toBe("12345");
-
-      // A coluna do RETRATO na operacao nasce nula: a pesagem que ja estava fechada antes
-      // da atualizacao nao entregou entrega futura nenhuma, e nao pode passar a citar uma
-      // nota so porque o cadastro ganhou uma agora.
-      expect(
-        database
-          .prepare("SELECT future_billing_nfe_number FROM weighing_operations WHERE id = 'op-1'")
-          .pluck()
-          .get()
-      ).toBeNull();
+      expect(profile?.receiptLogo.dataUrl).toBe("data:image/png;base64,LOGO");
+      expect(profile?.receiptLogo.widthMm).toBe(24);
+      expect(profile?.templateConfig).toMatchObject({
+        mode: "custom",
+        fontSizePx: 13,
+        companyPhone: "(15) 3248-1234"
+      });
 
       expect(database.prepare("PRAGMA integrity_check").pluck().get()).toBe("ok");
       expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
@@ -62,62 +54,50 @@ describe("atualizacao de um banco em uso (51 -> 52)", () => {
     }
   });
 
-  it("os indices unicos impedem duas notas vigentes para o mesmo par", () => {
+  it("passa a aceitar o modo texto direto e continua recusando lixo", () => {
     const database = openDesktopDatabase({ databasePath: ":memory:" });
 
     try {
       runDesktopMigrations(database);
-      seedCadastro(database);
-      const at = "2026-08-13T09:00:00.000Z";
-      const insert = database.prepare(
-        `INSERT INTO customer_future_billing_invoices
-           (id, customer_id, product_id, nfe_number, is_active, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 1, ?, ?)`
-      );
+      seedPrintProfile(database);
 
-      insert.run("fb-1", "cust-1", "prod-1", "111", at, at);
-      expect(() => insert.run("fb-2", "cust-1", "prod-1", "222", at, at)).toThrow();
+      expect(() =>
+        database
+          .prepare("UPDATE print_profiles SET printer_type = 'windows_escpos' WHERE id = ?")
+          .run("profile-1")
+      ).not.toThrow();
 
-      // A nota "vale para qualquer produto" tambem e unica por cliente...
-      insert.run("fb-3", "cust-1", null, "333", at, at);
-      expect(() => insert.run("fb-4", "cust-1", null, "444", at, at)).toThrow();
-
-      // ...mas nao conflita com a nota de um produto, nem com outro cliente.
-      expect(() => insert.run("fb-5", "cust-1", "prod-2", "555", at, at)).not.toThrow();
-      expect(() => insert.run("fb-6", "cust-2", "prod-1", "666", at, at)).not.toThrow();
-
-      // E o soft delete libera o par para uma nota nova.
-      database
-        .prepare("UPDATE customer_future_billing_invoices SET deleted_at = ? WHERE id = 'fb-1'")
-        .run(at);
-      expect(() => insert.run("fb-7", "cust-1", "prod-1", "777", at, at)).not.toThrow();
+      // O CHECK continua existindo: a reconstrucao nao pode ter afrouxado a coluna.
+      expect(() =>
+        database
+          .prepare("UPDATE print_profiles SET printer_type = 'qualquer' WHERE id = ?")
+          .run("profile-1")
+      ).toThrow();
     } finally {
       database.close();
     }
   });
 
-  it("permite voltar para o build anterior: a tabela nova fica inerte", () => {
+  it("mantem a chave estrangeira do computador dono do perfil", () => {
     const database = openDesktopDatabase({ databasePath: ":memory:" });
 
     try {
       runDesktopMigrations(database);
-      seedCadastro(database);
-      setCustomerFutureBillingInvoice(database, {
-        customerId: "cust-1",
-        productId: "prod-1",
-        nfeNumber: "12345"
-      });
+      seedPrintProfile(database);
 
-      // O operador volta para o instalador anterior, que so conhece ate a 51:
-      // runDesktopMigrations itera a PROPRIA lista, entao a 52 gravada em
-      // schema_migrations e ignorada e a tabela extra nao atrapalha o build antigo,
-      // que nunca a menciona.
-      const previous = DESKTOP_MIGRATIONS.filter((migration) => migration.version <= 51);
-      expect(() => runDesktopMigrations(database, previous)).not.toThrow();
-      expect(
-        database.prepare("SELECT trade_name FROM customers WHERE id = 'cust-1'").pluck().get()
-      ).toBe("Concessionaria");
-      expect(database.prepare("PRAGMA integrity_check").pluck().get()).toBe("ok");
+      // Perfil de um computador que nao existe nao pode entrar: era assim antes da
+      // reconstrucao e precisa continuar sendo.
+      expect(() =>
+        database
+          .prepare(
+            `INSERT INTO print_profiles
+               (id, device_id, document_type, printer_type, windows_printer_name, paper_width_mm,
+                margin_json, font_config_json, copies, cut_paper, is_active, created_at, updated_at)
+             VALUES ('orfao', 'device-inexistente', 'receipt_80mm', 'windows', 'X', 80,
+                     '{}', '{}', 1, 0, 1, '2026-08-13T12:00:00.000Z', '2026-08-13T12:00:00.000Z')`
+          )
+          .run()
+      ).toThrow();
     } finally {
       database.close();
     }
@@ -134,7 +114,7 @@ describe("atualizacao de um banco em uso (51 -> 52)", () => {
         DESKTOP_MIGRATIONS.filter((migration) => migration.version <= 51)
       );
       expect(database.pragma("journal_mode", { simple: true })).toBe("wal");
-      seedCadastro(database);
+      const deviceId = seedPrintProfile(database);
 
       // Fecha e reabre, como o app faz entre um uso e o proximo.
       database.close();
@@ -142,12 +122,9 @@ describe("atualizacao de um banco em uso (51 -> 52)", () => {
 
       const applied = runDesktopMigrations(database);
       expect(applied.map((migration) => migration.version)).toContain(52);
-      setCustomerFutureBillingInvoice(database, {
-        customerId: "cust-1",
-        productId: "prod-1",
-        nfeNumber: "12345"
-      });
-      expect(resolveCustomerFutureBillingNfe(database, "cust-1", "prod-1")).toBe("12345");
+      expect(getActiveReceiptPrintProfile(database, deviceId)?.windowsPrinterName).toBe(
+        "MP-4200 TH"
+      );
       expect(database.prepare("PRAGMA integrity_check").pluck().get()).toBe("ok");
       database.close();
     } finally {
@@ -156,47 +133,42 @@ describe("atualizacao de um banco em uso (51 -> 52)", () => {
   });
 });
 
-/** Cadastro de clientes e produtos, como a balanca tem antes de atualizar. */
-function seedCadastro(database: DesktopDatabase): void {
+/** Um perfil de cupom 80 mm ja configurado, como a balanca tem antes de atualizar. */
+function seedPrintProfile(database: DesktopDatabase): string {
   const identity = ensureInitialDesktopIdentity(database, {
     companyId: "c1",
-    companyLegalName: "KyberRock Mineracao LTDA",
+    companyLegalName: "Pedreira Ibiuna LTDA",
     unitId: "u1",
-    unitName: "Pedreira Principal",
+    unitName: "UN1",
     deviceId: "d1",
     deviceName: "PC Balanca",
     installationId: "i1"
   });
-  const at = "2026-08-13T09:00:00.000Z";
-  for (const [id, name] of [
-    ["cust-1", "Concessionaria"],
-    ["cust-2", "Construtora"]
-  ]) {
-    database
-      .prepare(
-        `INSERT INTO customers (id, company_id, source, legal_name, trade_name, is_active, created_at, updated_at)
-         VALUES (?, ?, 'local', ?, ?, 1, ?, ?)`
-      )
-      .run(id, identity.companyId, name, name, at, at);
-  }
-  for (const [id, code, description] of [
-    ["prod-1", "P1", "Rachao"],
-    ["prod-2", "P2", "Brita 1"]
-  ]) {
-    database
-      .prepare(
-        `INSERT INTO products (id, company_id, code, description, unit, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'ton', ?, ?)`
-      )
-      .run(id, identity.companyId, code, description, at, at);
-  }
-  // Uma pesagem ja fechada antes da atualizacao.
+  const at = "2026-08-13T12:00:00.000Z";
+
   database
     .prepare(
-      `INSERT INTO weighing_operations
-         (id, company_id, unit_id, device_id, status, operation_type, customer_id, product_id,
-          entry_weight_kg, exit_weight_kg, net_weight_kg, total_cents, created_at, updated_at)
-       VALUES ('op-1', ?, ?, ?, 'synced', 'invoice', 'cust-1', 'prod-1', 12000, 18500, 6500, 78000, ?, ?)`
+      `INSERT INTO print_profiles
+         (id, device_id, document_type, printer_type, windows_printer_name, network_host,
+          network_port, paper_width_mm, margin_json, font_config_json, template_config_json,
+          copies, cut_paper, is_active, created_at, updated_at)
+       VALUES ('profile-1', ?, 'receipt_80mm', 'windows', 'MP-4200 TH', NULL, NULL, 80,
+               '{}', ?, ?, 2, 1, 1, ?, ?)`
     )
-    .run(identity.companyId, identity.unitId, identity.deviceId, at, at);
+    .run(
+      identity.deviceId,
+      JSON.stringify({
+        receiptLogo: {
+          dataUrl: "data:image/png;base64,LOGO",
+          widthMm: 24,
+          heightMm: 16,
+          fit: "cover"
+        }
+      }),
+      JSON.stringify({ mode: "custom", fontSizePx: 13, companyPhone: "(15) 3248-1234" }),
+      at,
+      at
+    );
+
+  return identity.deviceId;
 }

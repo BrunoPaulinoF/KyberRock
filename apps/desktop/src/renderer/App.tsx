@@ -39,13 +39,19 @@ import { desktopAppInfo } from "../app-info";
 import type {
   PrintProfileSummary,
   PrintReceiptSummary,
-  PrinterType,
+  ReceiptLogoConfig,
   WindowsPrinterSummary
 } from "../services/printing";
+import {
+  printerTypeUsesEscPos,
+  printerTypeUsesWindowsQueue,
+  type PrinterType
+} from "../services/printer-type";
 import {
   DEFAULT_RECEIPT_STYLE,
   DEFAULT_RECEIPT_TEMPLATE_CONFIG,
   formatReceiptNumber,
+  normalizeReceiptTemplateConfig,
   RECEIPT_CONTACT_LABEL,
   type ReceiptFontFamily,
   type ReceiptTemplateConfig
@@ -500,6 +506,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   // O formulario da tela de impressao e hidratado do perfil salvo uma unica vez; depois
   // so o "Salvar perfil" reescreve. Ver applyReceiptProfileForm.
   const receiptFormHydratedRef = useRef(false);
+  // Perfil que ESTA gravado (o que imprime de verdade). A previa desenha o FORMULARIO, entao
+  // sem guardar o perfil salvo nao havia como avisar que os dois estavam diferentes — e era
+  // assim que o telefone de contato, digitado e nunca salvo, aparecia na tela e faltava no
+  // papel.
+  const [savedReceiptProfile, setSavedReceiptProfile] = useState<PrintProfileSummary | null>(null);
   const [receiptLogoFit, setReceiptLogoFit] =
     useState<PrintProfileSummary["receiptLogo"]["fit"]>("contain");
   // Como a logo sai na impressora termica (preto e branco, sem tons): a previa colorida
@@ -1567,6 +1578,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     ]);
     setPrintProfiles(nextProfiles);
     setPrintReceipts(nextReceipts);
+    // O que esta GRAVADO — a referencia contra a qual o formulario se compara para avisar
+    // que a previa esta mostrando algo que ainda nao vai sair no papel.
+    setSavedReceiptProfile(activeProfile ?? null);
     applyReceiptProfileForm(activeProfile ?? undefined, { force: options.syncForm });
   }
 
@@ -2012,7 +2026,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     const networkHost = networkPrinterHost.trim();
     const networkPort = Number(networkPrinterPort || 9100);
 
-    if (printerType === "windows" && !printerName) {
+    if (printerTypeUsesWindowsQueue(printerType) && !printerName) {
       setMessage("Selecione uma impressora do Windows antes de salvar o perfil.");
       return;
     }
@@ -2033,7 +2047,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     try {
       const profile = await desktopApi.configureReceiptPrintProfile({
         printerType,
-        windowsPrinterName: printerType === "windows" ? printerName : printerName || "NETWORK",
+        windowsPrinterName: printerTypeUsesWindowsQueue(printerType)
+          ? printerName
+          : printerName || "NETWORK",
         networkHost: printerType === "network" ? networkHost : null,
         networkPort: printerType === "network" ? networkPort : null,
         paperWidthMm: 80,
@@ -2057,6 +2073,39 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   function updateReceiptTemplateConfig(patch: Partial<ReceiptTemplateConfig>): void {
     setReceiptTemplateConfig((current) => ({ ...current, ...patch }));
+  }
+
+  /**
+   * O formulario da tela de impressao tem edicao que ainda nao foi gravada. Enquanto for
+   * verdade, a previa esta mostrando um cupom que a impressora ainda nao vai imprimir.
+   */
+  const receiptProfileUnsaved =
+    savedReceiptProfile !== null &&
+    receiptProfileSignature({
+      printerType: savedReceiptProfile.printerType,
+      windowsPrinterName: savedReceiptProfile.windowsPrinterName,
+      networkHost: savedReceiptProfile.networkHost ?? "",
+      networkPort: savedReceiptProfile.networkPort ?? 9100,
+      logo: savedReceiptProfile.receiptLogo,
+      templateConfig: savedReceiptProfile.templateConfig
+    }) !==
+      receiptProfileSignature({
+        printerType,
+        windowsPrinterName: selectedPrinterName,
+        networkHost: networkPrinterHost,
+        networkPort: Number(networkPrinterPort) || 9100,
+        logo: currentReceiptLogo(),
+        templateConfig: receiptTemplateConfig
+      });
+
+  /** Logo como o formulario esta agora — o que a previa desenha. */
+  function currentReceiptLogo(): ReceiptLogoConfig {
+    return {
+      dataUrl: receiptLogoDataUrl,
+      widthMm: Number(receiptLogoWidthMm) || 24,
+      heightMm: Number(receiptLogoHeightMm) || 16,
+      fit: receiptLogoFit
+    };
   }
 
   async function handleReceiptLogoFile(file: File | undefined): Promise<void> {
@@ -3750,11 +3799,21 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       onChange={(event) => setPrinterType(event.target.value as PrinterType)}
                       style={styles.input}
                     >
-                      <option value="windows">Windows instalada</option>
+                      <option value="windows_escpos">
+                        Windows instalada - termica (texto direto ESC/POS)
+                      </option>
+                      <option value="windows">Windows instalada - grafica (driver)</option>
                       <option value="network">Rede / WiFi ESC/POS</option>
                     </select>
                   </label>
-                  {printerType === "windows" ? (
+                  <p style={{ ...styles.muted, marginTop: 0 }}>
+                    {printerType === "windows"
+                      ? "Modo grafico: o cupom vai como pagina e quem desenha e o driver da impressora. Use so em impressora comum (laser/jato). Em impressora termica de cupom o driver costuma perder a logo e o numero do cupom — nesse caso troque para texto direto."
+                      : printerType === "windows_escpos"
+                        ? "Modo texto direto: a impressora recebe o cupom pronto (ESC/POS), sem o driver redesenhar nada. E o modo certo para termica de cupom (Bematech MP-4200, Elgin, Epson TM...) e o unico que garante logo, numero do cupom e telefone no papel."
+                        : "A impressora de rede recebe o mesmo cupom pronto (ESC/POS) do modo texto direto, so que por TCP/IP."}
+                  </p>
+                  {printerTypeUsesWindowsQueue(printerType) ? (
                     <>
                       <label style={styles.fieldLabel} title={TIPS.printing.selectPrinter}>
                         Impressora Windows
@@ -4000,6 +4059,22 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     </label>
                     {receiptTemplateConfig.mode === "custom" ? (
                       <>
+                        {/*
+                          A termica nao tem corpo em px: tem duas fontes embutidas e
+                          multiplicadores inteiros. Os controles continuam valendo — sao
+                          TRADUZIDOS —, mas em degraus, e a previa ja mostra o degrau que
+                          saiu. Sem este aviso o operador arrasta o controle, ve a previa
+                          nao mexer e conclui que a personalizacao nao funciona.
+                        */}
+                        {printerTypeUsesEscPos(printerType) ? (
+                          <p style={{ ...styles.muted, marginTop: 0 }}>
+                            No modo texto direto a impressora tem passos fixos, entao estes
+                            controles saem em degraus: ate 9 px (ou a fonte condensada) usa a fonte
+                            menor da impressora, de 15 px para cima o texto sai em altura dobrada, e
+                            no meio disso fica o tamanho normal. A previa ao lado mostra o degrau
+                            que vai sair no papel.
+                          </p>
+                        ) : null}
                         <label style={styles.fieldLabel}>
                           Fonte do cupom
                           <select
@@ -4177,12 +4252,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 >
                   <ReceiptPreviewCard
                     config={receiptTemplateConfig}
-                    logo={{
-                      dataUrl: receiptLogoDataUrl,
-                      widthMm: Number(receiptLogoWidthMm) || 24,
-                      heightMm: Number(receiptLogoHeightMm) || 16,
-                      fit: receiptLogoFit
-                    }}
+                    logo={currentReceiptLogo()}
+                    mode={printerTypeUsesEscPos(printerType) ? "escpos" : "graphic"}
+                    unsavedChanges={receiptProfileUnsaved}
                   />
 
                   <h2 style={styles.panelTitle}>Cupons emitidos</h2>
@@ -9272,6 +9344,41 @@ function fiscalBillingPillStyle(
 // Identidade visual KyberRock: grafite (logo) + ambar (sinalizacao de patio/mineracao)
 // sobre neutros da familia "stone". Tokens semanticos (success/danger/warning/accent)
 // permitem que os dois temas compartilhem os mesmos estilos de componente.
+/**
+ * Assinatura do perfil de cupom — o formulario e o perfil salvo reduzidos ao mesmo texto.
+ * Serve para uma coisa so: saber se o que a previa esta desenhando ja foi gravado no perfil
+ * que imprime. Sem isso, digitar o telefone de contato (ou trocar a logo) e mandar imprimir
+ * mostrava o cupom novo na tela e continuava imprimindo o antigo, sem explicacao nenhuma.
+ */
+function receiptProfileSignature(input: {
+  printerType: PrinterType;
+  windowsPrinterName: string;
+  networkHost: string;
+  networkPort: number;
+  logo: ReceiptLogoConfig;
+  templateConfig: ReceiptTemplateConfig;
+}): string {
+  const usesWindowsQueue = printerTypeUsesWindowsQueue(input.printerType);
+
+  return JSON.stringify({
+    printerType: input.printerType,
+    // Cada tipo compara so o endereco que USA: o campo do outro guarda sobra do perfil
+    // anterior ("NETWORK", uma porta velha) e acusaria diferenca que nao existe.
+    printerName: usesWindowsQueue ? input.windowsPrinterName.trim() : "",
+    networkHost: usesWindowsQueue ? "" : input.networkHost.trim(),
+    networkPort: usesWindowsQueue ? 0 : input.networkPort,
+    logo: {
+      dataUrl: input.logo.dataUrl ?? null,
+      widthMm: input.logo.widthMm,
+      heightMm: input.logo.heightMm,
+      fit: input.logo.fit
+    },
+    // Normaliza dos dois lados: o perfil volta do banco ja normalizado e o formulario nao,
+    // entao comparar cru marcaria "nao salvo" por causa de um espaco no telefone.
+    templateConfig: normalizeReceiptTemplateConfig(input.templateConfig)
+  });
+}
+
 function getThemeVariables(themeMode: ThemeMode): React.CSSProperties {
   if (themeMode === "dark") {
     return {

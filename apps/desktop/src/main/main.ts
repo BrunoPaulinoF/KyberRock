@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } from "electron";
 import type * as ElectronUpdater from "electron-updater";
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -34,7 +35,9 @@ import type {
   ReceiptPrinter,
   WindowsPrinterSummary
 } from "../services/printing.js";
-import { NetworkEscPosPrinter, type ReceiptLogoRasterizer } from "../services/network-printer.js";
+import { NetworkEscPosPrinter } from "../services/network-printer.js";
+import type { ReceiptLogoRasterizer } from "../services/escpos-receipt.js";
+import { WindowsRawEscPosPrinter } from "../services/windows-raw-printer.js";
 import {
   isRasterBlank,
   packRasterImage,
@@ -1844,6 +1847,17 @@ function createElectronReceiptPrinter(parentWindow: BrowserWindow): ReceiptPrint
         return;
       }
 
+      // Termica ligada no Windows: os mesmos bytes ESC/POS da impressora de rede, entregues
+      // na fila do Windows em modo RAW. Nada aqui passa pelo desenho do driver, entao o
+      // cabecalho do cupom (logo, COD, COPIA NRO) chega ao papel do jeito que foi montado.
+      if (payload.printerType === "windows_escpos") {
+        await new WindowsRawEscPosPrinter({
+          sendRaw: sendRawToWindowsPrinter,
+          rasterizeLogo: rasterizeReceiptLogo
+        }).printReceipt(payload);
+        return;
+      }
+
       const printWindow = new BrowserWindow({
         show: false,
         parent: parentWindow,
@@ -1893,6 +1907,166 @@ function createElectronReceiptPrinter(parentWindow: BrowserWindow): ReceiptPrint
       }
     }
   };
+}
+
+/**
+ * Teto de espera pelo Windows aceitar o cupom na fila. E so a ENTREGA na fila: a impressao em
+ * si continua depois, e o operador nao fica preso numa impressora desligada.
+ */
+const RAW_SPOOL_TIMEOUT_MS = 20_000;
+
+/**
+ * Coloca bytes crus na fila de impressao do Windows (datatype "RAW"), que e como uma termica
+ * de cupom espera receber ESC/POS. O caminho grafico (HTML + driver) continua existindo para
+ * impressora comum; este aqui e o da termica.
+ *
+ * A entrega usa a API de spooler do proprio Windows (`winspool.drv`) por PowerShell, e nao um
+ * modulo nativo: `better-sqlite3` ja mostra o custo de manter binario compilado casado com a
+ * versao do Electron, e uma impressora nao justifica um segundo. O script e ESTATICO — o nome
+ * da impressora e o arquivo entram como PARAMETROS, nunca concatenados no texto do script, para
+ * um nome de impressora com aspas nao virar comando.
+ */
+const RAW_SPOOL_SCRIPT = `param(
+  [Parameter(Mandatory = $true)][string] $PrinterName,
+  [Parameter(Mandatory = $true)][string] $Path,
+  [Parameter(Mandatory = $true)][string] $DocumentName
+)
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+
+public static class KyberRockRawPrinter {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  private class DocInfo {
+    [MarshalAs(UnmanagedType.LPWStr)] public string pDocName;
+    [MarshalAs(UnmanagedType.LPWStr)] public string pOutputFile;
+    [MarshalAs(UnmanagedType.LPWStr)] public string pDataType;
+  }
+
+  [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
+  private static extern bool OpenPrinterW(string printerName, out IntPtr handle, IntPtr defaults);
+  [DllImport("winspool.drv", SetLastError = true)]
+  private static extern bool ClosePrinter(IntPtr handle);
+  [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
+  private static extern bool StartDocPrinterW(IntPtr handle, int level, [In, MarshalAs(UnmanagedType.LPStruct)] DocInfo info);
+  [DllImport("winspool.drv", SetLastError = true)]
+  private static extern bool EndDocPrinter(IntPtr handle);
+  [DllImport("winspool.drv", SetLastError = true)]
+  private static extern bool StartPagePrinter(IntPtr handle);
+  [DllImport("winspool.drv", SetLastError = true)]
+  private static extern bool EndPagePrinter(IntPtr handle);
+  [DllImport("winspool.drv", SetLastError = true)]
+  private static extern bool WritePrinter(IntPtr handle, IntPtr bytes, int count, out int written);
+
+  private static Exception Fail(string step) {
+    return new Exception(step + " falhou (codigo " + Marshal.GetLastWin32Error() + ").");
+  }
+
+  public static void Send(string printerName, string path, string documentName) {
+    byte[] payload = File.ReadAllBytes(path);
+    IntPtr printer;
+
+    if (!OpenPrinterW(printerName, out printer, IntPtr.Zero)) {
+      throw Fail("Abrir a impressora '" + printerName + "'");
+    }
+
+    try {
+      DocInfo info = new DocInfo();
+      info.pDocName = documentName;
+      info.pDataType = "RAW";
+
+      if (!StartDocPrinterW(printer, 1, info)) { throw Fail("Iniciar o documento"); }
+
+      try {
+        if (!StartPagePrinter(printer)) { throw Fail("Iniciar a pagina"); }
+
+        IntPtr buffer = Marshal.AllocCoTaskMem(payload.Length);
+        try {
+          Marshal.Copy(payload, 0, buffer, payload.Length);
+          int written;
+          if (!WritePrinter(printer, buffer, payload.Length, out written)) { throw Fail("Enviar os dados"); }
+          if (written != payload.Length) {
+            throw new Exception("A impressora aceitou " + written + " de " + payload.Length + " bytes.");
+          }
+        } finally {
+          Marshal.FreeCoTaskMem(buffer);
+        }
+
+        EndPagePrinter(printer);
+      } finally {
+        EndDocPrinter(printer);
+      }
+    } finally {
+      ClosePrinter(printer);
+    }
+  }
+}
+'@
+[KyberRockRawPrinter]::Send($PrinterName, $Path, $DocumentName)
+`;
+
+/**
+ * Marca de ordem de bytes no topo do `.ps1`. Sem ela o Windows PowerShell 5.1 le o arquivo
+ * como ANSI e corrompe qualquer acento das mensagens de erro do script.
+ */
+const UTF8_BOM = "\uFEFF";
+
+async function sendRawToWindowsPrinter(
+  printerName: string,
+  data: Buffer,
+  documentName: string
+): Promise<void> {
+  if (process.platform !== "win32") {
+    throw new Error("A impressao ESC/POS direta so esta disponivel no Windows.");
+  }
+
+  const stamp = randomUUID();
+  const dataPath = path.join(app.getPath("temp"), `kyberrock-cupom-${stamp}.bin`);
+  const scriptPath = path.join(app.getPath("temp"), `kyberrock-raw-${stamp}.ps1`);
+
+  try {
+    writeFileSync(dataPath, data);
+    // BOM: sem ele o PowerShell 5.1 le o script como ANSI e estraga qualquer acento.
+    writeFileSync(scriptPath, `${UTF8_BOM}${RAW_SPOOL_SCRIPT}`, "utf8");
+
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          scriptPath,
+          "-PrinterName",
+          printerName,
+          "-Path",
+          dataPath,
+          "-DocumentName",
+          documentName
+        ],
+        { timeout: RAW_SPOOL_TIMEOUT_MS, windowsHide: true },
+        (error, _stdout, stderr) => {
+          if (!error) {
+            resolve();
+            return;
+          }
+
+          const detail = String(stderr || error.message)
+            .replace(/\s+/g, " ")
+            .trim();
+          writeStartupLog("receipt-print:raw-spool-failed", { printerName, detail });
+          reject(new Error(`Nao foi possivel enviar o cupom para "${printerName}": ${detail}`));
+        }
+      );
+    });
+  } finally {
+    rmSync(dataPath, { force: true });
+    rmSync(scriptPath, { force: true });
+  }
 }
 
 /** Teto de espera pela decodificacao da logo: passou disso, imprime do jeito que estiver. */
