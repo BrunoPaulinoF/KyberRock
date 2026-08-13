@@ -1838,5 +1838,55 @@ ALTER TABLE weighing_operations ADD COLUMN omie_billing_checked_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_weighing_operations_omie_billing_check
   ON weighing_operations(unit_id, omie_billing_checked_at);
 `
+  },
+  {
+    version: 52,
+    name: "print_profile_windows_escpos",
+    sql: `
+-- Terceiro tipo de impressora: a termica USB do Windows recebendo ESC/POS DIRETO.
+--
+-- No tipo 'windows' o cupom vai como pagina HTML e quem desenha o papel e o driver: o
+-- tamanho de pagina, as margens e ate se a imagem sera impressa dependem de como o driver
+-- esta configurado naquele computador. Numa termica (Bematech MP-4200 TH, Epson TM, Elgin,
+-- Daruma...) isso e um intermediario a toa — ela entende ESC/POS, o mesmo que a impressora
+-- de REDE ja recebe aqui ha tempos, com a logo como bit image e o texto em 48 colunas.
+--
+-- O CHECK antigo so aceitava ('windows', 'network') e o SQLite nao altera CHECK: a tabela e
+-- reconstruida. Nenhum perfil muda de tipo — quem esta em 'windows' continua em 'windows'.
+ALTER TABLE print_profiles RENAME TO print_profiles_old;
+
+CREATE TABLE print_profiles (
+  id TEXT PRIMARY KEY,
+  device_id TEXT NOT NULL REFERENCES devices(id),
+  document_type TEXT NOT NULL CHECK (document_type IN ('receipt_80mm', 'report_a4')),
+  windows_printer_name TEXT NOT NULL,
+  paper_width_mm INTEGER NOT NULL,
+  margin_json TEXT NOT NULL,
+  font_config_json TEXT NOT NULL,
+  copies INTEGER NOT NULL DEFAULT 1,
+  cut_paper INTEGER NOT NULL DEFAULT 0 CHECK (cut_paper IN (0, 1)),
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  printer_type TEXT NOT NULL DEFAULT 'windows'
+    CHECK (printer_type IN ('windows', 'windows_escpos', 'network')),
+  network_host TEXT,
+  network_port INTEGER,
+  template_config_json TEXT NOT NULL DEFAULT '{}'
+);
+
+INSERT INTO print_profiles (
+  id, device_id, document_type, windows_printer_name, paper_width_mm, margin_json,
+  font_config_json, copies, cut_paper, is_active, created_at, updated_at,
+  printer_type, network_host, network_port, template_config_json
+)
+SELECT
+  id, device_id, document_type, windows_printer_name, paper_width_mm, margin_json,
+  font_config_json, copies, cut_paper, is_active, created_at, updated_at,
+  printer_type, network_host, network_port, template_config_json
+FROM print_profiles_old;
+
+DROP TABLE print_profiles_old;
+`
   }
 ];

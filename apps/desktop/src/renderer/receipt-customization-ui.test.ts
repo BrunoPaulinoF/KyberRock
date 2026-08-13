@@ -80,6 +80,31 @@ describe("tela de impressao", () => {
     expect(appSource).toContain("Restaurar aparencia padrao");
   });
 
+  /**
+   * A termica da pedreira e ESC/POS: mandar o cupom direto para ela tira do meio o driver
+   * do Windows — que e quem decidia tamanho de pagina, margem e se a imagem seria impressa,
+   * e foi quem engoliu a logo e o numero do cupom no papel.
+   */
+  it("oferece a termica em ESC/POS direto como caminho recomendado", () => {
+    expect(appSource).toContain('<option value="windows_escpos">');
+    expect(appSource).toContain("recomendado");
+    // O formulario da impressora do Windows vale para os dois modos.
+    expect(appSource).toContain("isWindowsPrinterType(printerType)");
+    // Instalacao nova ja comeca no caminho que nao depende do driver.
+    expect(appSource).toContain('useState<PrinterType>("windows_escpos")');
+  });
+
+  it("mostra no perfil ativo por onde o cupom esta saindo", () => {
+    expect(appSource).toContain("describePrinterType(printProfiles[0].printerType)");
+  });
+
+  // Quando a pedreira diz "a correcao nao chegou", a primeira coisa a conferir e a versao
+  // instalada: a atualizacao so e aplicada quando o app e fechado.
+  it("mostra a versao instalada junto do botao de atualizacao", () => {
+    expect(appSource).toContain("getAppVersion");
+    expect(appSource).toContain("v{appVersion}");
+  });
+
   // O telefone e dado da pedreira (como a logo), nao um enfeite do modelo: fica fora do
   // editor visual, senao quem usa o modelo "Padrao" nem veria o campo.
   it("tem o campo de telefone da pedreira fora do editor visual", () => {

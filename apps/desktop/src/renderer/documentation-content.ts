@@ -449,6 +449,7 @@ export const documentationSections: DocumentationSection[] = [
     steps: [
       "Instale a impressora no Windows e confirme que ela imprime uma pagina de teste pelo proprio Windows.",
       "No KyberRock, abra a engrenagem e escolha Impressao (ou tecle F7).",
+      'Em "Tipo de impressora", deixe "Termica USB - ESC/POS direto" para bobina de 80 mm (Bematech, Epson, Elgin, Daruma, Tanca, Control iD). So use "Windows instalada" se a impressora nao for termica.',
       "Selecione a impressora e salve o perfil de cupom.",
       "Preencha a logo e o telefone da pedreira: os dois saem no cupom nos dois modelos (padrao e personalizado).",
       "Use o teste de impressao para validar papel, margem e tamanho antes da primeira carga.",
@@ -457,6 +458,7 @@ export const documentationSections: DocumentationSection[] = [
     ],
     details: [
       "Falha de impressao NAO desfaz a operacao. A pesagem fechada continua salva; corrija a impressora e reimprima.",
+      'Ha dois jeitos de usar a impressora instalada no Windows. Em "Termica USB - ESC/POS direto" o cupom vai pronto para a impressora, com a logo e as 48 colunas montadas pelo KyberRock: o resultado nao depende de tamanho de papel, margem ou escala configurados no driver. Em "Windows instalada" quem desenha o papel e o driver — util para impressora que nao fala ESC/POS. Se sair caractere estranho no modo direto, volte para "Windows instalada".',
       "O cupom traz o codigo da operacao (COD), dados da pedreira, cliente, produto, pesos de entrada, saida e liquido, valor, frete, veiculo, motorista e assinatura.",
       'A linha "COD" e o codigo da operacao; "COPIA NRO" conta quantas vias ja sairam. Nao confunda os dois.',
       "A logo do cupom e convertida para preto e branco na impressao. Logo muito clara pode sumir no papel — o sistema avisa quando detecta isso.",
@@ -892,7 +894,7 @@ export const documentationFaqs: DocumentationFaq[] = [
   {
     question: "A logo sumiu no cupom impresso, mas aparece na tela.",
     answer:
-      "Ate a versao anterior o cupom era montado na largura da pagina que o driver informava, entao a logo, o COD e o COPIA NRO — que saem centralizados — caiam fora da faixa do papel de 80 mm e nao imprimiam. Isso foi corrigido: o cupom agora e montado na largura do papel, sem depender do driver. Se depois de atualizar a logo ainda sair fraca, o motivo e outro: a termica imprime em preto e branco puro e logo de cor clara vira papel em branco. A tela de impressao mostra a previa em preto e branco e avisa quando a logo sairia vazia — nesse caso use uma versao com tracos escuros sobre fundo claro.",
+      'Confira primeiro a versao instalada (engrenagem, ao lado de "Verificar atualizacao"): a atualizacao so e aplicada quando o app e FECHADO, entao um computador que fica dias aberto continua na versao antiga. Nas versoes antigas o cupom era montado na largura da pagina que o driver informava e a logo, o COD e o COPIA NRO — que saem centralizados — caiam fora do papel de 80 mm. Depois de atualizar, se ainda faltar a logo, mude o tipo de impressora para "Termica USB - ESC/POS direto": nesse modo o driver do Windows sai do caminho e a logo vai como imagem montada pelo proprio KyberRock. Sobra um ultimo motivo, esse de imagem: a termica imprime em preto e branco puro e logo de cor clara vira papel em branco — a tela de impressao mostra a previa em preto e branco e avisa quando isso acontece.',
     category: "impressao",
     sectionId: "printing",
     keywords: [
@@ -903,6 +905,22 @@ export const documentationFaqs: DocumentationFaq[] = [
       "cupom sem logo",
       "cupom sem numero",
       "cupom cortado"
+    ]
+  },
+  {
+    question: "O cupom sai sem o numero (COD / COPIA NRO). Como resolvo?",
+    answer:
+      'E o mesmo motivo da logo sumida: o numero sai centralizado no topo e, quando o driver do Windows monta o cupom numa pagina maior que a bobina, ele cai fora do papel. Atualize o app (a atualizacao entra quando o app e fechado) e, em Configuracoes > Impressao, use "Termica USB - ESC/POS direto". Nesse modo o KyberRock manda o cupom pronto para a termica e imprime o COD e o COPIA NRO em corpo dobrado, bem no alto. Use "Testar impressora" para conferir sem gastar uma pesagem.',
+    category: "impressao",
+    sectionId: "printing",
+    keywords: [
+      "numero do cupom",
+      "cupom sem numero",
+      "cod",
+      "copia nro",
+      "escpos",
+      "esc/pos direto",
+      "termica"
     ]
   },
   {

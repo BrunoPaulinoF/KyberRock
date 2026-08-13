@@ -2,6 +2,7 @@ import {
   fitReceiptBodyFontSizePx,
   isReceiptRuleLine,
   receiptContentWidthMm,
+  receiptCopyNumberLine,
   receiptOperationCodeLine,
   RECEIPT_FONT_STACKS,
   RECEIPT_PAPER_MARGIN_MM
@@ -156,7 +157,7 @@ export function buildReceiptHtml(
             : ""
         }
       </div>
-      ${header.receiptNumberLabel ? `<div class="copy">COPIA NRO ${escapeHtml(header.receiptNumberLabel)}</div>` : ""}
+      ${header.receiptNumberLabel ? `<div class="copy">${escapeHtml(receiptCopyNumberLine(header.receiptNumberLabel))}</div>` : ""}
       ${header.copyLabel ? `<div class="via">${escapeHtml(header.copyLabel)}</div>` : ""}
       <pre>${renderReceiptBody(snapshot.bodyLines, style.numberFontSizePx !== style.fontSizePx)}</pre>
     </div>
