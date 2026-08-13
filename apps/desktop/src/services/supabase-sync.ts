@@ -4327,6 +4327,7 @@ export async function processOmieSyncQueue(
 
     const payload = job.payload as {
       operationId: string;
+      operationCode?: number | null;
       operationType: "invoice" | "internal";
       customerOmieId: number;
       localCustomerId?: string | null;
@@ -4364,6 +4365,7 @@ export async function processOmieSyncQueue(
         job.action === "create_and_bill_order" ? "create_and_bill_order" : "create_order";
       const { data, error } = await supabase.functions.invoke<{
         orderId?: number;
+        orderNumber?: string | null;
         omieCustomerId?: number;
         omieCarrierId?: number;
         billed?: boolean;
@@ -4379,6 +4381,9 @@ export async function processOmieSyncQueue(
             // Id da operacao local: vai nos dados adicionais do pedido/OS para
             // reconciliar o registro do OMIE com a pesagem que o originou.
             localOperationId: payload.operationId,
+            // Codigo sequencial da pesagem (000123): e a referencia LEGIVEL nos dados
+            // adicionais do pedido/OS — o UUID acima nao serve para ninguem procurar.
+            operationCode: payload.operationCode ?? undefined,
             operationType: payload.operationType,
             customerOmieId: payload.customerOmieId,
             customer: payload.customer ?? undefined,
@@ -4446,10 +4451,15 @@ export async function processOmieSyncQueue(
           .run(data.omieCarrierId, payload.localCarrierId, payload.transport?.carrierOmieId ?? 0);
       }
 
+      // Numero visivel do documento no OMIE, quando a inclusao ja o devolveu (a OS
+      // devolve; o pedido de venda quase nunca). COALESCE porque um reenvio que volte
+      // sem o numero nao pode apagar o que a reconciliacao ja tinha descoberto.
+      const orderNumber = (data.orderNumber ?? "").trim() || null;
       const updateSql =
         payload.operationType === "invoice"
           ? `UPDATE weighing_operations
            SET omie_sales_order_id = ?,
+               omie_order_number = COALESCE(?, omie_order_number),
                omie_billing_status = CASE WHEN ? THEN 'billed' ELSE omie_billing_status END,
                omie_billing_message = CASE WHEN ? THEN ? ELSE omie_billing_message END,
                omie_billed_at = CASE WHEN ? THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE omie_billed_at END,
@@ -4462,6 +4472,7 @@ export async function processOmieSyncQueue(
             // aparecer na tela de concluidas como o pedido aparece na venda com nota.
             `UPDATE weighing_operations
              SET omie_service_order_id = ?,
+                 omie_order_number = COALESCE(?, omie_order_number),
                  omie_billing_status = 'service_order_created',
                  omie_billing_message = ?,
                  status = 'synced',
@@ -4475,6 +4486,7 @@ export async function processOmieSyncQueue(
           .prepare(updateSql)
           .run(
             data.orderId,
+            orderNumber,
             billed ? 1 : 0,
             billed ? 1 : 0,
             data.billingStatusMessage ?? "Pedido faturado no OMIE.",
@@ -4487,6 +4499,7 @@ export async function processOmieSyncQueue(
           .prepare(updateSql)
           .run(
             data.orderId,
+            orderNumber,
             `Ordem de servico ${data.orderId} criada no OMIE na etapa "Faturar".`,
             payload.operationId
           );
@@ -4665,6 +4678,225 @@ export async function processOmieSyncQueue(
   }
 
   return { processed, failed, errors };
+}
+
+/**
+ * Quantas pesagens uma passada confere no OMIE. Cada uma custa uma chamada la, e a cota
+ * por minuto e a MESMA que a fila de fechamentos usa — estourar aqui atrasaria o envio
+ * dos pedidos, que e o que nao pode parar. O edge tambem corta em 40 do lado dele.
+ */
+const OMIE_BILLING_CHECK_BATCH = 40;
+
+/**
+ * Ate quantos dias para tras a reconciliacao olha. Pedido que passou meses sem ser
+ * faturado nao vai ser faturado agora, e cada consulta desperdicada e uma que faltou para
+ * o movimento do mes.
+ */
+const OMIE_BILLING_CHECK_WINDOW_DAYS = 120;
+
+/**
+ * Intervalo minimo entre duas conferencias. `syncCloudNow` nao roda so no agendador: ele e
+ * disparado em segundo plano a cada fechamento e a cada alteracao de operacao. Sem o
+ * freio, uma pedreira movimentada gastaria a cota do OMIE perguntando de novo pelas mesmas
+ * pesagens — e a cota e a MESMA que a fila de pedidos usa. Faturamento nao e urgente:
+ * saber 10 minutos depois nao muda nada.
+ */
+const OMIE_BILLING_CHECK_MIN_INTERVAL_MS = 10 * 60 * 1000;
+
+/** Ultima passada da conferencia, para o freio acima. */
+const OMIE_BILLING_CHECK_LAST_RUN_KEY = "omie_billing_check_last_run_at";
+
+export interface OmieBillingReconcileResult {
+  /** Pesagens conferidas no OMIE nesta passada. */
+  checked: number;
+  /** Quantas passaram a constar como faturadas. */
+  billed: number;
+  /** true quando a passada foi pulada pelo intervalo minimo (nao e erro). */
+  skipped?: boolean;
+  errors: string[];
+}
+
+interface PendingOmieBillingRow {
+  id: string;
+  operation_type: "invoice" | "internal";
+  omie_sales_order_id: number | null;
+  omie_service_order_id: number | null;
+}
+
+interface OmieOrderBillingState {
+  operationId: string;
+  orderType: "sales" | "service";
+  omieOrderId: number;
+  found: boolean;
+  billed: boolean;
+  orderNumber: string | null;
+  invoiceNumber: string | null;
+  documentUrl: string | null;
+  error: string | null;
+}
+
+/**
+ * Pergunta ao OMIE quais pedidos/OS ja foram faturados e vira a situacao das pesagens
+ * correspondentes para "Faturada".
+ *
+ * O KyberRock cria o pedido na etapa "Faturar" e para por ali: quem emite a nota e uma
+ * pessoa, dentro do OMIE, e nada avisava a balanca. O resultado era a conferencia de
+ * faturamento mostrando "No OMIE, falta faturar" para sempre, inclusive em venda que ja
+ * tinha nota emitida ha semanas — o numero de "nao faturado" do relatorio nao servia para
+ * cobrar ninguem porque ninguem sabia o que dele ja tinha sido resolvido.
+ *
+ * Roda junto da sincronizacao cloud, em lote e por rodizio (`omie_billing_checked_at`), e
+ * NAO mexe em `updated_at`: as colunas de faturamento sao locais — cada balanca aprende do
+ * proprio OMIE —, e bumpar a versao republicaria a operacao inteira na nuvem a toa (na
+ * primeira passada, o acervo inteiro de uma vez).
+ */
+export async function reconcileOmieBillingFromOmie(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  options: { limit?: number; windowDays?: number; force?: boolean } = {}
+): Promise<OmieBillingReconcileResult> {
+  const settings = getCloudSettings(database, identity);
+  const limit = options.limit ?? OMIE_BILLING_CHECK_BATCH;
+  const windowDays = options.windowDays ?? OMIE_BILLING_CHECK_WINDOW_DAYS;
+
+  if (options.force !== true && !hasOmieBillingCheckWindowElapsed(database)) {
+    return { checked: 0, billed: 0, skipped: true, errors: [] };
+  }
+
+  const pending = database
+    .prepare(
+      `SELECT id, operation_type, omie_sales_order_id, omie_service_order_id
+         FROM weighing_operations
+        WHERE unit_id = ?
+          AND deleted_at IS NULL
+          AND status <> 'cancelled'
+          AND (omie_sales_order_id IS NOT NULL OR omie_service_order_id IS NOT NULL)
+          -- Ja faturada nao volta a ser perguntada; cancelada no OMIE tambem nao, que e
+          -- estado final do documento la.
+          AND (omie_billing_status IS NULL
+               OR omie_billing_status NOT IN ('billed', 'cancelled_in_omie'))
+          AND date(created_at) >= date('now', ?)
+        ORDER BY omie_billing_checked_at ASC, created_at DESC
+        LIMIT ?`
+    )
+    .all(settings.unitId, `-${windowDays} days`, limit) as PendingOmieBillingRow[];
+
+  if (pending.length === 0) return { checked: 0, billed: 0, errors: [] };
+
+  const orders = pending
+    .map((row) => ({
+      operationId: row.id,
+      // A interna vira ordem de servico; a com nota, pedido de venda. Quando as duas
+      // existem (reenvio que mudou o tipo), o tipo da operacao decide.
+      orderType: (row.operation_type === "invoice" ? "sales" : "service") as "sales" | "service",
+      omieOrderId:
+        row.operation_type === "invoice"
+          ? (row.omie_sales_order_id ?? 0)
+          : (row.omie_service_order_id ?? 0)
+    }))
+    .filter((order) => order.omieOrderId > 0);
+
+  if (orders.length === 0) return { checked: 0, billed: 0, errors: [] };
+
+  // Marca a passada ANTES de chamar o OMIE: mesmo que a chamada falhe, o freio vale — uma
+  // instabilidade do OMIE nao pode virar uma tentativa por fechamento.
+  writeLocalSetting(database, OMIE_BILLING_CHECK_LAST_RUN_KEY, new Date().toISOString());
+
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.functions.invoke<{ results?: OmieOrderBillingState[] }>(
+    "omie-sync",
+    {
+      body: {
+        deviceId: settings.deviceId,
+        deviceToken: settings.deviceToken,
+        action: "check_order_billing",
+        payload: { orders }
+      }
+    }
+  );
+
+  if (error) {
+    return { checked: 0, billed: 0, errors: [await getFunctionErrorMessage(error)] };
+  }
+
+  const results = data?.results ?? [];
+  const errors: string[] = [];
+  let billed = 0;
+
+  const markBilled = database.prepare(
+    `UPDATE weighing_operations
+        SET omie_billing_status = 'billed',
+            omie_billed_at = COALESCE(omie_billed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            omie_billing_message = ?,
+            omie_order_number = COALESCE(?, omie_order_number),
+            omie_document_url = COALESCE(?, omie_document_url),
+            omie_billing_checked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE id = ?
+        AND (omie_billing_status IS NULL OR omie_billing_status <> 'billed')`
+  );
+  const markChecked = database.prepare(
+    `UPDATE weighing_operations
+        SET omie_order_number = COALESCE(?, omie_order_number),
+            omie_billing_checked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE id = ?`
+  );
+  const markMissing = database.prepare(
+    `UPDATE weighing_operations
+        SET omie_billing_message = ?,
+            omie_billing_checked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE id = ?`
+  );
+
+  for (const result of results) {
+    if (result.error) {
+      errors.push(`Faturamento OMIE ${result.omieOrderId}: ${result.error}`);
+      markChecked.run(null, result.operationId);
+      continue;
+    }
+
+    if (!result.found) {
+      // O documento sumiu do OMIE (excluido por alguem la). A situacao continua sendo
+      // "falta faturar" de proposito — a pesagem REALMENTE nao foi faturada, e agora nem
+      // pedido tem. O texto explica isso na linha da conferencia.
+      markMissing.run(
+        `${result.orderType === "sales" ? "Pedido" : "Ordem de servico"} ${result.omieOrderId} nao existe mais no OMIE.`,
+        result.operationId
+      );
+      continue;
+    }
+
+    if (!result.billed) {
+      markChecked.run(result.orderNumber, result.operationId);
+      continue;
+    }
+
+    const changes = markBilled.run(
+      buildBilledMessage(result),
+      result.orderNumber,
+      result.documentUrl,
+      result.operationId
+    ).changes;
+    if (changes > 0) billed++;
+  }
+
+  return { checked: results.length, billed, errors };
+}
+
+/** Ja passou tempo suficiente desde a ultima conferencia? Marca sem registro = sim. */
+function hasOmieBillingCheckWindowElapsed(database: DesktopDatabase): boolean {
+  const lastRunAt = readStringLocalSetting(database, OMIE_BILLING_CHECK_LAST_RUN_KEY);
+  if (!lastRunAt) return true;
+  const lastRun = Date.parse(lastRunAt);
+  if (Number.isNaN(lastRun)) return true;
+  return Date.now() - lastRun >= OMIE_BILLING_CHECK_MIN_INTERVAL_MS;
+}
+
+/** O texto da linha faturada: cita a nota quando o OMIE ja devolveu o numero dela. */
+function buildBilledMessage(result: OmieOrderBillingState): string {
+  const document = result.orderType === "sales" ? "NF-e" : "NFS-e";
+  return result.invoiceNumber
+    ? `Faturado no OMIE — ${document} ${result.invoiceNumber}.`
+    : "Faturado no OMIE.";
 }
 
 function sleep(ms: number): Promise<void> {
@@ -4873,6 +5105,7 @@ export async function processFiscalBillingNow(
 
   const payload = parseJsonValue(job.payload_json) as {
     operationId: string;
+    operationCode?: number | null;
     operationType: "invoice" | "internal";
     customerOmieId: number;
     localCustomerId?: string | null;
@@ -4908,6 +5141,7 @@ export async function processFiscalBillingNow(
   try {
     const { data, error } = await supabase.functions.invoke<{
       orderId?: number;
+      orderNumber?: string | null;
       omieCustomerId?: number;
       billed?: boolean;
       billingStatusCode?: string | null;
@@ -4919,6 +5153,8 @@ export async function processFiscalBillingNow(
         deviceToken: settings.deviceToken,
         action: "create_and_bill_order",
         payload: {
+          localOperationId: payload.operationId,
+          operationCode: payload.operationCode ?? undefined,
           operationType: payload.operationType,
           customerOmieId: payload.customerOmieId,
           customer: payload.customer ?? undefined,
@@ -4975,6 +5211,7 @@ export async function processFiscalBillingNow(
       .prepare(
         `UPDATE weighing_operations
          SET omie_sales_order_id = ?,
+             omie_order_number = COALESCE(?, omie_order_number),
              omie_billing_status = 'billed',
              omie_billing_message = ?,
              omie_billed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
@@ -4984,6 +5221,7 @@ export async function processFiscalBillingNow(
       )
       .run(
         data.orderId,
+        (data.orderNumber ?? "").trim() || null,
         data.billingStatusMessage ?? "Pedido faturado no OMIE.",
         data.documentUrl ?? null,
         operationId

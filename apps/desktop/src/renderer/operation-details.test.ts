@@ -349,7 +349,7 @@ describe("ficha da operacao sem rolagem", () => {
     );
 
     expect(sections).toHaveLength(6);
-    expect(sections.reduce((total, section) => total + section.items.length, 0)).toBe(47);
+    expect(sections.reduce((total, section) => total + section.items.length, 0)).toBe(48);
   });
 
   it("empilha as secoes em colunas de jornal, sem grade de linhas", () => {

@@ -3506,3 +3506,321 @@ Deno.test(
     );
   }
 );
+
+// ── Vinculacao KyberRock <-> OMIE e volta do faturamento ──────────────────────────────
+//
+// Dois sentidos, um por vez. Da balanca para o OMIE: o pedido/OS carrega a referencia da
+// pesagem num campo de descricao, para quem abrir o documento la saber de qual
+// carregamento ele nasceu. Do OMIE para a balanca: `check_order_billing` responde quais
+// documentos ja foram faturados por uma pessoa dentro do OMIE — sem isso a pesagem fica
+// para sempre em "No OMIE, falta faturar".
+
+Deno.test("create_order leva a referencia da pesagem nos dados adicionais do pedido", async () => {
+  const deviceToken = "token-order-reference";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-reference": {
+        id: "device-order-reference",
+        company_id: "company-order-reference",
+        unit_id: "unit-order-reference",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-reference": {
+        id: "company-order-reference",
+        is_active: true,
+        omie_app_key: "order-reference",
+        omie_app_secret: "secret-order-reference"
+      }
+    }
+  });
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarContasCorrentes") return { conta_corrente_lista: [{ nCodCC: 7 }] };
+    // O IncluirPedido do OMIE responde com o codigo interno E o numero visivel.
+    if (input.call === "IncluirPedido")
+      return { codigo_pedido: 11489137846, numero_pedido: "1234" };
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-order-reference",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        operationCode: 123,
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 15,
+        unitPrice: 50,
+        transport: { plate: "abc1d23", driverName: "Joao Motorista" },
+        issueDate: "2026-08-13",
+        idempotencyKey: "kyberrock:unit:op-reference:create_sales_order"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const infos = getParam(findRequest(omieQueue, "IncluirPedido")).informacoes_adicionais as Record<
+    string,
+    unknown
+  >;
+  // A referencia vem primeiro; o motorista/placa continua vindo depois dela.
+  assertEquals(
+    infos.dados_adicionais_nf,
+    "Pesagem KyberRock 000123 - Motorista: Joao Motorista - Placa: ABC1D23"
+  );
+  // O numero visivel volta ao desktop ao lado do codigo interno: e por ele que se procura
+  // o pedido dentro do OMIE.
+  assertObjectMatch(response, { ok: true, orderId: 11489137846, orderNumber: "1234" });
+});
+
+Deno.test("create_order leva a referencia da pesagem na OS e devolve o cNumOS", async () => {
+  const deviceToken = "token-os-reference";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-os-reference": {
+        id: "device-os-reference",
+        company_id: "company-os-reference",
+        unit_id: "unit-os-reference",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-os-reference": {
+        id: "company-os-reference",
+        is_active: true,
+        omie_app_key: "os-reference",
+        omie_app_secret: "secret-os-reference"
+      }
+    }
+  });
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarContasCorrentes") return { conta_corrente_lista: [{ nCodCC: 7 }] };
+    if (input.call === "ListarCadastroServico") return { cadastros: [{ cCodServMun: "1.07" }] };
+    if (input.call === "IncluirOS") return { nCodOS: 11489138183, cNumOS: "000045" };
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-os-reference",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "internal",
+        operationCode: 77,
+        localOperationId: "op-internal-1",
+        customerOmieId: 100,
+        serviceDescription: "Brita 1",
+        quantity: 10,
+        unitPrice: 40,
+        issueDate: "2026-08-13",
+        idempotencyKey: "kyberrock:unit:op-internal-1:create_service_order"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const infos = getParam(findRequest(omieQueue, "IncluirOS")).InformacoesAdicionais as Record<
+    string,
+    unknown
+  >;
+  const additionalData = infos.cDadosAdicNF as string;
+  // O codigo legivel vem antes do UUID, que continua indo por ser o identificador global.
+  assertEquals(
+    additionalData.startsWith(
+      "VENDA SEM VALOR FISCAL - OPERACAO INTERNA KYBERROCK | Pesagem KyberRock 000077 | Operacao: op-internal-1"
+    ),
+    true
+  );
+  assertObjectMatch(response, { ok: true, orderId: 11489138183, orderNumber: "000045" });
+});
+
+Deno.test("create_order sem codigo da pesagem mantem os dados adicionais como eram", async () => {
+  const deviceToken = "token-order-nocode";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-order-nocode": {
+        id: "device-order-nocode",
+        company_id: "company-order-nocode",
+        unit_id: "unit-order-nocode",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-order-nocode": {
+        id: "company-order-nocode",
+        is_active: true,
+        omie_app_key: "order-nocode",
+        omie_app_secret: "secret-order-nocode"
+      }
+    }
+  });
+  const omieQueue = orderQueueStub();
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-order-nocode",
+      deviceToken,
+      action: "create_order",
+      payload: {
+        operationType: "invoice",
+        customerOmieId: 100,
+        productOmieId: 200,
+        quantity: 15,
+        unitPrice: 50,
+        transport: { plate: "abc1d23", driverName: "Joao Motorista" },
+        issueDate: "2026-08-13",
+        idempotencyKey: "kyberrock:unit:op-nocode:create_sales_order"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const infos = getParam(findRequest(omieQueue, "IncluirPedido")).informacoes_adicionais as Record<
+    string,
+    unknown
+  >;
+  // Desktop antigo (nao manda operationCode): o texto sai como sempre saiu.
+  assertEquals(infos.dados_adicionais_nf, "Motorista: Joao Motorista - Placa: ABC1D23");
+  // E o numero visivel volta nulo quando o OMIE nao o devolveu na inclusao.
+  assertObjectMatch(response, { ok: true, orderId: 12345, orderNumber: null });
+});
+
+Deno.test("check_order_billing marca faturado pela etapa e devolve o numero da NF", async () => {
+  const deviceToken = "token-check-billing";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-check-billing": {
+        id: "device-check-billing",
+        company_id: "company-check-billing",
+        unit_id: "unit-check-billing",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-check-billing": {
+        id: "company-check-billing",
+        is_active: true,
+        omie_app_key: "check-billing",
+        omie_app_secret: "secret-check-billing"
+      }
+    }
+  });
+  const omieQueue = createOmieQueueStub((input) => {
+    const param = getParam(input);
+    if (input.call === "ConsultarPedido") {
+      // 60 = faturado no kanban de Vendas (o KyberRock cria tudo na 50).
+      return {
+        pedido_venda_produto: {
+          cabecalho: { codigo_pedido: param.codigo_pedido, numero_pedido: "1234", etapa: "60" },
+          informacoes_adicionais: { numero_nfe: "987" }
+        }
+      };
+    }
+    if (input.call === "ConsultarOS") {
+      // Ainda na etapa "Faturar": nada mudou para esta pesagem.
+      return { Cabecalho: { nCodOS: param.nCodOS, cNumOS: "000045", cEtapa: "50" } };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-check-billing",
+      deviceToken,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-1", orderType: "sales", omieOrderId: 11489137846 },
+          { operationId: "op-2", orderType: "service", omieOrderId: 11489138183 }
+        ]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const results = response.results as Array<Record<string, unknown>>;
+  assertEquals(results.length, 2);
+  assertObjectMatch(results[0], {
+    operationId: "op-1",
+    found: true,
+    billed: true,
+    orderNumber: "1234",
+    invoiceNumber: "987",
+    error: null
+  });
+  assertObjectMatch(results[1], {
+    operationId: "op-2",
+    found: true,
+    billed: false,
+    orderNumber: "000045",
+    invoiceNumber: null,
+    error: null
+  });
+});
+
+Deno.test("check_order_billing distingue documento sumido de falha do OMIE", async () => {
+  const deviceToken = "token-check-missing";
+  const token_hash = await sha256Hex(deviceToken);
+  const fixtures = createSupabaseDependencies({
+    devices: {
+      "device-check-missing": {
+        id: "device-check-missing",
+        company_id: "company-check-missing",
+        unit_id: "unit-check-missing",
+        token_hash,
+        is_active: true
+      }
+    },
+    companies: {
+      "company-check-missing": {
+        id: "company-check-missing",
+        is_active: true,
+        omie_app_key: "check-missing",
+        omie_app_secret: "secret-check-missing"
+      }
+    }
+  });
+  const omieQueue = createOmieQueueStub((input) => {
+    const param = getParam(input);
+    if (input.call === "ConsultarPedido") {
+      if (param.codigo_pedido === 1) throw new Error("Pedido nao cadastrado para o codigo [1]");
+      throw new OmieHttpError("Limite de requisicoes OMIE", 429, null, null);
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-check-missing",
+      deviceToken,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-missing", orderType: "sales", omieOrderId: 1 },
+          { operationId: "op-flaky", orderType: "sales", omieOrderId: 2 }
+        ]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const results = response.results as Array<Record<string, unknown>>;
+  // Excluido no OMIE: fato sobre o documento, nao erro a re-tentar.
+  assertObjectMatch(results[0], { operationId: "op-missing", found: false, error: null });
+  // Instabilidade: `found` continua true e o erro volta para a proxima passada tentar.
+  assertEquals(results[1].found, true);
+  assertEquals(typeof results[1].error, "string");
+});

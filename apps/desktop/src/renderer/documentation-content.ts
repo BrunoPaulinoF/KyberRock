@@ -614,6 +614,8 @@ export const documentationSections: DocumentationSection[] = [
       "Limpar concluidas apaga da lista e dos relatorios as operacoes ate ontem — as de hoje ficam. Isso nao mexe no pedido do OMIE.",
       "Na Conferencia de faturamento, filtre pela situacao para isolar o que ainda nao foi faturado: 'Recusada pelo OMIE' e 'Cadastro incompleto' precisam de correcao e reenvio; 'Nao enviada ao OMIE' esta em nova tentativa automatica.",
       "'No OMIE, falta faturar' nao e erro do KyberRock: o pedido (ou a ordem de servico, na venda interna) ja chegou la e a nota e emitida no proprio OMIE, na etapa Faturar.",
+      "Depois que alguem fatura no OMIE, a pesagem vira 'Faturada' sozinha: a cada sincronizacao o KyberRock confere no OMIE os pedidos e as ordens de servico que ainda faltavam faturar. Nao precisa dar baixa a mao aqui.",
+      "A coluna Pedido/OS OMIE traz o codigo da integracao e, entre parenteses, o numero como o OMIE o mostra na tela — e esse numero entre parenteses que se digita na busca do OMIE. Do outro lado, o pedido e a ordem de servico chegam la com 'Pesagem KyberRock 000123' nos dados adicionais, que e o codigo do cupom.",
       "O PDF e a planilha da conferencia saem com as mesmas pesagens que estao na tela, com os filtros aplicados."
     ],
     keywords: [

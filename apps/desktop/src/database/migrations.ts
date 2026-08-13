@@ -1807,5 +1807,36 @@ WHERE deleted_at IS NULL
 ALTER TABLE weighing_operations ADD COLUMN settle_from_advance INTEGER NOT NULL DEFAULT 0
   CHECK (settle_from_advance IN (0, 1));
 `
+  },
+  {
+    version: 51,
+    name: "operation_omie_order_number",
+    sql: `
+-- Numero VISIVEL do pedido/OS no OMIE.
+--
+-- O que a operacao ja guardava (\`omie_sales_order_id\`/\`omie_service_order_id\`) e o codigo
+-- INTERNO do OMIE — o nCodPed/nCodOS da API, aquele 11489137846 que aparece na coluna
+-- "Pedido/OS OMIE" da conferencia. Ele identifica o registro para a integracao, mas nao e
+-- o numero que o OMIE mostra na tela: quem pegava o numero da conferencia e procurava no
+-- OMIE nao achava nada.
+--
+-- Fica em coluna de texto (e nao inteiro) porque a OS numera com zeros a esquerda e o
+-- pedido pode ter prefixo por serie. Null enquanto o OMIE nao devolveu o numero: a
+-- inclusao nem sempre traz, e nesse caso a reconciliacao de faturamento preenche depois.
+ALTER TABLE weighing_operations ADD COLUMN omie_order_number TEXT;
+
+-- Quando esta operacao foi conferida no OMIE pela ultima vez.
+--
+-- Quem fatura e uma pessoa dentro do OMIE, entao o KyberRock precisa PERGUNTAR. Cada
+-- pergunta e uma chamada a API do OMIE, que tem cota por minuto — a passada confere um
+-- lote por vez e usa esta coluna para rodizio: quem nunca foi conferido vem primeiro,
+-- depois o conferido ha mais tempo. Sem ela, um monte de pesagens antigas que nunca serao
+-- faturadas ocuparia o lote inteiro e as de hoje jamais seriam olhadas.
+ALTER TABLE weighing_operations ADD COLUMN omie_billing_checked_at TEXT;
+
+-- Ordem do rodizio (os nulos primeiro, que e o que o SQLite faz por padrao no ASC).
+CREATE INDEX IF NOT EXISTS idx_weighing_operations_omie_billing_check
+  ON weighing_operations(unit_id, omie_billing_checked_at);
+`
   }
 ];

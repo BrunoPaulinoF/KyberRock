@@ -9085,12 +9085,45 @@ function fiscalStepDotStyle(input: {
   };
 }
 
+/**
+ * O numero do pedido/OS como ele aparece DENTRO do OMIE, entre parenteses, quando ja e
+ * conhecido. O codigo que vem antes dele e o da integracao (nCodPed/nCodOS): digitar
+ * aquele na busca do OMIE nao acha nada, e era o unico que a tela mostrava.
+ */
+function omieOrderNumberSuffix(operation: WeighingOperationSummary): string {
+  const number = operation.omieOrderNumber?.trim();
+  return number ? ` (nº ${number})` : "";
+}
+
+/** Texto da pesagem ja faturada: o documento pelo qual ela e procurada no OMIE. */
+function billedDetail(operation: WeighingOperationSummary): string {
+  if (operation.omieSalesOrderId) {
+    return `Pedido OMIE ${operation.omieSalesOrderId}${omieOrderNumberSuffix(operation)} — ${operation.omieBillingMessage ?? "faturado no OMIE."}`;
+  }
+  if (operation.omieServiceOrderId) {
+    return `Ordem de servico OMIE ${operation.omieServiceOrderId}${omieOrderNumberSuffix(operation)} — ${operation.omieBillingMessage ?? "faturada no OMIE."}`;
+  }
+  return operation.omieBillingMessage ?? "Faturado no OMIE.";
+}
+
 export function getFiscalBillingStatus(operation: WeighingOperationSummary): {
   label: string;
   detail: string;
   tone: "success" | "warning" | "danger" | "neutral";
   canRetry: boolean;
 } {
+  // Faturada e faturada, com nota ou sem: a reconciliacao com o OMIE marca tanto o
+  // pedido de venda (NF-e) quanto a ordem de servico (NFS-e), entao a leitura do
+  // faturamento vem antes do tipo da operacao.
+  if (operation.omieBillingStatus === "billed") {
+    return {
+      label: "Faturada",
+      detail: billedDetail(operation),
+      tone: "success",
+      canRetry: false
+    };
+  }
+
   // Operacao interna (venda sem nota): vira ordem de servico no OMIE, na mesma etapa
   // "Faturar" do pedido de venda — so em outro modulo. O estado do envio precisa ficar
   // visivel aqui; antes toda interna aparecia como "Sem nota fiscal de venda" e uma OS
@@ -9099,7 +9132,7 @@ export function getFiscalBillingStatus(operation: WeighingOperationSummary): {
     if (operation.omieServiceOrderId) {
       return {
         label: "OS enviada",
-        detail: `Ordem de servico OMIE ${operation.omieServiceOrderId} — fature na etapa "Faturar" do OMIE.`,
+        detail: `Ordem de servico OMIE ${operation.omieServiceOrderId}${omieOrderNumberSuffix(operation)} — fature na etapa "Faturar" do OMIE.`,
         tone: "success",
         canRetry: false
       };
@@ -9138,25 +9171,12 @@ export function getFiscalBillingStatus(operation: WeighingOperationSummary): {
     };
   }
 
-  if (operation.omieBillingStatus === "billed") {
-    return {
-      label: "Faturada",
-      detail: operation.omieSalesOrderId
-        ? `Pedido OMIE ${operation.omieSalesOrderId}`
-        : operation.omieDocumentUrl
-          ? "DANFE disponivel."
-          : "Pedido faturado no OMIE.",
-      tone: "success",
-      canRetry: false
-    };
-  }
-
   // Pedido ja criado no OMIE: o faturamento (NF-e) e feito no proprio OMIE (coluna
   // "Faturar"). O app nao fatura — nao ha "retry" de faturamento aqui.
   if (operation.omieSalesOrderId) {
     return {
       label: "Enviada ao OMIE",
-      detail: `Pedido OMIE ${operation.omieSalesOrderId} — fature na coluna "Faturar" do OMIE.`,
+      detail: `Pedido OMIE ${operation.omieSalesOrderId}${omieOrderNumberSuffix(operation)} — fature na coluna "Faturar" do OMIE.`,
       tone: "success",
       canRetry: false
     };
