@@ -700,16 +700,206 @@ export function isReceiptEscPosCenteredLine(line: string): boolean {
 const RECEIPT_COPY_LABEL_PATTERN = /^\d+a VIA$/;
 
 /**
- * Corpo, em px, que faz as 48 colunas da impressora ESC/POS caberem na faixa util do papel.
- * A impressora escreve em colunas fixas (fonte A), entao a previa do cupom ESC/POS nao tem
- * tamanho escolhido pelo operador: tem o tamanho que reproduz a grade da impressora.
+ * Corpo, em px, que faz as colunas da impressora ESC/POS caberem na faixa util do papel. A
+ * impressora escreve em grade fixa, entao a previa do cupom ESC/POS nao tem tamanho escolhido
+ * pelo operador: tem o tamanho que reproduz a grade da impressora.
  */
-export function receiptEscPosFontSizePx(paperWidthMm: number): number {
-  return fitReceiptBodyFontSizePx(
-    Number.MAX_SAFE_INTEGER,
-    "monospace",
-    receiptContentWidthMm(paperWidthMm)
+export function receiptEscPosFontSizePx(paperWidthMm: number, columns: number): number {
+  const maxPx =
+    (receiptContentWidthMm(paperWidthMm) * CSS_PX_PER_MM) /
+    (columns * RECEIPT_MONOSPACE_ADVANCE_EM);
+  return Math.max(RECEIPT_MIN_BODY_FONT_SIZE_PX, Math.floor(maxPx * 10) / 10);
+}
+
+/**
+ * ## A personalizacao do cupom numa impressora ESC/POS
+ *
+ * A termica nao tem "fonte de 13 px": ela tem DUAS fontes embutidas (A, de 12x24 pontos, e B,
+ * de 9x17) e multiplicadores INTEIROS de largura e altura. Entao a aparencia escolhida na tela
+ * nao pode ser copiada, ela precisa ser traduzida — e a traducao mora aqui, num lugar so, para
+ * o codificador e a previa nunca discordarem sobre o que a impressora vai fazer.
+ *
+ * O que fica de fora, e por que:
+ * - **familia da fonte**: a impressora so tem as duas dela. "Condensada" vira a fonte B; as
+ *   outras viram a fonte A. Nao ha Times nem Arial dentro de uma termica.
+ * - **largura dupla no corpo**: cortaria as colunas pela metade e o cupom e escrito numa grade
+ *   fixa (divisor, bloco Quantidade/Unitario/Total, linha de assinatura). Corpo maior dobra so
+ *   a ALTURA. No cabecalho, que sao duas linhas curtas, a largura dupla e permitida.
+ */
+export interface ReceiptEscPosLayout {
+  /** Fonte embutida da impressora. */
+  font: "A" | "B";
+  /** Colunas que cabem na faixa util do papel com essa fonte. */
+  columns: number;
+  charWidthDots: number;
+  charHeightDots: number;
+  /** Multiplicador de altura do corpo do cupom. */
+  bodyHeightScale: 1 | 2;
+  bold: boolean;
+  /** Espacamento entre linhas, em pontos (comando `ESC 3 n`). */
+  lineSpacingDots: number;
+  /** Multiplicadores do codigo da operacao e do numero do cupom. */
+  headerWidthScale: 1 | 2;
+  headerHeightScale: 1 | 2;
+  /** Multiplicador de altura dos numeros dentro da linha. */
+  numberHeightScale: 1 | 2;
+  logoAlignment: ReceiptLogoAlignment;
+}
+
+/** Colunas da fonte A: 48 no papel de 80 mm, 32 no de 58 mm. */
+function escPosFontAColumns(paperWidthMm: number): number {
+  return paperWidthMm <= 58 ? 32 : RECEIPT_LINE_WIDTH;
+}
+
+const ESCPOS_FONT_A_DOTS = { width: 12, height: 24 } as const;
+const ESCPOS_FONT_B_DOTS = { width: 9, height: 17 } as const;
+
+/**
+ * Abaixo deste corpo o operador esta pedindo "menor que o normal", e a impressora responde
+ * isso trocando para a fonte B — nao ha meio-termo entre as duas fontes dela.
+ */
+const ESCPOS_SMALL_BODY_MAX_PX = 9;
+
+/** Deste corpo para cima o operador esta pedindo "maior", e a impressora dobra a altura. */
+const ESCPOS_LARGE_BODY_MIN_PX = 15;
+
+/**
+ * A partir de quanto uma diferenca de tamanho vira multiplicador. Abaixo disso o operador
+ * mexeu de leve num controle continuo e a impressora, que so dobra, exageraria a intencao.
+ */
+const ESCPOS_DOUBLE_HEIGHT_RATIO = 1.15;
+const ESCPOS_DOUBLE_WIDTH_RATIO = 1.8;
+
+export function receiptEscPosLayout(
+  style: ReceiptStyle,
+  paperWidthMm: number
+): ReceiptEscPosLayout {
+  const large = style.fontSizePx >= ESCPOS_LARGE_BODY_MIN_PX;
+  const small = style.fontSizePx <= ESCPOS_SMALL_BODY_MAX_PX || style.fontFamily === "condensed";
+  const font = small ? "B" : "A";
+  const dots = font === "B" ? ESCPOS_FONT_B_DOTS : ESCPOS_FONT_A_DOTS;
+  const bodyHeightScale: 1 | 2 = large ? 2 : 1;
+  const headerRatio = style.headerFontSizePx / style.fontSizePx;
+  const numberRatio = style.numberFontSizePx / style.fontSizePx;
+  // A fonte B cabe mais colunas na mesma faixa de papel, na proporcao das larguras.
+  const columns = Math.floor(
+    (escPosFontAColumns(paperWidthMm) * ESCPOS_FONT_A_DOTS.width) / dots.width
   );
+
+  return {
+    font,
+    columns,
+    charWidthDots: dots.width,
+    charHeightDots: dots.height,
+    bodyHeightScale,
+    bold: style.boldBody,
+    lineSpacingDots: Math.min(
+      255,
+      Math.max(1, Math.round(style.lineHeight * dots.height * bodyHeightScale))
+    ),
+    headerWidthScale: headerRatio >= ESCPOS_DOUBLE_WIDTH_RATIO ? 2 : 1,
+    // Nunca MENOR que o corpo: com o corpo em altura dupla e o cabecalho na proporcao
+    // padrao, a razao da 0,875 e o `COD`/`COPIA NRO` sairia menor que o resto do cupom —
+    // justamente as duas linhas que existem para se destacar.
+    headerHeightScale: headerRatio >= ESCPOS_DOUBLE_HEIGHT_RATIO || bodyHeightScale === 2 ? 2 : 1,
+    numberHeightScale: numberRatio >= ESCPOS_DOUBLE_HEIGHT_RATIO ? 2 : 1,
+    logoAlignment: style.logoAlignment
+  };
+}
+
+/**
+ * Onde o CORPO do cupom comeca dentro de `lines` — o resto, antes dele, e o cabecalho. O
+ * destaque dos numeros vale so no corpo (pesos, valores, quantidades): aplicado no cabecalho,
+ * ele esticava o "13" de uma data e ate o "1" de "1a VIA". O HTML nunca teve esse problema
+ * porque la o cabecalho e desenhado fora do `<pre>`; no texto puro os dois moram na mesma lista.
+ */
+export function receiptBodyStartIndex(
+  // Aceita snapshot parcial: cupom gravado por uma versao anterior a `bodyLines` existir nao
+  // pode derrubar a impressao. Sem a divisao, o cupom inteiro conta como corpo — que e
+  // exatamente como era antes de o destaque dos numeros existir.
+  document: Partial<Pick<ReceiptDocument, "lines" | "bodyLines">>
+): number {
+  return Math.max(0, (document.lines?.length ?? 0) - (document.bodyLines?.length ?? 0));
+}
+
+/** Uma linha do cupom ja resolvida para o que a impressora faz com ela. */
+export interface ReceiptEscPosRenderedLine {
+  text: string;
+  align: "left" | "center";
+  widthScale: 1 | 2;
+  heightScale: 1 | 2;
+  bold: boolean;
+  /** Linha decorativa (divisor, assinatura), reconstruida na largura real da fonte. */
+  rule: boolean;
+  /** Os numeros desta linha saem em altura dupla. */
+  emphasizeNumbers: boolean;
+}
+
+/**
+ * Traduz uma linha do cupom para o que a impressora vai fazer com ela. Codificador e previa
+ * chamam ESTA funcao — e por isso a previa do cupom ESC/POS nao consegue divergir do papel.
+ */
+export function receiptEscPosRenderLine(
+  line: string,
+  layout: ReceiptEscPosLayout,
+  /** Linha do corpo do cupom. So nele os numeros saem em destaque — ver `receiptBodyStartIndex`. */
+  isBodyLine = true
+): ReceiptEscPosRenderedLine {
+  const trimmed = line.replace(/\s+$/, "");
+  const emphasizeNumbers = isBodyLine && layout.numberHeightScale === 2;
+
+  // A linha decorativa acompanha a fonte: com a fonte B cabem mais colunas, e um divisor de 48
+  // tracos deixaria um vao branco na direita do papel.
+  if (isReceiptRuleLine(trimmed)) {
+    return {
+      text: trimmed[0].repeat(layout.columns),
+      align: "left",
+      widthScale: 1,
+      heightScale: 1,
+      bold: false,
+      rule: true,
+      emphasizeNumbers: false
+    };
+  }
+
+  if (isReceiptEscPosCenteredLine(trimmed)) {
+    const text = trimmed.trimStart();
+    const emphasized = isReceiptEmphasizedHeaderLine(text);
+    // Largura dupla so quando a linha continua cabendo: ela corta as colunas pela metade.
+    const widthScale: 1 | 2 =
+      emphasized && layout.headerWidthScale === 2 && text.length * 2 <= layout.columns ? 2 : 1;
+
+    return {
+      text: text.slice(0, Math.floor(layout.columns / widthScale)),
+      align: "center",
+      widthScale,
+      heightScale: emphasized ? layout.headerHeightScale : layout.bodyHeightScale,
+      bold: emphasized || layout.bold,
+      rule: false,
+      emphasizeNumbers: !emphasized && emphasizeNumbers
+    };
+  }
+
+  return {
+    text: trimmed.slice(0, layout.columns),
+    align: "left",
+    widthScale: 1,
+    heightScale: layout.bodyHeightScale,
+    bold: layout.bold,
+    rule: false,
+    emphasizeNumbers
+  };
+}
+
+/**
+ * Quebra a linha em pedacos de texto e de numero, a mesma divisao que o HTML do cupom usa
+ * para aplicar o tamanho configurado para numeros so nos numeros.
+ */
+export function splitReceiptNumbers(text: string): { text: string; isNumber: boolean }[] {
+  return text
+    .split(/(\d[\d.,]*)/g)
+    .filter((part) => part.length > 0)
+    .map((part) => ({ text: part, isNumber: /^\d/.test(part) }));
 }
 
 /** Pilha de fontes de cada familia, compartilhada entre a previa e o HTML de impressao. */

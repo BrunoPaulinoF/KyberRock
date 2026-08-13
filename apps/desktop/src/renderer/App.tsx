@@ -4059,6 +4059,22 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     </label>
                     {receiptTemplateConfig.mode === "custom" ? (
                       <>
+                        {/*
+                          A termica nao tem corpo em px: tem duas fontes embutidas e
+                          multiplicadores inteiros. Os controles continuam valendo — sao
+                          TRADUZIDOS —, mas em degraus, e a previa ja mostra o degrau que
+                          saiu. Sem este aviso o operador arrasta o controle, ve a previa
+                          nao mexer e conclui que a personalizacao nao funciona.
+                        */}
+                        {printerTypeUsesEscPos(printerType) ? (
+                          <p style={{ ...styles.muted, marginTop: 0 }}>
+                            No modo texto direto a impressora tem passos fixos, entao estes
+                            controles saem em degraus: ate 9 px (ou a fonte condensada) usa a fonte
+                            menor da impressora, de 15 px para cima o texto sai em altura dobrada, e
+                            no meio disso fica o tamanho normal. A previa ao lado mostra o degrau
+                            que vai sair no papel.
+                          </p>
+                        ) : null}
                         <label style={styles.fieldLabel}>
                           Fonte do cupom
                           <select

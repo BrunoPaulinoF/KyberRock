@@ -934,6 +934,24 @@ export const documentationFaqs: DocumentationFaq[] = [
     sectionId: "printing",
     keywords: ["cod", "copia nro", "numero do cupom", "codigo da operacao", "entender o cupom"]
   },
+  {
+    question: "Mudei a fonte e o tamanho do cupom, mas o papel quase nao mudou.",
+    answer:
+      "Isso e da impressora, e a previa ja mostra o resultado real. No modo texto direto (ESC/POS) a termica nao tem fonte em px: ela tem duas fontes embutidas e so sabe dobrar o tamanho. Entao os controles saem em degraus — ate 9 px, ou escolhendo a fonte condensada, o cupom usa a fonte menor da impressora (cabem mais colunas e o divisor acompanha); de 15 px para cima o texto sai com altura dobrada; entre um e outro fica o tamanho normal. Entrelinha, negrito, alinhamento da logo, tamanho do cabecalho e destaque dos numeros funcionam do mesmo jeito, em degraus. O texto nunca sai com largura dobrada no corpo do cupom porque isso cortaria as colunas pela metade e desalinharia os pesos e valores. Se voce precisa de controle fino de fonte, use o modo grafico — mas ai quem desenha o cupom e o driver da impressora, e em termica ele costuma perder a logo e o numero do cupom.",
+    category: "impressao",
+    sectionId: "printing",
+    keywords: [
+      "fonte do cupom",
+      "tamanho da fonte",
+      "personalizacao",
+      "layout do cupom",
+      "cupom nao muda",
+      "entrelinha",
+      "negrito",
+      "esc/pos",
+      "texto direto"
+    ]
+  },
 
   // --- Nuvem --------------------------------------------------------------
   {

@@ -1,6 +1,10 @@
 import {
-  isReceiptEmphasizedHeaderLine,
-  isReceiptEscPosCenteredLine
+  DEFAULT_RECEIPT_STYLE,
+  receiptEscPosLayout,
+  receiptEscPosRenderLine,
+  splitReceiptNumbers,
+  type ReceiptEscPosLayout,
+  type ReceiptEscPosRenderedLine
 } from "@kyberrock/print-templates";
 
 import {
@@ -8,12 +12,6 @@ import {
   isBlankDotRatio,
   type ThermalDotMapOptions
 } from "./receipt-logo-raster.js";
-
-export interface EscPosLine {
-  text: string;
-  bold?: boolean;
-  align?: "left" | "center" | "right";
-}
 
 /** Imagem monocromatica pronta para o comando de bit image da impressora. */
 export interface EscPosRasterImage {
@@ -33,11 +31,21 @@ const RASTER_BAND_HEIGHT = 128;
 
 /**
  * Tamanho do caractere no comando `GS ! n`: os 4 bits altos multiplicam a largura e os 4
- * baixos a altura. So a ALTURA dobra no cabecalho — dobrar a largura cortaria a linha pela
- * metade das colunas, e `COPIA NRO 000000123-2` ja ocupa 21 das 24 que sobrariam.
+ * baixos a altura (0 = 1x, 1 = 2x). Quem decide os multiplicadores e `receiptEscPosLayout`,
+ * em print-templates — aqui so viram bytes.
  */
-const DOUBLE_HEIGHT = 0x01;
-const NORMAL_SIZE = 0x00;
+function characterSize(widthScale: number, heightScale: number): number {
+  return ((widthScale - 1) << 4) | (heightScale - 1);
+}
+
+const ALIGN_LEFT = 0x00;
+const ALIGN_CENTER = 0x01;
+const ALIGN_RIGHT = 0x02;
+
+function alignByte(alignment: "left" | "center" | "right"): number {
+  if (alignment === "center") return ALIGN_CENTER;
+  return alignment === "right" ? ALIGN_RIGHT : ALIGN_LEFT;
+}
 
 /**
  * Transforma o texto em ASCII imprimivel preservando a legibilidade. A codificacao "ascii" e
@@ -58,57 +66,79 @@ function toAsciiSafe(text: string): string {
 export function encodeEscPos(
   lines: string[],
   paperWidthMm: number,
-  logo?: EscPosRasterImage | null
+  logo?: EscPosRasterImage | null,
+  layout: ReceiptEscPosLayout = receiptEscPosLayout(DEFAULT_RECEIPT_STYLE, paperWidthMm),
+  /**
+   * Indice em que o CORPO do cupom comeca (o resto, antes, e cabecalho). So no corpo os
+   * numeros saem em destaque — ver `receiptBodyStartIndex`. Sem ele, tudo e corpo.
+   */
+  bodyStartIndex = 0
 ): Buffer {
   const buffers: Buffer[] = [];
-  const maxChars = paperWidthMm <= 58 ? 32 : 48;
 
   buffers.push(Buffer.from([ESC, 0x40]));
+  // Fonte embutida (ESC M) e entrelinha (ESC 3): a personalizacao da tela vira ISTO na
+  // termica, que nao tem fonte em px nem entrelinha fracionaria.
+  buffers.push(Buffer.from([ESC, 0x4d, layout.font === "B" ? 0x01 : 0x00]));
+  buffers.push(Buffer.from([ESC, 0x33, layout.lineSpacingDots]));
 
-  // A logo entra antes de qualquer texto, centralizada, como bit image — o cupom impresso
-  // na impressora de rede sai igual ao da impressora do Windows (que renderiza a logo em HTML).
-  const rasterLogo = logo ? encodeRasterImage(logo) : null;
+  // A logo entra antes de qualquer texto, como bit image, no alinhamento configurado — o
+  // cupom da impressora de rede sai igual ao da impressora do Windows em modo texto direto.
+  const rasterLogo = logo ? encodeRasterImage(logo, layout.logoAlignment) : null;
   if (rasterLogo) {
     buffers.push(rasterLogo);
   }
 
-  for (const line of lines) {
-    const trimmed = line.replace(/\s+$/, "");
-    if (isDivider(trimmed)) {
-      buffers.push(Buffer.from([ESC, 0x45, 0x00]));
-      buffers.push(Buffer.from("-".repeat(maxChars) + "\n", "ascii"));
-      continue;
-    }
-
-    // A impressora centraliza pelo comando (ESC a 1), entao o recuo que o texto ja trazia
-    // (o cupom em texto puro centraliza com espacos, para o ESC/POS e o HTML lerem a mesma
-    // linha) seria somado ao dela e empurraria a linha para a direita — era assim que o
-    // "COD 000123" saia deslocado, encostando na borda do papel.
-    const centeredText = trimmed.trimStart();
-    if (isReceiptEscPosCenteredLine(centeredText)) {
-      // O codigo da operacao e o numero do cupom saem em destaque, como no cabecalho grafico
-      // da previa: sao as duas linhas que o operador procura no papel em maos.
-      const emphasized = isReceiptEmphasizedHeaderLine(centeredText);
-      buffers.push(Buffer.from([ESC, 0x61, 0x01]));
-      if (emphasized) {
-        buffers.push(Buffer.from([GS, 0x21, DOUBLE_HEIGHT]));
-        buffers.push(Buffer.from([ESC, 0x45, 0x01]));
-      }
-      buffers.push(Buffer.from(toAsciiSafe(centeredText.slice(0, maxChars)) + "\n", "ascii"));
-      if (emphasized) {
-        buffers.push(Buffer.from([ESC, 0x45, 0x00]));
-        buffers.push(Buffer.from([GS, 0x21, NORMAL_SIZE]));
-      }
-      buffers.push(Buffer.from([ESC, 0x61, 0x00]));
-      continue;
-    }
-
-    buffers.push(Buffer.from([ESC, 0x61, 0x00]));
-    buffers.push(Buffer.from(toAsciiSafe(trimmed.slice(0, maxChars)) + "\n", "ascii"));
-  }
+  lines.forEach((line, index) => {
+    buffers.push(
+      encodeLine(receiptEscPosRenderLine(line, layout, index >= bodyStartIndex), layout)
+    );
+  });
 
   buffers.push(Buffer.from([ESC, 0x64, 0x03]));
   buffers.push(Buffer.from([GS, 0x56, 0x00]));
+
+  return Buffer.concat(buffers);
+}
+
+/**
+ * Uma linha ja resolvida vira bytes: alinhamento, tamanho do caractere, negrito e o texto.
+ *
+ * O recuo que a linha trazia (o cupom em texto puro centraliza com espacos, para o ESC/POS e o
+ * HTML lerem a mesma linha) ja foi removido em `receiptEscPosRenderLine`: somado ao ESC a 1 da
+ * impressora, ele empurrava o "COD 000123" para a borda do papel.
+ */
+function encodeLine(line: ReceiptEscPosRenderedLine, layout: ReceiptEscPosLayout): Buffer {
+  const buffers: Buffer[] = [
+    Buffer.from([ESC, 0x61, alignByte(line.align)]),
+    Buffer.from([ESC, 0x45, line.bold ? 0x01 : 0x00]),
+    Buffer.from([GS, 0x21, characterSize(line.widthScale, line.heightScale)])
+  ];
+
+  if (line.emphasizeNumbers) {
+    // Os numeros do cupom (pesos, valores) saem mais altos que o texto, o mesmo recorte que o
+    // HTML faz com `<span class="num">`. So a ALTURA muda: mexer na largura desalinharia o
+    // bloco Quantidade/Unitario/Total, que e montado com colunas fixas.
+    for (const part of splitReceiptNumbers(line.text)) {
+      if (part.isNumber) {
+        buffers.push(
+          Buffer.from([GS, 0x21, characterSize(line.widthScale, layout.numberHeightScale)])
+        );
+      }
+      buffers.push(Buffer.from(toAsciiSafe(part.text), "ascii"));
+      if (part.isNumber) {
+        buffers.push(Buffer.from([GS, 0x21, characterSize(line.widthScale, line.heightScale)]));
+      }
+    }
+    buffers.push(Buffer.from("\n", "ascii"));
+  } else {
+    buffers.push(Buffer.from(toAsciiSafe(line.text) + "\n", "ascii"));
+  }
+
+  // Volta ao normal: a proxima linha declara o que precisa, e nenhum estado vaza para ela.
+  buffers.push(Buffer.from([GS, 0x21, characterSize(1, 1)]));
+  buffers.push(Buffer.from([ESC, 0x45, 0x00]));
+  buffers.push(Buffer.from([ESC, 0x61, ALIGN_LEFT]));
 
   return Buffer.concat(buffers);
 }
@@ -184,14 +214,17 @@ export function isRasterBlank(raster: EscPosRasterImage): boolean {
   return isBlankDotRatio(countRasterBlackDots(raster), raster.widthPx * raster.heightPx);
 }
 
-function encodeRasterImage(image: EscPosRasterImage): Buffer | null {
+function encodeRasterImage(
+  image: EscPosRasterImage,
+  alignment: "left" | "center" | "right" = "center"
+): Buffer | null {
   const bytesPerRow = Math.ceil(image.widthPx / 8);
 
   if (bytesPerRow <= 0 || image.heightPx <= 0 || image.bits.length < bytesPerRow * image.heightPx) {
     return null;
   }
 
-  const buffers: Buffer[] = [Buffer.from([ESC, 0x61, 0x01])];
+  const buffers: Buffer[] = [Buffer.from([ESC, 0x61, alignByte(alignment)])];
 
   for (let row = 0; row < image.heightPx; row += RASTER_BAND_HEIGHT) {
     const bandHeight = Math.min(RASTER_BAND_HEIGHT, image.heightPx - row);
@@ -216,8 +249,4 @@ function encodeRasterImage(image: EscPosRasterImage): Buffer | null {
   buffers.push(Buffer.from("\n", "ascii"));
 
   return Buffer.concat(buffers);
-}
-
-function isDivider(line: string): boolean {
-  return line.length > 10 && /^[=-]+$/.test(line);
 }
