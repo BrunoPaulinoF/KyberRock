@@ -403,7 +403,7 @@ function buildHeaderLines(header: ReceiptHeaderBlock): string[] {
   }
 
   if (header.receiptNumberLabel && header.copyLabel) {
-    lines.push(`COPIA NRO ${header.receiptNumberLabel}`, header.copyLabel);
+    lines.push(receiptCopyNumberLine(header.receiptNumberLabel), header.copyLabel);
   }
 
   if (lines.length > 0 && (header.companyName || header.receiptNumberLabel)) {
@@ -762,6 +762,37 @@ export function receiptOperationCodeLine(operationCodeLabel: string): string {
 export function formatReceiptNumber(receiptNumber: number, deviceNumber?: number | null): string {
   const base = receiptNumber.toString().padStart(9, "0");
   return deviceNumber && deviceNumber > 0 ? `${base}-${deviceNumber}` : base;
+}
+
+/**
+ * Linha do numero do cupom ("COPIA NRO 000000101"). Mesma razao da linha do codigo: sao
+ * tres renderizadores desenhando o cabecalho, e a copia solta entre eles ja fez a previa
+ * divergir do papel uma vez.
+ */
+export function receiptCopyNumberLine(receiptNumberLabel: string): string {
+  return `COPIA NRO ${receiptNumberLabel}`;
+}
+
+/**
+ * Linhas do cupom que a impressora termica imprime em corpo dobrado: o codigo da operacao
+ * e o numero do cupom. Sao os dois numeros que ligam o papel na mao do motorista a venda no
+ * sistema — no corpo normal eles se perdiam no meio do texto, enquanto o cupom da impressora
+ * do Windows sempre os desenhou grandes. Sai do cabecalho ESTRUTURADO (e nao de adivinhar
+ * pelo texto), para os renderizadores destacarem exatamente a mesma coisa.
+ */
+export function receiptHighlightLines(header: ReceiptHeaderBlock | null | undefined): string[] {
+  if (!header) return [];
+  const lines: string[] = [];
+
+  if (header.operationCodeLabel) {
+    lines.push(receiptOperationCodeLine(header.operationCodeLabel));
+  }
+
+  if (header.receiptNumberLabel) {
+    lines.push(receiptCopyNumberLine(header.receiptNumberLabel));
+  }
+
+  return lines;
 }
 
 /** Largura util do papel de 80 mm, em caracteres — a mesma do divisor. */

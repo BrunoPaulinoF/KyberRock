@@ -1,5 +1,7 @@
 import { createConnection, type Socket } from "node:net";
 
+import { receiptHighlightLines } from "@kyberrock/print-templates";
+
 import { encodeEscPos, type EscPosRasterImage } from "./escpos-encoder.js";
 import { maxLogoWidthDots } from "./receipt-logo-raster.js";
 import type { ReceiptLogoConfig, ReceiptPrintPayload, ReceiptPrinter } from "./printing.js";
@@ -39,7 +41,11 @@ export class NetworkEscPosPrinter implements ReceiptPrinter {
       throw new Error("Host da impressora de rede nao configurado.");
     }
 
-    const data = encodeEscPos(payload.lines, payload.paperWidthMm, this.buildLogo(payload));
+    const data = encodeEscPos(payload.lines, payload.paperWidthMm, this.buildLogo(payload), {
+      // O codigo e o numero do cupom saem em corpo dobrado nas duas termicas (rede e USB):
+      // o cupom impresso pelas duas maquinas tem que ser o mesmo papel.
+      emphasizedLines: receiptHighlightLines(payload.snapshot.header)
+    });
 
     await new Promise<void>((resolve, reject) => {
       const socket: Socket = createConnection({ host: this.host, port: this.port });

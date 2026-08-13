@@ -12,6 +12,7 @@ import {
   NON_FISCAL_SALE_LABEL,
   normalizeReceiptTemplateConfig,
   receiptContentWidthMm,
+  receiptHighlightLines,
   RECEIPT_LINE_WIDTH,
   resolveReceiptTemplateConfig
 } from "./receipt-template";
@@ -422,6 +423,32 @@ describe("telefone da pedreira no cupom", () => {
     // Quebrado em palavras, nunca uma linha maior que o papel (que a impressora cortaria).
     expect(lines.every((line) => line.length <= RECEIPT_LINE_WIDTH)).toBe(true);
     expect(lines.join(" ")).toContain("0800 123456");
+  });
+});
+
+describe("destaque do codigo e do numero do cupom", () => {
+  it("marca as duas linhas que a termica imprime em corpo dobrado", () => {
+    const document = buildReceiptDocument(
+      { ...baseInput(), operationCode: 42, receiptNumber: 101 },
+      DEFAULT_RECEIPT_TEMPLATE_CONFIG
+    );
+
+    expect(receiptHighlightLines(document.header)).toEqual(["COD 000042", "COPIA NRO 000000101"]);
+    // As linhas destacadas existem no cupom exatamente com esse texto (o ESC/POS compara
+    // sem os espacos das pontas), senao o destaque cairia em nenhuma linha.
+    for (const line of receiptHighlightLines(document.header)) {
+      expect(document.lines.map((each) => each.trim())).toContain(line);
+    }
+  });
+
+  it("nao destaca o que o cupom nao imprime", () => {
+    const semCabecalho = buildReceiptDocument(
+      { ...baseInput(), operationCode: null },
+      { ...DEFAULT_RECEIPT_TEMPLATE_CONFIG, mode: "custom", showCopyInfo: false }
+    );
+
+    expect(receiptHighlightLines(semCabecalho.header)).toEqual([]);
+    expect(receiptHighlightLines(null)).toEqual([]);
   });
 });
 

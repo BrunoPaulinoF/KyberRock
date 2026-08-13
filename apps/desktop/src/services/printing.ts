@@ -18,7 +18,28 @@ import { enqueueSyncJob } from "./sync-queue.js";
 import { isClosedOperationStatus, nextOperationCode } from "./weighing-operations.js";
 
 export type PrintReceiptStatus = "printed" | "failed";
-export type PrinterType = "windows" | "network";
+
+/**
+ * Como o cupom chega na impressora:
+ *
+ * - `windows`: pagina HTML desenhada pelo driver do Windows. Serve para qualquer impressora
+ *   (inclusive a que nao fala ESC/POS), mas quem manda no papel e o driver;
+ * - `windows_escpos`: a MESMA termica instalada no Windows, recebendo ESC/POS direto (sem o
+ *   desenho do driver). E o caminho recomendado para bobina de 80 mm — o que sai no papel
+ *   passa a depender so do KyberRock;
+ * - `network`: termica ESC/POS por TCP/IP (rede/WiFi).
+ */
+export type PrinterType = "windows" | "windows_escpos" | "network";
+
+/** O perfil imprime pela impressora instalada no Windows (desenhada ou em ESC/POS direto). */
+export function usesWindowsPrinter(printerType: PrinterType): boolean {
+  return printerType === "windows" || printerType === "windows_escpos";
+}
+
+/** O cupom sai em ESC/POS (bit image da logo + 48 colunas), seja por USB ou por rede. */
+export function usesEscPos(printerType: PrinterType): boolean {
+  return printerType === "windows_escpos" || printerType === "network";
+}
 
 export interface WindowsPrinterSummary {
   name: string;
@@ -201,8 +222,8 @@ export function configureReceiptPrintProfile(
   input: ConfigureReceiptPrintProfileInput,
   now: Date = new Date()
 ): PrintProfileSummary {
-  const printerType: PrinterType = input.printerType === "network" ? "network" : "windows";
-  if (printerType === "windows") {
+  const printerType = normalizePrinterType(input.printerType);
+  if (usesWindowsPrinter(printerType)) {
     validateRequired("Printer name", input.windowsPrinterName);
   } else {
     validateRequired("Network host", input.networkHost ?? "");
@@ -219,10 +240,9 @@ export function configureReceiptPrintProfile(
     ...(existing?.templateConfig ?? DEFAULT_RECEIPT_TEMPLATE_CONFIG),
     ...(input.templateConfig ?? {})
   });
-  const windowsPrinterName =
-    printerType === "windows"
-      ? input.windowsPrinterName.trim()
-      : input.windowsPrinterName?.trim() || "NETWORK";
+  const windowsPrinterName = usesWindowsPrinter(printerType)
+    ? input.windowsPrinterName.trim()
+    : input.windowsPrinterName?.trim() || "NETWORK";
   const networkHost = printerType === "network" ? (input.networkHost ?? "").trim() : null;
   const networkPort = printerType === "network" ? (input.networkPort ?? 9100) : null;
 
@@ -897,7 +917,7 @@ function mapPrintProfileRow(row: PrintProfileRow): PrintProfileSummary {
     id: row.id,
     deviceId: row.device_id,
     documentType: row.document_type,
-    printerType: row.printer_type === "network" ? "network" : "windows",
+    printerType: normalizePrinterType(row.printer_type),
     windowsPrinterName: row.windows_printer_name,
     networkHost: row.network_host,
     networkPort: row.network_port,
@@ -952,6 +972,18 @@ function parseReceiptLogoConfig(value: string): ReceiptLogoConfig {
 
 function normalizeLogoFit(value: string): ReceiptLogoFit {
   return value === "cover" || value === "fill" ? value : "contain";
+}
+
+/**
+ * Tipo de impressora gravado/recebido. Vale para o valor que vem da tela e para o que ja
+ * esta no banco: perfil salvo antes do ESC/POS direto existir continua em "windows", que e
+ * onde ele sempre esteve — trocar o caminho de impressao de alguem sem avisar seria pior que
+ * o problema que o modo novo resolve.
+ */
+function normalizePrinterType(value: string | null | undefined): PrinterType {
+  if (value === "network") return "network";
+  if (value === "windows_escpos") return "windows_escpos";
+  return "windows";
 }
 
 function clampNumber(value: number, min: number, max: number): number {

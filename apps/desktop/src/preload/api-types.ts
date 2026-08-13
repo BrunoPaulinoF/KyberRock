@@ -117,6 +117,8 @@ export interface KyberRockDesktopApi {
   ) => Promise<DesktopAccessStatus>;
   activateDesktop: (input: ActivateDesktopInput) => Promise<DesktopAccessStatus>;
   logoutDesktop: () => Promise<void>;
+  /** Versao instalada do app, mostrada no menu de configuracoes. */
+  getAppVersion: () => Promise<string>;
   checkForUpdates: () => Promise<UpdateState>;
   downloadAndInstallUpdate: () => Promise<UpdateState>;
   listOpenWeighingOperations: () => Promise<WeighingOperationSummary[]>;

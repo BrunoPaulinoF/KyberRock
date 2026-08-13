@@ -26,6 +26,9 @@ const GS = 0x1d;
 /** Linhas por comando GS v 0: impressoras baratas travam com imagens grandes de uma vez so. */
 const RASTER_BAND_HEIGHT = 128;
 
+/** `GS ! n` com largura e altura dobradas (nibble alto = largura, nibble baixo = altura). */
+const DOUBLE_WIDTH_HEIGHT = 0x11;
+
 /**
  * Transforma o texto em ASCII imprimivel preservando a legibilidade. A codificacao "ascii" e
  * 7-bit e transformava qualquer acento (ã, ç, é, Á — comuns em razao social, cidade, endereco)
@@ -42,13 +45,24 @@ function toAsciiSafe(text: string): string {
     .replace(/[^\x20-\x7e]/g, " ");
 }
 
+export interface EncodeEscPosOptions {
+  /**
+   * Linhas impressas em corpo dobrado (o codigo da operacao e o numero do cupom). Sao
+   * comparadas ja sem os espacos das pontas, porque o cupom em texto puro centraliza com
+   * espacos. Linha que nao estiver aqui sai no corpo normal.
+   */
+  emphasizedLines?: string[];
+}
+
 export function encodeEscPos(
   lines: string[],
   paperWidthMm: number,
-  logo?: EscPosRasterImage | null
+  logo?: EscPosRasterImage | null,
+  options: EncodeEscPosOptions = {}
 ): Buffer {
   const buffers: Buffer[] = [];
   const maxChars = paperWidthMm <= 58 ? 32 : 48;
+  const emphasized = new Set((options.emphasizedLines ?? []).map((line) => line.trim()));
 
   buffers.push(Buffer.from([ESC, 0x40]));
 
@@ -72,6 +86,21 @@ export function encodeEscPos(
     // linha) seria somado ao dela e empurraria a linha para a direita — era assim que o
     // "COD 000123" saia deslocado, encostando na borda do papel.
     const centeredText = trimmed.trimStart();
+
+    // Codigo da operacao e numero do cupom em corpo dobrado e centralizados: sao os numeros
+    // que o operador procura no papel, e no corpo normal eles se perdiam no meio do texto.
+    // No dobro do corpo cabe metade das colunas — o corte respeita isso.
+    if (emphasized.has(centeredText)) {
+      buffers.push(Buffer.from([ESC, 0x61, 0x01]));
+      buffers.push(Buffer.from([GS, 0x21, DOUBLE_WIDTH_HEIGHT]));
+      buffers.push(
+        Buffer.from(toAsciiSafe(centeredText.slice(0, Math.floor(maxChars / 2))) + "\n", "ascii")
+      );
+      buffers.push(Buffer.from([GS, 0x21, 0x00]));
+      buffers.push(Buffer.from([ESC, 0x61, 0x00]));
+      continue;
+    }
+
     if (isCenterCandidate(centeredText)) {
       buffers.push(Buffer.from([ESC, 0x61, 0x01]));
       buffers.push(Buffer.from(toAsciiSafe(centeredText.slice(0, maxChars)) + "\n", "ascii"));

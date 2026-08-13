@@ -351,6 +351,18 @@ type ReceiptTemplateBooleanKey = {
   [Key in keyof ReceiptTemplateConfig]: ReceiptTemplateConfig[Key] extends boolean ? Key : never;
 }[keyof ReceiptTemplateConfig];
 
+/** Os dois modos que usam a impressora instalada no Windows pedem o mesmo formulario. */
+function isWindowsPrinterType(printerType: PrinterType): boolean {
+  return printerType === "windows" || printerType === "windows_escpos";
+}
+
+/** Como o cupom sai daqui, em uma palavra — mostrado no resumo do perfil ativo. */
+function describePrinterType(printerType: PrinterType): string {
+  if (printerType === "network") return "rede ESC/POS";
+  if (printerType === "windows_escpos") return "ESC/POS direto";
+  return "desenhado pelo driver";
+}
+
 const receiptTemplateToggleOptions: Array<{ key: ReceiptTemplateBooleanKey; label: string }> = [
   { key: "showCompanyHeader", label: "Cabecalho da empresa" },
   { key: "showCopyInfo", label: "Numero do cupom e via" },
@@ -456,6 +468,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const { confirmElement: appConfirmElement, requestConfirm: requestAppConfirm } = useConfirm();
   const [status, setStatus] = useState<DesktopStatusSnapshot | null>(initialStatus);
   const [updateState, setUpdateState] = useState<UpdateState>(createInitialUpdateState());
+  // Versao instalada: e por ela que se sabe se este computador ja recebeu a correcao. A
+  // atualizacao so e aplicada quando o app e FECHADO, e uma balanca fica dias aberta.
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const [openOperations, setOpenOperations] = useState<WeighingOperationSummary[]>([]);
   const [truckAverageMinutes, setTruckAverageMinutes] = useState(0);
   const [canceledOperations, setCanceledOperations] = useState<WeighingOperationSummary[]>([]);
@@ -490,7 +505,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [printers, setPrinters] = useState<WindowsPrinterSummary[]>([]);
   const [printProfiles, setPrintProfiles] = useState<PrintProfileSummary[]>([]);
   const [printReceipts, setPrintReceipts] = useState<PrintReceiptSummary[]>([]);
-  const [printerType, setPrinterType] = useState<PrinterType>("windows");
+  // Instalacao nova comeca no ESC/POS direto: o app e feito para bobina de 80 mm, e nesse
+  // caminho o cupom nao depende de como o driver daquele computador esta configurado. Quem
+  // ja tem perfil salvo continua no modo dele (applyReceiptProfileForm hidrata do banco).
+  const [printerType, setPrinterType] = useState<PrinterType>("windows_escpos");
   const [selectedPrinterName, setSelectedPrinterName] = useState("");
   const [networkPrinterHost, setNetworkPrinterHost] = useState("");
   const [networkPrinterPort, setNetworkPrinterPort] = useState("9100");
@@ -1330,6 +1348,19 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
       setStatus(nextStatus);
       setUpdateState(nextUpdateState);
+      // Versao instalada: pedida uma vez so, e nunca pode derrubar a carga da tela (a
+      // versao antiga do preload, ainda sem este canal, so nao mostra o numero).
+      setAppVersion((current) => {
+        if (current === null) {
+          void desktopApi
+            .getAppVersion?.()
+            .then((version) => {
+              if (active) setAppVersion(version);
+            })
+            .catch(() => undefined);
+        }
+        return current;
+      });
       setOpenOperations(nextOpenOperations);
       setCanceledOperations(nextCanceledOperations);
       setClosedOperations(nextClosedOperations);
@@ -2012,7 +2043,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     const networkHost = networkPrinterHost.trim();
     const networkPort = Number(networkPrinterPort || 9100);
 
-    if (printerType === "windows" && !printerName) {
+    if (isWindowsPrinterType(printerType) && !printerName) {
       setMessage("Selecione uma impressora do Windows antes de salvar o perfil.");
       return;
     }
@@ -2033,7 +2064,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     try {
       const profile = await desktopApi.configureReceiptPrintProfile({
         printerType,
-        windowsPrinterName: printerType === "windows" ? printerName : printerName || "NETWORK",
+        windowsPrinterName: isWindowsPrinterType(printerType)
+          ? printerName
+          : printerName || "NETWORK",
         networkHost: printerType === "network" ? networkHost : null,
         networkPort: printerType === "network" ? networkPort : null,
         paperWidthMm: 80,
@@ -2047,7 +2080,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       setMessage(
         profile.printerType === "network"
           ? `Impressora de rede configurada: ${profile.networkHost}:${profile.networkPort}.`
-          : `Impressora de cupom configurada: ${profile.windowsPrinterName}.`
+          : profile.printerType === "windows_escpos"
+            ? `Impressora de cupom configurada: ${profile.windowsPrinterName} (ESC/POS direto). Faca uma impressao de teste para conferir a logo e o numero.`
+            : `Impressora de cupom configurada: ${profile.windowsPrinterName} (desenhada pelo driver do Windows).`
       );
       await refreshPrintData({ syncForm: true });
     } catch (error) {
@@ -2591,6 +2626,18 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     >
                       <RefreshCw size={14} />
                       {getManualUpdateButtonLabel(updateState.status)}
+                      {appVersion && !updateReady ? (
+                        <span
+                          style={{
+                            marginLeft: "auto",
+                            fontSize: "11px",
+                            color: "var(--kr-muted)",
+                            fontWeight: 500
+                          }}
+                        >
+                          v{appVersion}
+                        </span>
+                      ) : null}
                       {updateReady ? (
                         <span
                           style={{
@@ -3750,11 +3797,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       onChange={(event) => setPrinterType(event.target.value as PrinterType)}
                       style={styles.input}
                     >
-                      <option value="windows">Windows instalada</option>
+                      <option value="windows_escpos">
+                        Termica USB - ESC/POS direto (recomendado)
+                      </option>
+                      <option value="windows">Windows instalada (desenhada pelo driver)</option>
                       <option value="network">Rede / WiFi ESC/POS</option>
                     </select>
                   </label>
-                  {printerType === "windows" ? (
+                  {isWindowsPrinterType(printerType) ? (
                     <>
                       <label style={styles.fieldLabel} title={TIPS.printing.selectPrinter}>
                         Impressora Windows
@@ -3772,6 +3822,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           ))}
                         </select>
                       </label>
+                      {/*
+                        A escolha entre os dois modos do Windows decide QUEM desenha o cupom.
+                        No modo ESC/POS direto quem desenha e o KyberRock; no outro e o driver,
+                        e foi o driver que ja engoliu a logo e o numero do cupom na pedreira.
+                      */}
+                      <p style={{ ...styles.muted, margin: "-4px 0 8px", fontSize: "11px" }}>
+                        {printerType === "windows_escpos"
+                          ? "O cupom vai direto para a termica em ESC/POS, sem passar pelo desenho do Windows: a logo e o numero saem iguais em qualquer computador, sem depender de tamanho de papel ou margem no driver. Use com bobina de 80 mm (Bematech, Epson, Elgin, Daruma, Tanca, Control iD)."
+                          : "O cupom vai como pagina e quem desenha o papel e o driver do Windows. Use quando a impressora NAO for termica ESC/POS; se a logo ou o numero nao sairem, troque para ESC/POS direto."}
+                      </p>
                       {printers.length === 0 ? (
                         <p style={styles.errorMessage}>
                           Nenhuma impressora instalada foi encontrada.
@@ -4256,6 +4316,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                             : printProfiles[0].windowsPrinterName}{" "}
                           - {printProfiles[0].paperWidthMm} mm
                           {` - ${printProfiles[0].copies} vias`}
+                          {/* Como o cupom e enviado: e a primeira coisa a conferir quando o
+                              papel sai diferente do que a previa mostra. */}
+                          {` - ${describePrinterType(printProfiles[0].printerType)}`}
                           {printProfiles[0].templateConfig.mode === "custom"
                             ? " - modelo personalizado"
                             : ""}

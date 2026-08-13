@@ -62,6 +62,29 @@ describe("encodeEscPos", () => {
     expect(recuada.toString("ascii")).not.toContain(" COD 000123");
   });
 
+  it("imprime em corpo dobrado so as linhas destacadas", () => {
+    const buffer = encodeEscPos(["                   COD 000123", "Cliente: Teste"], 80, null, {
+      emphasizedLines: ["COD 000123"]
+    });
+    const bytes = [...buffer];
+    const codigo = findSequence(bytes, [...Buffer.from("COD 000123", "ascii")]);
+    const cliente = findSequence(bytes, [...Buffer.from("Cliente: Teste", "ascii")]);
+
+    // GS ! 0x11 (dobro) antes do codigo e GS ! 0x00 (normal) depois dele.
+    expect(bytes.slice(codigo - 3, codigo)).toEqual([0x1d, 0x21, 0x11]);
+    expect(findSequence(bytes.slice(codigo), [0x1d, 0x21, 0x00])).toBeGreaterThan(0);
+    // A linha comum nao ganha destaque nenhum.
+    expect(bytes.slice(cliente - 3, cliente)).toEqual([0x1b, 0x61, 0x00]);
+  });
+
+  it("nao destaca nada quando o cupom nao pede destaque", () => {
+    const semOpcoes = encodeEscPos(["COD 000123"], 80);
+    const semDestaque = encodeEscPos(["COD 000123"], 80, null, { emphasizedLines: [] });
+
+    expect(semDestaque.equals(semOpcoes)).toBe(true);
+    expect(findSequence([...semOpcoes], [0x1d, 0x21])).toBe(-1);
+  });
+
   it("preserva o recuo das linhas que nao sao centralizadas", () => {
     // Colunas Quantidade/Unitario/Total: o recuo E o alinhamento da coluna.
     const colunas = "    6,500 TN    120,0000      780,00";

@@ -6,6 +6,7 @@ import {
   fitReceiptBodyFontSizePx,
   isReceiptRuleLine,
   receiptContentWidthMm,
+  receiptCopyNumberLine,
   receiptOperationCodeLine,
   RECEIPT_FONT_STACKS,
   RECEIPT_PAPER_MARGIN_MM,
@@ -280,7 +281,7 @@ function ReceiptPaper({
             letterSpacing: "0.04em"
           }}
         >
-          COPIA NRO {header.receiptNumberLabel}
+          {receiptCopyNumberLine(header.receiptNumberLabel)}
         </div>
       ) : null}
       {header.copyLabel ? (

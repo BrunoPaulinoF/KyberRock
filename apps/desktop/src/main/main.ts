@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } from "electron";
 import type * as ElectronUpdater from "electron-updater";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -35,6 +36,7 @@ import type {
   WindowsPrinterSummary
 } from "../services/printing.js";
 import { NetworkEscPosPrinter, type ReceiptLogoRasterizer } from "../services/network-printer.js";
+import { WindowsRawEscPosPrinter } from "../services/windows-raw-printer.js";
 import {
   isRasterBlank,
   packRasterImage,
@@ -231,6 +233,14 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("desktop:get-update-state", () => updateState);
+
+  /**
+   * Versao instalada. Sai na tela porque, quando a pedreira diz "a correcao nao chegou",
+   * a primeira coisa a saber e se o computador esta rodando a versao que tem a correcao —
+   * a atualizacao so e aplicada quando o operador FECHA o app, e uma balanca costuma ficar
+   * semanas aberta.
+   */
+  ipcMain.handle("desktop:get-app-version", () => app.getVersion());
 
   ipcMain.handle("desktop:get-access-status", () => {
     if (!runtime) {
@@ -1821,6 +1831,22 @@ function createElectronReceiptPrinter(parentWindow: BrowserWindow): ReceiptPrint
         return;
       }
 
+      // Termica do Windows recebendo ESC/POS direto: o cupom nao passa pelo desenho do
+      // driver, entao a logo (bit image) e as 48 colunas saem sempre iguais.
+      //
+      // Se este caminho falhar (PowerShell bloqueado por politica ou antivirus, fila do
+      // Windows recusando o trabalho RAW), o cupom ainda sai — pela pagina HTML, logo
+      // abaixo. Cupom que nao sai para o motorista e problema maior que cupom impresso
+      // pelo caminho antigo; o motivo da queda fica no log de inicializacao.
+      if (payload.printerType === "windows_escpos") {
+        try {
+          await createWindowsRawEscPosPrinter().printReceipt(payload);
+          return;
+        } catch (error) {
+          writeStartupLog("receipt-print:escpos-direct-failed", error);
+        }
+      }
+
       const printWindow = new BrowserWindow({
         show: false,
         parent: parentWindow,
@@ -1870,6 +1896,49 @@ function createElectronReceiptPrinter(parentWindow: BrowserWindow): ReceiptPrint
       }
     }
   };
+}
+
+/** Teto de espera pelo PowerShell que entrega o cupom ao spooler do Windows. */
+const WINDOWS_RAW_PRINT_TIMEOUT_MS = 20_000;
+
+/**
+ * Impressao ESC/POS direta na termica instalada no Windows. Toda a parte que depende do
+ * sistema (arquivo temporario, processo, decodificacao da logo) entra por aqui; a montagem
+ * do cupom e do comando fica no servico, que e testado.
+ */
+function createWindowsRawEscPosPrinter(): WindowsRawEscPosPrinter {
+  return new WindowsRawEscPosPrinter({
+    writeFile: (filePath, data) => writeFileSync(filePath, data),
+    removeFile: (filePath) => rmSync(filePath, { force: true }),
+    tempPath: (fileName) => path.join(app.getPath("temp"), fileName),
+    uniqueId: () => randomUUID(),
+    rasterizeLogo: rasterizeReceiptLogo,
+    run: (command, args) =>
+      new Promise((resolve, reject) => {
+        const child = spawn(command, args, { windowsHide: true });
+        let stderr = "";
+        let settled = false;
+        const finish = (result: { code: number; stderr: string } | Error): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (result instanceof Error) reject(result);
+          else resolve(result);
+        };
+        // A fila do Windows pode ficar presa (impressora sem papel, porta ocupada): sem
+        // teto, o botao de imprimir ficaria girando para sempre.
+        const timer = setTimeout(() => {
+          child.kill();
+          finish(new Error("A impressora nao respondeu a tempo. Confira se ela esta ligada."));
+        }, WINDOWS_RAW_PRINT_TIMEOUT_MS);
+
+        child.stderr?.on("data", (chunk: Buffer) => {
+          stderr += chunk.toString("utf8");
+        });
+        child.on("error", (error: Error) => finish(error));
+        child.on("close", (code) => finish({ code: code ?? 1, stderr }));
+      })
+  });
 }
 
 /** Teto de espera pela decodificacao da logo: passou disso, imprime do jeito que estiver. */

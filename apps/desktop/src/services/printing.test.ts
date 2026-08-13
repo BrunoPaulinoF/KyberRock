@@ -516,6 +516,67 @@ describe("printing", () => {
     }
   });
 
+  /**
+   * O perfil precisa guardar o caminho ESC/POS direto: e ele que tira o driver do Windows
+   * do meio (o driver e quem engolia a logo e o numero do cupom na termica da pedreira).
+   */
+  it("guarda a termica do Windows em modo ESC/POS direto", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      const profile = configureReceiptPrintProfile(database, {
+        identity,
+        printerType: "windows_escpos",
+        windowsPrinterName: "Bematech MP-4200 TH"
+      });
+
+      expect(profile.printerType).toBe("windows_escpos");
+      expect(profile.windowsPrinterName).toBe("Bematech MP-4200 TH");
+      // Releitura do banco: o CHECK da tabela aceita o tipo novo.
+      expect(getActiveReceiptPrintProfile(database, identity.deviceId)?.printerType).toBe(
+        "windows_escpos"
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  it("continua exigindo a impressora escolhida no modo ESC/POS direto", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+
+      expect(() =>
+        configureReceiptPrintProfile(database, {
+          identity,
+          printerType: "windows_escpos",
+          windowsPrinterName: "   "
+        })
+      ).toThrow(/Printer name/);
+    } finally {
+      database.close();
+    }
+  });
+
+  // Perfil salvo antes do modo novo existir nao pode mudar de caminho sozinho: trocar como
+  // a pedreira imprime sem ela pedir seria pior que o problema que o modo novo resolve.
+  it("mantem em 'windows' o perfil salvo antes do ESC/POS direto existir", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, { identity, windowsPrinterName: "TERMICA-80" });
+
+      expect(getActiveReceiptPrintProfile(database, identity.deviceId)?.printerType).toBe(
+        "windows"
+      );
+    } finally {
+      database.close();
+    }
+  });
+
   it("imprime o telefone da pedreira configurado no perfil", async () => {
     const database = createDatabase();
     const printer = createFakePrinter();
