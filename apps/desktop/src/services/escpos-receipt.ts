@@ -1,3 +1,9 @@
+import {
+  DEFAULT_RECEIPT_STYLE,
+  receiptBodyStartIndex,
+  receiptEscPosLayout
+} from "@kyberrock/print-templates";
+
 import { encodeEscPos, type EscPosRasterImage } from "./escpos-encoder.js";
 import { maxLogoWidthDots } from "./receipt-logo-raster.js";
 import type { ReceiptLogoConfig, ReceiptPrintPayload } from "./printing.js";
@@ -21,10 +27,20 @@ export function buildReceiptEscPosData(
   payload: ReceiptPrintPayload,
   rasterizeLogo: ReceiptLogoRasterizer | null
 ): Buffer {
+  // A aparencia escolhida na tela (fonte, corpo, entrelinha, negrito, alinhamento da logo)
+  // vira comando da impressora aqui: `receiptEscPosLayout` faz a traducao, e a previa da tela
+  // le a MESMA traducao. Sem isso a personalizacao existia so no caminho grafico.
+  const layout = receiptEscPosLayout(
+    payload.snapshot.style ?? DEFAULT_RECEIPT_STYLE,
+    payload.paperWidthMm
+  );
+
   return encodeEscPos(
     payload.lines,
     payload.paperWidthMm,
-    buildReceiptEscPosLogo(payload, rasterizeLogo)
+    buildReceiptEscPosLogo(payload, rasterizeLogo),
+    layout,
+    receiptBodyStartIndex(payload.snapshot)
   );
 }
 

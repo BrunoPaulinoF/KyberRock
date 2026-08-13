@@ -4,16 +4,19 @@ import {
   buildSampleReceiptInput,
   DEFAULT_RECEIPT_TEMPLATE_CONFIG,
   fitReceiptBodyFontSizePx,
-  isReceiptEmphasizedHeaderLine,
-  isReceiptEscPosCenteredLine,
   isReceiptRuleLine,
+  receiptBodyStartIndex,
   receiptContentWidthMm,
   receiptCopyNumberLine,
   receiptEscPosFontSizePx,
+  receiptEscPosLayout,
+  receiptEscPosRenderLine,
   receiptOperationCodeLine,
+  splitReceiptNumbers,
   RECEIPT_FONT_STACKS,
   RECEIPT_PAPER_MARGIN_MM,
   type ReceiptDocument,
+  type ReceiptEscPosRenderedLine,
   type ReceiptTemplateConfig
 } from "@kyberrock/print-templates";
 
@@ -361,11 +364,10 @@ function ReceiptPaper({
 /**
  * Papel do modo texto direto (ESC/POS) — o que a termica realmente imprime.
  *
- * Aqui nao existe cabecalho grafico nem tamanho de fonte escolhido pelo operador: a
- * impressora escreve em 48 colunas fixas (fonte A), centraliza sozinha as linhas que
- * `isReceiptEscPosCenteredLine` reconhece e dobra a ALTURA do codigo da operacao e do numero
- * do cupom (`GS ! 1`). A previa reproduz exatamente essas tres regras, com as MESMAS funcoes
- * que o codificador usa — e por isso ela nao consegue divergir do papel.
+ * A aparencia escolhida na tela nao e copiada, e TRADUZIDA: a impressora tem duas fontes
+ * embutidas e multiplicadores inteiros, nao um corpo em px. Quem traduz e
+ * `receiptEscPosLayout`, e o codificador dos bytes le a mesma traducao — a previa desenha
+ * exatamente o que a impressora vai receber, linha por linha, por `receiptEscPosRenderLine`.
  */
 function EscPosPaper({
   document,
@@ -376,8 +378,12 @@ function EscPosPaper({
   logo: ReceiptLogoConfig;
   paperWidthMm: number;
 }) {
-  const fontSizePx = receiptEscPosFontSizePx(paperWidthMm);
+  const layout = receiptEscPosLayout(document.style, paperWidthMm);
+  const fontSizePx = receiptEscPosFontSizePx(paperWidthMm, layout.columns);
   const showLogo = document.style.showLogo && Boolean(logo.dataUrl);
+  const bodyStartIndex = receiptBodyStartIndex(document);
+  // A entrelinha da impressora e em pontos, medida contra a altura do caractere.
+  const lineHeight = layout.lineSpacingDots / (layout.charHeightDots * layout.bodyHeightScale);
 
   return (
     <div
@@ -396,7 +402,18 @@ function EscPosPaper({
       }}
     >
       {showLogo ? (
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: "4px" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent:
+              layout.logoAlignment === "left"
+                ? "flex-start"
+                : layout.logoAlignment === "right"
+                  ? "flex-end"
+                  : "center",
+            marginBottom: "4px"
+          }}
+        >
           <img
             src={logo.dataUrl ?? ""}
             alt="Logo do cupom"
@@ -410,46 +427,87 @@ function EscPosPaper({
           />
         </div>
       ) : null}
-      <pre style={{ margin: 0, font: "inherit", lineHeight: 1.15, whiteSpace: "pre" }}>
+      <pre style={{ margin: 0, font: "inherit", whiteSpace: "pre" }}>
         {document.lines.map((line, index) => (
-          <EscPosLine key={index} line={line} />
+          <EscPosLine
+            key={index}
+            line={receiptEscPosRenderLine(line, layout, index >= bodyStartIndex)}
+            numberHeightScale={layout.numberHeightScale}
+            lineHeight={lineHeight}
+          />
         ))}
       </pre>
     </div>
   );
 }
 
-function EscPosLine({ line }: { line: string }) {
-  // O divisor sai na largura inteira que a impressora usa, sem o recuo do texto puro.
-  if (isReceiptRuleLine(line)) {
-    return <div>{line}</div>;
+function EscPosLine({
+  line,
+  numberHeightScale,
+  lineHeight
+}: {
+  line: ReceiptEscPosRenderedLine;
+  numberHeightScale: 1 | 2;
+  lineHeight: number;
+}) {
+  const content = line.emphasizeNumbers
+    ? splitReceiptNumbers(line.text).map((part, index) =>
+        part.isNumber ? (
+          <EscPosGlyphs key={index} heightScale={numberHeightScale}>
+            {part.text}
+          </EscPosGlyphs>
+        ) : (
+          part.text
+        )
+      )
+    : line.text || " ";
+
+  return (
+    <div
+      style={{
+        textAlign: line.align,
+        // A altura dupla come duas linhas de papel; a entrelinha da impressora ja considera
+        // isso, entao a previa reserva o mesmo espaco.
+        lineHeight: lineHeight * Math.max(line.heightScale, numberHeightScale),
+        fontWeight: line.bold ? 700 : undefined
+      }}
+    >
+      <EscPosGlyphs widthScale={line.widthScale} heightScale={line.heightScale}>
+        {content}
+      </EscPosGlyphs>
+    </div>
+  );
+}
+
+/**
+ * Caracteres nos multiplicadores da impressora. `GS ! n` estica o DESENHO do caractere, e nao
+ * troca por uma fonte maior — `scale` reproduz isso, e mantem a largura da coluna quando so a
+ * altura dobra.
+ */
+function EscPosGlyphs({
+  children,
+  widthScale = 1,
+  heightScale = 1
+}: {
+  children: React.ReactNode;
+  widthScale?: 1 | 2;
+  heightScale?: 1 | 2;
+}) {
+  if (widthScale === 1 && heightScale === 1) {
+    return <>{children}</>;
   }
 
-  if (isReceiptEscPosCenteredLine(line)) {
-    const text = line.trimStart();
-
-    // `GS ! 1` dobra so a ALTURA do caractere: a linha continua ocupando as mesmas colunas.
-    if (isReceiptEmphasizedHeaderLine(text)) {
-      return (
-        <div style={{ textAlign: "center", lineHeight: 2.2 }}>
-          <span
-            style={{
-              display: "inline-block",
-              transform: "scaleY(2)",
-              transformOrigin: "center",
-              fontWeight: 700
-            }}
-          >
-            {text}
-          </span>
-        </div>
-      );
-    }
-
-    return <div style={{ textAlign: "center" }}>{text}</div>;
-  }
-
-  return <div>{line || " "}</div>;
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        transform: `scale(${widthScale}, ${heightScale})`,
+        transformOrigin: "center"
+      }}
+    >
+      {children}
+    </span>
+  );
 }
 
 /**

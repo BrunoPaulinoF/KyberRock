@@ -89,6 +89,48 @@ describe("WindowsRawEscPosPrinter", () => {
     expect(sendRaw).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * A personalizacao existia so no caminho grafico: o cupom ESC/POS saia sempre na fonte
+   * padrao, ignorando fonte, corpo, entrelinha, negrito e alinhamento da logo escolhidos na
+   * tela. Este teste percorre o caminho inteiro — perfil salvo -> snapshot -> bytes.
+   */
+  it("leva a personalizacao salva ate os bytes da impressora", async () => {
+    const personalizado = payload(
+      {},
+      {
+        mode: "custom",
+        fontFamily: "condensed",
+        boldBody: true,
+        lineHeight: 2
+      }
+    );
+    let data: Buffer | null = null;
+
+    await new WindowsRawEscPosPrinter({
+      sendRaw: async (_name, sent) => {
+        data = sent;
+      }
+    }).printReceipt(personalizado);
+
+    const bytes = [...data!];
+    // ESC M 1 = fonte B (a condensada da impressora), ESC 3 34 = 2 x 17 pontos da fonte B.
+    expect(indexOfSequence(bytes, [0x1b, 0x4d, 0x01])).toBeGreaterThanOrEqual(0);
+    expect(indexOfSequence(bytes, [0x1b, 0x33, 34])).toBeGreaterThanOrEqual(0);
+    // Negrito ligado no corpo e divisor esticado para as 64 colunas da fonte B.
+    expect(indexOfSequence(bytes, [0x1b, 0x45, 0x01])).toBeGreaterThanOrEqual(0);
+    expect(data!.includes(Buffer.from("-".repeat(64), "ascii"))).toBe(true);
+
+    // O cupom padrao continua na fonte A, sem negrito e com o divisor de 48.
+    let padrao: Buffer | null = null;
+    await new WindowsRawEscPosPrinter({
+      sendRaw: async (_name, sent) => {
+        padrao = sent;
+      }
+    }).printReceipt(payload());
+    expect(indexOfSequence([...padrao!], [0x1b, 0x4d, 0x00])).toBeGreaterThanOrEqual(0);
+    expect(padrao!.includes(Buffer.from("-".repeat(48) + "\n", "ascii"))).toBe(true);
+  });
+
   it("recusa imprimir sem impressora configurada", async () => {
     const semNome = { ...payload(), printerName: "   " };
 
@@ -113,6 +155,13 @@ describe("receiptDocumentName", () => {
     expect(receiptDocumentName(payload())).toBe("KyberRock cupom 000000882-4");
   });
 });
+
+/** Posicao da sequencia de bytes, ou -1. */
+function indexOfSequence(bytes: number[], sequence: number[]): number {
+  return bytes.findIndex((_byte, index) =>
+    sequence.every((expected, offset) => bytes[index + offset] === expected)
+  );
+}
 
 function payload(
   logo: Partial<ReceiptLogoConfig> = {},
