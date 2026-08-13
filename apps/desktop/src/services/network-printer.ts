@@ -1,18 +1,10 @@
 import { createConnection, type Socket } from "node:net";
 
-import { encodeEscPos, type EscPosRasterImage } from "./escpos-encoder.js";
-import { maxLogoWidthDots } from "./receipt-logo-raster.js";
-import type { ReceiptLogoConfig, ReceiptPrintPayload, ReceiptPrinter } from "./printing.js";
+import { buildReceiptEscPosData } from "./escpos-receipt.js";
+import type { ReceiptLogoRasterizer } from "./escpos-receipt.js";
+import type { ReceiptPrintPayload, ReceiptPrinter } from "./printing.js";
 
-/**
- * Converte a logo configurada (data URL) na imagem monocromatica que a impressora entende.
- * A decodificacao da imagem depende do Electron (`nativeImage`), entao entra por injecao para
- * manter este servico livre de dependencia do processo principal.
- */
-export type ReceiptLogoRasterizer = (
-  logo: ReceiptLogoConfig,
-  maxWidthPx: number
-) => EscPosRasterImage | null;
+export type { ReceiptLogoRasterizer };
 
 export interface NetworkPrinterConfig {
   host: string;
@@ -39,7 +31,7 @@ export class NetworkEscPosPrinter implements ReceiptPrinter {
       throw new Error("Host da impressora de rede nao configurado.");
     }
 
-    const data = encodeEscPos(payload.lines, payload.paperWidthMm, this.buildLogo(payload));
+    const data = buildReceiptEscPosData(payload, this.rasterizeLogo);
 
     await new Promise<void>((resolve, reject) => {
       const socket: Socket = createConnection({ host: this.host, port: this.port });
@@ -76,26 +68,5 @@ export class NetworkEscPosPrinter implements ReceiptPrinter {
         });
       });
     });
-  }
-
-  /** Uma logo invalida nunca pode impedir a impressao do cupom — no pior caso sai sem ela. */
-  private buildLogo(payload: ReceiptPrintPayload): EscPosRasterImage | null {
-    const logo = payload.snapshot.receiptLogo;
-
-    // "Imprimir a logo" desligado na personalizacao vale para as duas impressoras: antes
-    // so o HTML (impressora do Windows) respeitava a escolha.
-    if (payload.snapshot.style?.showLogo === false) {
-      return null;
-    }
-
-    if (!this.rasterizeLogo || !logo?.dataUrl) {
-      return null;
-    }
-
-    try {
-      return this.rasterizeLogo(logo, maxLogoWidthDots(payload.paperWidthMm));
-    } catch {
-      return null;
-    }
   }
 }

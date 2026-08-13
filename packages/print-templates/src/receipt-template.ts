@@ -403,7 +403,7 @@ function buildHeaderLines(header: ReceiptHeaderBlock): string[] {
   }
 
   if (header.receiptNumberLabel && header.copyLabel) {
-    lines.push(`COPIA NRO ${header.receiptNumberLabel}`, header.copyLabel);
+    lines.push(receiptCopyNumberLine(header.receiptNumberLabel), header.copyLabel);
   }
 
   if (lines.length > 0 && (header.companyName || header.receiptNumberLabel)) {
@@ -665,6 +665,53 @@ export function fitReceiptBodyFontSizePx(
   return Math.max(RECEIPT_MIN_BODY_FONT_SIZE_PX, fitted);
 }
 
+/**
+ * Linha que a impressora ESC/POS centraliza sozinha (comando `ESC a 1`). A regra vive aqui,
+ * e nao dentro do codificador, porque a previa da tela precisa centralizar as MESMAS linhas —
+ * senao volta a acontecer o de sempre: a tela mostra um cupom e o papel sai outro.
+ */
+export function isReceiptEscPosCenteredLine(line: string): boolean {
+  const text = line.trimStart();
+
+  if (text.length === 0) return false;
+
+  const upper = text.toUpperCase();
+
+  return (
+    upper.includes("AGRADECEMOS") ||
+    upper.includes("CUPOM DE TESTE") ||
+    RECEIPT_COPY_LABEL_PATTERN.test(text) ||
+    (text.length < 32 &&
+      /^[A-Z0-9 ./-]+$/.test(text) &&
+      // Pelo menos uma LETRA. Sem isso, o resto de uma linha quebrada que so tem numeros
+      // ("99648-0471", o final do telefone de contato) era centralizado sozinho, com a
+      // primeira metade encostada na esquerda. Toda linha que o cupom realmente centraliza
+      // tem letra: COD, COPIA NRO, a razao social, FINANCEIRO, o aviso sem valor fiscal.
+      /[A-Z]/.test(text) &&
+      !text.includes(":"))
+  );
+}
+
+/**
+ * A via da impressao ("1a VIA", "2a VIA"). Precisa de regra propria porque o "a" minusculo a
+ * derruba do teste generico de linha centralizavel — e ela e a UNICA linha do cabecalho que
+ * saia encostada na esquerda no papel enquanto aparecia centralizada na tela.
+ */
+const RECEIPT_COPY_LABEL_PATTERN = /^\d+a VIA$/;
+
+/**
+ * Corpo, em px, que faz as 48 colunas da impressora ESC/POS caberem na faixa util do papel.
+ * A impressora escreve em colunas fixas (fonte A), entao a previa do cupom ESC/POS nao tem
+ * tamanho escolhido pelo operador: tem o tamanho que reproduz a grade da impressora.
+ */
+export function receiptEscPosFontSizePx(paperWidthMm: number): number {
+  return fitReceiptBodyFontSizePx(
+    Number.MAX_SAFE_INTEGER,
+    "monospace",
+    receiptContentWidthMm(paperWidthMm)
+  );
+}
+
 /** Pilha de fontes de cada familia, compartilhada entre a previa e o HTML de impressao. */
 export const RECEIPT_FONT_STACKS: Record<ReceiptFontFamily, string> = {
   monospace: 'Consolas, "Courier New", monospace',
@@ -756,7 +803,36 @@ export function formatOperationCode(operationCode: number | null | undefined): s
  * previa sem a linha quando o codigo passou a existir.
  */
 export function receiptOperationCodeLine(operationCodeLabel: string): string {
-  return `COD ${operationCodeLabel}`;
+  return `${RECEIPT_OPERATION_CODE_LABEL} ${operationCodeLabel}`;
+}
+
+/** Rotulo do codigo da operacao no cupom. */
+export const RECEIPT_OPERATION_CODE_LABEL = "COD";
+
+/**
+ * Rotulo do numero da impressao no cupom. Estava escrito a mao nos TRES renderizadores
+ * (texto ESC/POS, HTML da impressora do Windows e previa da tela) — a mesma copia solta que
+ * ja deixou a previa divergir do papel. Agora sai daqui.
+ */
+export const RECEIPT_COPY_NUMBER_LABEL = "COPIA NRO";
+
+/** Linha do numero da impressao no cupom ("COPIA NRO 000000123-2"). */
+export function receiptCopyNumberLine(receiptNumberLabel: string): string {
+  return `${RECEIPT_COPY_NUMBER_LABEL} ${receiptNumberLabel}`;
+}
+
+/**
+ * Linha que o cabecalho do cupom imprime em destaque (corpo maior e negrito): o codigo da
+ * operacao e o numero da impressao. Os dois renderizadores graficos ja faziam isso com CSS;
+ * o ESC/POS imprimia tudo do mesmo tamanho, e era ai que o numero do cupom sumia no meio do
+ * papel para quem confere de longe.
+ */
+export function isReceiptEmphasizedHeaderLine(line: string): boolean {
+  const text = line.trimStart();
+  return (
+    text.startsWith(`${RECEIPT_OPERATION_CODE_LABEL} `) ||
+    text.startsWith(`${RECEIPT_COPY_NUMBER_LABEL} `)
+  );
 }
 
 export function formatReceiptNumber(receiptNumber: number, deviceNumber?: number | null): string {

@@ -8,10 +8,15 @@ import {
   DEFAULT_RECEIPT_STYLE,
   DEFAULT_RECEIPT_TEMPLATE_CONFIG,
   fitReceiptBodyFontSizePx,
+  isReceiptEmphasizedHeaderLine,
+  isReceiptEscPosCenteredLine,
   isReceiptRuleLine,
   NON_FISCAL_SALE_LABEL,
   normalizeReceiptTemplateConfig,
   receiptContentWidthMm,
+  receiptCopyNumberLine,
+  receiptEscPosFontSizePx,
+  receiptOperationCodeLine,
   RECEIPT_LINE_WIDTH,
   resolveReceiptTemplateConfig
 } from "./receipt-template";
@@ -460,6 +465,65 @@ describe("geometria do papel", () => {
   it("nao mexe nas fontes proporcionais, que nao tem grade de colunas", () => {
     expect(fitReceiptBodyFontSizePx(16, "sans", receiptContentWidthMm(80))).toBe(16);
     expect(fitReceiptBodyFontSizePx(16, "condensed", receiptContentWidthMm(80))).toBe(16);
+  });
+});
+
+/**
+ * Regras do cabecalho compartilhadas pelos TRES renderizadores (texto ESC/POS, HTML da
+ * impressora do Windows e previa da tela). Cada uma tinha copia solta em algum deles, e foi
+ * essa copia que ja deixou a previa mostrar um cupom e o papel sair outro.
+ */
+describe("cabecalho compartilhado", () => {
+  it("monta as duas linhas do topo a partir de um lugar so", () => {
+    expect(receiptOperationCodeLine("000755")).toBe("COD 000755");
+    expect(receiptCopyNumberLine("000000882-4")).toBe("COPIA NRO 000000882-4");
+  });
+
+  it("reconhece as linhas que saem em destaque", () => {
+    expect(isReceiptEmphasizedHeaderLine(receiptOperationCodeLine("000755"))).toBe(true);
+    expect(isReceiptEmphasizedHeaderLine(receiptCopyNumberLine("000000882-4"))).toBe(true);
+    // O cupom em texto puro ja vem centralizado com espacos.
+    expect(isReceiptEmphasizedHeaderLine("          COD 000755")).toBe(true);
+    expect(isReceiptEmphasizedHeaderLine("1a VIA")).toBe(false);
+    expect(isReceiptEmphasizedHeaderLine("CODIGO.: OP-1")).toBe(false);
+  });
+
+  it("reconhece as linhas que a impressora centraliza sozinha", () => {
+    expect(isReceiptEscPosCenteredLine("          COD 000755")).toBe(true);
+    expect(isReceiptEscPosCenteredLine("1a VIA")).toBe(true);
+    expect(isReceiptEscPosCenteredLine(NON_FISCAL_SALE_LABEL)).toBe(true);
+    expect(isReceiptEscPosCenteredLine("AGRADECEMOS PELA PREFERENCIA! VOLTE SEMPRE")).toBe(true);
+    // Linha de dado, alinhada a esquerda: tem ":" e/ou minuscula.
+    expect(isReceiptEscPosCenteredLine("Cliente: Cliente Exemplo")).toBe(false);
+    expect(isReceiptEscPosCenteredLine("CODIGO.: OP-1")).toBe(false);
+    expect(isReceiptEscPosCenteredLine("")).toBe(false);
+    // Resto de uma linha quebrada (o final do telefone de contato) segue a primeira metade,
+    // na esquerda — centralizar so ele deixava o contato torto no papel.
+    expect(isReceiptEscPosCenteredLine("99648-0471")).toBe(false);
+  });
+
+  it("centraliza a via junto com o resto do cabecalho", () => {
+    // O "a" minusculo de "1a VIA" a derrubava do teste generico, e ela era a unica linha do
+    // cabecalho que saia na esquerda no papel enquanto aparecia centralizada na tela.
+    expect(isReceiptEscPosCenteredLine("1a VIA")).toBe(true);
+    expect(isReceiptEscPosCenteredLine("2a VIA")).toBe(true);
+    expect(isReceiptEscPosCenteredLine("Assinatura do Cliente")).toBe(false);
+  });
+
+  it("da a previa do cupom ESC/POS o corpo que faz as 48 colunas caberem no papel", () => {
+    const em80 = receiptEscPosFontSizePx(80);
+    const em58 = receiptEscPosFontSizePx(58);
+
+    // A grade de 48 colunas precisa caber na faixa util (papel - 2 x margem).
+    for (const [fontSizePx, paperWidthMm] of [
+      [em80, 80],
+      [em58, 58]
+    ]) {
+      const widthMm = ((RECEIPT_LINE_WIDTH * 0.55 * fontSizePx) / 96) * 25.4;
+      expect(widthMm).toBeLessThanOrEqual(receiptContentWidthMm(paperWidthMm) + 0.01);
+    }
+
+    expect(em80).toBeGreaterThan(em58);
   });
 });
 

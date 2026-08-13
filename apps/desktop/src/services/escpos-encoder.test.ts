@@ -47,6 +47,42 @@ describe("encodeEscPos", () => {
   });
 
   /**
+   * Na previa o codigo da operacao e o numero do cupom saem grandes e em negrito. Impressos
+   * como texto comum, eram duas linhas iguais a todas as outras no meio do papel — e sao
+   * justamente as duas que o operador procura no cupom em maos.
+   */
+  describe("destaque do cabecalho", () => {
+    it("dobra a altura e liga o negrito no codigo da operacao e no numero do cupom", () => {
+      for (const line of ["COD 000123", "COPIA NRO 000000882-4"]) {
+        const bytes = [...encodeEscPos([line], 80)];
+        const text = findSequence(bytes, [...Buffer.from(line, "ascii")]);
+
+        // GS ! 1 (altura dupla) e ESC E 1 (negrito) antes do texto...
+        expect(findSequence(bytes, [0x1d, 0x21, 0x01])).toBeGreaterThanOrEqual(0);
+        expect(findSequence(bytes, [0x1d, 0x21, 0x01])).toBeLessThan(text);
+        expect(findSequence(bytes, [0x1b, 0x45, 0x01])).toBeLessThan(text);
+        // ...e desligados depois, para o resto do cupom voltar ao normal.
+        expect(findSequence(bytes.slice(text), [0x1d, 0x21, 0x00])).toBeGreaterThanOrEqual(0);
+        expect(findSequence(bytes.slice(text), [0x1b, 0x45, 0x00])).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it("nao aumenta o resto do cupom", () => {
+      const bytes = [...encodeEscPos(["PEDREIRA IBIUNA", "AGRADECEMOS PELA PREFERENCIA"], 80)];
+
+      expect(findSequence(bytes, [0x1d, 0x21, 0x01])).toBe(-1);
+    });
+
+    // Largura dupla cortaria a linha para 24 colunas e o numero do cupom ja usa 21.
+    it("nao dobra a largura, para o numero do cupom nao ser truncado", () => {
+      const bytes = [...encodeEscPos(["COPIA NRO 000000882-4"], 80)];
+
+      expect(findSequence(bytes, [0x1d, 0x21, 0x11])).toBe(-1);
+      expect(findSequence(bytes, [0x1d, 0x21, 0x10])).toBe(-1);
+    });
+  });
+
+  /**
    * O cupom em texto puro ja centraliza com espacos (e a mesma linha que alimenta o HTML e a
    * previa). A impressora centraliza de novo pelo ESC a 1, entao os dois recuos se somavam e
    * empurravam a linha para a direita — o "COD 000123" saia encostado na borda do papel.

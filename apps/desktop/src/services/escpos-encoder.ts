@@ -1,4 +1,9 @@
 import {
+  isReceiptEmphasizedHeaderLine,
+  isReceiptEscPosCenteredLine
+} from "@kyberrock/print-templates";
+
+import {
   buildThermalDotMap,
   isBlankDotRatio,
   type ThermalDotMapOptions
@@ -25,6 +30,14 @@ const GS = 0x1d;
 
 /** Linhas por comando GS v 0: impressoras baratas travam com imagens grandes de uma vez so. */
 const RASTER_BAND_HEIGHT = 128;
+
+/**
+ * Tamanho do caractere no comando `GS ! n`: os 4 bits altos multiplicam a largura e os 4
+ * baixos a altura. So a ALTURA dobra no cabecalho — dobrar a largura cortaria a linha pela
+ * metade das colunas, e `COPIA NRO 000000123-2` ja ocupa 21 das 24 que sobrariam.
+ */
+const DOUBLE_HEIGHT = 0x01;
+const NORMAL_SIZE = 0x00;
 
 /**
  * Transforma o texto em ASCII imprimivel preservando a legibilidade. A codificacao "ascii" e
@@ -72,9 +85,20 @@ export function encodeEscPos(
     // linha) seria somado ao dela e empurraria a linha para a direita — era assim que o
     // "COD 000123" saia deslocado, encostando na borda do papel.
     const centeredText = trimmed.trimStart();
-    if (isCenterCandidate(centeredText)) {
+    if (isReceiptEscPosCenteredLine(centeredText)) {
+      // O codigo da operacao e o numero do cupom saem em destaque, como no cabecalho grafico
+      // da previa: sao as duas linhas que o operador procura no papel em maos.
+      const emphasized = isReceiptEmphasizedHeaderLine(centeredText);
       buffers.push(Buffer.from([ESC, 0x61, 0x01]));
+      if (emphasized) {
+        buffers.push(Buffer.from([GS, 0x21, DOUBLE_HEIGHT]));
+        buffers.push(Buffer.from([ESC, 0x45, 0x01]));
+      }
       buffers.push(Buffer.from(toAsciiSafe(centeredText.slice(0, maxChars)) + "\n", "ascii"));
+      if (emphasized) {
+        buffers.push(Buffer.from([ESC, 0x45, 0x00]));
+        buffers.push(Buffer.from([GS, 0x21, NORMAL_SIZE]));
+      }
       buffers.push(Buffer.from([ESC, 0x61, 0x00]));
       continue;
     }
@@ -196,14 +220,4 @@ function encodeRasterImage(image: EscPosRasterImage): Buffer | null {
 
 function isDivider(line: string): boolean {
   return line.length > 10 && /^[=-]+$/.test(line);
-}
-
-function isCenterCandidate(line: string): boolean {
-  if (line.length === 0) return false;
-  const upper = line.toUpperCase();
-  return (
-    upper.includes("AGRADECEMOS") ||
-    upper.includes("CUPOM DE TESTE") ||
-    (line.length < 32 && /^[A-Z0-9 ./-]+$/.test(line) && !line.includes(":"))
-  );
 }

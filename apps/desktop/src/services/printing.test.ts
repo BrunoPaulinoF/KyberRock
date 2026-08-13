@@ -516,6 +516,59 @@ describe("printing", () => {
     }
   });
 
+  /**
+   * A termica ligada no Windows precisa poder receber ESC/POS pronto em vez de uma pagina
+   * desenhada pelo driver. Se o tipo nao sobreviver ao banco, a impressao volta silenciosamente
+   * para o caminho grafico — e o cupom volta a sair sem logo e sem numero.
+   */
+  it("guarda o modo texto direto (ESC/POS) escolhido para a impressora do Windows", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        printerType: "windows_escpos",
+        windowsPrinterName: "MP-4200 TH"
+      });
+
+      const profile = getActiveReceiptPrintProfile(database, identity.deviceId);
+      expect(profile).toMatchObject({
+        printerType: "windows_escpos",
+        windowsPrinterName: "MP-4200 TH",
+        networkHost: null
+      });
+
+      const operation = createClosedOperation(database, identity);
+      await printWeighingReceipt(database, { operationId: operation.id, identity }, printer);
+
+      // O cupom sai para a fila do Windows pelo nome da impressora, nao por host:porta.
+      expect(printer.calls[0].printerType).toBe("windows_escpos");
+      expect(printer.calls[0].printerName).toBe("MP-4200 TH");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("exige o nome da impressora tambem no modo texto direto", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+
+      expect(() =>
+        configureReceiptPrintProfile(database, {
+          identity,
+          printerType: "windows_escpos",
+          windowsPrinterName: "  "
+        })
+      ).toThrow(/Printer name/i);
+    } finally {
+      database.close();
+    }
+  });
+
   it("imprime o telefone da pedreira configurado no perfil", async () => {
     const database = createDatabase();
     const printer = createFakePrinter();
