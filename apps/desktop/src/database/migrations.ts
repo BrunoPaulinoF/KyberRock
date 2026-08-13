@@ -1838,5 +1838,60 @@ ALTER TABLE weighing_operations ADD COLUMN omie_billing_checked_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_weighing_operations_omie_billing_check
   ON weighing_operations(unit_id, omie_billing_checked_at);
 `
+  },
+  {
+    version: 52,
+    name: "print_profile_windows_escpos",
+    sql: `
+-- Impressora do Windows recebendo ESC/POS pronto ('windows_escpos').
+--
+-- A termica de cupom (Bematech MP-4200, Elgin, Epson TM...) e nativamente ESC/POS. Ate aqui
+-- so a impressora de REDE recebia esse formato; a mesma impressora ligada por USB caia no
+-- tipo 'windows', que monta o cupom em HTML e entrega uma PAGINA para o driver desenhar. E
+-- o driver que decidia entao o tamanho do papel, a posicao do que e centralizado e como
+-- converter a logo em pontos — decisoes que faziam o cabecalho do cupom (logo, COD,
+-- COPIA NRO) sumir no papel enquanto aparecia perfeito na previa.
+--
+-- O CHECK antigo so aceitava 'windows' e 'network'. O SQLite nao altera CHECK no lugar, e
+-- por isso a tabela e reconstruida: sem isso, escolher o modo texto direto dava erro de
+-- constraint e a pedreira ficava presa no caminho grafico.
+--
+-- A tabela nova repete a definicao da antiga inteira (a original mais as colunas que as
+-- migracoes 4x acrescentaram), mudando SO a lista do CHECK. A print_profiles nao e pai de
+-- nenhuma outra tabela, entao trocar a tabela no lugar nao mexe em chave estrangeira alheia.
+CREATE TABLE print_profiles_new (
+  id TEXT PRIMARY KEY,
+  device_id TEXT NOT NULL REFERENCES devices(id),
+  document_type TEXT NOT NULL CHECK (document_type IN ('receipt_80mm', 'report_a4')),
+  printer_type TEXT NOT NULL DEFAULT 'windows'
+    CHECK (printer_type IN ('windows', 'windows_escpos', 'network')),
+  windows_printer_name TEXT NOT NULL,
+  network_host TEXT,
+  network_port INTEGER,
+  paper_width_mm INTEGER NOT NULL,
+  margin_json TEXT NOT NULL,
+  font_config_json TEXT NOT NULL,
+  template_config_json TEXT NOT NULL DEFAULT '{}',
+  copies INTEGER NOT NULL DEFAULT 1,
+  cut_paper INTEGER NOT NULL DEFAULT 0 CHECK (cut_paper IN (0, 1)),
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+INSERT INTO print_profiles_new (
+  id, device_id, document_type, printer_type, windows_printer_name, network_host, network_port,
+  paper_width_mm, margin_json, font_config_json, template_config_json,
+  copies, cut_paper, is_active, created_at, updated_at
+)
+SELECT
+  id, device_id, document_type, printer_type, windows_printer_name, network_host, network_port,
+  paper_width_mm, margin_json, font_config_json, template_config_json,
+  copies, cut_paper, is_active, created_at, updated_at
+FROM print_profiles;
+
+DROP TABLE print_profiles;
+ALTER TABLE print_profiles_new RENAME TO print_profiles;
+`
   }
 ];
