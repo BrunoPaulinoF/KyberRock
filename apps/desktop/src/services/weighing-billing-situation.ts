@@ -17,6 +17,9 @@
  * O desktop nao emite nota: quem fatura e o OMIE. `sent` significa que o pedido (ou a
  * ordem de servico, na venda interna) ja esta la e falta a etapa "Faturar" — nao e um
  * problema do KyberRock, mas continua sendo dinheiro nao faturado.
+ *
+ * `billed` chega de dois jeitos: pelo botao de faturar do proprio app (raro) ou, o caso
+ * normal, pela reconciliacao que confere no OMIE se alguem ja faturou o pedido/OS por la.
  */
 export type WeighingBillingSituation =
   | "billed"
@@ -69,10 +72,15 @@ export interface WeighingBillingSituationInput {
 /**
  * Mesma leitura de `getFiscalBillingStatus` (renderer), reduzida ao que a conferencia
  * precisa saber. A venda INTERNA nao gera pedido de venda: ela vira ordem de servico, e
- * por isso e o `omie_service_order_id` que diz se ela chegou la — e por isso ela nunca
- * chega a `billed`, que e o estado do pedido faturado.
+ * por isso e o `omie_service_order_id` que diz se ela chegou la.
+ *
+ * O faturamento vem antes do tipo de operacao de proposito: a reconciliacao com o OMIE
+ * marca `billed` tanto no pedido de venda (NF-e) quanto na ordem de servico (NFS-e), e
+ * antes dela a interna nunca saia de "No OMIE, falta faturar" — nem depois de faturada.
  */
 export function resolveSituation(row: WeighingBillingSituationInput): WeighingBillingSituation {
+  if (row.omie_billing_status === "billed") return "billed";
+
   if (row.operation_type !== "invoice") {
     if (row.omie_service_order_id) return "sent";
     if (row.omie_billing_status === "cadastro_incompleto") return "cadastro_incompleto";
@@ -80,7 +88,6 @@ export function resolveSituation(row: WeighingBillingSituationInput): WeighingBi
     return "pending";
   }
 
-  if (row.omie_billing_status === "billed") return "billed";
   // Pedido criado: o KyberRock fez a parte dele e a NF-e sai na coluna "Faturar" do OMIE.
   if (row.omie_sales_order_id) return "sent";
   if (row.omie_billing_status === "cadastro_incompleto") return "cadastro_incompleto";

@@ -65,10 +65,15 @@ function unitPriceLabel(row: WeighingBillingRow): string {
   return `${formatBRL(row.unitPriceCents)}/${row.priceUnit === "kg" ? "kg" : "t"}`;
 }
 
-/** Numero pelo qual a pesagem e procurada no OMIE. */
+/**
+ * Numero pelo qual a pesagem e procurada no OMIE. Quando o numero VISIVEL do documento ja
+ * foi conferido la, ele vem junto entre parenteses: o codigo grande e o da integracao, e
+ * digitar ele na busca do OMIE nao acha nada.
+ */
 function omieReference(row: WeighingBillingRow): string {
-  if (row.omieSalesOrderId) return `Pedido ${row.omieSalesOrderId}`;
-  if (row.omieServiceOrderId) return `OS ${row.omieServiceOrderId}`;
+  const visible = row.omieOrderNumber ? ` (nº ${row.omieOrderNumber})` : "";
+  if (row.omieSalesOrderId) return `Pedido ${row.omieSalesOrderId}${visible}`;
+  if (row.omieServiceOrderId) return `OS ${row.omieServiceOrderId}${visible}`;
   return "-";
 }
 

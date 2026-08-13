@@ -71,6 +71,7 @@ type OmieAction =
   | "list_document_types"
   | "create_order"
   | "create_and_bill_order"
+  | "check_order_billing"
   | "cancel_order"
   | "push_customer"
   | "push_carrier";
@@ -215,6 +216,14 @@ type OmieCategory = {
 
 type CreateOrderPayload = {
   localOperationId?: string;
+  /**
+   * Codigo sequencial da pesagem no KyberRock (o mesmo 000123 impresso no cupom). E o
+   * elo que o OMIE enxerga: vai no campo de dados adicionais do pedido de venda e da OS
+   * para quem abrir o registro la saber de qual pesagem ele nasceu. O `localOperationId`
+   * (UUID) continua indo na OS por ser o identificador global, mas nao serve para achar
+   * nada de olho — o codigo serve.
+   */
+  operationCode?: number | null;
   operationType: "invoice" | "internal";
   customerOmieId: number;
   productOmieId?: number;
@@ -329,6 +338,8 @@ type CreateOrderPayload = {
 
 type CreateAndBillOrderResult = {
   orderId: number;
+  /** Numero visivel do pedido no OMIE (numero_pedido); null quando o OMIE nao devolveu. */
+  orderNumber: string | null;
   omieCustomerId: number;
   omieCarrierId: number | null;
   billed: boolean;
@@ -602,17 +613,27 @@ export async function handleOmieSyncRequest(
 
     if (action === "create_order") {
       const payload = body.payload as CreateOrderPayload;
-      const { orderId, omieCustomerId, omieCarrierId } = await createOmieOrder(
+      const { orderId, orderNumber, omieCustomerId, omieCarrierId } = await createOmieOrder(
         credentials,
         payload
       );
-      return jsonResponse({ ok: true, orderId, omieCustomerId, omieCarrierId });
+      return jsonResponse({ ok: true, orderId, orderNumber, omieCustomerId, omieCarrierId });
     }
 
     if (action === "create_and_bill_order") {
       const payload = body.payload as CreateOrderPayload;
       const result = await createAndBillOmieOrder(credentials, payload);
       return jsonResponse({ ok: true, ...result });
+    }
+
+    // Volta do OMIE: quais pedidos/OS ja foram faturados la. E o unico jeito de o
+    // KyberRock saber de um faturamento feito a mao dentro do OMIE.
+    if (action === "check_order_billing") {
+      const results = await checkOmieOrdersBilling(
+        credentials,
+        body.payload as CheckOrderBillingPayload | undefined
+      );
+      return jsonResponse({ ok: true, results });
     }
 
     if (action === "cancel_order") {
@@ -2934,6 +2955,8 @@ type OmieServiceOrderResponse = {
   codigoOS?: number;
   cCodIntOS?: string;
   codigoOSIntegracao?: string;
+  /** Numero da OS como o operador a ve na tela do OMIE — distinto do nCodOS interno. */
+  cNumOS?: string;
 };
 
 /**
@@ -2951,10 +2974,27 @@ type OmieServiceOrderResponse = {
  * Cada conserto acontece no maximo uma vez por envio, entao um erro persistente continua
  * subindo (com a mensagem do OMIE) em vez de virar loop.
  */
+/**
+ * Retorno do envio do fechamento ao OMIE.
+ *
+ * `orderId` e o codigo interno (nCodPed/nCodOS) — o numero pelo qual a API referencia o
+ * registro e o que o KyberRock ja guardava. `orderNumber` e o numero que o OPERADOR ve na
+ * tela do OMIE (numero_pedido/cNumOS): sao coisas diferentes, e era so o primeiro que
+ * aparecia na conferencia de faturamento — quem procurava "11489137846" no OMIE nao
+ * achava nada. Null quando o OMIE nao devolveu o numero na inclusao; nesse caso a
+ * reconciliacao (check_order_billing) preenche depois.
+ */
+type CreatedOmieOrder = {
+  orderId: number;
+  orderNumber: string | null;
+  omieCustomerId: number;
+  omieCarrierId: number | null;
+};
+
 async function createOmieOrder(
   credentials: OmieCredentials,
   payload: CreateOrderPayload
-): Promise<{ orderId: number; omieCustomerId: number; omieCarrierId: number | null }> {
+): Promise<CreatedOmieOrder> {
   // Garante o cliente no OMIE (cadastra na hora quando ainda nao existe) antes do pedido.
   let customerOmieId = await resolveOrderCustomerOmieId(credentials, payload);
   // Boleto: quem LIGA a cobranca e a recomendacao do cadastro do cliente, nao o pedido.
@@ -3015,7 +3055,7 @@ async function submitOmieOrder(
   payload: CreateOrderPayload,
   customerOmieId: number,
   carrierOmieId: number | null
-): Promise<{ orderId: number; omieCustomerId: number; omieCarrierId: number | null }> {
+): Promise<CreatedOmieOrder> {
   const integrationCode = toOmieIntegrationCode(payload.idempotencyKey);
   // Conta corrente escolhida na operacao (meio de pagamento -> conta vinculada).
   // Prioridade: (1) nCodCC vindo do desktop; (2) resolucao pelo nome da conta
@@ -3045,6 +3085,7 @@ async function submitOmieOrder(
       throw new Error("productOmieId obrigatorio para pedido de venda");
     }
     const parcelamento = buildOrderParcelamento(payload);
+    const salesOrderAdditionalData = buildSalesOrderAdditionalData(payload);
     const buildSalesOrderBody = (invoiceEmails: string) => ({
       cabecalho: {
         codigo_pedido_integracao: integrationCode,
@@ -3075,8 +3116,12 @@ async function submitOmieOrder(
       informacoes_adicionais: {
         codigo_categoria: resolveCategoryCode(payload.omieCategoryCode),
         ...(accountCode !== null ? { codigo_conta_corrente: accountCode } : {}),
-        ...(buildTransportAdditionalData(payload.transport) !== null
-          ? { dados_adicionais_nf: buildTransportAdditionalData(payload.transport) }
+        // Dados adicionais da NF: a referencia da pesagem que originou o pedido vem
+        // primeiro, seguida do motorista/placa. Sem ela o pedido de venda chegava ao
+        // OMIE sem nenhuma pista de qual carregamento ele era — o vinculo so existia no
+        // sentido OMIE -> KyberRock (o numero do pedido guardado na operacao).
+        ...(salesOrderAdditionalData !== null
+          ? { dados_adicionais_nf: salesOrderAdditionalData }
           : {}),
         // "Enderecos de e-mail que recebem a NF" do pedido: todos os e-mails da aba
         // Fiscal do cadastro do cliente. Sem lista o campo nem vai, e o OMIE usa o
@@ -3136,7 +3181,12 @@ async function submitOmieOrder(
     if (!orderId) {
       throw new Error("OMIE nao retornou codigoPedido");
     }
-    return { orderId, omieCustomerId: customerOmieId, omieCarrierId: carrierOmieId };
+    return {
+      orderId,
+      orderNumber: extractOrderNumber(response, "numero_pedido"),
+      omieCustomerId: customerOmieId,
+      omieCarrierId: carrierOmieId
+    };
   }
 
   const serviceCodes = await resolveOmieServiceCodes(credentials);
@@ -3223,7 +3273,11 @@ async function submitOmieOrder(
       () => null
     );
     const existingId = extractServiceOrderId(existing);
-    return existingId !== null ? { nCodOS: existingId } : null;
+    if (existingId === null) return null;
+    const existingNumber = extractOrderNumber(existing, "cNumOS");
+    return existingNumber !== null
+      ? { nCodOS: existingId, cNumOS: existingNumber }
+      : { nCodOS: existingId };
   };
 
   const response = await callOmie<unknown, OmieServiceOrderResponse>(
@@ -3300,7 +3354,26 @@ async function submitOmieOrder(
   if (!orderId) {
     throw new Error("OMIE nao retornou codigoOS");
   }
-  return { orderId, omieCustomerId: customerOmieId, omieCarrierId: carrierOmieId };
+  return {
+    orderId,
+    orderNumber: extractOrderNumber(response, "cNumOS"),
+    omieCustomerId: customerOmieId,
+    omieCarrierId: carrierOmieId
+  };
+}
+
+/**
+ * Numero VISIVEL do pedido/OS na resposta do OMIE (`numero_pedido` / `cNumOS`), quando ela
+ * o traz. Nem toda inclusao devolve — o IncluirPedido costuma responder so com o codigo
+ * interno —, e por isso o valor e opcional: a reconciliacao de faturamento consulta o
+ * registro depois e preenche o que faltou.
+ */
+function extractOrderNumber(value: unknown, key: string): string | null {
+  const found = findStringByKey(value, key);
+  if (found === null) return null;
+  const trimmed = found.trim();
+  // "0" e o vazio do OMIE em campo numerico: guardar isso na operacao so poluiria a tela.
+  return trimmed.length > 0 && trimmed !== "0" ? trimmed : null;
 }
 
 async function consultServiceOrderByIntegrationCode(
@@ -3755,6 +3828,8 @@ function buildServiceItemAdditionalData(payload: CreateOrderPayload): string | n
  */
 function buildServiceOrderAdditionalData(payload: CreateOrderPayload): string {
   const parts: string[] = ["VENDA SEM VALOR FISCAL - OPERACAO INTERNA KYBERROCK"];
+  const reference = buildWeighingReference(payload);
+  if (reference !== null) parts.push(reference);
   if (payload.localOperationId) {
     parts.push(`Operacao: ${payload.localOperationId}`);
   }
@@ -3777,6 +3852,36 @@ function buildServiceOrderAdditionalData(payload: CreateOrderPayload): string {
   return truncateOmieText(parts.join(" | "), 500);
 }
 
+/**
+ * Como a pesagem se apresenta dentro do OMIE: "Pesagem KyberRock 000123". E o codigo
+ * sequencial que o operador ve na balanca e no cupom, o unico numero que serve para achar
+ * a operacao de olho — o UUID nao serve, e o numero do pedido e do OMIE, nao nosso.
+ *
+ * Null quando a operacao nao tem codigo (base antiga, antes da migracao 46, ou desktop
+ * desatualizado que ainda nao manda o campo): nesse caso o texto sai como sempre saiu.
+ */
+function buildWeighingReference(payload: CreateOrderPayload): string | null {
+  const code = payload.operationCode;
+  if (typeof code !== "number" || !Number.isFinite(code) || code <= 0) return null;
+  return `Pesagem KyberRock ${String(Math.floor(code)).padStart(6, "0")}`;
+}
+
+/**
+ * Dados adicionais da NF do pedido de venda: referencia da pesagem + motorista/placa.
+ *
+ * A referencia vem primeiro de proposito — e o que fecha o vinculo no sentido
+ * KyberRock -> OMIE. O outro sentido ja existia (a operacao guarda o codigo do pedido),
+ * mas quem abria o pedido no OMIE nao tinha como voltar ate o carregamento.
+ */
+function buildSalesOrderAdditionalData(payload: CreateOrderPayload): string | null {
+  const parts: string[] = [];
+  const reference = buildWeighingReference(payload);
+  if (reference !== null) parts.push(reference);
+  const transportData = buildTransportAdditionalData(payload.transport);
+  if (transportData !== null) parts.push(transportData);
+  return parts.length > 0 ? truncateOmieText(parts.join(" - "), 500) : null;
+}
+
 /** Corta textos livres antes de enviar ao OMIE, que rejeita campos acima do limite. */
 function truncateOmieText(value: string, maxLength: number): string {
   return value.length > maxLength ? value.slice(0, maxLength) : value;
@@ -3790,7 +3895,10 @@ async function createAndBillOmieOrder(
     throw new Error("Faturamento automatico disponivel apenas para pedido de venda fiscal");
   }
 
-  const { orderId, omieCustomerId, omieCarrierId } = await createOmieOrder(credentials, payload);
+  const { orderId, orderNumber, omieCustomerId, omieCarrierId } = await createOmieOrder(
+    credentials,
+    payload
+  );
   const billing = await billSalesOrder(
     credentials,
     orderId,
@@ -3805,6 +3913,9 @@ async function createAndBillOmieOrder(
 
   return {
     orderId,
+    // A consulta pos-faturamento e a chance mais confiavel de pegar o numero visivel:
+    // o IncluirPedido costuma responder so com o codigo interno.
+    orderNumber: orderNumber ?? extractOrderNumber(consultedOrder, "numero_pedido"),
     omieCustomerId,
     omieCarrierId,
     billed: true,
@@ -3869,18 +3980,42 @@ function isOmieBlockedCancelFault(message: string): boolean {
   );
 }
 
-// Etapa >= "60" no OMIE indica pedido faturado; nesse caso nao tentamos excluir.
-function isSalesOrderBilled(consult: unknown): boolean {
+/**
+ * O registro ja foi FATURADO no OMIE?
+ *
+ * Duas evidencias, nesta ordem: a etapa do kanban (o KyberRock cria tudo na "50 -
+ * Faturar"; faturar empurra para 60 ou alem) e, quando o OMIE nao devolve etapa, o
+ * numero/chave do documento fiscal emitido. Vale para o pedido de venda (NF-e) e para a
+ * ordem de servico (NFS-e), que usam nomes de campo diferentes para a mesma coisa.
+ *
+ * Serve a dois usos: barrar o cancelamento do que ja virou nota e, agora, virar a
+ * situacao da pesagem para "Faturada" quando quem faturou foi uma pessoa dentro do OMIE.
+ */
+function isOmieOrderBilled(consult: unknown): boolean {
   const etapa = findStringByKey(consult, "etapa") ?? findStringByKey(consult, "cEtapa");
   if (etapa && /^\d+$/.test(etapa.trim())) {
     return Number(etapa.trim()) >= 60;
   }
-  // Sinais de NF emitida no bloco de informacoes.
-  const nfKey =
+  return extractOmieInvoiceNumber(consult) !== null;
+}
+
+/**
+ * Numero do documento fiscal emitido no faturamento, quando ha. NF-e no pedido de venda,
+ * NFS-e na ordem de servico — o OMIE nomeia o campo de um jeito em cada modulo. Alimenta
+ * tanto a deteccao do faturamento quanto a mensagem que a conferencia mostra na linha.
+ */
+function extractOmieInvoiceNumber(consult: unknown): string | null {
+  const number =
+    findStringByKey(consult, "numero_nfse") ??
+    findStringByKey(consult, "cNumNFSe") ??
+    findStringByKey(consult, "nNumNFSe") ??
     findStringByKey(consult, "numero_nfe") ??
     findStringByKey(consult, "nNF") ??
-    findStringByKey(consult, "chave_nfe");
-  return nfKey !== null && nfKey.trim().length > 0;
+    findStringByKey(consult, "chave_nfe") ??
+    findStringByKey(consult, "cChaveNFe");
+  if (number === null) return null;
+  const trimmed = number.trim();
+  return trimmed.length > 0 && trimmed !== "0" ? trimmed : null;
 }
 
 type CancelOrderPayload = {
@@ -3918,7 +4053,7 @@ async function cancelOmieOrder(
     throw error;
   }
 
-  if (isSales && isSalesOrderBilled(consult)) {
+  if (isSales && isOmieOrderBilled(consult)) {
     return {
       ok: true,
       cancelled: false,
@@ -3950,6 +4085,99 @@ async function cancelOmieOrder(
     }
     throw error;
   }
+}
+
+type CheckOrderBillingPayload = {
+  orders?: Array<{
+    operationId: string;
+    orderType: "sales" | "service";
+    omieOrderId: number;
+  }>;
+};
+
+/**
+ * Situacao de UM pedido/OS conferida no OMIE. `found: false` = o registro nao existe mais
+ * la (excluido por alguem); o desktop nao mexe na operacao nesse caso, so registra.
+ */
+type OrderBillingState = {
+  operationId: string;
+  orderType: "sales" | "service";
+  omieOrderId: number;
+  found: boolean;
+  billed: boolean;
+  /** Numero visivel do pedido/OS no OMIE, para a conferencia mostrar o que se procura la. */
+  orderNumber: string | null;
+  /** Numero da NF-e/NFS-e emitida no faturamento, quando o OMIE ja o devolve. */
+  invoiceNumber: string | null;
+  documentUrl: string | null;
+  error: string | null;
+};
+
+/**
+ * Quantos registros uma passada confere. Cada um custa uma chamada ao OMIE, que tem limite
+ * de requisicoes por minuto — e a fila de pedidos do fechamento usa a mesma cota. O
+ * desktop ja manda os mais antigos primeiro, entao o que sobrar cai na proxima
+ * sincronizacao em vez de estourar o limite de uma vez.
+ */
+const CHECK_ORDER_BILLING_MAX = 40;
+
+/**
+ * Confere no OMIE quais pedidos/OS ja foram faturados.
+ *
+ * Quem fatura e uma PESSOA, dentro do OMIE, na coluna "Faturar" — o KyberRock nunca fica
+ * sabendo por conta propria, e por isso a pesagem ficava para sempre em "No OMIE, falta
+ * faturar" mesmo depois da nota sair. Esta consulta e o caminho de volta: o desktop manda
+ * os pedidos/OS que ainda nao constam faturados aqui, e cada um volta com a situacao real
+ * la, o numero visivel e o documento emitido.
+ *
+ * Uma falha isolada nao derruba a passada: o registro volta com `error` preenchido e a
+ * proxima sincronizacao tenta de novo.
+ */
+async function checkOmieOrdersBilling(
+  credentials: OmieCredentials,
+  payload: CheckOrderBillingPayload | undefined
+): Promise<OrderBillingState[]> {
+  const orders = (payload?.orders ?? []).slice(0, CHECK_ORDER_BILLING_MAX);
+  const results: OrderBillingState[] = [];
+
+  for (const order of orders) {
+    const isSales = order.orderType === "sales";
+    const base = {
+      operationId: order.operationId,
+      orderType: order.orderType,
+      omieOrderId: order.omieOrderId
+    };
+    try {
+      const consult = isSales
+        ? await consultSalesOrder(credentials, order.omieOrderId)
+        : await consultServiceOrder(credentials, order.omieOrderId);
+      results.push({
+        ...base,
+        found: true,
+        billed: isOmieOrderBilled(consult),
+        orderNumber: extractOrderNumber(consult, isSales ? "numero_pedido" : "cNumOS"),
+        invoiceNumber: extractOmieInvoiceNumber(consult),
+        documentUrl: extractDocumentUrl(consult),
+        error: null
+      });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      // Excluido no OMIE: nao e erro de rede nem falha a re-tentar — e um fato sobre o
+      // registro, e o desktop precisa distinguir os dois para nao insistir para sempre.
+      const missing = isOmieNotFoundFault(message);
+      results.push({
+        ...base,
+        found: !missing,
+        billed: false,
+        orderNumber: null,
+        invoiceNumber: null,
+        documentUrl: null,
+        error: missing ? null : message
+      });
+    }
+  }
+
+  return results;
 }
 
 async function consultSalesOrderByIntegrationCode(

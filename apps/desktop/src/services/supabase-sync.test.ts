@@ -26,6 +26,7 @@ import {
   readOmiePullState,
   readStoredSupabaseConfig,
   rearmOmieBillingForCustomer,
+  reconcileOmieBillingFromOmie,
   syncCustomerAdvancesFromCloud,
   syncOmieReferenceDataFromCloud,
   writeStoredSupabaseConfig
@@ -2686,7 +2687,287 @@ describe("supabase sync", () => {
       database.close();
     }
   });
+
+  // ── Volta do faturamento do OMIE ──────────────────────────────────────────────────
+  //
+  // Quem fatura e uma pessoa dentro do OMIE, na coluna "Faturar". Sem perguntar, a
+  // pesagem ficaria em "No OMIE, falta faturar" mesmo com a nota emitida ha semanas.
+
+  it("vira para faturada a pesagem que o OMIE ja faturou", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-faturada", salesOrderId: 11489137846 });
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          ok: true,
+          results: [
+            {
+              operationId: "op-faturada",
+              orderType: "sales",
+              omieOrderId: 11489137846,
+              found: true,
+              billed: true,
+              orderNumber: "1234",
+              invoiceNumber: "987",
+              documentUrl: "https://omie.example/danfe.pdf",
+              error: null
+            }
+          ]
+        }
+      });
+
+      const result = await reconcileOmieBillingFromOmie(database, identity);
+
+      expect(invokeMock).toHaveBeenCalledWith("omie-sync", {
+        body: expect.objectContaining({
+          action: "check_order_billing",
+          payload: {
+            orders: [{ operationId: "op-faturada", orderType: "sales", omieOrderId: 11489137846 }]
+          }
+        })
+      });
+      expect(result).toMatchObject({ checked: 1, billed: 1, errors: [] });
+      const row = database
+        .prepare(
+          `SELECT omie_billing_status, omie_billing_message, omie_order_number,
+                  omie_document_url, omie_billed_at, omie_billing_checked_at, updated_at
+             FROM weighing_operations WHERE id = 'op-faturada'`
+        )
+        .get() as Record<string, string | null>;
+      expect(row.omie_billing_status).toBe("billed");
+      expect(row.omie_billing_message).toBe("Faturado no OMIE — NF-e 987.");
+      expect(row.omie_order_number).toBe("1234");
+      expect(row.omie_document_url).toBe("https://omie.example/danfe.pdf");
+      expect(row.omie_billed_at).not.toBeNull();
+      expect(row.omie_billing_checked_at).not.toBeNull();
+      // As colunas de faturamento sao locais: bumpar updated_at republicaria a operacao
+      // inteira na nuvem a toa — na primeira passada, o acervo inteiro de uma vez.
+      expect(row.updated_at).toBe(RECENT_ISO);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("marca a ordem de servico interna faturada como faturada tambem", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, {
+        id: "op-interna",
+        serviceOrderId: 11489138183,
+        operationType: "internal"
+      });
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          ok: true,
+          results: [
+            {
+              operationId: "op-interna",
+              orderType: "service",
+              omieOrderId: 11489138183,
+              found: true,
+              billed: true,
+              orderNumber: "000045",
+              invoiceNumber: null,
+              documentUrl: null,
+              error: null
+            }
+          ]
+        }
+      });
+
+      const result = await reconcileOmieBillingFromOmie(database, identity);
+
+      // A OS vai como "service": a interna nao gera pedido de venda.
+      const [, options] = invokeMock.mock.calls[0] as [
+        string,
+        { body: { payload: { orders: Array<Record<string, unknown>> } } }
+      ];
+      expect(options.body.payload.orders[0].orderType).toBe("service");
+      expect(result).toMatchObject({ billed: 1 });
+      const row = database
+        .prepare(
+          "SELECT omie_billing_status, omie_billing_message FROM weighing_operations WHERE id = 'op-interna'"
+        )
+        .get() as Record<string, string | null>;
+      expect(row.omie_billing_status).toBe("billed");
+      expect(row.omie_billing_message).toBe("Faturado no OMIE.");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("explica na operacao o pedido que sumiu do OMIE sem dar por faturado", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-sumida", salesOrderId: 555 });
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          ok: true,
+          results: [
+            {
+              operationId: "op-sumida",
+              orderType: "sales",
+              omieOrderId: 555,
+              found: false,
+              billed: false,
+              orderNumber: null,
+              invoiceNumber: null,
+              documentUrl: null,
+              error: null
+            }
+          ]
+        }
+      });
+
+      const result = await reconcileOmieBillingFromOmie(database, identity);
+
+      expect(result).toMatchObject({ checked: 1, billed: 0 });
+      const row = database
+        .prepare(
+          "SELECT omie_billing_status, omie_billing_message FROM weighing_operations WHERE id = 'op-sumida'"
+        )
+        .get() as Record<string, string | null>;
+      // A pesagem REALMENTE nao foi faturada, e agora nem pedido tem: continua pendente.
+      expect(row.omie_billing_status).toBeNull();
+      expect(row.omie_billing_message).toBe("Pedido 555 nao existe mais no OMIE.");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("confere por rodizio: quem nunca foi conferido vem antes do conferido ha mais tempo", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-nunca", salesOrderId: 1 });
+      insertSentOperation(database, { id: "op-antiga", salesOrderId: 2 });
+      insertSentOperation(database, { id: "op-recente", salesOrderId: 3 });
+      database
+        .prepare("UPDATE weighing_operations SET omie_billing_checked_at = ? WHERE id = ?")
+        .run("2026-01-01T00:00:00.000Z", "op-antiga");
+      database
+        .prepare("UPDATE weighing_operations SET omie_billing_checked_at = ? WHERE id = ?")
+        .run("2026-08-01T00:00:00.000Z", "op-recente");
+      invokeMock.mockResolvedValue({ error: null, data: { ok: true, results: [] } });
+
+      await reconcileOmieBillingFromOmie(database, identity, { limit: 1, force: true });
+      const [, first] = invokeMock.mock.calls[0] as [
+        string,
+        { body: { payload: { orders: Array<{ operationId: string }> } } }
+      ];
+      expect(first.body.payload.orders.map((order) => order.operationId)).toEqual(["op-nunca"]);
+
+      // Sem resposta o rodizio nao anda: a proxima passada volta na mesma operacao. E o
+      // que garante que uma falha do OMIE nao pula ninguem da fila.
+      await reconcileOmieBillingFromOmie(database, identity, { limit: 2, force: true });
+      const [, second] = invokeMock.mock.calls[1] as [
+        string,
+        { body: { payload: { orders: Array<{ operationId: string }> } } }
+      ];
+      expect(second.body.payload.orders.map((order) => order.operationId)).toEqual([
+        "op-nunca",
+        "op-antiga"
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("respeita o intervalo minimo entre conferencias", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-freio", salesOrderId: 1 });
+      invokeMock.mockResolvedValue({ error: null, data: { ok: true, results: [] } });
+
+      await reconcileOmieBillingFromOmie(database, identity);
+      // syncCloudNow roda em segundo plano a cada fechamento e a cada alteracao de
+      // operacao: sem o freio, uma pedreira movimentada gastaria a cota do OMIE
+      // perguntando de novo pelas mesmas pesagens.
+      const second = await reconcileOmieBillingFromOmie(database, identity);
+
+      expect(second).toEqual({ checked: 0, billed: 0, skipped: true, errors: [] });
+      expect(invokeMock).toHaveBeenCalledTimes(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao pergunta pela pesagem ja faturada nem pela cancelada", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-ja-faturada", salesOrderId: 1 });
+      insertSentOperation(database, { id: "op-cancelada", salesOrderId: 2 });
+      insertSentOperation(database, { id: "op-sem-pedido" });
+      database
+        .prepare("UPDATE weighing_operations SET omie_billing_status = 'billed' WHERE id = ?")
+        .run("op-ja-faturada");
+      database
+        .prepare("UPDATE weighing_operations SET status = 'cancelled' WHERE id = ?")
+        .run("op-cancelada");
+
+      const result = await reconcileOmieBillingFromOmie(database, identity);
+
+      // Nenhuma sobra: faturada e estado final, cancelada saiu do fluxo e a que nunca
+      // chegou ao OMIE nao tem o que conferir la.
+      expect(result).toEqual({ checked: 0, billed: 0, errors: [] });
+      expect(invokeMock).not.toHaveBeenCalled();
+    } finally {
+      database.close();
+    }
+  });
 });
+
+/** Data recente fixa: a reconciliacao so olha os ultimos 120 dias. */
+const RECENT_ISO = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+/** Pesagem fechada que ja tem pedido (ou OS) no OMIE e ainda nao consta faturada. */
+function insertSentOperation(
+  database: DesktopDatabase,
+  options: {
+    id: string;
+    salesOrderId?: number | null;
+    serviceOrderId?: number | null;
+    operationType?: "invoice" | "internal";
+  }
+): void {
+  database
+    .prepare(
+      `INSERT INTO weighing_operations (
+        id, company_id, unit_id, device_id, status, operation_type,
+        entry_weight_kg, exit_weight_kg, net_weight_kg, unit_price_cents,
+        product_total_cents, total_cents, omie_sales_order_id, omie_service_order_id,
+        created_at, updated_at
+      ) VALUES (?, 'company-1', 'unit-1', 'device-1', 'synced', ?, 20, 10, 10, 2500, 25000, 25000, ?, ?, ?, ?)`
+    )
+    .run(
+      options.id,
+      options.operationType ?? "invoice",
+      options.salesOrderId ?? null,
+      options.serviceOrderId ?? null,
+      RECENT_ISO,
+      RECENT_ISO
+    );
+}
 
 function createDatabase(): DesktopDatabase {
   const database = openDesktopDatabase({ databasePath: ":memory:" });

@@ -52,6 +52,11 @@ export interface WeighingBillingRow {
   operationTypeLabel: string;
   omieSalesOrderId: number | null;
   omieServiceOrderId: number | null;
+  /**
+   * Numero do pedido/OS como ele aparece DENTRO do OMIE. Os dois campos acima sao o
+   * codigo interno da API; e este que se digita na busca do OMIE para achar o documento.
+   */
+  omieOrderNumber: string | null;
   omieBilledAt: string | null;
   situation: WeighingBillingSituation;
   situationLabel: string;
@@ -129,6 +134,7 @@ interface WeighingBillingSourceRow {
   total_cents: number | null;
   omie_sales_order_id: number | null;
   omie_service_order_id: number | null;
+  omie_order_number: string | null;
   omie_billing_status: string | null;
   omie_billing_message: string | null;
   omie_billed_at: string | null;
@@ -187,7 +193,7 @@ export class WeighingBillingReportService {
            COALESCE(v.plate, o.remote_plate) as plate,
            o.net_weight_kg, o.unit_price_cents, o.price_unit,
            o.product_total_cents, o.freight_total_cents, o.total_cents,
-           o.omie_sales_order_id, o.omie_service_order_id,
+           o.omie_sales_order_id, o.omie_service_order_id, o.omie_order_number,
            o.omie_billing_status, o.omie_billing_message, o.omie_billed_at
          FROM weighing_operations o
          LEFT JOIN customers cust ON cust.id = o.customer_id
@@ -231,6 +237,7 @@ function mapRow(row: WeighingBillingSourceRow): WeighingBillingRow {
     operationTypeLabel: row.operation_type === "internal" ? "Interna" : "Com nota",
     omieSalesOrderId: row.omie_sales_order_id,
     omieServiceOrderId: row.omie_service_order_id,
+    omieOrderNumber: (row.omie_order_number ?? "").trim() || null,
     omieBilledAt: row.omie_billed_at,
     situation,
     situationLabel: WEIGHING_BILLING_SITUATION_LABEL[situation],
@@ -268,7 +275,10 @@ function matchesSearch(row: WeighingBillingRow, search: string): boolean {
     row.plate,
     row.operationCode === null ? "" : String(row.operationCode),
     row.omieSalesOrderId === null ? "" : String(row.omieSalesOrderId),
-    row.omieServiceOrderId === null ? "" : String(row.omieServiceOrderId)
+    row.omieServiceOrderId === null ? "" : String(row.omieServiceOrderId),
+    // Tambem pelo numero que o OMIE mostra: quem chega aqui vindo da tela do OMIE tem
+    // esse numero na mao, nao o codigo interno.
+    row.omieOrderNumber ?? ""
   ].some((field) => field.toLowerCase().includes(term));
 }
 

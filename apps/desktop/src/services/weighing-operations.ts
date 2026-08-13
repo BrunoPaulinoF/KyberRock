@@ -250,6 +250,12 @@ export interface WeighingOperationSummary {
   omieSalesOrderId: number | null;
   /** Numero da ordem de servico criada no OMIE para a operacao interna (sem nota). */
   omieServiceOrderId: number | null;
+  /**
+   * Numero do pedido/OS como o OMIE o mostra na tela — distinto do codigo interno acima,
+   * que e o da API. E por este que se procura o documento dentro do OMIE. Null enquanto o
+   * OMIE nao devolveu (a reconciliacao de faturamento preenche depois).
+   */
+  omieOrderNumber: string | null;
   omieBillingStatus: string | null;
   omieBillingMessage: string | null;
   omieBilledAt: string | null;
@@ -300,6 +306,7 @@ interface OperationRow {
   quotation_id: string | null;
   omie_sales_order_id: number | null;
   omie_service_order_id: number | null;
+  omie_order_number: string | null;
   omie_billing_status: string | null;
   omie_billing_message: string | null;
   omie_billed_at: string | null;
@@ -1503,6 +1510,12 @@ export interface OmieOrderTransport {
 
 export interface OmieBillingJobPayload {
   operationId: string;
+  /**
+   * Codigo sequencial da pesagem (o 000123 do cupom). Vai nos dados adicionais do pedido
+   * de venda e da OS para que, dentro do OMIE, de para voltar ate o carregamento que
+   * originou o documento. Null nas operacoes anteriores a migracao 46.
+   */
+  operationCode: number | null;
   operationType: OperationType;
   /** Codigo OMIE do cliente. 0 quando ainda nao vinculado — o edge cria pelo campo `customer`. */
   customerOmieId: number;
@@ -1676,11 +1689,12 @@ export function buildOmieBillingJob(
 ): BuiltOmieBillingJob | null {
   const row = database
     .prepare(
-      "SELECT unit_id, customer_id, product_id, vehicle_id, carrier_id, payment_term_id, payment_method_id, freight_type, exit_weight_captured_at FROM weighing_operations WHERE id = ?"
+      "SELECT unit_id, operation_code, customer_id, product_id, vehicle_id, carrier_id, payment_term_id, payment_method_id, freight_type, exit_weight_captured_at FROM weighing_operations WHERE id = ?"
     )
     .get(operationId) as
     | {
         unit_id: string;
+        operation_code: number | null;
         customer_id: string | null;
         product_id: string | null;
         vehicle_id: string | null;
@@ -1838,6 +1852,7 @@ export function buildOmieBillingJob(
     ),
     payload: {
       operationId,
+      operationCode: row.operation_code ?? null,
       operationType: operation.operationType,
       customerOmieId: omieCustomerId ?? 0,
       localCustomerId: row.customer_id,
@@ -2207,7 +2222,8 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.settle_from_advance, o.omie_advance_settle_cents,
-        o.omie_sales_order_id, o.omie_service_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_sales_order_id, o.omie_service_order_id, o.omie_order_number,
+        o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id,
@@ -2256,7 +2272,8 @@ export function listCanceledWeighingOperations(
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.settle_from_advance, o.omie_advance_settle_cents,
-        o.omie_sales_order_id, o.omie_service_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_sales_order_id, o.omie_service_order_id, o.omie_order_number,
+        o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id,
@@ -2303,7 +2320,8 @@ export function listClosedWeighingOperations(
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.settle_from_advance, o.omie_advance_settle_cents,
-        o.omie_sales_order_id, o.omie_service_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_sales_order_id, o.omie_service_order_id, o.omie_order_number,
+        o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id,
@@ -2445,7 +2463,8 @@ export function getWeighingOperation(
         o.product_total_cents, o.freight_total_cents, o.freight_json, o.freight_type, o.total_cents,
         o.deduct_freight_from_credit, o.product_credit_debit_cents, o.freight_credit_debit_cents, o.quotation_id,
         o.settle_from_advance, o.omie_advance_settle_cents,
-        o.omie_sales_order_id, o.omie_service_order_id, o.omie_billing_status, o.omie_billing_message,
+        o.omie_sales_order_id, o.omie_service_order_id, o.omie_order_number,
+        o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
         o.cancel_reason, o.created_at, o.updated_at,
         c.id AS customer_id,
@@ -3375,6 +3394,7 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     quotationId: row.quotation_id,
     omieSalesOrderId: row.omie_sales_order_id,
     omieServiceOrderId: row.omie_service_order_id ?? null,
+    omieOrderNumber: row.omie_order_number ?? null,
     omieBillingStatus: row.omie_billing_status,
     omieBillingMessage: row.omie_billing_message,
     omieBilledAt: row.omie_billed_at,

@@ -1497,6 +1497,45 @@ describe("weighing operations", () => {
     }
   });
 
+  // O codigo sequencial da pesagem vai junto do pedido/OS para virar texto de vinculacao
+  // nos dados adicionais do documento no OMIE: sem ele, quem abre o pedido la nao tem
+  // como voltar ate o carregamento que o originou.
+  it("buildOmieBillingJob leva o codigo sequencial da pesagem no payload do pedido", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      const operationCode = database
+        .prepare("SELECT operation_code FROM weighing_operations WHERE id = ?")
+        .pluck()
+        .get(operation.id) as number;
+
+      expect(operationCode).toBeGreaterThan(0);
+      expect(buildOmieBillingJob(database, operation.id)!.payload.operationCode).toBe(
+        operationCode
+      );
+    } finally {
+      database.close();
+    }
+  });
+
   // A aba Fiscal do cadastro do cliente alimenta os "Enderecos de e-mail que recebem a NF"
   // da propria operacao no OMIE: o espelho no cadastro (email_fatura) nao preenchia esse
   // campo do pedido, entao a tela de e-mails da operacao nascia vazia.

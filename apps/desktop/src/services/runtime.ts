@@ -141,6 +141,7 @@ import {
   pushOmieCustomersToCloud,
   processOmieSyncQueue,
   processFiscalBillingNow,
+  reconcileOmieBillingFromOmie,
   rearmOmieBillingForCustomer,
   getSupabaseSyncStatus,
   isSupabaseInitialized,
@@ -1654,6 +1655,20 @@ export class DesktopRuntime {
       } catch (error) {
         failed++;
         errors.push(`Fila OMIE: ${error instanceof Error ? error.message : "erro desconhecido"}`);
+      }
+
+      // Volta do OMIE: quem faturou o pedido/OS foi uma pessoa la dentro, e sem
+      // perguntar a pesagem ficaria em "No OMIE, falta faturar" para sempre. Um lote por
+      // ciclo, por rodizio. Nunca derruba a sincronizacao: o cadastro e as operacoes
+      // valem mais do que saber a situacao de faturamento agora.
+      try {
+        const billingCheck = await reconcileOmieBillingFromOmie(this.database, identity);
+        synced += billingCheck.billed;
+        errors.push(...billingCheck.errors);
+      } catch (error) {
+        errors.push(
+          `Conferencia de faturamento OMIE: ${error instanceof Error ? error.message : "erro desconhecido"}`
+        );
       }
 
       // Reconciliacao: toda operacao cuja versao local esta na frente do que a

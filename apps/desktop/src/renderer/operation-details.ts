@@ -247,6 +247,9 @@ export function buildOperationDetailSections(
           label: "Ordem de servico",
           value: operation.omieServiceOrderId ? String(operation.omieServiceOrderId) : "—"
         },
+        // Os dois campos acima sao o codigo da integracao (nCodPed/nCodOS). Este e o
+        // numero que o OMIE mostra na tela — o que se digita na busca de la.
+        { label: "Numero no OMIE", value: operation.omieOrderNumber || "—" },
         { label: "Status do faturamento", value: operation.omieBillingStatus || "—" },
         {
           label: "Faturada em",

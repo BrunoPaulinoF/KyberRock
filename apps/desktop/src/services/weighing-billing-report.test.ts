@@ -75,6 +75,7 @@ interface OperationSeed {
   serviceOrderId?: number | null;
   billingStatus?: string | null;
   billingMessage?: string | null;
+  orderNumber?: string | null;
   deletedAt?: string | null;
 }
 
@@ -86,7 +87,7 @@ function insertOperations(db: Database, seeds: OperationSeed[]): void {
          customer_id, product_id, vehicle_id,
          entry_weight_kg, exit_weight_kg, net_weight_kg, unit_price_cents, price_unit,
          product_total_cents, freight_total_cents, total_cents,
-         omie_sales_order_id, omie_service_order_id,
+         omie_sales_order_id, omie_service_order_id, omie_order_number,
          omie_billing_status, omie_billing_message,
          entry_weight_captured_at, exit_weight_captured_at,
          deleted_at, created_at, updated_at
@@ -95,7 +96,7 @@ function insertOperations(db: Database, seeds: OperationSeed[]): void {
          ?, ?, 'veh-1',
          10000, ?, ?, 50000, 'ton',
          ?, ?, ?,
-         ?, ?,
+         ?, ?, ?,
          ?, ?,
          datetime(?), datetime(?),
          ?, datetime(?), datetime(?)
@@ -115,6 +116,7 @@ function insertOperations(db: Database, seeds: OperationSeed[]): void {
       seed.totalCents,
       seed.salesOrderId ?? null,
       seed.serviceOrderId ?? null,
+      seed.orderNumber ?? null,
       seed.billingStatus ?? null,
       seed.billingMessage ?? null,
       seed.createdAt,
@@ -464,10 +466,20 @@ describe("resolveSituation", () => {
     expect(
       resolveSituation({ ...base, omie_service_order_id: null, omie_billing_status: null })
     ).toBe("pending");
-    // A interna nunca vira "billed": ela nao gera pedido de venda.
+  });
+
+  it("le a interna ja faturada no OMIE como faturada", () => {
+    // A OS tambem e faturada dentro do OMIE (NFS-e), e a reconciliacao com o OMIE marca
+    // 'billed' nela como marca no pedido de venda. Antes a interna ficava presa em "No
+    // OMIE, falta faturar" mesmo depois da nota de servico sair.
     expect(
-      resolveSituation({ ...base, omie_service_order_id: null, omie_billing_status: "billed" })
-    ).toBe("pending");
+      resolveSituation({
+        operation_type: "internal",
+        omie_sales_order_id: null,
+        omie_service_order_id: 9,
+        omie_billing_status: "billed"
+      })
+    ).toBe("billed");
   });
 });
 
@@ -507,6 +519,40 @@ describe("documentos da conferencia", () => {
     expect(sheet).toContain("Pesagem a pesagem");
     expect(sheet).toContain("Pedido 5002");
     expect(sheet).toContain("OS 7001");
+  });
+
+  // O codigo grande da coluna e o da INTEGRACAO (nCodPed/nCodOS); digitar ele na busca do
+  // OMIE nao acha nada. Quando a reconciliacao ja descobriu o numero visivel, ele entra ao
+  // lado — e e por ele que se procura o documento la.
+  it("mostra o numero visivel do pedido ao lado do codigo da integracao", () => {
+    const db = createDatabase();
+    setupBaseData(db);
+    insertOperations(db, [
+      {
+        id: "op-numero",
+        code: 201,
+        customer: "cust-1",
+        product: "prod-1",
+        net: 15000,
+        productCents: 750000,
+        freightCents: 0,
+        totalCents: 750000,
+        createdAt: "2026-06-02 08:00:00",
+        salesOrderId: 11489137846,
+        orderNumber: "1234"
+      }
+    ]);
+    const report = service(db).getReport("2026-06-01", "2026-06-30", "unit-1");
+
+    expect(report.rows[0].omieOrderNumber).toBe("1234");
+    expect(
+      renderWeighingBillingReportSpreadsheet(report, new Date("2026-07-01T12:00:00Z"))
+    ).toContain("Pedido 11489137846 (nº 1234)");
+    // E a busca livre tambem aceita esse numero: quem chega aqui vindo da tela do OMIE
+    // tem ele na mao, nao o codigo da integracao.
+    expect(
+      service(db).getReport("2026-06-01", "2026-06-30", "unit-1", { search: "1234" }).rows
+    ).toHaveLength(1);
   });
 
   it("nomeia o arquivo pelo escopo e pelo periodo", () => {

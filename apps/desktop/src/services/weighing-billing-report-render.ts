@@ -187,10 +187,15 @@ function rowCells(row: WeighingBillingRow): string[] {
   ];
 }
 
-/** Numero pelo qual a pesagem e procurada no OMIE — e o elo entre os dois sistemas. */
+/**
+ * Numero pelo qual a pesagem e procurada no OMIE — e o elo entre os dois sistemas. O
+ * numero visivel do documento acompanha o codigo da integracao quando ja e conhecido; e
+ * ele que serve na busca do OMIE.
+ */
 function omieReference(row: WeighingBillingRow): string {
-  if (row.omieSalesOrderId) return `Pedido ${row.omieSalesOrderId}`;
-  if (row.omieServiceOrderId) return `OS ${row.omieServiceOrderId}`;
+  const visible = row.omieOrderNumber ? ` (nº ${row.omieOrderNumber})` : "";
+  if (row.omieSalesOrderId) return `Pedido ${row.omieSalesOrderId}${visible}`;
+  if (row.omieServiceOrderId) return `OS ${row.omieServiceOrderId}${visible}`;
   return "-";
 }
 
