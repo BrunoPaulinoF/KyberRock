@@ -16,6 +16,7 @@ import type {
 import type { OmieCustomerReadiness } from "../services/omie-customer-readiness";
 import type { FreightModality } from "../services/freight";
 import type { CustomerFreightRule as CustomerFreightRuleView } from "../services/customer-freight-rules";
+import type { CustomerFutureBillingInvoice as CustomerFutureBillingInvoiceView } from "../services/customer-future-billing";
 import type {
   CloudBootstrapResult,
   CustomerAdvancesSyncResult,
@@ -232,6 +233,20 @@ export interface KyberRockDesktopApi {
   }) => Promise<unknown>;
   removeCustomerFreightRule: (ruleId: string) => Promise<void>;
   removeCustomerFreightModality: (ruleId: string, modality: FreightModality) => Promise<void>;
+  /**
+   * Notas de venda para ENTREGA FUTURA ja emitidas contra o cliente. Uma por tipo de
+   * produto (a nota de rachao nao vale para a brita); `productId` nulo e a que vale para
+   * qualquer produto dele.
+   */
+  getCustomerFutureBillingInvoices: (
+    customerId: string
+  ) => Promise<CustomerFutureBillingInvoiceView[]>;
+  setCustomerFutureBillingInvoice: (input: {
+    customerId: string;
+    productId?: string | null;
+    nfeNumber: string;
+  }) => Promise<CustomerFutureBillingInvoiceView>;
+  removeCustomerFutureBillingInvoice: (invoiceId: string) => Promise<void>;
   listWindowsPrinters: () => Promise<WindowsPrinterSummary[]>;
   configureReceiptPrintProfile: (
     input: Omit<ConfigureReceiptPrintProfileInput, "identity">

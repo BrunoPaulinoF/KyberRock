@@ -72,6 +72,12 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:remove-customer-freight-rule", ruleId),
   removeCustomerFreightModality: (ruleId: string, modality: string) =>
     ipcRenderer.invoke("desktop:remove-customer-freight-modality", ruleId, modality),
+  getCustomerFutureBillingInvoices: (customerId: string) =>
+    ipcRenderer.invoke("desktop:get-customer-future-billing-invoices", customerId),
+  setCustomerFutureBillingInvoice: (input: unknown) =>
+    ipcRenderer.invoke("desktop:set-customer-future-billing-invoice", input),
+  removeCustomerFutureBillingInvoice: (invoiceId: string) =>
+    ipcRenderer.invoke("desktop:remove-customer-future-billing-invoice", invoiceId),
   listWindowsPrinters: () => ipcRenderer.invoke("desktop:list-windows-printers"),
   configureReceiptPrintProfile: (input: unknown) =>
     ipcRenderer.invoke("desktop:configure-receipt-print-profile", input),

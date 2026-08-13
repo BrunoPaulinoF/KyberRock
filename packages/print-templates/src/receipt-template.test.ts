@@ -93,6 +93,91 @@ describe("buildReceiptLines", () => {
     expect(buildReceiptLines(baseInput()).join("\n")).not.toContain("OBS.:");
   });
 
+  it("prints the future-billing invoice the load is delivering", () => {
+    const lines = buildReceiptLines({
+      ...baseInput(),
+      futureBillingNfeNumber: "12345"
+    });
+
+    const reference = lines.find((line) => line.startsWith("REMESSA REF."));
+    expect(reference).toBeDefined();
+    expect(lines.join(" ")).toContain(
+      "REMESSA REF. A NF-E DE FATURAMENTO FUTURO N. 12345 (VENDA PARA ENTREGA FUTURA)"
+    );
+  });
+
+  it("leaves the future-billing line out when the customer has none", () => {
+    // O caso comum: cliente sem entrega futura em aberto imprime o cupom de sempre.
+    expect(buildReceiptLines(baseInput()).join("\n")).not.toContain("FATURAMENTO FUTURO");
+    expect(
+      buildReceiptLines({ ...baseInput(), futureBillingNfeNumber: "   " }).join("\n")
+    ).not.toContain("FATURAMENTO FUTURO");
+    expect(
+      buildReceiptLines({ ...baseInput(), futureBillingNfeNumber: null }).join("\n")
+    ).not.toContain("FATURAMENTO FUTURO");
+  });
+
+  it("never prints the future-billing reference on an internal (non-fiscal) coupon", () => {
+    // Esse cupom se declara "VENDA SEM VALOR FISCAL": citar uma NF-e nele poria duas
+    // afirmacoes contrarias no mesmo papel.
+    const lines = buildReceiptLines({
+      ...baseInput(),
+      operationType: "internal",
+      futureBillingNfeNumber: "12345"
+    });
+
+    expect(lines.join(" ")).not.toContain("FATURAMENTO FUTURO");
+    expect(lines.join(" ")).not.toContain("12345");
+    expect(lines.join(" ")).toContain(NON_FISCAL_SALE_LABEL);
+  });
+
+  it("prints the future-billing reference even with the layout blocks turned off", () => {
+    // E recado fiscal para quem recebe a carga, nao um bloco de layout: sai igual ao
+    // OBS. do frete, fora das escolhas de exibicao do operador.
+    const lines = buildReceiptLinesWithConfig(
+      { ...baseInput(), futureBillingNfeNumber: "12345" },
+      {
+        ...DEFAULT_RECEIPT_TEMPLATE_CONFIG,
+        showCompanyHeader: false,
+        showCustomerInfo: false,
+        showProductDetail: false,
+        showFreight: false,
+        showWeights: false
+      }
+    );
+
+    expect(lines.join(" ")).toContain("NF-E DE FATURAMENTO FUTURO N. 12345");
+  });
+
+  it("wraps the future-billing reference to the paper width", () => {
+    const lines = buildReceiptLines({
+      ...baseInput(),
+      futureBillingNfeNumber: "000000012345678"
+    });
+
+    const start = lines.findIndex((line) => line.startsWith("REMESSA REF."));
+    expect(start).toBeGreaterThanOrEqual(0);
+    const referenceLines = lines.slice(start, start + 3);
+    expect(referenceLines.length).toBeGreaterThan(1);
+    for (const line of referenceLines) {
+      expect(line.length).toBeLessThanOrEqual(RECEIPT_LINE_WIDTH);
+    }
+    expect(referenceLines.join(" ")).toContain("000000012345678");
+  });
+
+  it("keeps the receipt number and the future-billing number apart", () => {
+    // Sao dois numeros diferentes no mesmo papel: o do cupom numera a impressao, o da
+    // entrega futura aponta para a nota que o cliente ja pagou.
+    const lines = buildReceiptLines({
+      ...baseInput(),
+      receiptNumber: 101,
+      futureBillingNfeNumber: "12345"
+    });
+
+    expect(lines.join(" ")).toContain("NF-E DE FATURAMENTO FUTURO N. 12345");
+    expect(lines.some((line) => line.includes("000000101"))).toBe(true);
+  });
+
   it("marks reprints as second copy", () => {
     const lines = buildReceiptLines({
       ...baseInput(),

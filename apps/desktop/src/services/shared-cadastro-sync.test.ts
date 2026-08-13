@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
+import { resolveCustomerFutureBillingNfe } from "./customer-future-billing";
 import {
   pullDesktopDataFromCloud,
   pushSharedCadastroToCloud,
@@ -543,6 +544,16 @@ describe("cadastro compartilhado da pedreira", () => {
               updated_at: "2026-07-27T10:00:00.000Z"
             }
           ],
+          customerFutureBillingInvoices: [
+            {
+              id: "fb-1",
+              customer_id: "cust-1",
+              product_id: "prod-1",
+              nfe_number: "12345",
+              is_active: true,
+              updated_at: "2026-07-27T10:00:00.000Z"
+            }
+          ],
           paymentTerms: [
             {
               id: "term-1",
@@ -582,11 +593,12 @@ describe("cadastro compartilhado da pedreira", () => {
 
       const pulled = await pullDesktopDataFromCloud(database, identity);
 
-      expect(pulled.cadastro).toBe(7);
+      expect(pulled.cadastro).toBe(8);
       expect(count(database, "price_tables")).toBe(1);
       expect(count(database, "price_table_items")).toBe(1);
       expect(count(database, "customer_price_tables")).toBe(1);
       expect(count(database, "customer_freight_rules")).toBe(1);
+      expect(count(database, "customer_future_billing_invoices")).toBe(1);
       expect(count(database, "payment_terms")).toBe(1);
       expect(count(database, "accounts")).toBe(1);
       expect(
@@ -595,6 +607,9 @@ describe("cadastro compartilhado da pedreira", () => {
           .pluck()
           .get()
       ).toBe('{"mode":"per_ton","price_cents":1200}');
+      // A balanca B resolve a nota que a balanca A cadastrou: e isso que faz as duas
+      // faturarem o mesmo cliente com a mesma referencia.
+      expect(resolveCustomerFutureBillingNfe(database, "cust-1", "prod-1")).toBe("12345");
     } finally {
       database.close();
     }
@@ -715,6 +730,11 @@ describe("cadastro compartilhado da pedreira", () => {
       expect(pushedKeys.indexOf("carriers")).toBeLessThan(pushedKeys.indexOf("customerCarriers"));
       expect(payloadFor("carriers")).toHaveLength(1);
       expect(payloadFor("customerCarriers")).toHaveLength(1);
+      // A nota de entrega futura sobe junto do resto do cadastro, depois do cliente e do
+      // produto que ela referencia.
+      expect(payloadFor("customerFutureBillingInvoices")).toMatchObject([
+        { id: "fb-1", customer_id: "cust-1", product_id: "prod-1", nfe_number: "12345" }
+      ]);
 
       // Segundo ciclo sem alteracao local: nada a reenviar.
       invokeMock.mockClear();
@@ -810,7 +830,7 @@ describe("cadastro compartilhado da pedreira", () => {
       invokeMock.mockResolvedValue({ data: { ok: true }, error: null });
       const recovered = await pushSharedCadastroToCloud(database, identity);
       expect(recovered.errors).toEqual([]);
-      expect(recovered.pushed).toBe(7);
+      expect(recovered.pushed).toBe(8);
     } finally {
       database.close();
     }
@@ -914,6 +934,12 @@ function seedLocalCadastro(database: DesktopDatabase): void {
     .prepare(
       `INSERT INTO product_default_prices (id, company_id, product_id, unit_price_cents, unit, is_active, created_at, updated_at)
        VALUES ('price-1', 'company-1', 'prod-1', 9000, 'ton', 1, ?, ?)`
+    )
+    .run(now, now);
+  database
+    .prepare(
+      `INSERT INTO customer_future_billing_invoices (id, customer_id, product_id, nfe_number, is_active, created_at, updated_at)
+       VALUES ('fb-1', 'cust-1', 'prod-1', '12345', 1, ?, ?)`
     )
     .run(now, now);
 }

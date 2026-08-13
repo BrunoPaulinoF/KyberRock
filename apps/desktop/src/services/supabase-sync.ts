@@ -139,6 +139,7 @@ interface DesktopPullResponse {
   priceTableItems?: Array<Record<string, unknown>>;
   customerPriceTables?: Array<Record<string, unknown>>;
   customerFreightRules?: Array<Record<string, unknown>>;
+  customerFutureBillingInvoices?: Array<Record<string, unknown>>;
   paymentTerms?: Array<Record<string, unknown>>;
   paymentMethods?: Array<Record<string, unknown>>;
   accounts?: Array<Record<string, unknown>>;
@@ -860,6 +861,14 @@ function upsertCloudCadastro(
       () => upsertCloudCustomerFreightRules(database, payload.customerFreightRules ?? [])
     ],
     [
+      "customer_future_billing_invoices",
+      () =>
+        upsertCloudCustomerFutureBillingInvoices(
+          database,
+          payload.customerFutureBillingInvoices ?? []
+        )
+    ],
+    [
       "payment_terms",
       () => upsertCloudPaymentTerms(database, companyId, payload.paymentTerms ?? [])
     ],
@@ -1062,6 +1071,68 @@ function upsertCloudCustomerFreightRules(
       customerId,
       productId,
       jsonStringValue(row.rule_json) ?? "{}",
+      booleanToSql(row.is_active, true),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt,
+      deletedAt
+    );
+    count++;
+  }
+  return count;
+}
+
+function upsertCloudCustomerFutureBillingInvoices(
+  database: DesktopDatabase,
+  rows: Array<Record<string, unknown>>
+): number {
+  // Mesma protecao dos indices unicos parciais da migracao 52: uma nota vigente por
+  // (cliente, produto) e uma por cliente sem produto. Quando a nuvem manda a mesma nota
+  // com outro id, a local vence — regravar aqui derrubaria o indice.
+  const findConflictForProduct = database.prepare(
+    `SELECT id FROM customer_future_billing_invoices
+     WHERE customer_id = ? AND product_id = ? AND deleted_at IS NULL LIMIT 1`
+  );
+  const findConflictForDefault = database.prepare(
+    `SELECT id FROM customer_future_billing_invoices
+     WHERE customer_id = ? AND product_id IS NULL AND deleted_at IS NULL LIMIT 1`
+  );
+  const upsert = database.prepare(`
+    INSERT INTO customer_future_billing_invoices (
+      id, customer_id, product_id, nfe_number, is_active, created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      customer_id = excluded.customer_id,
+      product_id = excluded.product_id,
+      nfe_number = excluded.nfe_number,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = excluded.deleted_at
+  `);
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    const customerId = existingId(database, "customers", row.customer_id);
+    if (!id || !customerId) continue;
+    const nfeNumber = stringValue(row.nfe_number);
+    if (!nfeNumber) continue;
+    const productId = row.product_id ? existingId(database, "products", row.product_id) : null;
+    if (row.product_id && !productId) continue;
+    const deletedAt = isoStringValue(row.deleted_at);
+    if (!deletedAt) {
+      const conflict = (
+        productId
+          ? findConflictForProduct.get(customerId, productId)
+          : findConflictForDefault.get(customerId)
+      ) as { id: string } | undefined;
+      if (conflict && conflict.id !== id) continue;
+    }
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      customerId,
+      productId,
+      nfeNumber,
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
       updatedAt,
@@ -2139,8 +2210,9 @@ function upsertCloudOperations(
       freight_credit_debit_cents, quotation_id,
       remote_plate, remote_driver_name, remote_customer_name, remote_product_description,
       payment_method_id, wallet_settlement_method_id, wallet_settlement_due_date,
-      wallet_settled_at, wallet_settlement_note, settle_from_advance, omie_advance_settle_cents
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      wallet_settled_at, wallet_settlement_note, settle_from_advance, omie_advance_settle_cents,
+      future_billing_nfe_number
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       unit_id = excluded.unit_id,
@@ -2191,6 +2263,10 @@ function upsertCloudOperations(
       remote_driver_name = COALESCE(excluded.remote_driver_name, weighing_operations.remote_driver_name),
       remote_customer_name = COALESCE(excluded.remote_customer_name, weighing_operations.remote_customer_name),
       remote_product_description = COALESCE(excluded.remote_product_description, weighing_operations.remote_product_description),
+      -- Nota de entrega futura da carga: congelada no fechamento e nunca reescrita por um
+      -- pull. COALESCE porque uma balanca em versao antiga projeta a operacao sem a coluna
+      -- e um nulo dela nao pode apagar o numero que esta maquina ja imprimiu no cupom.
+      future_billing_nfe_number = COALESCE(excluded.future_billing_nfe_number, weighing_operations.future_billing_nfe_number),
       -- Carteira: os valores ja chegam resolvidos de isProjectedColumn (nuvem sem as
       -- colunas devolve o que esta maquina tem), entao aqui a projecao manda — inclusive
       -- o nulo, que e como a reabertura feita na outra balanca chega ate aqui.
@@ -2397,7 +2473,8 @@ function upsertCloudOperations(
         walletSettledAt,
         walletSettlementNote,
         settleFromAdvance,
-        advanceSettleCents
+        advanceSettleCents,
+        nullableStringValue(row.future_billing_nfe_number)
       );
       count++;
     } catch (error) {
@@ -3392,6 +3469,10 @@ function getOperationPayload(
     freight_json: operation.freight_json,
     // Modalidade do frete (CIF/FOB/…): o relatorio de vendas do comercial filtra por ela.
     freight_type: getFreightModalityInfo(stringValue(operation.freight_type)).key,
+    // Nota de entrega futura que ESTA carga entregou, congelada no fechamento. Projetada
+    // para a 2a via poder sair em OUTRA balanca da pedreira citando a mesma nota: sem ela,
+    // a segunda maquina reimprimiria o cupom sem a referencia que a NF-e ja carrega.
+    future_billing_nfe_number: nullableStringValue(operation.future_billing_nfe_number),
     total_cents: operation.total_cents,
     omie_sales_order_id: operation.omie_sales_order_id,
     omie_service_order_id: operation.omie_service_order_id,
@@ -4358,6 +4439,7 @@ export async function processOmieSyncQueue(
       } | null;
       localCarrierId?: string | null;
       carrier?: Record<string, unknown> | null;
+      futureBillingNfeNumber?: string;
     };
 
     try {
@@ -4403,6 +4485,9 @@ export async function processOmieSyncQueue(
             omieCategoryCode: payload.omieCategoryCode ?? undefined,
             transport: payload.transport ?? undefined,
             carrier: payload.carrier ?? undefined,
+            // Nota de entrega futura que esta carga esta entregando: o edge a coloca na
+            // frente dos dados adicionais da NF. Vazio = sem entrega futura em aberto.
+            futureBillingNfeNumber: payload.futureBillingNfeNumber || undefined,
             idempotencyKey: job.idempotencyKey
           }
         }
@@ -5132,6 +5217,7 @@ export async function processFiscalBillingNow(
       cargoWeightKg?: number | null;
       ownVehicle?: boolean;
     } | null;
+    futureBillingNfeNumber?: string;
   };
 
   if (payload.operationType !== "invoice") {
@@ -5171,6 +5257,9 @@ export async function processFiscalBillingNow(
           accountOmieCode: payload.accountOmieCode ?? undefined,
           accountName: payload.accountName ?? undefined,
           transport: payload.transport ?? undefined,
+          // Mesmo carimbo do fechamento: refaturar nao pode perder a referencia da nota
+          // de entrega futura que a carga esta entregando.
+          futureBillingNfeNumber: payload.futureBillingNfeNumber || undefined,
           idempotencyKey: job.idempotency_key
         }
       }
@@ -6457,6 +6546,32 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         customer_id: stringValue(row.customer_id),
         product_id: nullableStringValue(row.product_id),
         rule_json: parseJsonValue(row.rule_json) ?? {},
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt,
+        deleted_at: row.deleted_at ? cloudTimestamp(row.deleted_at, updatedAt) : null
+      };
+    }
+  },
+  {
+    key: "customerFutureBillingInvoices",
+    label: "notas de entrega futura",
+    sql: buildCadastroSelect({
+      table: "customer_future_billing_invoices",
+      alias: "fb",
+      columns:
+        "fb.id, fb.customer_id, fb.product_id, fb.nfe_number, fb.is_active, fb.created_at, fb.updated_at, fb.deleted_at",
+      joins: "JOIN customers fbc ON fbc.id = fb.customer_id",
+      where: "fbc.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        customer_id: stringValue(row.customer_id),
+        product_id: nullableStringValue(row.product_id),
+        nfe_number: stringValue(row.nfe_number),
         is_active: cloudActive(row),
         created_at: cloudTimestamp(row.created_at, updatedAt),
         updated_at: updatedAt,

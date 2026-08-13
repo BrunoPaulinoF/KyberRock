@@ -16,6 +16,7 @@ import {
   type FreightRule
 } from "./freight.js";
 import { getCustomerFreightRuleForProduct } from "./customer-freight-rules.js";
+import { resolveCustomerFutureBillingNfe } from "./customer-future-billing.js";
 import { calculateSavingsPercent, PricingService, type PriceDetails } from "./pricing.js";
 import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
@@ -960,6 +961,28 @@ export function closeWeighingOperation(
         );
     }
 
+    // Retrato da nota de entrega futura NO FECHAMENTO.
+    //
+    // O numero e gravado na operacao (e nao lido do cadastro na hora de imprimir) porque
+    // ele vira texto de documento fiscal: o pedido enviado ao OMIE congela o payload aqui,
+    // e a 2a via do cupom tem que sair com o MESMO numero da 1a. Se a leitura fosse ao
+    // vivo, trocar a nota no cadastro reescreveria o passado — cupons ja impressos
+    // passariam a citar uma nota diferente da que foi para a NF-e.
+    //
+    // So na venda com nota: a operacao interna vira ordem de servico e nao emite NF-e,
+    // entao nao ha remessa de entrega futura para referenciar.
+    const futureBillingNfeNumber =
+      nextOperationType === "invoice"
+        ? resolveCustomerFutureBillingNfe(database, opRow?.customer_id, operation.productId)
+        : null;
+    if (futureBillingNfeNumber) {
+      database
+        .prepare(
+          `UPDATE weighing_operations SET future_billing_nfe_number = ?, updated_at = ? WHERE id = ?`
+        )
+        .run(futureBillingNfeNumber, timestamp, input.operationId);
+    }
+
     if (productCreditDebitCents > 0 || freightCreditDebitCents > 0) {
       if (opRow?.customer_id) {
         const creditService = new CreditService(database);
@@ -1574,6 +1597,17 @@ export interface OmieBillingJobPayload {
    * Fiscal; nesse caso o campo nao e enviado e o OMIE cai no cadastro, como antes.
    */
   invoiceEmails: string;
+  /**
+   * Numero da NF-e de VENDA PARA ENTREGA FUTURA que esta carga esta entregando, resolvido
+   * no cadastro do cliente pelo par (cliente, produto) — a nota e emitida por tipo de
+   * produto, entao a pesagem de rachao sai com o numero da nota de rachao.
+   *
+   * Vai para os dados adicionais da NF do pedido (`informacoes_adicionais.dados_adicionais_nf`):
+   * cada carga e uma remessa de entrega futura (CFOP 5.116/5.117) que precisa referenciar o
+   * faturamento que a originou. String vazia = cliente sem entrega futura em aberto para
+   * aquele produto, e o texto sai como sempre saiu.
+   */
+  futureBillingNfeNumber: string;
 }
 
 export interface BuiltOmieBillingJob {
@@ -1689,7 +1723,7 @@ export function buildOmieBillingJob(
 ): BuiltOmieBillingJob | null {
   const row = database
     .prepare(
-      "SELECT unit_id, operation_code, customer_id, product_id, vehicle_id, carrier_id, payment_term_id, payment_method_id, freight_type, exit_weight_captured_at FROM weighing_operations WHERE id = ?"
+      "SELECT unit_id, operation_code, customer_id, product_id, vehicle_id, carrier_id, payment_term_id, payment_method_id, freight_type, exit_weight_captured_at, future_billing_nfe_number FROM weighing_operations WHERE id = ?"
     )
     .get(operationId) as
     | {
@@ -1703,6 +1737,7 @@ export function buildOmieBillingJob(
         payment_method_id: string | null;
         freight_type: string | null;
         exit_weight_captured_at: string | null;
+        future_billing_nfe_number: string | null;
       }
     | undefined;
   if (!row) return null;
@@ -1880,7 +1915,11 @@ export function buildOmieBillingJob(
       invoiceEmails: formatEmailListForOmie(
         customerRow?.fiscal_emails,
         OMIE_ORDER_INVOICE_EMAIL_FIELD_MAX_LENGTH
-      )
+      ),
+      // Retrato gravado no fechamento, nao o cadastro de agora: refaturar tem que
+      // reenviar a MESMA nota que o cupom ja imprimiu, mesmo que o cadastro tenha
+      // mudado desde entao.
+      futureBillingNfeNumber: row.future_billing_nfe_number ?? ""
     }
   };
 }

@@ -3579,6 +3579,133 @@ Deno.test("create_order leva a referencia da pesagem nos dados adicionais do ped
   assertObjectMatch(response, { ok: true, orderId: 11489137846, orderNumber: "1234" });
 });
 
+Deno.test(
+  "create_order referencia a NF-e de faturamento futuro nos dados adicionais do pedido",
+  async () => {
+    const deviceToken = "token-future-billing";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-future-billing": {
+          id: "device-future-billing",
+          company_id: "company-future-billing",
+          unit_id: "unit-future-billing",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-future-billing": {
+          id: "company-future-billing",
+          is_active: true,
+          omie_app_key: "future-billing",
+          omie_app_secret: "secret-future-billing"
+        }
+      }
+    });
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarContasCorrentes") return { conta_corrente_lista: [{ nCodCC: 7 }] };
+      if (input.call === "IncluirPedido")
+        return { codigo_pedido: 11489137846, numero_pedido: "1234" };
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: "device-future-billing",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "invoice",
+          operationCode: 123,
+          customerOmieId: 100,
+          productOmieId: 200,
+          quantity: 15,
+          unitPrice: 50,
+          transport: { plate: "abc1d23", driverName: "Joao Motorista" },
+          issueDate: "2026-08-13",
+          futureBillingNfeNumber: "12345",
+          idempotencyKey: "kyberrock:unit:op-future-billing:create_sales_order"
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    const infos = getParam(findRequest(omieQueue, "IncluirPedido"))
+      .informacoes_adicionais as Record<string, unknown>;
+    // A referencia da nota de entrega futura vem PRIMEIRO: o texto e truncado pelo fim, e
+    // e a unica parte dele com efeito fiscal. O resto do texto continua igual.
+    assertEquals(
+      infos.dados_adicionais_nf,
+      "Remessa referente a NF-e de faturamento futuro n. 12345 (venda para entrega futura)" +
+        " - Pesagem KyberRock 000123 - Motorista: Joao Motorista - Placa: ABC1D23"
+    );
+    assertObjectMatch(response, { ok: true, orderId: 11489137846 });
+  }
+);
+
+Deno.test(
+  "create_order sem faturamento futuro mantem os dados adicionais como sempre foram",
+  async () => {
+    const deviceToken = "token-no-future-billing";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-no-future-billing": {
+          id: "device-no-future-billing",
+          company_id: "company-no-future-billing",
+          unit_id: "unit-no-future-billing",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-no-future-billing": {
+          id: "company-no-future-billing",
+          is_active: true,
+          omie_app_key: "no-future-billing",
+          omie_app_secret: "secret-no-future-billing"
+        }
+      }
+    });
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarContasCorrentes") return { conta_corrente_lista: [{ nCodCC: 7 }] };
+      if (input.call === "IncluirPedido")
+        return { codigo_pedido: 11489137846, numero_pedido: "1234" };
+      return defaultOmieListResponse(input);
+    });
+
+    await postOmieSync(
+      {
+        deviceId: "device-no-future-billing",
+        deviceToken,
+        action: "create_order",
+        payload: {
+          operationType: "invoice",
+          operationCode: 123,
+          customerOmieId: 100,
+          productOmieId: 200,
+          quantity: 15,
+          unitPrice: 50,
+          transport: { plate: "abc1d23", driverName: "Joao Motorista" },
+          issueDate: "2026-08-13",
+          // Campo vazio (cliente sem entrega futura) nao pode virar texto no papel.
+          futureBillingNfeNumber: "   ",
+          idempotencyKey: "kyberrock:unit:op-no-future-billing:create_sales_order"
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    const infos = getParam(findRequest(omieQueue, "IncluirPedido"))
+      .informacoes_adicionais as Record<string, unknown>;
+    assertEquals(
+      infos.dados_adicionais_nf,
+      "Pesagem KyberRock 000123 - Motorista: Joao Motorista - Placa: ABC1D23"
+    );
+  }
+);
+
 Deno.test("create_order leva a referencia da pesagem na OS e devolve o cNumOS", async () => {
   const deviceToken = "token-os-reference";
   const token_hash = await sha256Hex(deviceToken);

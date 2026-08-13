@@ -6,6 +6,7 @@ import { ensureInitialDesktopIdentity } from "./bootstrap";
 import { CreditService } from "./credit";
 import { CustomerReportService } from "./customer-report";
 import { rememberCustomerFreightValue } from "./customer-freight-rules";
+import { setCustomerFutureBillingInvoice } from "./customer-future-billing";
 import { setDefaultNfeEmail } from "./customers";
 import { createPaymentTerm } from "./payment-terms";
 import { enqueueSyncJob } from "./sync-queue";
@@ -1608,6 +1609,221 @@ describe("weighing operations", () => {
 
       // Vazio: o edge nao manda o campo e o OMIE cai no cadastro do cliente.
       expect(buildOmieBillingJob(database, operation.id)!.payload.invoiceEmails).toBe("");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("leva a nota de entrega futura DO PRODUTO da pesagem para o pedido", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database
+        .prepare(
+          "UPDATE customers SET omie_customer_id = 456, document = '12345678000195' WHERE id = 'customer-1'"
+        )
+        .run();
+      // Duas notas do mesmo cliente: uma do produto da pesagem, outra de um produto que
+      // nao e o dela. Sair com a errada seria pior do que nao sair com nenhuma.
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO products (id, company_id, code, description, unit, created_at, updated_at)
+           VALUES ('product-2', 'company-1', 'RACHAO', 'Rachao', 'ton', ?, ?)`
+        )
+        .run(now, now);
+      setCustomerFutureBillingInvoice(database, {
+        customerId: "customer-1",
+        productId: "product-1",
+        nfeNumber: "12345"
+      });
+      setCustomerFutureBillingInvoice(database, {
+        customerId: "customer-1",
+        productId: "product-2",
+        nfeNumber: "99999"
+      });
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      expect(buildOmieBillingJob(database, operation.id)!.payload.futureBillingNfeNumber).toBe(
+        "12345"
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  it("deixa a nota de entrega futura vazia quando o cliente nao tem nenhuma", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database
+        .prepare(
+          "UPDATE customers SET omie_customer_id = 456, document = '12345678000195' WHERE id = 'customer-1'"
+        )
+        .run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      // O caso comum: sem entrega futura em aberto, o texto do pedido sai como sempre saiu.
+      expect(buildOmieBillingJob(database, operation.id)!.payload.futureBillingNfeNumber).toBe("");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("refaturar reenvia a nota congelada no fechamento, nao a do cadastro de agora", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database
+        .prepare(
+          "UPDATE customers SET omie_customer_id = 456, document = '12345678000195' WHERE id = 'customer-1'"
+        )
+        .run();
+      setCustomerFutureBillingInvoice(database, {
+        customerId: "customer-1",
+        productId: "product-1",
+        nfeNumber: "12345"
+      });
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      // Cadastro muda depois do fechamento (a entrega futura acabou e entrou a nota
+      // seguinte). O cupom ja saiu citando a 12345 — o pedido tem que citar a mesma.
+      setCustomerFutureBillingInvoice(database, {
+        customerId: "customer-1",
+        productId: "product-1",
+        nfeNumber: "77777"
+      });
+
+      expect(buildOmieBillingJob(database, operation.id)!.payload.futureBillingNfeNumber).toBe(
+        "12345"
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao congela nota de entrega futura na operacao interna (venda sem nota)", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database
+        .prepare(
+          "UPDATE customers SET omie_customer_id = 456, document = '12345678000195' WHERE id = 'customer-1'"
+        )
+        .run();
+      setCustomerFutureBillingInvoice(database, {
+        customerId: "customer-1",
+        productId: "product-1",
+        nfeNumber: "12345"
+      });
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "internal"
+      });
+
+      // A OS nao emite NF-e: nao ha remessa de entrega futura para referenciar.
+      expect(buildOmieBillingJob(database, operation.id)!.payload.futureBillingNfeNumber).toBe("");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao carimba a pesagem com a nota de entrega futura de OUTRO produto", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database
+        .prepare(
+          "UPDATE customers SET omie_customer_id = 456, document = '12345678000195' WHERE id = 'customer-1'"
+        )
+        .run();
+      const now = "2026-06-06T12:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO products (id, company_id, code, description, unit, created_at, updated_at)
+           VALUES ('product-2', 'company-1', 'RACHAO', 'Rachao', 'ton', ?, ?)`
+        )
+        .run(now, now);
+      setCustomerFutureBillingInvoice(database, {
+        customerId: "customer-1",
+        productId: "product-2",
+        nfeNumber: "99999"
+      });
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      expect(buildOmieBillingJob(database, operation.id)!.payload.futureBillingNfeNumber).toBe("");
     } finally {
       database.close();
     }

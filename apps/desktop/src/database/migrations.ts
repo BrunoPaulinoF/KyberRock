@@ -1838,5 +1838,61 @@ ALTER TABLE weighing_operations ADD COLUMN omie_billing_checked_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_weighing_operations_omie_billing_check
   ON weighing_operations(unit_id, omie_billing_checked_at);
 `
+  },
+  {
+    version: 52,
+    name: "customer_future_billing_invoices",
+    sql: `
+-- NF-e ja emitida contra o cliente em VENDA PARA ENTREGA FUTURA.
+--
+-- O cliente grande (concessionaria, construtora) nao compra caminhao a caminhao: ele emite
+-- o pagamento de UMA nota de simples faturamento (CFOP 5.922/6.922, sem ICMS/IPI) e depois
+-- vai retirando a carga aos poucos. Cada carga que sai e uma REMESSA de entrega futura
+-- (CFOP 5.116/5.117), e a legislacao exige que a remessa referencie a nota de faturamento
+-- que a originou. Sem o numero no documento, quem recebe a carga nao consegue amarrar uma
+-- coisa na outra.
+--
+-- Uma linha por (cliente, produto) e nao uma coluna em \`customers\` porque a nota e emitida
+-- POR TIPO DE PRODUTO: o mesmo cliente tem uma nota de rachao e outra de brita, e a pesagem
+-- de rachao tem que sair com o numero da nota de rachao. \`product_id\` nulo e a nota que
+-- vale para qualquer produto daquele cliente — o mesmo desenho (e os mesmos dois indices
+-- unicos parciais) de \`customer_freight_rules\`, que ja resolve "por produto, com padrao".
+--
+-- \`nfe_number\` e TEXT pelo mesmo motivo de \`omie_order_number\`: o numero pode vir com
+-- zeros a esquerda. Enquanto a linha existir, TODA pesagem faturada daquele par sai com a
+-- referencia — remover a linha e o que encerra a entrega futura.
+CREATE TABLE IF NOT EXISTS customer_future_billing_invoices (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  product_id TEXT REFERENCES products(id),
+  nfe_number TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_future_billing_customer_product
+  ON customer_future_billing_invoices(customer_id, product_id)
+  WHERE deleted_at IS NULL AND product_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_future_billing_customer_default
+  ON customer_future_billing_invoices(customer_id)
+  WHERE deleted_at IS NULL AND product_id IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_customer_future_billing_customer_active
+  ON customer_future_billing_invoices(customer_id, is_active, deleted_at);
+
+-- Retrato da nota de entrega futura NO FECHAMENTO da pesagem.
+--
+-- A tabela acima e cadastro (muda quando o operador quiser); esta coluna e documento. O
+-- numero vira texto da NF-e enviada ao OMIE e do cupom impresso, e os dois tem que
+-- concordar para sempre: a 2a via de um cupom precisa sair com o mesmo numero da 1a, e
+-- trocar a nota no cadastro nao pode reescrever o que ja foi entregue. Null = pesagem que
+-- nao entregou entrega futura nenhuma (o caso comum, e toda pesagem anterior a esta
+-- migracao).
+ALTER TABLE weighing_operations ADD COLUMN future_billing_nfe_number TEXT;
+`
   }
 ];
