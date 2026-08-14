@@ -4,11 +4,11 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ScaleReading } from "@kyberrock/scale-adapters";
 import type { DesktopDatabase } from "../database/sqlite";
 import { CreditService } from "./credit";
 import { writeLocalSetting } from "./local-settings";
 import { DesktopRuntime } from "./runtime";
+import type { ScaleCaptureTokenStore } from "./scale-capture-tokens";
 import { OMIE_ADVANCES_STATE_KEY, writeStoredSupabaseConfig } from "./supabase-sync";
 import { getWalletReport } from "./wallet";
 
@@ -209,10 +209,7 @@ describe("conferencia do adiantamento na pesagem", () => {
 
 type RuntimeInternals = {
   database: DesktopDatabase;
-  pendingScaleCaptures: Map<
-    string,
-    { operationType: "entry" | "exit"; reading: ScaleReading; expiresAt: number }
-  >;
+  pendingScaleCaptures: ScaleCaptureTokenStore;
 };
 
 function asInternals(runtime: DesktopRuntime): RuntimeInternals {
@@ -228,11 +225,9 @@ function stageCapture(
   operationType: "entry" | "exit",
   weightKg: number
 ): string {
-  const captureId = `capture-${operationType}-${weightKg}`;
   const capturedAt = "2026-08-07T12:00:00.000Z";
-  asInternals(runtime).pendingScaleCaptures.set(captureId, {
+  return asInternals(runtime).pendingScaleCaptures.issue({
     operationType,
-    expiresAt: Date.now() + 60_000,
     reading: {
       weightKg,
       unit: "kg",
@@ -242,7 +237,6 @@ function stageCapture(
       receivedAt: capturedAt
     }
   });
-  return captureId;
 }
 
 /** Payloads de `pull_customer_advances` enviados a Edge Function nesta pesagem. */

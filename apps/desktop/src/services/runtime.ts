@@ -383,6 +383,7 @@ import {
   type ScaleConfigurationInput
 } from "./scale-configs.js";
 import { ScaleCaptureService, type ScaleCaptureOperationType } from "./scale-capture.js";
+import { ScaleCaptureTokenStore } from "./scale-capture-tokens.js";
 
 /**
  * Interface comum dos adaptadores de balanca (TCP, serial e virtual): o que o
@@ -572,10 +573,11 @@ export class DesktopRuntime {
    * antiga" quando o operador troca IP/porta/baud em Configuracoes > Balanca.
    */
   private activeScaleSessionKey: string | null = null;
-  private readonly pendingScaleCaptures = new Map<
-    string,
-    { operationType: ScaleCaptureOperationType; reading: ScaleReading; expiresAt: number }
-  >();
+  /**
+   * Pesos capturados pela balanca aguardando a tela confirmar a operacao. Ver
+   * `SCALE_CAPTURE_TOKEN_TTL_MS` para o porque da janela ser generosa.
+   */
+  private readonly pendingScaleCaptures = new ScaleCaptureTokenStore();
   private reportService: ReportService;
   private customerReportService: CustomerReportService;
   private weighingBillingReportService: WeighingBillingReportService;
@@ -834,7 +836,7 @@ export class DesktopRuntime {
       : Promise.resolve();
 
     const entryReading =
-      this.consumeScaleCapture(input.scaleCaptureId, "entry") ??
+      this.pendingScaleCaptures.consume(input.scaleCaptureId, { operationType: "entry" }) ??
       (await this.captureStableWeight({ operationType: "entry" }));
     await advanceSync;
 
@@ -907,7 +909,7 @@ export class DesktopRuntime {
       .catch(() => undefined);
 
     const exitReading =
-      this.consumeScaleCapture(scaleCaptureId, "exit") ??
+      this.pendingScaleCaptures.consume(scaleCaptureId, { operationType: "exit", operationId }) ??
       (await this.captureStableWeight({ operationType: "exit" }));
     await advanceSync;
 
@@ -1193,46 +1195,17 @@ export class DesktopRuntime {
   async captureStableScaleWeight(options: {
     operationType: ScaleCaptureOperationType;
     timeoutMs?: number;
+    /** Operacao que sera fechada com este peso (saida). A entrada ainda nao tem uma. */
+    operationId?: string;
   }): Promise<ScaleCaptureResult> {
     this.assertDesktopAccess();
     const reading = await this.captureStableWeight(options);
-    const captureId = randomUUID();
-    this.pendingScaleCaptures.set(captureId, {
+    const captureId = this.pendingScaleCaptures.issue({
       operationType: options.operationType,
       reading,
-      expiresAt: Date.now() + 30_000
+      operationId: options.operationId
     });
-    this.pruneExpiredScaleCaptures();
     return { captureId, reading };
-  }
-
-  private consumeScaleCapture(
-    captureId: string | undefined,
-    operationType: ScaleCaptureOperationType
-  ): ScaleReading | null {
-    if (!captureId) return null;
-    const capture = this.pendingScaleCaptures.get(captureId);
-    this.pendingScaleCaptures.delete(captureId);
-
-    if (!capture) {
-      throw new Error("Captura de peso nao encontrada ou ja utilizada. Capture o peso novamente.");
-    }
-    if (capture.operationType !== operationType) {
-      throw new Error("Captura de peso nao pertence a este tipo de operacao.");
-    }
-    if (capture.expiresAt < Date.now()) {
-      throw new Error("Captura de peso expirada. Capture o peso novamente.");
-    }
-    return capture.reading;
-  }
-
-  private pruneExpiredScaleCaptures(): void {
-    const now = Date.now();
-    for (const [captureId, capture] of this.pendingScaleCaptures.entries()) {
-      if (capture.expiresAt < now) {
-        this.pendingScaleCaptures.delete(captureId);
-      }
-    }
   }
 
   cancelWeighing(operationId: string, reason: string): WeighingOperationSummary {

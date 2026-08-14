@@ -571,6 +571,8 @@ export interface KyberRockDesktopApi {
   scaleCaptureStable: (options: {
     operationType: "entry" | "exit";
     timeoutMs?: number;
+    /** Operacao que sera fechada com este peso (saida). A entrada ainda nao tem uma. */
+    operationId?: string;
   }) => Promise<{ captureId: string; reading: ScaleReading }>;
   scaleDiscover: () => Promise<{ host: string; port: number } | null>;
   scaleGetStatus: () => Promise<ToledoTcpAdapterStatus>;

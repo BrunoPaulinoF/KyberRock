@@ -8158,6 +8158,7 @@ function CloseOperationWeighingDialog({
   const [liveWeight, setLiveWeight] = useState<number | null>(null);
   const [capturedExitWeight, setCapturedExitWeight] = useState<number | null>(null);
   const [capturedExitCaptureId, setCapturedExitCaptureId] = useState<string | null>(null);
+  const [capturedExitAt, setCapturedExitAt] = useState<string | null>(null);
   const [scaleLink, setScaleLink] = useState<ScaleLinkViewModel>(INITIAL_SCALE_LINK);
   const [scaleMessage, setScaleMessage] = useState<string>("Conectando a balanca...");
   const lastScaleReadingAtRef = useRef<number | null>(null);
@@ -8257,14 +8258,21 @@ function CloseOperationWeighingDialog({
     setIsCapturing(true);
     setCaptureError(null);
     try {
-      const capture = await desktopApi.scaleCaptureStable({ operationType: "exit" });
+      // Vai preso a esta operacao: o peso guardado so pode fechar a pesagem que
+      // estava aberta na tela quando o caminhao foi pesado.
+      const capture = await desktopApi.scaleCaptureStable({
+        operationType: "exit",
+        operationId: operation.id
+      });
       setCapturedExitWeight(capture.reading.weightKg);
       setCapturedExitCaptureId(capture.captureId);
+      setCapturedExitAt(capture.reading.capturedAt);
       if (operation.entryWeightKg !== null && capture.reading.weightKg <= operation.entryWeightKg) {
         setCaptureError("Peso de saida deve ser maior que o peso de entrada.");
       }
     } catch (err) {
       setCapturedExitCaptureId(null);
+      setCapturedExitAt(null);
       setCaptureError(err instanceof Error ? err.message : "Falha ao capturar peso");
     } finally {
       setIsCapturing(false);
@@ -8428,7 +8436,7 @@ function CloseOperationWeighingDialog({
             </strong>
             <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
               {capturedExitWeight !== null
-                ? "Leitura estavel capturada"
+                ? `Leitura estavel capturada${capturedExitAt ? ` as ${formatClockTime(capturedExitAt)}` : ""} — o peso fica guardado ate confirmar`
                 : "Clique em 'Capturar peso'"}
             </div>
           </div>
@@ -9018,6 +9026,13 @@ function formatMoney(value: number | null | undefined): string {
   }
 
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value / 100);
+}
+
+/** Hora do relogio ("14:32") de um timestamp — usada para datar o peso capturado. */
+function formatClockTime(value: string): string {
+  const parsed = parseDbTimestamp(value);
+  if (Number.isNaN(parsed.getTime())) return "--:--";
+  return parsed.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
 function formatWeightKg(value: number): string {
