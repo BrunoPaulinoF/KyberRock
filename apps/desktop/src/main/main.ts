@@ -1623,10 +1623,13 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("desktop:scale-capture-stable", async (_event, options: unknown) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
-    const input = options as { operationType?: "entry" | "exit"; timeoutMs?: number } | undefined;
+    const input = options as
+      | { operationType?: "entry" | "exit"; timeoutMs?: number; operationId?: unknown }
+      | undefined;
     return runtime.captureStableScaleWeight({
       operationType: input?.operationType === "exit" ? "exit" : "entry",
-      timeoutMs: input?.timeoutMs
+      timeoutMs: input?.timeoutMs,
+      operationId: typeof input?.operationId === "string" ? input.operationId : undefined
     });
   });
 
