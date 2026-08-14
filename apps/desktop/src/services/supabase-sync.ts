@@ -4790,11 +4790,14 @@ export async function processOmieSyncQueue(
 }
 
 /**
- * Quantas pesagens uma passada confere no OMIE. Cada uma custa uma chamada la, e a cota
- * por minuto e a MESMA que a fila de fechamentos usa — estourar aqui atrasaria o envio
- * dos pedidos, que e o que nao pode parar. O edge tambem corta em 40 do lado dele.
+ * Quantas pesagens uma passada confere no OMIE.
+ *
+ * Era 40, quando cada pesagem custava uma consulta e cada consulta custava 3 segundos de
+ * fila (a MESMA fila do envio dos fechamentos). O edge agora confere pela LISTAGEM — 100
+ * documentos por chamada —, entao o lote cobre o movimento de um dia inteiro de uma vez:
+ * o dia fecha conferido em vez de ir sendo alcancado aos poucos.
  */
-const OMIE_BILLING_CHECK_BATCH = 40;
+const OMIE_BILLING_CHECK_BATCH = 300;
 
 /**
  * Ate quantos dias para tras a reconciliacao olha. Pedido que passou meses sem ser
@@ -4804,16 +4807,40 @@ const OMIE_BILLING_CHECK_BATCH = 40;
 const OMIE_BILLING_CHECK_WINDOW_DAYS = 120;
 
 /**
- * Intervalo minimo entre duas conferencias. `syncCloudNow` nao roda so no agendador: ele e
- * disparado em segundo plano a cada fechamento e a cada alteracao de operacao. Sem o
- * freio, uma pedreira movimentada gastaria a cota do OMIE perguntando de novo pelas mesmas
- * pesagens — e a cota e a MESMA que a fila de pedidos usa. Faturamento nao e urgente:
- * saber 10 minutos depois nao muda nada.
+ * A janela "quente": o que entra na frente da fila em toda passada.
+ *
+ * Sem ela, o rodizio por `omie_billing_checked_at` trata a pesagem de hoje como trata a de
+ * tres meses atras — e num acervo grande as de hoje esperavam a vez atras de centenas de
+ * pesagens velhas que nunca serao faturadas. Dois dias, e nao um, para o movimento da
+ * virada de meia-noite e o do fim do expediente nao cairem para tras do acervo.
  */
-const OMIE_BILLING_CHECK_MIN_INTERVAL_MS = 10 * 60 * 1000;
+const OMIE_BILLING_CHECK_HOT_WINDOW_DAYS = 2;
+
+/**
+ * Intervalo minimo entre duas conferencias. `syncCloudNow` nao roda so no agendador: ele e
+ * disparado em segundo plano a cada fechamento e a cada alteracao de operacao, e sem freio
+ * uma pedreira movimentada gastaria a fila do OMIE perguntando de novo pelas mesmas
+ * pesagens — e a fila e a MESMA do envio dos pedidos.
+ *
+ * Eram 10 minutos quando a passada custava ~40 chamadas. Pela listagem uma passada tipica
+ * custa 1 ou 2, entao o freio pode cair para 3 minutos: o dia acompanha praticamente em
+ * tempo real e o envio dos fechamentos nem sente.
+ */
+const OMIE_BILLING_CHECK_MIN_INTERVAL_MS = 3 * 60 * 1000;
+
+/**
+ * De quanto em quanto tempo o ACERVO (tudo o que passou da janela quente) entra na
+ * conferencia. O documento de dois meses atras nao muda de estado a cada tres minutos, e
+ * incluir o acervo custa caro: os codigos dele sao baixos, e a listagem do OMIE — que vem
+ * do codigo maior para o menor — precisa varrer ate la para alcanca-los.
+ */
+const OMIE_BILLING_CHECK_FULL_INTERVAL_MS = 60 * 60 * 1000;
 
 /** Ultima passada da conferencia, para o freio acima. */
 const OMIE_BILLING_CHECK_LAST_RUN_KEY = "omie_billing_check_last_run_at";
+
+/** Ultima passada que incluiu o acervo. */
+const OMIE_BILLING_CHECK_FULL_LAST_RUN_KEY = "omie_billing_check_full_last_run_at";
 
 export interface OmieBillingReconcileResult {
   /** Pesagens conferidas no OMIE nesta passada. */
@@ -4862,15 +4889,35 @@ interface OmieOrderBillingState {
 export async function reconcileOmieBillingFromOmie(
   database: DesktopDatabase,
   identity: LocalDesktopIdentity,
-  options: { limit?: number; windowDays?: number; force?: boolean } = {}
+  options: {
+    limit?: number;
+    windowDays?: number;
+    hotWindowDays?: number;
+    includeBacklog?: boolean;
+    force?: boolean;
+  } = {}
 ): Promise<OmieBillingReconcileResult> {
   const settings = getCloudSettings(database, identity);
   const limit = options.limit ?? OMIE_BILLING_CHECK_BATCH;
   const windowDays = options.windowDays ?? OMIE_BILLING_CHECK_WINDOW_DAYS;
+  const hotWindowDays = options.hotWindowDays ?? OMIE_BILLING_CHECK_HOT_WINDOW_DAYS;
 
-  if (options.force !== true && !hasOmieBillingCheckWindowElapsed(database)) {
+  if (options.force !== true && !hasWindowElapsed(database, OMIE_BILLING_CHECK_LAST_RUN_KEY)) {
     return { checked: 0, billed: 0, skipped: true, errors: [] };
   }
+
+  // Duas cadencias. A passada CURTA (a cada 3 min) olha so o movimento recente: sao
+  // poucos documentos, todos com codigo alto, e a listagem do OMIE os acha na primeira
+  // pagina. A passada COMPLETA (de hora em hora) inclui o acervo — cujos codigos sao
+  // baixos e obrigam a varrer fundo. Misturar os dois em toda passada faria a varredura
+  // ir ate o fim toda vez, e o acervo de meses nao muda de estado a cada tres minutos.
+  const includeBacklog =
+    options.includeBacklog ??
+    hasWindowElapsed(
+      database,
+      OMIE_BILLING_CHECK_FULL_LAST_RUN_KEY,
+      OMIE_BILLING_CHECK_FULL_INTERVAL_MS
+    );
 
   const pending = database
     .prepare(
@@ -4885,10 +4932,22 @@ export async function reconcileOmieBillingFromOmie(
           AND (omie_billing_status IS NULL
                OR omie_billing_status NOT IN ('billed', 'cancelled_in_omie'))
           AND date(created_at) >= date('now', ?)
-        ORDER BY omie_billing_checked_at ASC, created_at DESC
+        -- O movimento recente vem na frente do acervo, sempre. Depois disso vale o
+        -- rodizio (quem nunca foi conferido, depois o conferido ha mais tempo), e o
+        -- desempate pela pesagem mais nova: se o lote acabar, quem fica de fora e o
+        -- registro velho, nunca o de hoje.
+        ORDER BY
+          CASE WHEN date(created_at) >= date('now', ?) THEN 0 ELSE 1 END,
+          omie_billing_checked_at ASC,
+          created_at DESC
         LIMIT ?`
     )
-    .all(settings.unitId, `-${windowDays} days`, limit) as PendingOmieBillingRow[];
+    .all(
+      settings.unitId,
+      `-${includeBacklog ? windowDays : hotWindowDays} days`,
+      `-${hotWindowDays} days`,
+      limit
+    ) as PendingOmieBillingRow[];
 
   if (pending.length === 0) return { checked: 0, billed: 0, errors: [] };
 
@@ -4909,7 +4968,11 @@ export async function reconcileOmieBillingFromOmie(
 
   // Marca a passada ANTES de chamar o OMIE: mesmo que a chamada falhe, o freio vale — uma
   // instabilidade do OMIE nao pode virar uma tentativa por fechamento.
-  writeLocalSetting(database, OMIE_BILLING_CHECK_LAST_RUN_KEY, new Date().toISOString());
+  const startedAt = new Date().toISOString();
+  writeLocalSetting(database, OMIE_BILLING_CHECK_LAST_RUN_KEY, startedAt);
+  if (includeBacklog) {
+    writeLocalSetting(database, OMIE_BILLING_CHECK_FULL_LAST_RUN_KEY, startedAt);
+  }
 
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.functions.invoke<{ results?: OmieOrderBillingState[] }>(
@@ -4991,13 +5054,20 @@ export async function reconcileOmieBillingFromOmie(
   return { checked: results.length, billed, errors };
 }
 
-/** Ja passou tempo suficiente desde a ultima conferencia? Marca sem registro = sim. */
-function hasOmieBillingCheckWindowElapsed(database: DesktopDatabase): boolean {
-  const lastRunAt = readStringLocalSetting(database, OMIE_BILLING_CHECK_LAST_RUN_KEY);
+/**
+ * Ja passou tempo suficiente desde a ultima passada marcada nesta chave? Sem registro (ou
+ * com marca ilegivel) a resposta e sim — na duvida, conferir e melhor que nao conferir.
+ */
+function hasWindowElapsed(
+  database: DesktopDatabase,
+  key: string,
+  intervalMs: number = OMIE_BILLING_CHECK_MIN_INTERVAL_MS
+): boolean {
+  const lastRunAt = readStringLocalSetting(database, key);
   if (!lastRunAt) return true;
   const lastRun = Date.parse(lastRunAt);
   if (Number.isNaN(lastRun)) return true;
-  return Date.now() - lastRun >= OMIE_BILLING_CHECK_MIN_INTERVAL_MS;
+  return Date.now() - lastRun >= intervalMs;
 }
 
 /** O texto da linha faturada: cita a nota quando o OMIE ja devolveu o numero dela. */

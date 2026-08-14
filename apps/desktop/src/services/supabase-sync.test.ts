@@ -2996,6 +2996,88 @@ describe("supabase sync", () => {
     }
   });
 
+  it("passada curta olha so o movimento recente; o acervo entra na passada completa", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-hoje", salesOrderId: 9001 });
+      insertSentOperation(database, {
+        id: "op-acervo",
+        salesOrderId: 5001,
+        createdAt: daysAgoIso(40)
+      });
+      invokeMock.mockResolvedValue({ error: null, data: { ok: true, results: [] } });
+
+      // Curta: so o que e recente. O acervo tem codigo baixo no OMIE e obrigaria a
+      // listagem — que vem do codigo maior para o menor — a varrer ate la.
+      await reconcileOmieBillingFromOmie(database, identity, {
+        force: true,
+        includeBacklog: false
+      });
+      const [, short] = invokeMock.mock.calls[0] as [
+        string,
+        { body: { payload: { orders: Array<{ operationId: string }> } } }
+      ];
+      expect(short.body.payload.orders.map((order) => order.operationId)).toEqual(["op-hoje"]);
+
+      // Completa: os dois, e o recente vem primeiro — se o lote acabar, quem fica de fora
+      // e o registro velho.
+      await reconcileOmieBillingFromOmie(database, identity, {
+        force: true,
+        includeBacklog: true
+      });
+      const [, full] = invokeMock.mock.calls[1] as [
+        string,
+        { body: { payload: { orders: Array<{ operationId: string }> } } }
+      ];
+      expect(full.body.payload.orders.map((order) => order.operationId)).toEqual([
+        "op-hoje",
+        "op-acervo"
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("põe o movimento do dia na frente do acervo nunca conferido", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      // O acervo nunca foi conferido e a de hoje ja foi: pelo rodizio puro, a velha viria
+      // primeiro. Nao pode — e a de hoje que o operador esta olhando na tela.
+      insertSentOperation(database, {
+        id: "op-acervo-virgem",
+        salesOrderId: 5001,
+        createdAt: daysAgoIso(40)
+      });
+      insertSentOperation(database, { id: "op-hoje", salesOrderId: 9001 });
+      database
+        .prepare("UPDATE weighing_operations SET omie_billing_checked_at = ? WHERE id = ?")
+        .run(new Date().toISOString(), "op-hoje");
+      invokeMock.mockResolvedValue({ error: null, data: { ok: true, results: [] } });
+
+      await reconcileOmieBillingFromOmie(database, identity, {
+        force: true,
+        includeBacklog: true
+      });
+
+      const [, options] = invokeMock.mock.calls[0] as [
+        string,
+        { body: { payload: { orders: Array<{ operationId: string }> } } }
+      ];
+      expect(options.body.payload.orders.map((order) => order.operationId)).toEqual([
+        "op-hoje",
+        "op-acervo-virgem"
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
   it("nao pergunta pela pesagem ja faturada nem pela cancelada", async () => {
     const database = createDatabase();
 
@@ -3027,6 +3109,11 @@ describe("supabase sync", () => {
 /** Data recente fixa: a reconciliacao so olha os ultimos 120 dias. */
 const RECENT_ISO = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
+/** Uma data de N dias atras, para separar o movimento recente do acervo. */
+function daysAgoIso(days: number): string {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
 /** Pesagem fechada que ja tem pedido (ou OS) no OMIE e ainda nao consta faturada. */
 function insertSentOperation(
   database: DesktopDatabase,
@@ -3035,8 +3122,11 @@ function insertSentOperation(
     salesOrderId?: number | null;
     serviceOrderId?: number | null;
     operationType?: "invoice" | "internal";
+    /** Idade da pesagem. Padrao: ontem — dentro da janela quente. */
+    createdAt?: string;
   }
 ): void {
+  const createdAt = options.createdAt ?? RECENT_ISO;
   database
     .prepare(
       `INSERT INTO weighing_operations (
@@ -3051,8 +3141,8 @@ function insertSentOperation(
       options.operationType ?? "invoice",
       options.salesOrderId ?? null,
       options.serviceOrderId ?? null,
-      RECENT_ISO,
-      RECENT_ISO
+      createdAt,
+      createdAt
     );
 }
 

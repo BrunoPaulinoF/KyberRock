@@ -4145,12 +4145,48 @@ type OrderBillingState = {
 };
 
 /**
- * Quantos registros uma passada confere. Cada um custa uma chamada ao OMIE, que tem limite
- * de requisicoes por minuto — e a fila de pedidos do fechamento usa a mesma cota. O
- * desktop ja manda os mais antigos primeiro, entao o que sobrar cai na proxima
- * sincronizacao em vez de estourar o limite de uma vez.
+ * Quantos registros uma passada confere.
+ *
+ * Era 40 porque cada registro custava UMA chamada ao OMIE, a 3 segundos por chamada
+ * (`OMIE_REQUEST_DELAY_MS`, fila serializada e compartilhada com o envio dos fechamentos):
+ * conferir 40 pesagens travava a fila por dois minutos. Com a LISTAGEM, uma chamada traz
+ * 100 registros, e o teto pode subir para cobrir o movimento de um dia inteiro numa
+ * passada — que e o que faz a tela de conferencia acompanhar o dia em vez de correr atras.
  */
-const CHECK_ORDER_BILLING_MAX = 40;
+const CHECK_ORDER_BILLING_MAX = 300;
+
+/** Registros por pagina na listagem de pedidos/OS (o maximo que o OMIE aceita). */
+const ORDER_LISTING_PAGE_SIZE = 100;
+
+/**
+ * Teto de paginas por tipo de documento numa passada. 10 paginas = 1000 registros = ~30s
+ * de fila. Na pratica quase nunca se chega perto: a listagem vem do codigo maior para o
+ * menor e para assim que passa do documento mais antigo procurado.
+ */
+const ORDER_LISTING_MAX_PAGES = 10;
+
+/**
+ * A partir de quantos documentos a listagem compensa. Abaixo disso a consulta individual
+ * sai mais barata: 3 consultas custam 3 chamadas, e uma pagina de listagem custa 1 — mas
+ * so cobre os documentos recentes, e ainda pode precisar de mais paginas.
+ */
+const ORDER_LISTING_MIN_BATCH = 4;
+
+/**
+ * Teto de consultas individuais numa passada (o caminho de recuperacao). Existe para o
+ * pior caso: se a listagem nao servir para nada, conferir 300 pesagens uma a uma seriam 15
+ * minutos de fila com o envio dos fechamentos parado atras. O que nao couber mantem o
+ * `omie_billing_checked_at` antigo no desktop e volta na frente da fila na proxima passada.
+ */
+const CONSULT_FALLBACK_MAX = 25;
+
+/** O que a listagem sabe dizer sobre um documento, sem a consulta individual. */
+type ListedBillingState = {
+  billed: boolean;
+  orderNumber: string | null;
+  invoiceNumber: string | null;
+  documentUrl: string | null;
+};
 
 /**
  * Confere no OMIE quais pedidos/OS ja foram faturados.
@@ -4169,46 +4205,208 @@ async function checkOmieOrdersBilling(
   payload: CheckOrderBillingPayload | undefined
 ): Promise<OrderBillingState[]> {
   const orders = (payload?.orders ?? []).slice(0, CHECK_ORDER_BILLING_MAX);
-  const results: OrderBillingState[] = [];
+  if (orders.length === 0) return [];
 
-  for (const order of orders) {
-    const isSales = order.orderType === "sales";
-    const base = {
-      operationId: order.operationId,
-      orderType: order.orderType,
-      omieOrderId: order.omieOrderId
-    };
-    try {
-      const consult = isSales
-        ? await consultSalesOrder(credentials, order.omieOrderId)
-        : await consultServiceOrder(credentials, order.omieOrderId);
-      results.push({
-        ...base,
-        found: true,
-        billed: isOmieOrderBilled(consult),
-        orderNumber: extractOrderNumber(consult, isSales ? "numero_pedido" : "cNumOS"),
-        invoiceNumber: extractOmieInvoiceNumber(consult),
-        documentUrl: extractDocumentUrl(consult),
-        error: null
-      });
-    } catch (error) {
-      const message = getErrorMessage(error);
-      // Excluido no OMIE: nao e erro de rede nem falha a re-tentar — e um fato sobre o
-      // registro, e o desktop precisa distinguir os dois para nao insistir para sempre.
-      const missing = isOmieNotFoundFault(message);
-      results.push({
-        ...base,
-        found: !missing,
-        billed: false,
-        orderNumber: null,
-        invoiceNumber: null,
-        documentUrl: null,
-        error: missing ? null : message
-      });
+  const results: OrderBillingState[] = [];
+  let consultBudget = CONSULT_FALLBACK_MAX;
+
+  for (const orderType of ["sales", "service"] as const) {
+    const group = orders.filter((order) => order.orderType === orderType);
+    if (group.length === 0) continue;
+
+    // Listagem primeiro: uma chamada resolve ate 100 documentos. So vale a pena a partir
+    // de um punhado deles — abaixo disso a consulta individual custa menos chamadas.
+    const listed =
+      group.length >= ORDER_LISTING_MIN_BATCH
+        ? await listOmieOrderBillingStates(
+            credentials,
+            orderType,
+            group.map((order) => order.omieOrderId)
+          )
+        : new Map<number, ListedBillingState>();
+
+    for (const order of group) {
+      const base = {
+        operationId: order.operationId,
+        orderType: order.orderType,
+        omieOrderId: order.omieOrderId
+      };
+
+      const fromListing = listed.get(order.omieOrderId);
+      if (fromListing) {
+        results.push({ ...base, found: true, ...fromListing, error: null });
+        continue;
+      }
+
+      // Nao apareceu na listagem. Pode ser documento antigo demais (a listagem para
+      // quando passa do procurado), pode ser excluido no OMIE — a consulta individual
+      // separa os dois. Sem orcamento, fica para a proxima passada: o desktop nao recebe
+      // resultado para ele e nao mexe no rodizio dele.
+      if (consultBudget <= 0) continue;
+      consultBudget--;
+      results.push(await consultOmieOrderBilling(credentials, order));
     }
   }
 
   return results;
+}
+
+/** Confere UM documento pela consulta direta — o caminho preciso, de uma chamada cada. */
+async function consultOmieOrderBilling(
+  credentials: OmieCredentials,
+  order: { operationId: string; orderType: "sales" | "service"; omieOrderId: number }
+): Promise<OrderBillingState> {
+  const isSales = order.orderType === "sales";
+  const base = {
+    operationId: order.operationId,
+    orderType: order.orderType,
+    omieOrderId: order.omieOrderId
+  };
+  try {
+    const consult = isSales
+      ? await consultSalesOrder(credentials, order.omieOrderId)
+      : await consultServiceOrder(credentials, order.omieOrderId);
+    return {
+      ...base,
+      found: true,
+      billed: isOmieOrderBilled(consult),
+      orderNumber: extractOrderNumber(consult, isSales ? "numero_pedido" : "cNumOS"),
+      invoiceNumber: extractOmieInvoiceNumber(consult),
+      documentUrl: extractDocumentUrl(consult),
+      error: null
+    };
+  } catch (error) {
+    const message = getErrorMessage(error);
+    // Excluido no OMIE: nao e erro de rede nem falha a re-tentar — e um fato sobre o
+    // registro, e o desktop precisa distinguir os dois para nao insistir para sempre.
+    const missing = isOmieNotFoundFault(message);
+    return {
+      ...base,
+      found: !missing,
+      billed: false,
+      orderNumber: null,
+      invoiceNumber: null,
+      documentUrl: null,
+      error: missing ? null : message
+    };
+  }
+}
+
+/**
+ * Varre a listagem de pedidos (ou de OS) do OMIE atras dos documentos procurados.
+ *
+ * A listagem vem ordenada do codigo MAIOR para o menor — ou seja, do mais novo para o mais
+ * velho —, e e isso que torna a varredura barata: os fechamentos de hoje estao na primeira
+ * pagina. A varredura para em tres situacoes: achou todos, a pagina ja passou do documento
+ * mais antigo que se procura (dali para tras so tem coisa mais velha), ou bateu no teto de
+ * paginas.
+ *
+ * Mapa vazio nao e erro: significa "a listagem nao resolveu", e quem chama cai na consulta
+ * individual. E o que mantem a conferencia correta mesmo se o OMIE mudar a listagem.
+ */
+async function listOmieOrderBillingStates(
+  credentials: OmieCredentials,
+  orderType: "sales" | "service",
+  wantedIds: number[]
+): Promise<Map<number, ListedBillingState>> {
+  const wanted = new Set(wantedIds);
+  const smallestWanted = Math.min(...wantedIds);
+  const found = new Map<number, ListedBillingState>();
+
+  for (let page = 1; page <= ORDER_LISTING_MAX_PAGES; page++) {
+    let records: unknown[];
+    try {
+      records = await listOmieOrdersPage(credentials, orderType, page);
+    } catch (error) {
+      // Listagem indisponivel (campo recusado, instabilidade): nao derruba a conferencia,
+      // so a devolve para o caminho da consulta individual.
+      console.error(
+        `[omie] listagem de ${orderType === "sales" ? "pedidos" : "OS"} falhou na pagina ${page}; ` +
+          "conferindo o faturamento por consulta individual",
+        error
+      );
+      break;
+    }
+    if (records.length === 0) break;
+
+    let pageSmallestId = Number.POSITIVE_INFINITY;
+    for (const record of records) {
+      const id =
+        orderType === "sales" ? extractSalesOrderId(record) : extractServiceOrderId(record);
+      if (id === null) continue;
+      if (id < pageSmallestId) pageSmallestId = id;
+      if (!wanted.has(id)) continue;
+      found.set(id, {
+        billed: isOmieOrderBilled(record),
+        orderNumber: extractOrderNumber(record, orderType === "sales" ? "numero_pedido" : "cNumOS"),
+        invoiceNumber: extractOmieInvoiceNumber(record),
+        documentUrl: extractDocumentUrl(record)
+      });
+      if (found.size === wanted.size) return found;
+    }
+
+    // Passou do mais antigo procurado: continuar so gastaria chamada com documento velho.
+    if (pageSmallestId <= smallestWanted) break;
+  }
+
+  return found;
+}
+
+/**
+ * Uma pagina da listagem, do codigo maior para o menor.
+ *
+ * A ordem decrescente e o que faz a varredura valer a pena, entao ela nao tem plano B: se o
+ * OMIE recusar os campos de ordenacao, a listagem inteira e abandonada (o erro sobe) e a
+ * conferencia cai na consulta individual. Listar em ordem crescente comecaria pelo pedido
+ * mais antigo do cadastro e gastaria as 10 paginas sem chegar perto do movimento de hoje.
+ */
+async function listOmieOrdersPage(
+  credentials: OmieCredentials,
+  orderType: "sales" | "service",
+  page: number
+): Promise<unknown[]> {
+  const isSales = orderType === "sales";
+  const response = await callOmie<unknown, unknown>(
+    credentials,
+    isSales ? "/produtos/pedido/" : "/servicos/os/",
+    isSales ? "ListarPedidos" : "ListarOS",
+    {
+      pagina: page,
+      registros_por_pagina: ORDER_LISTING_PAGE_SIZE,
+      apenas_importado_api: "N",
+      ordenar_por: "CODIGO",
+      ordem_decrescente: "S"
+    }
+  );
+  return extractOrderListRecords(response);
+}
+
+/**
+ * Os documentos de uma resposta de listagem. O nome do array muda entre os modulos do OMIE
+ * (`pedido_venda_produto` em Vendas, `osCadastro` em Servicos) e ja variou entre versoes,
+ * entao depois dos nomes conhecidos vale o primeiro array de objetos da resposta — os
+ * outros campos do envelope (pagina, total_de_paginas) sao numeros.
+ */
+function extractOrderListRecords(response: unknown): unknown[] {
+  if (!response || typeof response !== "object") return [];
+  const record = response as Record<string, unknown>;
+  for (const key of [
+    "pedido_venda_produto",
+    "pedidoVendaProduto",
+    "pedidos_venda_produto",
+    "osCadastro",
+    "os_cadastro",
+    "osCadastros"
+  ]) {
+    const value = record[key];
+    if (Array.isArray(value)) return value;
+  }
+  for (const value of Object.values(record)) {
+    if (Array.isArray(value) && value.some((item) => item && typeof item === "object")) {
+      return value;
+    }
+  }
+  return [];
 }
 
 async function consultSalesOrderByIntegrationCode(

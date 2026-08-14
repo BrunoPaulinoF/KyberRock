@@ -3951,3 +3951,252 @@ Deno.test("check_order_billing distingue documento sumido de falha do OMIE", asy
   assertEquals(results[1].found, true);
   assertEquals(typeof results[1].error, "string");
 });
+
+// ── Conferencia de faturamento pela LISTAGEM ──────────────────────────────────────────
+//
+// Cada chamada ao OMIE custa 3 segundos de fila (a mesma fila do envio dos fechamentos),
+// entao conferir pesagem por pesagem nao escala: 40 pesagens travavam a fila por dois
+// minutos. A listagem traz 100 documentos por chamada e vem do codigo maior para o menor,
+// que e onde estao os fechamentos de hoje.
+
+/** Um registro de ListarPedidos, no formato do modulo de Vendas do OMIE. */
+function salesListingRecord(codigo: number, etapa: string, numero: string) {
+  return {
+    cabecalho: { codigo_pedido: codigo, numero_pedido: numero, etapa },
+    informacoes_adicionais: {}
+  };
+}
+
+function billingFixtures(name: string) {
+  return { deviceId: `device-${name}`, companyId: `company-${name}`, token: `token-${name}` };
+}
+
+async function billingDependencies(name: string) {
+  const ids = billingFixtures(name);
+  const token_hash = await sha256Hex(ids.token);
+  return {
+    ids,
+    fixtures: createSupabaseDependencies({
+      devices: {
+        [ids.deviceId]: {
+          id: ids.deviceId,
+          company_id: ids.companyId,
+          unit_id: `unit-${name}`,
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        [ids.companyId]: {
+          id: ids.companyId,
+          is_active: true,
+          omie_app_key: name,
+          omie_app_secret: `secret-${name}`
+        }
+      }
+    })
+  };
+}
+
+Deno.test("check_order_billing resolve um lote inteiro com UMA chamada de listagem", async () => {
+  const { ids, fixtures } = await billingDependencies("listagem-lote");
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarPedidos") {
+      return {
+        pagina: 1,
+        total_de_paginas: 3,
+        pedido_venda_produto: [
+          salesListingRecord(9005, "60", "1005"),
+          salesListingRecord(9004, "50", "1004"),
+          salesListingRecord(9003, "60", "1003"),
+          salesListingRecord(9002, "50", "1002"),
+          salesListingRecord(9001, "50", "1001")
+        ]
+      };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-1", orderType: "sales", omieOrderId: 9005 },
+          { operationId: "op-2", orderType: "sales", omieOrderId: 9004 },
+          { operationId: "op-3", orderType: "sales", omieOrderId: 9003 },
+          { operationId: "op-4", orderType: "sales", omieOrderId: 9002 }
+        ]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  // Uma chamada para quatro pesagens — e nenhuma consulta individual.
+  assertEquals(omieQueue.requests.filter((r) => r.call === "ListarPedidos").length, 1);
+  assertEquals(omieQueue.requests.filter((r) => r.call === "ConsultarPedido").length, 0);
+
+  const results = response.results as Array<Record<string, unknown>>;
+  assertEquals(
+    results.map((r) => [r.operationId, r.billed, r.orderNumber]),
+    [
+      ["op-1", true, "1005"],
+      ["op-2", false, "1004"],
+      ["op-3", true, "1003"],
+      ["op-4", false, "1002"]
+    ]
+  );
+});
+
+Deno.test("check_order_billing para de paginar quando passa do documento mais antigo", async () => {
+  const { ids, fixtures } = await billingDependencies("listagem-parada");
+  const pages: Record<number, unknown[]> = {
+    1: [
+      salesListingRecord(9005, "60", "1005"),
+      salesListingRecord(9004, "50", "1004"),
+      // 9000 e mais antigo que o mais antigo procurado (9004): dali para tras so tem
+      // documento mais velho ainda, entao a segunda pagina nem e pedida.
+      salesListingRecord(9000, "50", "1000")
+    ],
+    2: [salesListingRecord(8999, "50", "999")]
+  };
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarPedidos") {
+      const page = Number(getParam(input).pagina);
+      return { pagina: page, pedido_venda_produto: pages[page] ?? [] };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-1", orderType: "sales", omieOrderId: 9005 },
+          { operationId: "op-2", orderType: "sales", omieOrderId: 9004 },
+          { operationId: "op-3", orderType: "sales", omieOrderId: 9006 },
+          { operationId: "op-4", orderType: "sales", omieOrderId: 9007 }
+        ]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertEquals(omieQueue.requests.filter((r) => r.call === "ListarPedidos").length, 1);
+  // 9006 e 9007 nao apareceram na listagem: caem na consulta individual, que e o que
+  // distingue "documento antigo demais" de "documento excluido no OMIE".
+  assertEquals(omieQueue.requests.filter((r) => r.call === "ConsultarPedido").length, 2);
+});
+
+Deno.test("check_order_billing cai na consulta individual quando a listagem falha", async () => {
+  const { ids, fixtures } = await billingDependencies("listagem-recusada");
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarPedidos") {
+      throw new Error("ERROR: Tag [ORDENAR_POR] nao faz parte da estrutura");
+    }
+    if (input.call === "ConsultarPedido") {
+      const codigo = Number(getParam(input).codigo_pedido);
+      return {
+        pedido_venda_produto: {
+          cabecalho: { codigo_pedido: codigo, numero_pedido: String(codigo), etapa: "60" }
+        }
+      };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-1", orderType: "sales", omieOrderId: 9001 },
+          { operationId: "op-2", orderType: "sales", omieOrderId: 9002 },
+          { operationId: "op-3", orderType: "sales", omieOrderId: 9003 },
+          { operationId: "op-4", orderType: "sales", omieOrderId: 9004 }
+        ]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  // A listagem some, mas a conferencia continua correta — so mais cara.
+  assertEquals(omieQueue.requests.filter((r) => r.call === "ConsultarPedido").length, 4);
+  const results = response.results as Array<Record<string, unknown>>;
+  assertEquals(
+    results.every((r) => r.billed === true && r.found === true),
+    true
+  );
+});
+
+Deno.test("check_order_billing nao lista quando ha poucos documentos", async () => {
+  const { ids, fixtures } = await billingDependencies("listagem-poucos");
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ConsultarPedido") {
+      return { pedido_venda_produto: { cabecalho: { codigo_pedido: 9001, etapa: "50" } } };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: { orders: [{ operationId: "op-1", orderType: "sales", omieOrderId: 9001 }] }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  // Uma pesagem: listar custaria uma chamada e ainda poderia nao achar. Consulta direta.
+  assertEquals(omieQueue.requests.filter((r) => r.call === "ListarPedidos").length, 0);
+  assertEquals(omieQueue.requests.filter((r) => r.call === "ConsultarPedido").length, 1);
+});
+
+Deno.test("check_order_billing lista a OS pelo modulo de servicos", async () => {
+  const { ids, fixtures } = await billingDependencies("listagem-os");
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarOS") {
+      return {
+        pagina: 1,
+        osCadastro: [
+          { Cabecalho: { nCodOS: 7004, cNumOS: "000044", cEtapa: "60" } },
+          { Cabecalho: { nCodOS: 7003, cNumOS: "000043", cEtapa: "50" } },
+          { Cabecalho: { nCodOS: 7002, cNumOS: "000042", cEtapa: "50" } },
+          { Cabecalho: { nCodOS: 7001, cNumOS: "000041", cEtapa: "50" } }
+        ]
+      };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-1", orderType: "service", omieOrderId: 7004 },
+          { operationId: "op-2", orderType: "service", omieOrderId: 7003 },
+          { operationId: "op-3", orderType: "service", omieOrderId: 7002 },
+          { operationId: "op-4", orderType: "service", omieOrderId: 7001 }
+        ]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertEquals(omieQueue.requests.filter((r) => r.call === "ListarOS").length, 1);
+  assertEquals(omieQueue.requests.filter((r) => r.call === "ConsultarOS").length, 0);
+  const results = response.results as Array<Record<string, unknown>>;
+  assertObjectMatch(results[0], { operationId: "op-1", billed: true, orderNumber: "000044" });
+  assertObjectMatch(results[3], { operationId: "op-4", billed: false, orderNumber: "000041" });
+});

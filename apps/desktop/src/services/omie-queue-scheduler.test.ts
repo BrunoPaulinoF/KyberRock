@@ -138,6 +138,71 @@ describe("startOmieQueueDrainScheduler", () => {
     expect(onError).toHaveBeenCalledWith(error);
   });
 
+  // A conferencia de faturamento anda no mesmo tique, mas com vida propria: ela nao
+  // depende da fila ter job, e uma drenagem longa nao pode segurar a proxima conferencia.
+  it("confere o faturamento mesmo com a fila vazia", () => {
+    const drain = vi.fn().mockResolvedValue(undefined);
+    const reconcileBilling = vi.fn().mockResolvedValue(undefined);
+    const { setIntervalFn, run } = captureTick();
+
+    startOmieQueueDrainScheduler({
+      hasRunnableJobs: () => false,
+      drain,
+      reconcileBilling,
+      setIntervalFn
+    });
+    run();
+
+    expect(drain).not.toHaveBeenCalled();
+    expect(reconcileBilling).toHaveBeenCalledTimes(1);
+  });
+
+  it("nao segura a conferencia atras de uma drenagem em andamento", async () => {
+    // Drenagem que nunca termina: e o caso real de um OMIE lento com a fila cheia.
+    const drain = vi.fn().mockReturnValue(new Promise<void>(() => undefined));
+    const reconcileBilling = vi.fn().mockResolvedValue(undefined);
+    const { setIntervalFn, run } = captureTick();
+
+    startOmieQueueDrainScheduler({
+      hasRunnableJobs: () => true,
+      drain,
+      reconcileBilling,
+      setIntervalFn
+    });
+    run();
+    await Promise.resolve();
+    await Promise.resolve();
+    run();
+
+    // A drenagem segue travada na reentrancia; a conferencia anda no proprio ritmo.
+    expect(drain).toHaveBeenCalledTimes(1);
+    expect(reconcileBilling).toHaveBeenCalledTimes(2);
+  });
+
+  it("reporta falha da conferencia sem derrubar o agendador nem a drenagem", async () => {
+    const drain = vi.fn().mockResolvedValue(undefined);
+    const reconcileBilling = vi.fn().mockRejectedValue(new Error("OMIE fora do ar"));
+    const onError = vi.fn();
+    const { setIntervalFn, run } = captureTick();
+
+    startOmieQueueDrainScheduler({
+      hasRunnableJobs: () => true,
+      drain,
+      reconcileBilling,
+      onError,
+      setIntervalFn
+    });
+    run();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(drain).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+    // E o tique seguinte continua conferindo.
+    run();
+    expect(reconcileBilling).toHaveBeenCalledTimes(2);
+  });
+
   it("para de agendar quando stop() e chamado", () => {
     const clearIntervalFn = vi.fn();
     const handle = startOmieQueueDrainScheduler({
