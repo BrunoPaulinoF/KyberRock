@@ -148,6 +148,7 @@ import {
   processOmieSyncQueue,
   processFiscalBillingNow,
   reconcileOmieBillingFromOmie,
+  type OmieBillingReconcileResult,
   rearmOmieBillingForCustomer,
   getSupabaseSyncStatus,
   isSupabaseInitialized,
@@ -1025,9 +1026,26 @@ export class DesktopRuntime {
   }
 
   /**
-   * Liga o tick que drena a fila OMIE (ver omie-queue-scheduler). Sem ele, a
-   * re-tentativa de um job que falhou (60 s, 2 min, 4 min...) so acontecia quando algo
-   * disparava a sincronizacao cloud — no pior caso, o ciclo de 30 minutos.
+   * Confere no OMIE quem ja foi faturado, se o intervalo minimo da conferencia ja passou.
+   *
+   * Ponto unico dos dois chamadores (o tique do OMIE e a sincronizacao cloud): sem
+   * credencial de nuvem nao ha o que perguntar, e a falha nunca sobe — a conferencia e a
+   * ultima coisa do sistema que pode derrubar um envio de fechamento.
+   */
+  private async runOmieBillingCheck(): Promise<OmieBillingReconcileResult> {
+    const idle = { checked: 0, billed: 0, skipped: true, errors: [] };
+    if (!this.hasCloudCredentials()) return idle;
+    initializeSupabaseFromSettings(this.database);
+    if (!isSupabaseInitialized()) return idle;
+    return await reconcileOmieBillingFromOmie(this.database, this.ensureIdentity());
+  }
+
+  /**
+   * Liga o tick que drena a fila OMIE e confere o faturamento (ver omie-queue-scheduler).
+   * Sem ele, a re-tentativa de um job que falhou (60 s, 2 min, 4 min...) so acontecia
+   * quando algo disparava a sincronizacao cloud — no pior caso, o ciclo de 30 minutos —,
+   * e a conferencia de faturamento tinha o mesmo problema: acompanhava o dia enquanto a
+   * pedreira estava movimentada e parava justamente quando o movimento parava.
    */
   startOmieQueueDrainScheduler(): OmieQueueDrainSchedulerHandle {
     this.omieQueueDrainScheduler?.stop();
@@ -1035,6 +1053,9 @@ export class DesktopRuntime {
       hasRunnableJobs: () => this.hasRunnableOmieJobs(),
       drain: async () => {
         await this.runOmieQueue();
+      },
+      reconcileBilling: async () => {
+        await this.runOmieBillingCheck();
       },
       onError: (error) => console.error("Drenagem da fila OMIE falhou", error)
     });
@@ -1653,11 +1674,13 @@ export class DesktopRuntime {
       }
 
       // Volta do OMIE: quem faturou o pedido/OS foi uma pessoa la dentro, e sem
-      // perguntar a pesagem ficaria em "No OMIE, falta faturar" para sempre. Um lote por
-      // ciclo, por rodizio. Nunca derruba a sincronizacao: o cadastro e as operacoes
-      // valem mais do que saber a situacao de faturamento agora.
+      // perguntar a pesagem ficaria em "No OMIE, falta faturar" para sempre. O tique do
+      // OMIE ja faz isso a cada 30 s (respeitando o intervalo minimo da conferencia);
+      // aqui e so para a sincronizacao manual da tela devolver o estado ja atualizado.
+      // Nunca derruba a sincronizacao: o cadastro e as operacoes valem mais do que saber
+      // a situacao de faturamento agora.
       try {
-        const billingCheck = await reconcileOmieBillingFromOmie(this.database, identity);
+        const billingCheck = await this.runOmieBillingCheck();
         synced += billingCheck.billed;
         errors.push(...billingCheck.errors);
       } catch (error) {
