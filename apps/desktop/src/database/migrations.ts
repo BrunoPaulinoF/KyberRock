@@ -1949,5 +1949,65 @@ CREATE INDEX IF NOT EXISTS idx_customer_future_billing_customer_active
 -- migracao).
 ALTER TABLE weighing_operations ADD COLUMN future_billing_nfe_number TEXT;
 `
+  },
+  {
+    version: 54,
+    name: "customer_future_billing_balance",
+    sql: `
+-- Saldo da nota de entrega futura: quanto ela faturou e quanto ainda da para retirar.
+--
+-- A nota de faturamento e emitida por uma QUANTIDADE ("500 t de rachao por tanto") e o
+-- cliente vai retirando aquilo caminhao a caminhao. Ate aqui o cadastro guardava so o numero
+-- dela: a referencia saia certinha no cupom, mas o operador nao tinha onde olhar para saber
+-- quanto ainda restava — o controle ficava numa planilha ao lado da balanca, e quem
+-- descobria que a nota tinha acabado era o cliente. \`total_weight_kg\` e esse total, em
+-- quilos, na mesma unidade em que a balanca pesa (\`net_weight_kg\`), para o saldo ser uma
+-- subtracao e nao uma conversao.
+--
+-- O quanto JA FOI TIRADO nao vira coluna: e a soma do peso liquido das pesagens que citaram
+-- a nota. Um contador gravado precisaria ser somado nas duas balancas da pedreira, e a que
+-- fechasse uma carga offline voltaria com um numero diferente do da outra; as pesagens ja
+-- atravessam a nuvem, entao somar a partir delas da o mesmo saldo nas duas maquinas.
+--
+-- Total nulo = nota SEM controle de saldo. E como fica toda nota cadastrada antes desta
+-- migracao, e ela continua carimbando pesagem exatamente como carimbava.
+ALTER TABLE customer_future_billing_invoices ADD COLUMN total_weight_kg REAL;
+
+-- Uma unica nota vigente por (cliente, produto) deixa de valer.
+--
+-- Quem esgota a nota de 500 t abre OUTRA para o mesmo produto, e as duas precisam conviver:
+-- a esgotada como historico do que ja foi entregue (e do saldo que zerou), a nova como a que
+-- carimba as proximas pesagens. Sem isso a segunda nota so entrava por cima da primeira, e o
+-- quanto ja tinha sido tirado da anterior sumia do cadastro.
+--
+-- O que continua unico e a MESMA nota repetida no mesmo par: isso e erro de digitacao, e
+-- faria a mesma quantidade faturada ser oferecida duas vezes ao operador.
+DROP INDEX IF EXISTS idx_customer_future_billing_customer_product;
+DROP INDEX IF EXISTS idx_customer_future_billing_customer_default;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_future_billing_product_nfe
+  ON customer_future_billing_invoices(customer_id, product_id, nfe_number)
+  WHERE deleted_at IS NULL AND product_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_future_billing_default_nfe
+  ON customer_future_billing_invoices(customer_id, nfe_number)
+  WHERE deleted_at IS NULL AND product_id IS NULL;
+
+-- QUAL nota a pesagem baixou, e nao so o numero dela.
+--
+-- Com mais de uma nota por cliente o numero sozinho ja nao identifica a linha (o mesmo
+-- cliente pode ter a nota 500 do rachao e a nota 500 da brita, de series diferentes), e o
+-- saldo tem de sair da linha certa. Congelado no fechamento junto com o numero e pelo mesmo
+-- motivo: o retrato do que foi entregue nao muda quando o cadastro mudar.
+--
+-- Nulo nas pesagens anteriores a esta migracao — para elas o saldo e recuperado pelo numero
+-- congelado (ver \`customer-future-billing.ts\`), senao a nota que ja tinha meia entrega
+-- futura na rua estrearia no quadro dizendo que nada foi tirado.
+ALTER TABLE weighing_operations ADD COLUMN future_billing_invoice_id TEXT REFERENCES customer_future_billing_invoices(id);
+
+CREATE INDEX IF NOT EXISTS idx_weighing_operations_future_billing_invoice
+  ON weighing_operations(future_billing_invoice_id)
+  WHERE future_billing_invoice_id IS NOT NULL;
+`
   }
 ];

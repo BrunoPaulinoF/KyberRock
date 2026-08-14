@@ -234,9 +234,10 @@ export interface KyberRockDesktopApi {
   removeCustomerFreightRule: (ruleId: string) => Promise<void>;
   removeCustomerFreightModality: (ruleId: string, modality: FreightModality) => Promise<void>;
   /**
-   * Notas de venda para ENTREGA FUTURA ja emitidas contra o cliente. Uma por tipo de
-   * produto (a nota de rachao nao vale para a brita); `productId` nulo e a que vale para
-   * qualquer produto dele.
+   * Notas de venda para ENTREGA FUTURA ja emitidas contra o cliente, com o saldo de cada
+   * uma. Sao por tipo de produto (a nota de rachao nao vale para a brita) e o mesmo produto
+   * aceita varias, consumidas da mais antiga para a mais nova; `productId` nulo e a que vale
+   * para qualquer produto dele.
    */
   getCustomerFutureBillingInvoices: (
     customerId: string
@@ -245,6 +246,8 @@ export interface KyberRockDesktopApi {
     customerId: string;
     productId?: string | null;
     nfeNumber: string;
+    /** Quanto a nota faturou, em kg. Vazio = nota sem controle de saldo. */
+    totalWeightKg?: number | string | null;
   }) => Promise<CustomerFutureBillingInvoiceView>;
   removeCustomerFutureBillingInvoice: (invoiceId: string) => Promise<void>;
   listWindowsPrinters: () => Promise<WindowsPrinterSummary[]>;

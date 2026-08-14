@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
-import { resolveCustomerFutureBillingNfe } from "./customer-future-billing";
+import { resolveCustomerFutureBillingInvoice } from "./customer-future-billing";
 import {
   pullDesktopDataFromCloud,
   pushSharedCadastroToCloud,
@@ -550,6 +550,7 @@ describe("cadastro compartilhado da pedreira", () => {
               customer_id: "cust-1",
               product_id: "prod-1",
               nfe_number: "12345",
+              total_weight_kg: 500000,
               is_active: true,
               updated_at: "2026-07-27T10:00:00.000Z"
             }
@@ -609,7 +610,17 @@ describe("cadastro compartilhado da pedreira", () => {
       ).toBe('{"mode":"per_ton","price_cents":1200}');
       // A balanca B resolve a nota que a balanca A cadastrou: e isso que faz as duas
       // faturarem o mesmo cliente com a mesma referencia.
-      expect(resolveCustomerFutureBillingNfe(database, "cust-1", "prod-1")).toBe("12345");
+      expect(resolveCustomerFutureBillingInvoice(database, "cust-1", "prod-1")?.nfeNumber).toBe(
+        "12345"
+      );
+      // O total tambem atravessa: sem ele a balanca B somaria retiradas contra um teto
+      // que nao conhece e o saldo das duas maquinas nunca bateria.
+      expect(
+        database
+          .prepare("SELECT total_weight_kg FROM customer_future_billing_invoices WHERE id = 'fb-1'")
+          .pluck()
+          .get()
+      ).toBe(500000);
     } finally {
       database.close();
     }
@@ -733,7 +744,13 @@ describe("cadastro compartilhado da pedreira", () => {
       // A nota de entrega futura sobe junto do resto do cadastro, depois do cliente e do
       // produto que ela referencia.
       expect(payloadFor("customerFutureBillingInvoices")).toMatchObject([
-        { id: "fb-1", customer_id: "cust-1", product_id: "prod-1", nfe_number: "12345" }
+        {
+          id: "fb-1",
+          customer_id: "cust-1",
+          product_id: "prod-1",
+          nfe_number: "12345",
+          total_weight_kg: 500000
+        }
       ]);
 
       // Segundo ciclo sem alteracao local: nada a reenviar.
@@ -938,8 +955,8 @@ function seedLocalCadastro(database: DesktopDatabase): void {
     .run(now, now);
   database
     .prepare(
-      `INSERT INTO customer_future_billing_invoices (id, customer_id, product_id, nfe_number, is_active, created_at, updated_at)
-       VALUES ('fb-1', 'cust-1', 'prod-1', '12345', 1, ?, ?)`
+      `INSERT INTO customer_future_billing_invoices (id, customer_id, product_id, nfe_number, total_weight_kg, is_active, created_at, updated_at)
+       VALUES ('fb-1', 'cust-1', 'prod-1', '12345', 500000, 1, ?, ?)`
     )
     .run(now, now);
 }

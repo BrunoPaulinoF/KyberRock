@@ -69,6 +69,15 @@ const OMIE_RAZAO_SOCIAL_MAX_LENGTH = 60;
  */
 const FUTURE_BILLING_ANY_PRODUCT = "__any__";
 
+/**
+ * Peso do quadro das notas de entrega futura. Sempre em quilos, a unidade em que a balanca
+ * pesa e em que o total da nota e digitado: converter para tonelada aqui obrigaria o
+ * operador a comparar duas unidades diferentes na mesma linha para conferir o saldo.
+ */
+function formatKgAmount(value: number): string {
+  return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} kg`;
+}
+
 const initialForm: CustomerFormData = {
   tradeName: "",
   legalName: "",
@@ -142,6 +151,42 @@ const styles = {
   cellMuted: {
     color: "var(--kr-muted)",
     fontSize: "12px"
+  },
+  // Quadro das notas de entrega futura: numero da nota, total, ja tirado e saldo.
+  futureBillingBoard: {
+    display: "grid",
+    gap: "2px",
+    marginTop: "4px"
+  },
+  futureBillingHeaderRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1.6fr) repeat(3, minmax(0, 1fr)) auto",
+    gap: "8px",
+    alignItems: "center",
+    fontSize: "10px",
+    fontWeight: 800,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.04em",
+    color: "var(--kr-muted)"
+  },
+  futureBillingRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1.6fr) repeat(3, minmax(0, 1fr)) auto",
+    gap: "8px",
+    alignItems: "center",
+    fontSize: "12px",
+    color: "var(--kr-text-strong)",
+    borderTop: "1px solid var(--kr-border)",
+    padding: "6px 0"
+  },
+  futureBillingProduct: {
+    display: "block",
+    color: "var(--kr-muted)",
+    fontSize: "11px"
+  },
+  futureBillingNumberCell: {
+    textAlign: "right" as const,
+    fontVariantNumeric: "tabular-nums" as const
   },
   formShell: {
     display: "grid",
@@ -514,12 +559,14 @@ export function CustomersView({
   // usado quando o tipo da venda nao tem valor proprio.
   const [freightModality, setFreightModality] = useState<FreightModality | "">("");
   const [savingFreight, setSavingFreight] = useState(false);
-  // Notas de venda para entrega futura ja emitidas contra o cliente, uma por produto.
+  // Notas de venda para entrega futura ja emitidas contra o cliente, cada uma com o quanto
+  // ja saiu contra ela. Varias por produto: quando uma esgota, a proxima assume.
   const [futureBillingInvoices, setFutureBillingInvoices] = useState<
     CustomerFutureBillingInvoice[]
   >([]);
   const [futureBillingProductId, setFutureBillingProductId] = useState("");
   const [futureBillingNfeNumber, setFutureBillingNfeNumber] = useState("");
+  const [futureBillingTotalWeightKg, setFutureBillingTotalWeightKg] = useState("");
   const [savingFutureBilling, setSavingFutureBilling] = useState(false);
   const customerFreightEntries = useMemo(
     () => toCustomerFreightEntries(customerFreightRules),
@@ -677,6 +724,7 @@ export function CustomersView({
     setFutureBillingInvoices([]);
     setFutureBillingProductId("");
     setFutureBillingNfeNumber("");
+    setFutureBillingTotalWeightKg("");
     setDefaultConditionText("");
     setActiveFormSection("identificacao");
   }
@@ -779,6 +827,7 @@ export function CustomersView({
     // B, e um clique em "Salvar" gravaria a nota de um no outro.
     setFutureBillingProductId("");
     setFutureBillingNfeNumber("");
+    setFutureBillingTotalWeightKg("");
     try {
       setFutureBillingInvoices(await desktopApi.getCustomerFutureBillingInvoices(customerId));
     } catch {
@@ -945,10 +994,14 @@ export function CustomersView({
         customerId: editingId,
         productId:
           futureBillingProductId === FUTURE_BILLING_ANY_PRODUCT ? null : futureBillingProductId,
-        nfeNumber: futureBillingNfeNumber
+        nfeNumber: futureBillingNfeNumber,
+        // Vazio grava a nota sem controle de saldo: quem so quer a referencia no cupom
+        // continua com o cadastro de antes, sem ter de inventar uma quantidade.
+        totalWeightKg: futureBillingTotalWeightKg || null
       });
       setFutureBillingNfeNumber("");
       setFutureBillingProductId("");
+      setFutureBillingTotalWeightKg("");
       await loadFutureBillingInvoices(editingId);
       showFlash("success", "Nota de faturamento futuro salva.");
     } catch (err) {
@@ -965,7 +1018,7 @@ export function CustomersView({
     const confirmed = await requestConfirm({
       title: "Encerrar a entrega futura?",
       description:
-        "As proximas pesagens desse cliente param de sair com a referencia dessa nota. As ja faturadas nao mudam.",
+        "A nota sai do quadro com o saldo dela: as proximas pesagens passam para a nota seguinte do mesmo produto, ou saem sem referencia se nao houver outra. As ja faturadas nao mudam.",
       confirmLabel: "Encerrar",
       cancelLabel: "Manter",
       tone: "danger"
@@ -1741,12 +1794,18 @@ export function CustomersView({
                   <h4 style={styles.formSectionTitle}>Venda para entrega futura</h4>
                   <p style={styles.formHint}>
                     Quando o cliente ja pagou uma nota de faturamento (CFOP 5.922) e vai retirando a
-                    carga aos poucos, cadastre aqui o numero dela. Cada pesagem desse produto passa
-                    a sair com a referencia no cupom e nos dados adicionais da nota enviada ao OMIE.
-                    A nota e por produto: a de rachao nao vale para a brita. Deixe o produto em
-                    branco para valer para qualquer produto do cliente. Enquanto a nota estiver
-                    aqui, TODA pesagem sai carimbada — remova a linha quando a entrega futura
-                    acabar.
+                    carga aos poucos, cadastre aqui o numero dela e quanto ela faturou em quilos.
+                    Cada pesagem desse produto passa a sair com a referencia no cupom e nos dados
+                    adicionais da nota enviada ao OMIE, e o peso liquido dela baixa do saldo do
+                    quadro abaixo. A nota e por produto: a de rachao nao vale para a brita. Deixe o
+                    produto em branco para valer para qualquer produto do cliente.
+                  </p>
+                  <p style={styles.formHint}>
+                    Pode cadastrar quantas notas o cliente tiver — uma linha por nota. Elas sao
+                    consumidas da mais antiga para a mais nova: quando o saldo de uma zera, a
+                    proxima do mesmo produto assume sozinha, e a esgotada fica no quadro como
+                    historico do que ja foi entregue. Sem o total em quilos a nota nao controla
+                    saldo e carimba TODA pesagem ate alguem remove-la.
                   </p>
                   {editingId ? (
                     <div style={{ display: "grid", gap: "8px" }}>
@@ -1782,6 +1841,13 @@ export function CustomersView({
                           disabled={false}
                           hint="Numero da nota ja emitida (so digitos)."
                         />
+                        <NumberInput
+                          label="Total da nota (kg)"
+                          value={futureBillingTotalWeightKg}
+                          onChange={setFutureBillingTotalWeightKg}
+                          disabled={false}
+                          hint="Quanto a nota faturou, em quilos (30 t = 30000). Vazio = sem controle de saldo."
+                        />
                       </div>
                       <button
                         type="button"
@@ -1796,31 +1862,62 @@ export function CustomersView({
                           Nenhuma nota de entrega futura cadastrada. As pesagens saem normais.
                         </p>
                       ) : (
-                        futureBillingInvoices.map((invoice) => (
-                          <div
-                            key={invoice.id}
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              alignItems: "center",
-                              gap: "8px",
-                              borderTop: "1px solid var(--kr-border)",
-                              paddingTop: "8px"
-                            }}
-                          >
-                            <span style={styles.cellMuted}>
-                              <strong>{invoice.productDescription ?? "Qualquer produto"}</strong>:
-                              NF-e {invoice.nfeNumber}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => void handleRemoveFutureBillingInvoice(invoice.id)}
-                              style={styles.dangerButton}
-                            >
-                              Remover
-                            </button>
+                        <div style={styles.futureBillingBoard}>
+                          {/*
+                            O quadro de controle: quanto a nota faturou, quanto ja saiu e
+                            quanto falta. E a conta que antes vivia numa planilha ao lado da
+                            balanca — por isso as tres colunas ficam lado a lado, na mesma
+                            linha do numero da nota.
+                          */}
+                          <div style={styles.futureBillingHeaderRow}>
+                            <span>Nota</span>
+                            <span style={styles.futureBillingNumberCell}>Total</span>
+                            <span style={styles.futureBillingNumberCell}>Ja tirado</span>
+                            <span style={styles.futureBillingNumberCell}>Saldo</span>
+                            <span />
                           </div>
-                        ))
+                          {futureBillingInvoices.map((invoice) => {
+                            const saldo = invoice.remainingWeightKg;
+                            const esgotada = saldo !== null && saldo <= 0;
+                            return (
+                              <div key={invoice.id} style={styles.futureBillingRow}>
+                                <span>
+                                  <strong>NF-e {invoice.nfeNumber}</strong>
+                                  <span style={styles.futureBillingProduct}>
+                                    {invoice.productDescription ?? "Qualquer produto"}
+                                  </span>
+                                </span>
+                                <span style={styles.futureBillingNumberCell}>
+                                  {invoice.totalWeightKg === null
+                                    ? "—"
+                                    : formatKgAmount(invoice.totalWeightKg)}
+                                </span>
+                                <span style={styles.futureBillingNumberCell}>
+                                  {formatKgAmount(invoice.withdrawnWeightKg)}
+                                </span>
+                                <span
+                                  style={{
+                                    ...styles.futureBillingNumberCell,
+                                    fontWeight: 700,
+                                    // Saldo zerado (ou estourado) e a informacao que faz o
+                                    // operador abrir a proxima nota: nao pode passar batido
+                                    // no meio de tres numeros iguais.
+                                    color: esgotada ? "#b91c1c" : "var(--kr-text-strong)"
+                                  }}
+                                >
+                                  {saldo === null ? "sem controle" : formatKgAmount(saldo)}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleRemoveFutureBillingInvoice(invoice.id)}
+                                  style={styles.dangerButton}
+                                >
+                                  Remover
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
                       )}
                     </div>
                   ) : (

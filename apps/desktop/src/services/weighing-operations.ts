@@ -16,7 +16,7 @@ import {
   type FreightRule
 } from "./freight.js";
 import { getCustomerFreightRuleForProduct } from "./customer-freight-rules.js";
-import { resolveCustomerFutureBillingNfe } from "./customer-future-billing.js";
+import { resolveCustomerFutureBillingInvoice } from "./customer-future-billing.js";
 import { calculateSavingsPercent, PricingService, type PriceDetails } from "./pricing.js";
 import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
@@ -971,16 +971,23 @@ export function closeWeighingOperation(
     //
     // So na venda com nota: a operacao interna vira ordem de servico e nao emite NF-e,
     // entao nao ha remessa de entrega futura para referenciar.
-    const futureBillingNfeNumber =
+    //
+    // Junto com o numero fica o ID da nota, que e o que baixa o saldo dela no cadastro: o
+    // peso liquido gravado logo acima passa a contar como retirado assim que esta linha
+    // grava. A escolha acontece DEPOIS do peso porque e o saldo de agora que decide a nota —
+    // a carga que esta saindo ainda nao conta contra si mesma.
+    const futureBillingInvoice =
       nextOperationType === "invoice"
-        ? resolveCustomerFutureBillingNfe(database, opRow?.customer_id, operation.productId)
+        ? resolveCustomerFutureBillingInvoice(database, opRow?.customer_id, operation.productId)
         : null;
-    if (futureBillingNfeNumber) {
+    if (futureBillingInvoice) {
       database
         .prepare(
-          `UPDATE weighing_operations SET future_billing_nfe_number = ?, updated_at = ? WHERE id = ?`
+          `UPDATE weighing_operations
+             SET future_billing_nfe_number = ?, future_billing_invoice_id = ?, updated_at = ?
+           WHERE id = ?`
         )
-        .run(futureBillingNfeNumber, timestamp, input.operationId);
+        .run(futureBillingInvoice.nfeNumber, futureBillingInvoice.id, timestamp, input.operationId);
     }
 
     if (productCreditDebitCents > 0 || freightCreditDebitCents > 0) {

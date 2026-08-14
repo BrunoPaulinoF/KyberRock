@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
+import {
+  getCustomerFutureBillingInvoices,
+  setCustomerFutureBillingInvoice
+} from "./customer-future-billing";
 import { enqueueSyncJob } from "./sync-queue";
 import {
   listOperationsPendingCloudPush,
@@ -354,6 +358,102 @@ describe("multi-desktop na mesma pedreira", () => {
       expect(listOpenWeighingOperations(database)).toHaveLength(0);
       expect(listClosedWeighingOperations(database).map((op) => op.id)).toContain("op-to-close");
       expect(listCanceledWeighingOperations(database).map((op) => op.id)).toContain("op-to-cancel");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("entrega futura: a carga que saiu na outra balanca baixa o saldo da nota aqui", async () => {
+    // O saldo da nota e o mesmo para a pedreira inteira. Se a retirada feita na balanca B
+    // nao descontasse aqui, cada maquina ofereceria a mesma quantidade faturada ao seu
+    // operador e o cliente levaria mais do que a nota cobre.
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      insertCadastro(database);
+      upsertUnitDevices(database, identity, [
+        { id: "desktop-b", name: "Balanca 2", color: "#ea580c", is_active: true }
+      ]);
+      const nota = setCustomerFutureBillingInvoice(database, {
+        customerId: "cust-1",
+        productId: "prod-1",
+        nfeNumber: "12345",
+        totalWeightKg: 100_000
+      });
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          operations: [
+            {
+              id: "op-entrega-futura",
+              company_id: "company-1",
+              unit_id: "unit-1",
+              device_id: "desktop-b",
+              status: "closed_local",
+              operation_type: "invoice",
+              customer_id: "cust-1",
+              product_id: "prod-1",
+              exit_weight_kg: 40_000,
+              net_weight_kg: 28_000,
+              future_billing_nfe_number: "12345",
+              future_billing_invoice_id: nota.id,
+              created_at: "2026-07-22T11:00:00.000Z",
+              updated_at: "2026-07-22T12:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      const [saldo] = getCustomerFutureBillingInvoices(database, "cust-1");
+      expect(saldo.withdrawnWeightKg).toBe(28_000);
+      expect(saldo.remainingWeightKg).toBe(72_000);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("entrega futura: a carga desta balanca leva a nota que baixou para a nuvem", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      insertCadastro(database);
+      const nota = setCustomerFutureBillingInvoice(database, {
+        customerId: "cust-1",
+        productId: "prod-1",
+        nfeNumber: "12345",
+        totalWeightKg: 100_000
+      });
+      // Pesagem ja fechada citando a nota, como o fechamento grava.
+      database
+        .prepare(
+          `INSERT INTO weighing_operations (
+             id, company_id, unit_id, device_id, status, operation_type, customer_id, product_id,
+             entry_weight_kg, exit_weight_kg, net_weight_kg,
+             future_billing_nfe_number, future_billing_invoice_id, created_at, updated_at
+           ) VALUES ('op-entrega-futura', 'company-1', 'unit-1', ?, 'closed_local', 'invoice',
+             'cust-1', 'prod-1', 12000, 40000, 28000, '12345', ?,
+             '2026-07-22T11:00:00.000Z', '2026-07-22T12:00:00.000Z')`
+        )
+        .run(identity.deviceId, nota.id);
+      invokeMock.mockResolvedValueOnce({ data: { ok: true }, error: null });
+
+      await syncOperationToSupabase(database, "op-entrega-futura", identity);
+
+      expect(invokeMock).toHaveBeenCalledWith("desktop-sync", {
+        body: expect.objectContaining({
+          operations: [
+            expect.objectContaining({
+              id: "op-entrega-futura",
+              future_billing_nfe_number: "12345",
+              future_billing_invoice_id: nota.id
+            })
+          ]
+        })
+      });
     } finally {
       database.close();
     }
