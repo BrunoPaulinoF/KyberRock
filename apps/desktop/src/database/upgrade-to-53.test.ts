@@ -9,7 +9,7 @@ import { DESKTOP_MIGRATIONS } from "./migrations";
 import { openDesktopDatabase, type DesktopDatabase } from "./sqlite";
 import { ensureInitialDesktopIdentity } from "../services/bootstrap";
 import {
-  resolveCustomerFutureBillingNfe,
+  resolveCustomerFutureBillingInvoice,
   setCustomerFutureBillingInvoice
 } from "../services/customer-future-billing";
 
@@ -32,7 +32,7 @@ describe("atualizacao de um banco em uso (52 -> 53)", () => {
       expect(applied.map((migration) => migration.version)).toContain(53);
 
       // Nada mudou para o operador: sem nota cadastrada, nenhuma pesagem sai carimbada.
-      expect(resolveCustomerFutureBillingNfe(database, "cust-1", "prod-1")).toBeNull();
+      expect(resolveCustomerFutureBillingInvoice(database, "cust-1", "prod-1")).toBeNull();
       expect(
         database.prepare("SELECT trade_name FROM customers WHERE id = 'cust-1'").pluck().get()
       ).toBe("Concessionaria");
@@ -43,7 +43,9 @@ describe("atualizacao de um banco em uso (52 -> 53)", () => {
         productId: "prod-1",
         nfeNumber: "12345"
       });
-      expect(resolveCustomerFutureBillingNfe(database, "cust-1", "prod-1")).toBe("12345");
+      expect(resolveCustomerFutureBillingInvoice(database, "cust-1", "prod-1")?.nfeNumber).toBe(
+        "12345"
+      );
 
       // A coluna do RETRATO na operacao nasce nula: a pesagem que ja estava fechada antes
       // da atualizacao nao entregou entrega futura nenhuma, e nao pode passar a citar uma
@@ -62,11 +64,17 @@ describe("atualizacao de um banco em uso (52 -> 53)", () => {
     }
   });
 
-  it("os indices unicos impedem duas notas vigentes para o mesmo par", () => {
+  it("os indices unicos da 53 impedem duas notas vigentes para o mesmo par", () => {
     const database = openDesktopDatabase({ databasePath: ":memory:" });
 
     try {
-      runDesktopMigrations(database);
+      // Pinado na 53 de proposito: a 54 afrouxa essa regra (o cliente que esgota uma nota
+      // abre outra para o mesmo produto, e as duas convivem). Aqui fica registrado o que a
+      // 53 entregou; o que vale hoje esta em upgrade-to-54.test.ts.
+      runDesktopMigrations(
+        database,
+        DESKTOP_MIGRATIONS.filter((migration) => migration.version <= 53)
+      );
       seedCadastro(database);
       const at = "2026-08-13T09:00:00.000Z";
       const insert = database.prepare(
@@ -147,7 +155,9 @@ describe("atualizacao de um banco em uso (52 -> 53)", () => {
         productId: "prod-1",
         nfeNumber: "12345"
       });
-      expect(resolveCustomerFutureBillingNfe(database, "cust-1", "prod-1")).toBe("12345");
+      expect(resolveCustomerFutureBillingInvoice(database, "cust-1", "prod-1")?.nfeNumber).toBe(
+        "12345"
+      );
       expect(database.prepare("PRAGMA integrity_check").pluck().get()).toBe("ok");
       database.close();
     } finally {

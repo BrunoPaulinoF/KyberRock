@@ -1085,25 +1085,28 @@ function upsertCloudCustomerFutureBillingInvoices(
   database: DesktopDatabase,
   rows: Array<Record<string, unknown>>
 ): number {
-  // Mesma protecao dos indices unicos parciais da migracao 52: uma nota vigente por
-  // (cliente, produto) e uma por cliente sem produto. Quando a nuvem manda a mesma nota
-  // com outro id, a local vence — regravar aqui derrubaria o indice.
+  // Mesma protecao dos indices unicos parciais da migracao 54: o mesmo NUMERO nao entra
+  // duas vezes no mesmo par (cliente, produto). Varias notas por par sao esperadas — e
+  // assim que a nota seguinte assume quando a anterior esgota —, entao o conflito aqui e so
+  // a mesma nota chegando com outro id; nesse caso a local vence, porque regravar
+  // derrubaria o indice e porque e a ela que as pesagens desta maquina ja apontam.
   const findConflictForProduct = database.prepare(
     `SELECT id FROM customer_future_billing_invoices
-     WHERE customer_id = ? AND product_id = ? AND deleted_at IS NULL LIMIT 1`
+     WHERE customer_id = ? AND product_id = ? AND nfe_number = ? AND deleted_at IS NULL LIMIT 1`
   );
   const findConflictForDefault = database.prepare(
     `SELECT id FROM customer_future_billing_invoices
-     WHERE customer_id = ? AND product_id IS NULL AND deleted_at IS NULL LIMIT 1`
+     WHERE customer_id = ? AND product_id IS NULL AND nfe_number = ? AND deleted_at IS NULL LIMIT 1`
   );
   const upsert = database.prepare(`
     INSERT INTO customer_future_billing_invoices (
-      id, customer_id, product_id, nfe_number, is_active, created_at, updated_at, deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      id, customer_id, product_id, nfe_number, total_weight_kg, is_active, created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       customer_id = excluded.customer_id,
       product_id = excluded.product_id,
       nfe_number = excluded.nfe_number,
+      total_weight_kg = excluded.total_weight_kg,
       is_active = excluded.is_active,
       updated_at = excluded.updated_at,
       deleted_at = excluded.deleted_at
@@ -1122,8 +1125,8 @@ function upsertCloudCustomerFutureBillingInvoices(
     if (!deletedAt) {
       const conflict = (
         productId
-          ? findConflictForProduct.get(customerId, productId)
-          : findConflictForDefault.get(customerId)
+          ? findConflictForProduct.get(customerId, productId, nfeNumber)
+          : findConflictForDefault.get(customerId, nfeNumber)
       ) as { id: string } | undefined;
       if (conflict && conflict.id !== id) continue;
     }
@@ -1133,6 +1136,7 @@ function upsertCloudCustomerFutureBillingInvoices(
       customerId,
       productId,
       nfeNumber,
+      numberValue(row.total_weight_kg),
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
       updatedAt,
@@ -2211,8 +2215,8 @@ function upsertCloudOperations(
       remote_plate, remote_driver_name, remote_customer_name, remote_product_description,
       payment_method_id, wallet_settlement_method_id, wallet_settlement_due_date,
       wallet_settled_at, wallet_settlement_note, settle_from_advance, omie_advance_settle_cents,
-      future_billing_nfe_number
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      future_billing_nfe_number, future_billing_invoice_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       unit_id = excluded.unit_id,
@@ -2267,6 +2271,10 @@ function upsertCloudOperations(
       -- pull. COALESCE porque uma balanca em versao antiga projeta a operacao sem a coluna
       -- e um nulo dela nao pode apagar o numero que esta maquina ja imprimiu no cupom.
       future_billing_nfe_number = COALESCE(excluded.future_billing_nfe_number, weighing_operations.future_billing_nfe_number),
+      -- Qual nota a carga baixou: chega junto com o numero e pelo mesmo COALESCE. E o que
+      -- faz o saldo da nota bater nas duas balancas — a retirada que a outra maquina fechou
+      -- so entra na conta desta quando este vinculo chega.
+      future_billing_invoice_id = COALESCE(excluded.future_billing_invoice_id, weighing_operations.future_billing_invoice_id),
       -- Carteira: os valores ja chegam resolvidos de isProjectedColumn (nuvem sem as
       -- colunas devolve o que esta maquina tem), entao aqui a projecao manda — inclusive
       -- o nulo, que e como a reabertura feita na outra balanca chega ate aqui.
@@ -2474,7 +2482,13 @@ function upsertCloudOperations(
         walletSettlementNote,
         settleFromAdvance,
         advanceSettleCents,
-        nullableStringValue(row.future_billing_nfe_number)
+        nullableStringValue(row.future_billing_nfe_number),
+        // A nota tem de existir AQUI antes de a pesagem apontar para ela (chave estrangeira).
+        // No caso normal ja existe: o cadastro compartilhado e gravado logo acima, no mesmo
+        // pull. Quando a janela incremental nao trouxe a nota, a pesagem entra so com o
+        // numero e o COALESCE acima guarda o vinculo para o pull seguinte — enquanto isso o
+        // saldo sai pelo numero congelado, como nas pesagens anteriores a esta versao.
+        existingId(database, "customer_future_billing_invoices", row.future_billing_invoice_id)
       );
       count++;
     } catch (error) {
@@ -3473,6 +3487,9 @@ function getOperationPayload(
     // para a 2a via poder sair em OUTRA balanca da pedreira citando a mesma nota: sem ela,
     // a segunda maquina reimprimiria o cupom sem a referencia que a NF-e ja carrega.
     future_billing_nfe_number: nullableStringValue(operation.future_billing_nfe_number),
+    // QUAL nota essa carga baixou. E o vinculo que o saldo do cadastro soma: sem ele a outra
+    // balanca receberia a pesagem e nao saberia de qual das notas do cliente tirar o peso.
+    future_billing_invoice_id: nullableStringValue(operation.future_billing_invoice_id),
     total_cents: operation.total_cents,
     omie_sales_order_id: operation.omie_sales_order_id,
     omie_service_order_id: operation.omie_service_order_id,
@@ -6571,7 +6588,7 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
       table: "customer_future_billing_invoices",
       alias: "fb",
       columns:
-        "fb.id, fb.customer_id, fb.product_id, fb.nfe_number, fb.is_active, fb.created_at, fb.updated_at, fb.deleted_at",
+        "fb.id, fb.customer_id, fb.product_id, fb.nfe_number, fb.total_weight_kg, fb.is_active, fb.created_at, fb.updated_at, fb.deleted_at",
       joins: "JOIN customers fbc ON fbc.id = fb.customer_id",
       where: "fbc.company_id = @companyId"
     }),
@@ -6583,6 +6600,10 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         customer_id: stringValue(row.customer_id),
         product_id: nullableStringValue(row.product_id),
         nfe_number: stringValue(row.nfe_number),
+        // Total faturado na nota, em kg. Projetado porque o saldo tem de ser o MESMO nas
+        // duas balancas da pedreira: as pesagens ja atravessam a nuvem, entao sem o total
+        // do outro lado a segunda maquina somaria retiradas contra um teto que nao conhece.
+        total_weight_kg: numberValue(row.total_weight_kg),
         is_active: cloudActive(row),
         created_at: cloudTimestamp(row.created_at, updatedAt),
         updated_at: updatedAt,

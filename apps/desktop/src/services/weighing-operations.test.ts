@@ -6,7 +6,11 @@ import { ensureInitialDesktopIdentity } from "./bootstrap";
 import { CreditService } from "./credit";
 import { CustomerReportService } from "./customer-report";
 import { rememberCustomerFreightValue } from "./customer-freight-rules";
-import { setCustomerFutureBillingInvoice } from "./customer-future-billing";
+import {
+  getCustomerFutureBillingInvoices,
+  removeCustomerFutureBillingInvoice,
+  setCustomerFutureBillingInvoice
+} from "./customer-future-billing";
 import { setDefaultNfeEmail } from "./customers";
 import { createPaymentTerm } from "./payment-terms";
 import { enqueueSyncJob } from "./sync-queue";
@@ -1731,8 +1735,10 @@ describe("weighing operations", () => {
         operationType: "invoice"
       });
 
-      // Cadastro muda depois do fechamento (a entrega futura acabou e entrou a nota
-      // seguinte). O cupom ja saiu citando a 12345 — o pedido tem que citar a mesma.
+      // Cadastro muda depois do fechamento: a nota da vez e removida e entra a seguinte.
+      // O cupom ja saiu citando a 12345 — o pedido tem que citar a mesma.
+      const [antiga] = getCustomerFutureBillingInvoices(database, "customer-1");
+      removeCustomerFutureBillingInvoice(database, antiga.id);
       setCustomerFutureBillingInvoice(database, {
         customerId: "customer-1",
         productId: "product-1",
@@ -1824,6 +1830,162 @@ describe("weighing operations", () => {
       });
 
       expect(buildOmieBillingJob(database, operation.id)!.payload.futureBillingNfeNumber).toBe("");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("o fechamento baixa o peso liquido do saldo da nota que carimbou", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const nota = setCustomerFutureBillingInvoice(database, {
+        customerId: "customer-1",
+        productId: "product-1",
+        nfeNumber: "12345",
+        totalWeightKg: 100_000
+      });
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      // A pesagem congela QUAL nota baixou, e nao so o numero: e esse vinculo que o quadro
+      // do cadastro soma.
+      expect(
+        database
+          .prepare("SELECT future_billing_invoice_id FROM weighing_operations WHERE id = ?")
+          .pluck()
+          .get(operation.id)
+      ).toBe(nota.id);
+      const [saldo] = getCustomerFutureBillingInvoices(database, "customer-1");
+      expect(saldo.withdrawnWeightKg).toBe(6_500);
+      expect(saldo.remainingWeightKg).toBe(93_500);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("esgotada a nota, a proxima pesagem sai com a nota seguinte", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      // Duas notas do mesmo produto, como o cliente que ja abriu a seguinte antes de a
+      // primeira acabar. A fila e por ordem de cadastro.
+      setCustomerFutureBillingInvoice(
+        database,
+        {
+          customerId: "customer-1",
+          productId: "product-1",
+          nfeNumber: "111",
+          totalWeightKg: 6_500
+        },
+        new Date("2026-06-06T09:00:00.000Z")
+      );
+      setCustomerFutureBillingInvoice(
+        database,
+        {
+          customerId: "customer-1",
+          productId: "product-1",
+          nfeNumber: "222",
+          totalWeightKg: 20_000
+        },
+        new Date("2026-06-06T10:00:00.000Z")
+      );
+
+      const primeira = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: primeira.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+
+      // A carga que esta saindo nao conta contra si mesma: cabia exatamente nos 6.500 kg
+      // que a nota tinha, entao e a 111 que ela cita.
+      expect(
+        database
+          .prepare("SELECT future_billing_nfe_number FROM weighing_operations WHERE id = ?")
+          .pluck()
+          .get(primeira.id)
+      ).toBe("111");
+
+      const segunda = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: segunda.id,
+        exitWeightKg: 20_000,
+        operationType: "invoice"
+      });
+
+      // Zerada a 111, a seguinte assume sozinha — ninguem mexeu no cadastro entre as duas.
+      expect(
+        database
+          .prepare("SELECT future_billing_nfe_number FROM weighing_operations WHERE id = ?")
+          .pluck()
+          .get(segunda.id)
+      ).toBe("222");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("operacao interna nao baixa saldo da nota (nao ha remessa a referenciar)", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      setCustomerFutureBillingInvoice(database, {
+        customerId: "customer-1",
+        productId: "product-1",
+        nfeNumber: "12345",
+        totalWeightKg: 100_000
+      });
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "internal"
+      });
+
+      const [saldo] = getCustomerFutureBillingInvoices(database, "customer-1");
+      expect(saldo.withdrawnWeightKg).toBe(0);
+      expect(saldo.remainingWeightKg).toBe(100_000);
     } finally {
       database.close();
     }
