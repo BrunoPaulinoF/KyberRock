@@ -4439,6 +4439,7 @@ export async function processOmieSyncQueue(
       } | null;
       localCarrierId?: string | null;
       carrier?: Record<string, unknown> | null;
+      invoiceEmails?: string;
       futureBillingNfeNumber?: string;
     };
 
@@ -4485,6 +4486,12 @@ export async function processOmieSyncQueue(
             omieCategoryCode: payload.omieCategoryCode ?? undefined,
             transport: payload.transport ?? undefined,
             carrier: payload.carrier ?? undefined,
+            // Destinatarios da NF DESTE documento (aba Fiscal do cliente). O fechamento
+            // sempre montou o campo, mas ele nunca era copiado para ca: o edge so recebia
+            // a aba Fiscal por dentro do bloco `customer`, que ele ignora quando o cliente
+            // ja tem codigo OMIE — ou seja, no cliente ja sincronizado a lista de e-mails
+            // do pedido nascia vazia mesmo com a aba Fiscal preenchida.
+            invoiceEmails: payload.invoiceEmails || undefined,
             // Nota de entrega futura que esta carga esta entregando: o edge a coloca na
             // frente dos dados adicionais da NF. Vazio = sem entrega futura em aberto.
             futureBillingNfeNumber: payload.futureBillingNfeNumber || undefined,
@@ -5217,6 +5224,7 @@ export async function processFiscalBillingNow(
       cargoWeightKg?: number | null;
       ownVehicle?: boolean;
     } | null;
+    invoiceEmails?: string;
     futureBillingNfeNumber?: string;
   };
 
@@ -5257,6 +5265,9 @@ export async function processFiscalBillingNow(
           accountOmieCode: payload.accountOmieCode ?? undefined,
           accountName: payload.accountName ?? undefined,
           transport: payload.transport ?? undefined,
+          // Mesmos destinatarios da NF do fechamento: refaturar nao pode mandar o pedido
+          // com a lista de e-mails vazia depois de o operador arrumar o cadastro.
+          invoiceEmails: payload.invoiceEmails || undefined,
           // Mesmo carimbo do fechamento: refaturar nao pode perder a referencia da nota
           // de entrega futura que a carga esta entregando.
           futureBillingNfeNumber: payload.futureBillingNfeNumber || undefined,
