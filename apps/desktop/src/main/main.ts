@@ -551,6 +551,29 @@ function registerIpcHandlers(): void {
     return runtime.removeCustomerFreightRule(ruleId);
   });
 
+  ipcMain.handle("desktop:get-customer-future-billing-invoices", (_event, customerId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+    return runtime.getCustomerFutureBillingInvoices(customerId);
+  });
+
+  ipcMain.handle("desktop:set-customer-future-billing-invoice", (_event, input: unknown) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+    return runtime.setCustomerFutureBillingInvoice(
+      input as Parameters<typeof runtime.setCustomerFutureBillingInvoice>[0]
+    );
+  });
+
+  ipcMain.handle("desktop:remove-customer-future-billing-invoice", (_event, invoiceId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+    return runtime.removeCustomerFutureBillingInvoice(invoiceId);
+  });
+
   ipcMain.handle(
     "desktop:remove-customer-freight-modality",
     (_event, ruleId: string, modality: string) => {

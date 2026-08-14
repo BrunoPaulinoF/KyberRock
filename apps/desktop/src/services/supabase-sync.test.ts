@@ -1327,6 +1327,93 @@ describe("supabase sync", () => {
     }
   });
 
+  // A ponte copia o payload campo a campo, e os dois campos abaixo ja nasceram (ou quase
+  // nasceram) esquecidos: `invoiceEmails` era montado no fechamento e nunca chegava aqui,
+  // e o do faturamento futuro corria o mesmo risco. Sem este teste, apagar uma das linhas
+  // do `invoke` nao quebra nada — o pedido so sai mudo no OMIE.
+  it("leva os e-mails da NF e a nota de entrega futura para o edge", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      enqueueSyncJob(database, {
+        id: "omie-job-emails",
+        target: "omie",
+        action: "create_order",
+        entityType: "weighing_operation",
+        entityId: "operation-1",
+        idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order",
+        payload: {
+          operationId: "operation-1",
+          operationType: "invoice",
+          customerOmieId: 123,
+          productOmieId: 456,
+          quantity: 10,
+          unitPrice: 25,
+          issueDate: "2026-06-12",
+          invoiceEmails: "fiscal@cliente.com, financeiro@cliente.com",
+          futureBillingNfeNumber: "12345"
+        }
+      });
+      invokeMock.mockResolvedValueOnce({ error: null, data: { orderId: 987 } });
+
+      await processOmieSyncQueue(database, identity);
+
+      expect(invokeMock).toHaveBeenCalledWith("omie-sync", {
+        body: expect.objectContaining({
+          payload: expect.objectContaining({
+            invoiceEmails: "fiscal@cliente.com, financeiro@cliente.com",
+            futureBillingNfeNumber: "12345"
+          })
+        })
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("omite os dois campos quando o cadastro nao tem nenhum dos dois", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      enqueueSyncJob(database, {
+        id: "omie-job-sem-emails",
+        target: "omie",
+        action: "create_order",
+        entityType: "weighing_operation",
+        entityId: "operation-1",
+        idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order",
+        payload: {
+          operationId: "operation-1",
+          operationType: "invoice",
+          customerOmieId: 123,
+          productOmieId: 456,
+          quantity: 10,
+          unitPrice: 25,
+          issueDate: "2026-06-12",
+          invoiceEmails: "",
+          futureBillingNfeNumber: ""
+        }
+      });
+      invokeMock.mockResolvedValueOnce({ error: null, data: { orderId: 987 } });
+
+      await processOmieSyncQueue(database, identity);
+
+      // String vazia vira `undefined`: o campo nao e enviado e o OMIE segue com o cadastro
+      // do cliente, como sempre fez.
+      const sent = invokeMock.mock.calls[0][1].body.payload as Record<string, unknown>;
+      expect(sent.invoiceEmails).toBeUndefined();
+      expect(sent.futureBillingNfeNumber).toBeUndefined();
+    } finally {
+      database.close();
+    }
+  });
+
   it("records the OMIE service order of an internal operation", async () => {
     const database = createDatabase();
 

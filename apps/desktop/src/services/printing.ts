@@ -190,6 +190,12 @@ interface OperationReceiptRow {
   product_description: string | null;
   payment_term_name: string | null;
   payment_method_name: string | null;
+  /**
+   * NF-e de entrega futura que ESTA pesagem entregou, congelada no fechamento. Lida da
+   * operacao (e nao do cadastro do cliente) para a 2a via sair igual a 1a e igual ao
+   * texto que foi para a NF-e no OMIE.
+   */
+  future_billing_nfe_number: string | null;
 }
 
 interface PrintReceiptRow {
@@ -658,7 +664,7 @@ function getOperationForReceipt(
         NULL AS company_state_registration, u.name AS unit_name, o.status, o.operation_type,
         o.entry_weight_captured_at, o.entry_weight_kg, o.exit_weight_captured_at, o.exit_weight_kg,
         o.net_weight_kg, o.unit_price_cents, o.product_total_cents, o.freight_total_cents,
-        o.freight_json, o.freight_type, o.total_cents,
+        o.freight_json, o.freight_type, o.total_cents, o.future_billing_nfe_number,
         COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
         c.document AS customer_document,
         c.phone AS customer_phone, c.zipcode AS customer_zipcode, c.city AS customer_city,
@@ -824,6 +830,7 @@ function buildReceiptSnapshot(
     freightTotalCents: operation.freight_total_cents,
     showFreightValue: readFreightShowOnReceipt(operation.freight_json, operation.freight_type),
     freightNote: readFreightNote(operation.freight_json),
+    futureBillingNfeNumber: operation.future_billing_nfe_number,
     totalCents: operation.total_cents ?? 0
   };
   const document = buildReceiptDocument(templateInput, templateConfig);

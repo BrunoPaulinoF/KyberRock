@@ -107,6 +107,12 @@ import {
   removeCustomerFreightModality,
   type SetCustomerFreightRuleInput
 } from "./customer-freight-rules.js";
+import {
+  getCustomerFutureBillingInvoices,
+  setCustomerFutureBillingInvoice,
+  removeCustomerFutureBillingInvoice,
+  type SetCustomerFutureBillingInvoiceInput
+} from "./customer-future-billing.js";
 import type { FreightModality } from "./freight.js";
 import {
   configureReceiptPrintProfile,
@@ -1442,6 +1448,22 @@ export class DesktopRuntime {
   removeCustomerFreightModality(ruleId: string, modality: FreightModality) {
     this.assertDesktopAccess();
     return removeCustomerFreightModality(this.database, ruleId, modality);
+  }
+
+  /** Notas de venda para entrega futura ja emitidas contra o cliente (por produto). */
+  getCustomerFutureBillingInvoices(customerId: string) {
+    this.assertDesktopAccess();
+    return getCustomerFutureBillingInvoices(this.database, customerId);
+  }
+
+  setCustomerFutureBillingInvoice(input: SetCustomerFutureBillingInvoiceInput) {
+    this.assertDesktopAccess();
+    return setCustomerFutureBillingInvoice(this.database, input);
+  }
+
+  removeCustomerFutureBillingInvoice(invoiceId: string) {
+    this.assertDesktopAccess();
+    return removeCustomerFutureBillingInvoice(this.database, invoiceId);
   }
 
   configureReceiptPrintProfile(

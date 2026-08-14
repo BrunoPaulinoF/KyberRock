@@ -540,7 +540,8 @@ export const documentationSections: DocumentationSection[] = [
       "A ordem de preco e: preco especial do cliente, depois tabela de preco vinculada, depois preco padrao do produto.",
       "Alterar preco na operacao pede a senha de 4 digitos da empresa.",
       "A busca de CNPJ preenche razao social, endereco e telefone a partir da base publica. O e-mail quase nunca vem — preencha na mao, porque ele e obrigatorio para a NF-e.",
-      "Existe importacao de clientes por planilha para a carga inicial; peca ao suporte quando for migrar de outro sistema."
+      "Existe importacao de clientes por planilha para a carga inicial; peca ao suporte quando for migrar de outro sistema.",
+      "Venda para entrega futura: quando o cliente ja pagou uma nota de faturamento e vai retirando a carga aos poucos, cadastre o numero dela na aba Fiscal do cliente. A nota e por produto — a de rachao nao vale para a brita, e deixar o produto em branco faz valer para qualquer produto dele. A partir dai, toda pesagem desse produto sai com a referencia da nota no cupom e nos dados adicionais do pedido no OMIE. Ela carimba TODA pesagem ate alguem remover a linha: quando a entrega futura acabar, remova."
     ],
     keywords: [
       "cadastro",
@@ -557,7 +558,11 @@ export const documentationSections: DocumentationSection[] = [
       "cnpj",
       "cpf",
       "senha do preco",
-      "importar clientes"
+      "importar clientes",
+      "faturamento futuro",
+      "entrega futura",
+      "nota ja emitida",
+      "nota antecipada"
     ]
   },
   {

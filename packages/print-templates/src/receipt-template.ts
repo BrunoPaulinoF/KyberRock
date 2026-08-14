@@ -56,6 +56,15 @@ export interface ReceiptTemplateInput {
    * sai — e recado para quem recebe a carga, nao dinheiro. Ausente/vazia: a linha nao sai.
    */
   freightNote?: string | null;
+  /**
+   * Numero da NF-e de VENDA PARA ENTREGA FUTURA que esta carga esta entregando, resolvida
+   * no cadastro do cliente pelo produto desta pesagem.
+   *
+   * Sai no papel para quem recebe a carga amarrar a remessa a nota que o cliente ja pagou:
+   * o cupom traz DOIS numeros e eles nao se confundem — o do cupom numera a impressao, este
+   * aponta para a nota emitida antes. Ausente/vazio (o caso comum): a linha nao sai.
+   */
+  futureBillingNfeNumber?: string | null;
   totalCents: number;
 }
 
@@ -473,6 +482,25 @@ function buildBodyLines(input: ReceiptTemplateInput, config: ReceiptTemplateConf
     lines.push(...wrapReceiptText(`OBS.: ${freightNote}`));
   }
 
+  // Venda para entrega futura: esta carga esta entregando uma nota que o cliente ja pagou,
+  // e o papel tem que dizer qual. Sai fora dos `config.showX` pelo mesmo motivo da OBS do
+  // frete — e recado fiscal para quem recebe a carga, nao um bloco de layout que o
+  // operador escolhe ligar. A frase e por extenso porque o cupom ja tem numero proprio
+  // (o do rodape): so "NF 12345" seria mais um numero solto no papel.
+  //
+  // NUNCA na operacao interna: esse cupom se declara "VENDA SEM VALOR FISCAL" no rodape, e
+  // citar uma NF-e nele poria duas afirmacoes contrarias no mesmo papel. E a mesma regra
+  // do lado do OMIE, onde a referencia so entra no pedido de venda, nunca na ordem de
+  // servico.
+  const futureBillingNfe = nonFiscal ? undefined : input.futureBillingNfeNumber?.trim();
+  if (futureBillingNfe) {
+    lines.push(
+      ...wrapReceiptText(
+        `REMESSA REF. A NF-E DE FATURAMENTO FUTURO N. ${futureBillingNfe} (VENDA PARA ENTREGA FUTURA)`
+      )
+    );
+  }
+
   if (config.showProductDetail) {
     lines.push(`Cond.Pagto.: ${input.paymentTermName ?? "NAO INFORMADA"}`);
     lines.push(`Meio Pagto.: ${input.paymentMethodName ?? "NAO INFORMADO"}`);
@@ -595,6 +623,9 @@ export function buildSampleReceiptInput(printedAt: string): ReceiptTemplateInput
     freightTotalCents: 0,
     // A previa mostra onde a observacao da entrada cai no papel.
     freightNote: "Entregar na obra do centro - falar com o encarregado",
+    // Sem nota de entrega futura de proposito: este molde tambem alimenta o cupom de
+    // TESTE que sai na impressora, e um numero de NF-e inventado no papel e o tipo de
+    // coisa que acaba parando na mao de um motorista.
     totalCents: 78_000
   };
 }

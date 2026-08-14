@@ -15,12 +15,14 @@ import type { KyberRockDesktopApi } from "../preload/api-types";
 import { FREIGHT_MODALITIES, getFreightModalityInfo } from "../services/freight";
 import type { FreightModality } from "../services/freight";
 import type { CustomerFreightRule as CustomerFreightRuleView } from "../services/customer-freight-rules";
+import type { CustomerFutureBillingInvoice } from "../services/customer-future-billing";
 import {
   CepInput,
   DocumentInput,
   EmailListInput,
   Field,
   MoneyInput,
+  NumberInput,
   PhoneInput,
   TextInput,
   getInputStyle
@@ -58,6 +60,14 @@ import { formatDbDateTime } from "./format-datetime";
  * `omie-sync`). O renderer nao importa o cliente OMIE — ele nunca fala com o OMIE.
  */
 const OMIE_RAZAO_SOCIAL_MAX_LENGTH = 60;
+
+/**
+ * Valor do seletor de produto da nota de entrega futura que significa "vale para qualquer
+ * produto" (gravado como `product_id` nulo). Precisa ser diferente de `""`, que e o
+ * "ainda nao escolhi" — sem essa distincao, salvar sem escolher nada criaria em silencio
+ * a nota que carimba todos os produtos do cliente.
+ */
+const FUTURE_BILLING_ANY_PRODUCT = "__any__";
 
 const initialForm: CustomerFormData = {
   tradeName: "",
@@ -504,6 +514,13 @@ export function CustomersView({
   // usado quando o tipo da venda nao tem valor proprio.
   const [freightModality, setFreightModality] = useState<FreightModality | "">("");
   const [savingFreight, setSavingFreight] = useState(false);
+  // Notas de venda para entrega futura ja emitidas contra o cliente, uma por produto.
+  const [futureBillingInvoices, setFutureBillingInvoices] = useState<
+    CustomerFutureBillingInvoice[]
+  >([]);
+  const [futureBillingProductId, setFutureBillingProductId] = useState("");
+  const [futureBillingNfeNumber, setFutureBillingNfeNumber] = useState("");
+  const [savingFutureBilling, setSavingFutureBilling] = useState(false);
   const customerFreightEntries = useMemo(
     () => toCustomerFreightEntries(customerFreightRules),
     [customerFreightRules]
@@ -657,6 +674,9 @@ export function CustomersView({
     setFreightValueReais("");
     setFreightMode("default");
     setFreightModality("");
+    setFutureBillingInvoices([]);
+    setFutureBillingProductId("");
+    setFutureBillingNfeNumber("");
     setDefaultConditionText("");
     setActiveFormSection("identificacao");
   }
@@ -749,6 +769,21 @@ export function CustomersView({
     void loadLinkedCarriers(customer.id);
     void loadCustomerCredit(customer.id);
     void loadCustomerFreightRules(customer.id);
+    void loadFutureBillingInvoices(customer.id);
+  }
+
+  async function loadFutureBillingInvoices(customerId: string): Promise<void> {
+    if (!desktopApi) return;
+    // Limpa o que estava digitado antes de trocar de cliente: sem isso, um numero de nota
+    // deixado sem salvar no cadastro do cliente A continuaria na caixa ao abrir o cliente
+    // B, e um clique em "Salvar" gravaria a nota de um no outro.
+    setFutureBillingProductId("");
+    setFutureBillingNfeNumber("");
+    try {
+      setFutureBillingInvoices(await desktopApi.getCustomerFutureBillingInvoices(customerId));
+    } catch {
+      setFutureBillingInvoices([]);
+    }
   }
 
   async function loadSpecialPrices(customerId: string): Promise<void> {
@@ -888,6 +923,60 @@ export function CustomersView({
       showFlash("success", "Frete removido.");
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Erro ao remover frete.");
+    }
+  }
+
+  async function handleSaveFutureBillingInvoice(): Promise<void> {
+    if (!desktopApi || !editingId) return;
+    if (!futureBillingProductId) {
+      setFormError(
+        "Escolha o produto da nota de entrega futura (ou 'Qualquer produto do cliente')."
+      );
+      return;
+    }
+    if (!futureBillingNfeNumber.trim()) {
+      setFormError("Informe o numero da nota fiscal de faturamento futuro.");
+      return;
+    }
+    setSavingFutureBilling(true);
+    setFormError(null);
+    try {
+      await desktopApi.setCustomerFutureBillingInvoice({
+        customerId: editingId,
+        productId:
+          futureBillingProductId === FUTURE_BILLING_ANY_PRODUCT ? null : futureBillingProductId,
+        nfeNumber: futureBillingNfeNumber
+      });
+      setFutureBillingNfeNumber("");
+      setFutureBillingProductId("");
+      await loadFutureBillingInvoices(editingId);
+      showFlash("success", "Nota de faturamento futuro salva.");
+    } catch (err) {
+      setFormError(
+        err instanceof Error ? err.message : "Erro ao salvar a nota de faturamento futuro."
+      );
+    } finally {
+      setSavingFutureBilling(false);
+    }
+  }
+
+  async function handleRemoveFutureBillingInvoice(invoiceId: string): Promise<void> {
+    if (!desktopApi || !editingId) return;
+    const confirmed = await requestConfirm({
+      title: "Encerrar a entrega futura?",
+      description:
+        "As proximas pesagens desse cliente param de sair com a referencia dessa nota. As ja faturadas nao mudam.",
+      confirmLabel: "Encerrar",
+      cancelLabel: "Manter",
+      tone: "danger"
+    });
+    if (!confirmed) return;
+    try {
+      await desktopApi.removeCustomerFutureBillingInvoice(invoiceId);
+      await loadFutureBillingInvoices(editingId);
+      showFlash("success", "Entrega futura encerrada.");
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erro ao remover a nota.");
     }
   }
 
@@ -1648,6 +1737,97 @@ export function CustomersView({
                     recebem a NF&quot; de cada operacao enviada ao OMIE. Deixe vazio para o OMIE
                     seguir com o que estiver configurado la.
                   </p>
+
+                  <h4 style={styles.formSectionTitle}>Venda para entrega futura</h4>
+                  <p style={styles.formHint}>
+                    Quando o cliente ja pagou uma nota de faturamento (CFOP 5.922) e vai retirando a
+                    carga aos poucos, cadastre aqui o numero dela. Cada pesagem desse produto passa
+                    a sair com a referencia no cupom e nos dados adicionais da nota enviada ao OMIE.
+                    A nota e por produto: a de rachao nao vale para a brita. Deixe o produto em
+                    branco para valer para qualquer produto do cliente. Enquanto a nota estiver
+                    aqui, TODA pesagem sai carimbada — remova a linha quando a entrega futura
+                    acabar.
+                  </p>
+                  {editingId ? (
+                    <div style={{ display: "grid", gap: "8px" }}>
+                      <div style={styles.fieldRow}>
+                        <Field label="Produto">
+                          {/*
+                            Comeca sem escolha de proposito. A nota de entrega futura e
+                            emitida POR PRODUTO, e "qualquer produto" carimba tambem o que
+                            nao foi faturado naquela nota — escolha que tem de ser
+                            deliberada, nao o que sai de um Salvar apressado.
+                          */}
+                          <select
+                            value={futureBillingProductId}
+                            onChange={(e) => setFutureBillingProductId(e.target.value)}
+                            style={getInputStyle(false)}
+                          >
+                            <option value="">Selecione o produto da nota</option>
+                            {products.map((product) => (
+                              <option key={product.id} value={product.id}>
+                                {product.code ? `${product.code} - ` : ""}
+                                {product.description}
+                              </option>
+                            ))}
+                            <option value={FUTURE_BILLING_ANY_PRODUCT}>
+                              Qualquer produto do cliente
+                            </option>
+                          </select>
+                        </Field>
+                        <NumberInput
+                          label="Numero da NF-e"
+                          value={futureBillingNfeNumber}
+                          onChange={setFutureBillingNfeNumber}
+                          disabled={false}
+                          hint="Numero da nota ja emitida (so digitos)."
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveFutureBillingInvoice()}
+                        disabled={savingFutureBilling}
+                        style={styles.secondaryButton}
+                      >
+                        {savingFutureBilling ? "Salvando..." : "Salvar nota de entrega futura"}
+                      </button>
+                      {futureBillingInvoices.length === 0 ? (
+                        <p style={styles.cellMuted}>
+                          Nenhuma nota de entrega futura cadastrada. As pesagens saem normais.
+                        </p>
+                      ) : (
+                        futureBillingInvoices.map((invoice) => (
+                          <div
+                            key={invoice.id}
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              gap: "8px",
+                              borderTop: "1px solid var(--kr-border)",
+                              paddingTop: "8px"
+                            }}
+                          >
+                            <span style={styles.cellMuted}>
+                              <strong>{invoice.productDescription ?? "Qualquer produto"}</strong>:
+                              NF-e {invoice.nfeNumber}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => void handleRemoveFutureBillingInvoice(invoice.id)}
+                              style={styles.dangerButton}
+                            >
+                              Remover
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  ) : (
+                    <p style={styles.cellMuted}>
+                      Salve o cliente antes de cadastrar a nota de entrega futura.
+                    </p>
+                  )}
                 </section>
               ) : null}
 

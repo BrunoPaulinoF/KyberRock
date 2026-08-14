@@ -3,7 +3,12 @@ import { describe, expect, it } from "vitest";
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
-import { closeWeighingOperation, createSimulatedWeighingOperation } from "./weighing-operations";
+import { setCustomerFutureBillingInvoice } from "./customer-future-billing";
+import {
+  closeWeighingOperation,
+  createSimulatedWeighingOperation,
+  createWeighingOperation
+} from "./weighing-operations";
 import {
   configureReceiptPrintProfile,
   getActiveReceiptPrintProfile,
@@ -660,7 +665,198 @@ describe("printing", () => {
       database.close();
     }
   });
+
+  it("imprime a referencia da nota de entrega futura do produto pesado", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        paperWidthMm: 80
+      });
+      insertFutureBillingCadastro(database);
+      setCustomerFutureBillingInvoice(database, {
+        customerId: "customer-fb",
+        productId: "product-rachao",
+        nfeNumber: "12345"
+      });
+      // Nota de outro produto do MESMO cliente: nao pode sair nesta pesagem.
+      setCustomerFutureBillingInvoice(database, {
+        customerId: "customer-fb",
+        productId: "product-brita",
+        nfeNumber: "99999"
+      });
+      const operation = createClosedRachaoOperation(database, identity);
+
+      await printWeighingReceipt(database, { operationId: operation.id, identity }, printer);
+
+      const printed = printer.calls[0].lines.join(" ");
+      expect(printed).toContain("NF-E DE FATURAMENTO FUTURO N. 12345");
+      expect(printed).not.toContain("99999");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("a 2a via sai com a MESMA nota da 1a, mesmo se o cadastro mudar depois", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        paperWidthMm: 80
+      });
+      insertFutureBillingCadastro(database);
+      setCustomerFutureBillingInvoice(database, {
+        customerId: "customer-fb",
+        productId: "product-rachao",
+        nfeNumber: "12345"
+      });
+      const operation = createClosedRachaoOperation(database, identity);
+      const receipt = await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer
+      );
+      expect(printer.calls[0].lines.join(" ")).toContain("N. 12345");
+
+      // A entrega futura acabou e o operador cadastra a nota seguinte. O que ja saiu no
+      // papel nao pode mudar: a 1a via em maos do cliente cita a 12345, e a NF-e enviada
+      // ao OMIE tambem.
+      setCustomerFutureBillingInvoice(database, {
+        customerId: "customer-fb",
+        productId: "product-rachao",
+        nfeNumber: "77777"
+      });
+      printer.calls.length = 0;
+      await reprintWeighingReceipt(database, { receiptId: receipt.id, identity }, printer);
+
+      expect(printer.calls[0].lines.join(" ")).toContain("N. 12345");
+      expect(printer.calls[0].lines.join(" ")).not.toContain("77777");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao imprime a nota de entrega futura na operacao interna (venda sem nota)", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        paperWidthMm: 80
+      });
+      insertFutureBillingCadastro(database);
+      setCustomerFutureBillingInvoice(database, {
+        customerId: "customer-fb",
+        productId: "product-rachao",
+        nfeNumber: "12345"
+      });
+      const operation = createClosedRachaoOperation(database, identity, "internal");
+
+      await printWeighingReceipt(database, { operationId: operation.id, identity }, printer);
+
+      // A operacao interna vira ordem de servico e nao emite NF-e: nao ha remessa de
+      // entrega futura para referenciar, no papel nem no OMIE.
+      expect(printer.calls[0].lines.join(" ")).not.toContain("12345");
+      expect(
+        database
+          .prepare("SELECT future_billing_nfe_number FROM weighing_operations WHERE id = ?")
+          .pluck()
+          .get(operation.id)
+      ).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao imprime a linha de entrega futura quando o cliente nao tem nota", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        paperWidthMm: 80
+      });
+      insertFutureBillingCadastro(database);
+      const operation = createClosedRachaoOperation(database, identity);
+
+      await printWeighingReceipt(database, { operationId: operation.id, identity }, printer);
+
+      expect(printer.calls[0].lines.join(" ")).not.toContain("FATURAMENTO FUTURO");
+    } finally {
+      database.close();
+    }
+  });
 });
+
+/** Cliente e produtos reais (o cupom resolve a nota pelo par cliente+produto). */
+function insertFutureBillingCadastro(database: DesktopDatabase): void {
+  const now = "2026-06-06T12:00:00.000Z";
+  database
+    .prepare(
+      `INSERT INTO customers (id, company_id, source, legal_name, trade_name, is_active, created_at, updated_at)
+       VALUES ('customer-fb', 'company-1', 'local', 'Concessionaria LTDA', 'Concessionaria', 1, ?, ?)`
+    )
+    .run(now, now);
+  for (const [id, omieId, code, description] of [
+    ["product-rachao", 123, "RACHAO", "Rachao"],
+    ["product-brita", 124, "BRITA1", "Brita 1"]
+  ] as Array<[string, number, string, string]>) {
+    database
+      .prepare(
+        `INSERT INTO products (
+           id, company_id, omie_product_id, code, description, unit, unit_price_cents, item_type,
+           created_at, updated_at
+         ) VALUES (?, 'company-1', ?, ?, ?, 'ton', 12000, '04 - Produtos Acabados', ?, ?)`
+      )
+      .run(id, omieId, code, description, now, now);
+  }
+  database
+    .prepare(
+      `INSERT INTO vehicles (id, company_id, plate, created_at, updated_at)
+       VALUES ('vehicle-fb', 'company-1', 'ABC1D23', ?, ?)`
+    )
+    .run(now, now);
+  database
+    .prepare(
+      `INSERT INTO drivers (id, company_id, name, created_at, updated_at)
+       VALUES ('driver-fb', 'company-1', 'Motorista Teste', ?, ?)`
+    )
+    .run(now, now);
+}
+
+function createClosedRachaoOperation(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  operationType: "invoice" | "internal" = "invoice"
+): { id: string } {
+  const operation = createWeighingOperation(database, {
+    identity,
+    customerId: "customer-fb",
+    vehicleId: "vehicle-fb",
+    driverId: "driver-fb",
+    productId: "product-rachao",
+    entryWeightKg: 12_000
+  });
+  return closeWeighingOperation(database, {
+    operationId: operation.id,
+    exitWeightKg: 18_500,
+    operationType
+  });
+}
 
 function createDatabase(): DesktopDatabase {
   const database = openDesktopDatabase({ databasePath: ":memory:" });

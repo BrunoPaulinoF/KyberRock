@@ -333,6 +333,19 @@ type CreateOrderPayload = {
    * Vazio nos dois -> o campo nao e enviado e o OMIE usa o cadastro do cliente, como antes.
    */
   invoiceEmails?: string;
+  /**
+   * Numero da NF-e de VENDA PARA ENTREGA FUTURA que esta carga esta entregando, resolvida
+   * pelo desktop no par (cliente, produto) da pesagem.
+   *
+   * A pedreira emite uma NF-e de simples faturamento (CFOP 5.922/6.922) e o cliente vai
+   * retirando a carga aos poucos; cada retirada e uma remessa de entrega futura (CFOP
+   * 5.116/5.117) que precisa REFERENCIAR aquele faturamento. O `IncluirPedido` nao expoe
+   * o grupo `NFref` da NF-e, entao a referencia vai por extenso nos dados adicionais
+   * (`informacoes_adicionais.dados_adicionais_nf`), que e o que alimenta o `infCpl`.
+   *
+   * Ausente/vazio (o caso comum, e todo desktop antigo) -> o texto sai como sempre saiu.
+   */
+  futureBillingNfeNumber?: string;
   idempotencyKey: string;
 };
 
@@ -3875,11 +3888,29 @@ function buildWeighingReference(payload: CreateOrderPayload): string | null {
  */
 function buildSalesOrderAdditionalData(payload: CreateOrderPayload): string | null {
   const parts: string[] = [];
+  // Vem ANTES da referencia da pesagem: `truncateOmieText` corta o fim, e esta e a unica
+  // linha do texto que tem efeito fiscal — a remessa de entrega futura precisa apontar
+  // para a nota de faturamento que a originou.
+  const futureBilling = buildFutureBillingReference(payload);
+  if (futureBilling !== null) parts.push(futureBilling);
   const reference = buildWeighingReference(payload);
   if (reference !== null) parts.push(reference);
   const transportData = buildTransportAdditionalData(payload.transport);
   if (transportData !== null) parts.push(transportData);
   return parts.length > 0 ? truncateOmieText(parts.join(" - "), 500) : null;
+}
+
+/**
+ * Referencia a NF-e de faturamento futuro nos dados adicionais da nota.
+ *
+ * O texto e por extenso (e nao so o numero) porque e ele que o cliente le no DANFE para
+ * amarrar a carga que chegou a nota que ele ja pagou. Null quando o cliente nao tem
+ * entrega futura em aberto para o produto desta pesagem.
+ */
+function buildFutureBillingReference(payload: CreateOrderPayload): string | null {
+  const number = payload.futureBillingNfeNumber?.trim().slice(0, 20);
+  if (!number) return null;
+  return `Remessa referente a NF-e de faturamento futuro n. ${number} (venda para entrega futura)`;
 }
 
 /** Corta textos livres antes de enviar ao OMIE, que rejeita campos acima do limite. */

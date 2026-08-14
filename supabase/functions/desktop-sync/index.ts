@@ -30,6 +30,7 @@ type CloudPayload = {
   priceTableItems?: Record<string, unknown>[];
   customerPriceTables?: Record<string, unknown>[];
   customerFreightRules?: Record<string, unknown>[];
+  customerFutureBillingInvoices?: Record<string, unknown>[];
   paymentTerms?: Record<string, unknown>[];
   paymentMethods?: Record<string, unknown>[];
   accounts?: Record<string, unknown>[];
@@ -55,6 +56,7 @@ const CADASTRO_TABLES = [
   { key: "priceTableItems", table: "price_table_items" },
   { key: "customerPriceTables", table: "customer_price_tables" },
   { key: "customerFreightRules", table: "customer_freight_rules" },
+  { key: "customerFutureBillingInvoices", table: "customer_future_billing_invoices" },
   { key: "paymentTerms", table: "payment_terms" },
   { key: "paymentMethods", table: "payment_methods" },
   { key: "accounts", table: "accounts" },
