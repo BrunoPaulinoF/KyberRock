@@ -117,7 +117,7 @@ describe("renderTruckControlHtml", () => {
     expect(html).toContain("ABC1D23");
     expect(html).not.toContain("XYZ4E56");
     expect(html).not.toContain("Maria");
-    expect(html).toContain('Filtro &quot;ABC1D23&quot;');
+    expect(html).toContain("Filtro &quot;ABC1D23&quot;");
     expect(html).toContain("25.000");
   });
 });
