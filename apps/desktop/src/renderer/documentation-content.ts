@@ -607,7 +607,7 @@ export const documentationSections: DocumentationSection[] = [
     steps: [
       "Abra o Painel (F1) para o status do turno, os KPIs do dia e as pendencias que precisam de atencao agora.",
       "Use Insights (F5) para peso por dia, top produtos, mix de operacoes e exportacao em PDF ou Excel do periodo.",
-      "Use Controle de caminhoes para acompanhar as viagens do periodo.",
+      "Use Controle de caminhoes para acompanhar as viagens do periodo e baixar a lista em PDF ou Excel.",
       "Use Relatorio por cliente para gerar o relatorio simplificado e/ou completo de um cliente em PDF e/ou Excel.",
       "Use Conferencia de faturamento para ver o periodo pesagem a pesagem — cliente, data, produto, peso, frete e total de cada carregamento — e conferir contra o faturamento do OMIE.",
       "Em Relatorios, cadastre quem recebe o fechamento diario por e-mail e, no card do relatorio financeiro (OMIE), quem recebe o resumo financeiro e em que horario."
@@ -622,7 +622,9 @@ export const documentationSections: DocumentationSection[] = [
       "'No OMIE, falta faturar' nao e erro do KyberRock: o pedido (ou a ordem de servico, na venda interna) ja chegou la e a nota e emitida no proprio OMIE, na etapa Faturar.",
       "Depois que alguem fatura no OMIE, a pesagem vira 'Faturada' sozinha, em poucos minutos: o KyberRock confere no OMIE, de tempos em tempos, os pedidos e as ordens de servico que ainda faltavam faturar. O movimento dos ultimos dois dias e conferido a cada passada; o que e mais antigo, de hora em hora. Nao precisa dar baixa a mao aqui.",
       "A coluna Pedido/OS OMIE traz o codigo da integracao e, entre parenteses, o numero como o OMIE o mostra na tela — e esse numero entre parenteses que se digita na busca do OMIE. Do outro lado, o pedido e a ordem de servico chegam la com 'Pesagem KyberRock 000123' nos dados adicionais, que e o codigo do cupom.",
-      "O PDF e a planilha da conferencia saem com as mesmas pesagens que estao na tela, com os filtros aplicados."
+      "O PDF e a planilha da conferencia saem com as mesmas pesagens que estao na tela, com os filtros aplicados.",
+      "No Controle de caminhoes vale o mesmo: digite a placa (ou o nome do motorista) na busca e os botoes de PDF e Excel geram o arquivo so com os caminhoes que ficaram na lista, um ou varios, com os totais desse recorte. Com a busca vazia, sai o periodo inteiro.",
+      "A planilha do Controle de caminhoes traz duas tabelas: uma linha por caminhao e outra com o peso por produto de cada placa, para filtrar e somar por material no Excel."
     ],
     keywords: [
       "relatorio",
@@ -635,6 +637,8 @@ export const documentationSections: DocumentationSection[] = [
       "excel",
       "exportar",
       "controle de caminhoes",
+      "placa",
+      "baixar excel",
       "relatorio por cliente",
       "conferencia de faturamento",
       "conferir faturamento",

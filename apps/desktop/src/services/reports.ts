@@ -115,6 +115,8 @@ export interface TruckControlRow {
 export interface TruckControlReport {
   startDate: string;
   endDate: string;
+  /** Busca de placa/motorista aplicada ao relatorio; `null` = periodo inteiro. */
+  search: string | null;
   averageMinutes: number;
   totalOperations: number;
   totalNetWeightKg: number;
@@ -650,6 +652,7 @@ export class ReportService {
     return {
       startDate,
       endDate,
+      search: null,
       averageMinutes: totalOperations > 0 ? Math.round(totalMinutesAll / totalOperations) : 0,
       totalOperations,
       totalNetWeightKg,
@@ -678,48 +681,6 @@ export class ReportService {
       .get(unitId, startDate, endDate) as { avg_min: number | null } | undefined;
     const avg = row?.avg_min ?? 0;
     return Number.isFinite(avg) && avg > 0 ? Math.round(avg) : 0;
-  }
-
-  exportTruckControlToHtml(startDate: string, endDate: string, unitId: string): string {
-    const report = this.getTruckControlReport(startDate, endDate, unitId);
-    const truckRows = report.trucks
-      .map((truck) => {
-        const products = truck.products
-          .map(
-            (p) =>
-              `${escapeHtml(p.productDescription)}: ${p.totalNetWeightKg.toLocaleString("pt-BR")} kg`
-          )
-          .join("<br />");
-        return `<tr><td>${escapeHtml(truck.plate)}</td><td>${escapeHtml(
-          truck.driverName ?? "-"
-        )}</td><td class="num">${truck.operations}</td><td class="num">${formatMinutes(
-          truck.avgMinutes
-        )}</td><td class="num">${formatMinutes(
-          truck.totalMinutes
-        )}</td><td class="num">${truck.totalNetWeightKg.toLocaleString(
-          "pt-BR"
-        )}</td><td>${products || "-"}</td></tr>`;
-      })
-      .join("");
-
-    return `<!doctype html><html><head><meta charset="utf-8" /><style>body{font-family:Arial,sans-serif;color:#0f172a;margin:28px}h1{margin:0 0 4px;font-size:22px}p{margin:0 0 18px;color:#475569}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0}.card{border:1px solid #cbd5e1;border-radius:10px;padding:10px}.card span{display:block;color:#64748b;font-size:12px}.card strong{font-size:16px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #cbd5e1;padding:7px;text-align:left;vertical-align:top}th{background:#e2e8f0}.num{text-align:right}thead{display:table-header-group}tr{page-break-inside:avoid}@page{size:A4;margin:14mm}</style></head><body><h1>Controle de caminhoes</h1><p>Periodo: ${escapeHtml(
-      startDate
-    )} a ${escapeHtml(
-      endDate
-    )}</p><section class="summary"><div class="card"><span>Caminhoes</span><strong>${report.trucks.length}</strong></div><div class="card"><span>Operacoes</span><strong>${report.totalOperations}</strong></div><div class="card"><span>Tempo medio na pedreira</span><strong>${formatMinutes(
-      report.averageMinutes
-    )}</strong></div><div class="card"><span>Tonelagem</span><strong>${(
-      report.totalNetWeightKg / 1000
-    ).toLocaleString("pt-BR", {
-      maximumFractionDigits: 2
-    })} t</strong></div></section><table><thead><tr><th>Placa</th><th>Motorista</th><th>Operacoes</th><th>Tempo medio</th><th>Tempo total</th><th>Peso kg</th><th>Peso por produto</th></tr></thead><tbody>${
-      truckRows || '<tr><td colspan="7">Sem operacoes no periodo.</td></tr>'
-    }</tbody></table>${renderTotalBar([
-      { label: "Caminhoes", value: report.trucks.length.toLocaleString("pt-BR") },
-      { label: "Operacoes", value: report.totalOperations.toLocaleString("pt-BR") },
-      { label: "Tempo medio", value: formatMinutes(report.averageMinutes) },
-      { label: "Tonelagem", value: formatTons(report.totalNetWeightKg), emphasis: true }
-    ])}</body></html>`;
   }
 
   exportRangeToHtml(startDate: string, endDate: string, unitId: string): string {
@@ -977,15 +938,6 @@ export function minutesBetween(
   if (Number.isNaN(entry) || Number.isNaN(exit)) return null;
   const minutes = (exit - entry) / 60_000;
   return minutes >= 0 ? minutes : 0;
-}
-
-// Formata minutos como "1h 05min" / "42min".
-export function formatMinutes(totalMinutes: number): string {
-  const minutes = Math.max(0, Math.round(totalMinutes));
-  if (minutes < 60) return `${minutes}min`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return `${hours}h ${String(rest).padStart(2, "0")}min`;
 }
 
 // Valor em centavos -> "R$ 1.234,56" (pt-BR). Usado no relatorio de Insights.

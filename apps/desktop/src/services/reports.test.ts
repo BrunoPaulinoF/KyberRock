@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase } from "../database/sqlite";
 import { ReportService } from "./reports";
+import { renderTruckControlHtml } from "./truck-control-report";
 
 function createDatabase() {
   const db = openDesktopDatabase({ databasePath: ":memory:", fileMustExist: false });
@@ -265,7 +266,9 @@ describe("ReportService truck control", () => {
       insertTruckOperations(db);
 
       const service = new ReportService(db);
-      const html = service.exportTruckControlToHtml("2026-06-01", "2026-06-30", "unit-1");
+      const html = renderTruckControlHtml(
+        service.getTruckControlReport("2026-06-01", "2026-06-30", "unit-1")
+      );
 
       expect(html).toContain("Controle de caminhoes");
       expect(html).toContain("ABC1D23");

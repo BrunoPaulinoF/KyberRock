@@ -214,6 +214,15 @@ export function formatTonsNumber(kg: number): string {
   });
 }
 
+/** Duracao em minutos -> "42min" / "1h 05min". */
+export function formatMinutes(totalMinutes: number): string {
+  const minutes = Math.max(0, Math.round(totalMinutes));
+  if (minutes < 60) return `${minutes}min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return `${hours}h ${String(rest).padStart(2, "0")}min`;
+}
+
 export function formatKg(kg: number): string {
   return `${kg.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} kg`;
 }
