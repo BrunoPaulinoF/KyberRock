@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
 import type { TruckControlReport } from "../services/reports";
+import { filterTruckControlReport } from "../services/truck-control-report";
 import { IconActionButton } from "./IconActionButton";
 import { HelpTooltip } from "./Tooltip";
 
@@ -163,7 +164,7 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
   const [report, setReport] = useState<TruckControlReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [exporting, setExporting] = useState(false);
+  const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -184,35 +185,40 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
     void load();
   }, [load]);
 
-  const filteredTrucks = useMemo(() => {
-    if (!report) return [];
-    const term = search.trim().toUpperCase();
-    if (!term) return report.trucks;
-    return report.trucks.filter(
-      (truck) =>
-        truck.plate.toUpperCase().includes(term) ||
-        (truck.driverName ?? "").toUpperCase().includes(term)
-    );
-  }, [report, search]);
+  // Recorte da busca (placa ou motorista) aplicado com a mesma funcao que o main usa ao
+  // gerar o PDF e a planilha: o que esta na lista e exatamente o que sai no arquivo.
+  const visible = useMemo(
+    () => (report ? filterTruckControlReport(report, search) : null),
+    [report, search]
+  );
+  const filteredTrucks = visible?.trucks ?? [];
+  const filtered = Boolean(visible?.search);
 
-  async function handleExportPdf(): Promise<void> {
+  async function handleExport(format: "pdf" | "excel"): Promise<void> {
     if (!desktopApi) return;
-    setExporting(true);
+    setExporting(format);
     setNotice(null);
     setError(null);
     try {
-      const result = await desktopApi.exportTruckControlPdf(startDate, endDate);
+      const result = await desktopApi.exportTruckControl(format, startDate, endDate, search);
       if (result?.path) {
-        setNotice(`PDF salvo em: ${result.path}`);
+        setNotice(`${format === "pdf" ? "PDF" : "Excel"} salvo em: ${result.path}`);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao gerar o PDF.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : `Falha ao gerar o ${format === "pdf" ? "PDF" : "Excel"}.`
+      );
     } finally {
-      setExporting(false);
+      setExporting(null);
     }
   }
 
-  const averageMinutes = report?.averageMinutes ?? 0;
+  // Media do periodo inteiro: e contra ela que se destaca o caminhao demorado, mesmo com
+  // a lista filtrada. Os cartoes mostram os numeros do recorte que esta na tela.
+  const periodAverageMinutes = report?.averageMinutes ?? 0;
+  const averageMinutes = visible?.averageMinutes ?? 0;
 
   return (
     <section style={styles.page}>
@@ -220,19 +226,42 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Controle de caminhoes</h2>
           <HelpTooltip
-            content="Tempo dentro da pedreira, numero de operacoes e peso por produto de cada caminhao no periodo. Caminhoes acima do tempo medio ficam destacados."
+            content="Tempo dentro da pedreira, numero de operacoes e peso por produto de cada caminhao no periodo. Caminhoes acima do tempo medio do periodo ficam destacados. O PDF e o Excel saem com os caminhoes que estao na lista: com a busca preenchida, o arquivo traz so eles."
             placement="right"
           />
         </div>
-        <IconActionButton
-          icon="file-text"
-          label="Gerar PDF"
-          tip={exporting ? "Gerando PDF..." : "Gerar PDF"}
-          tone="primary"
-          placement="top"
-          disabled={exporting || loading}
-          onClick={() => void handleExportPdf()}
-        />
+        <div style={{ display: "flex", gap: "6px" }}>
+          <IconActionButton
+            icon="file-text"
+            label="Gerar PDF"
+            tip={
+              exporting === "pdf"
+                ? "Gerando PDF..."
+                : filtered
+                  ? "Gerar PDF so com os caminhoes da busca"
+                  : "Gerar PDF"
+            }
+            tone="primary"
+            placement="top"
+            disabled={exporting !== null || loading}
+            onClick={() => void handleExport("pdf")}
+          />
+          <IconActionButton
+            icon="table"
+            label="Baixar Excel"
+            tip={
+              exporting === "excel"
+                ? "Gerando Excel..."
+                : filtered
+                  ? "Baixar Excel so com os caminhoes da busca"
+                  : "Baixar Excel"
+            }
+            tone="primary"
+            placement="top"
+            disabled={exporting !== null || loading}
+            onClick={() => void handleExport("excel")}
+          />
+        </div>
       </header>
 
       <div style={styles.filters}>
@@ -257,7 +286,7 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
           />
         </label>
         <label style={{ ...styles.field, flex: 1, minWidth: "200px" }}>
-          Buscar caminhao (placa ou motorista)
+          Buscar caminhao (placa ou motorista) — vale para o PDF e o Excel
           <input
             type="search"
             value={search}
@@ -278,15 +307,23 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
 
       {error ? <p style={styles.error}>{error}</p> : null}
       {notice ? <p style={styles.muted}>{notice}</p> : null}
+      {filtered ? (
+        <p style={styles.muted}>
+          Busca &quot;{visible?.search}&quot;: {filteredTrucks.length} de{" "}
+          {report?.trucks.length ?? 0} caminhoes. Os cartoes e os arquivos (PDF/Excel) usam so
+          esses. Tempo medio do periodo, com todos os caminhoes:{" "}
+          {formatMinutes(periodAverageMinutes)}.
+        </p>
+      ) : null}
 
       <div style={styles.summary}>
         <div style={styles.card}>
           <span style={styles.cardLabel}>Caminhoes</span>
-          <span style={styles.cardValue}>{report?.trucks.length ?? 0}</span>
+          <span style={styles.cardValue}>{filteredTrucks.length}</span>
         </div>
         <div style={styles.card}>
           <span style={styles.cardLabel}>Operacoes</span>
-          <span style={styles.cardValue}>{report?.totalOperations ?? 0}</span>
+          <span style={styles.cardValue}>{visible?.totalOperations ?? 0}</span>
         </div>
         <div style={styles.card}>
           <span style={styles.cardLabel}>Tempo medio na pedreira</span>
@@ -295,7 +332,7 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
         <div style={styles.card}>
           <span style={styles.cardLabel}>Tonelagem</span>
           <span style={styles.cardValue}>
-            {((report?.totalNetWeightKg ?? 0) / 1000).toLocaleString("pt-BR", {
+            {((visible?.totalNetWeightKg ?? 0) / 1000).toLocaleString("pt-BR", {
               maximumFractionDigits: 2
             })}{" "}
             t
@@ -326,12 +363,13 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
             ) : filteredTrucks.length === 0 ? (
               <tr>
                 <td style={styles.td} colSpan={7}>
-                  Nenhum caminhao no periodo.
+                  {filtered ? "Nenhum caminhao para essa busca." : "Nenhum caminhao no periodo."}
                 </td>
               </tr>
             ) : (
               filteredTrucks.map((truck) => {
-                const aboveAvg = truck.avgMinutes > averageMinutes && averageMinutes > 0;
+                const aboveAvg =
+                  truck.avgMinutes > periodAverageMinutes && periodAverageMinutes > 0;
                 return (
                   <tr key={truck.plate}>
                     <td style={styles.td}>

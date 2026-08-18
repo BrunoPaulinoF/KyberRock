@@ -300,8 +300,19 @@ export interface KyberRockDesktopApi {
     formats: Array<"pdf" | "excel">,
     options?: InvoiceClosingOptions
   ) => Promise<{ files: string[] } | null>;
-  getTruckControl: (startDate: string, endDate: string) => Promise<TruckControlReport>;
-  exportTruckControlPdf: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
+  /** `search` recorta o relatorio por placa ou motorista, como a busca da tela. */
+  getTruckControl: (
+    startDate: string,
+    endDate: string,
+    search?: string
+  ) => Promise<TruckControlReport>;
+  /** Salva o controle de caminhoes em PDF ou Excel com o recorte de `search` aplicado. */
+  exportTruckControl: (
+    format: "pdf" | "excel",
+    startDate: string,
+    endDate: string,
+    search?: string
+  ) => Promise<{ path: string } | null>;
   exportReportExcel: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
   listCustomerReportCustomers: () => Promise<CustomerReportOption[]>;
   /** Resumo comparativo de todos os clientes com movimento no periodo. */

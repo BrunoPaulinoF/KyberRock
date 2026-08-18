@@ -751,25 +751,28 @@ function registerIpcHandlers(): void {
     return runtime.getReportHtml(startDate, endDate);
   });
 
-  ipcMain.handle("desktop:get-truck-control", (_event, startDate: string, endDate: string) => {
-    if (!runtime) throw new Error("Desktop runtime is not ready.");
-    return runtime.getTruckControlReport(startDate, endDate);
-  });
-
   ipcMain.handle(
-    "desktop:export-truck-control-pdf",
-    async (_event, startDate: string, endDate: string) => {
+    "desktop:get-truck-control",
+    (_event, startDate: string, endDate: string, search?: string) => {
       if (!runtime) throw new Error("Desktop runtime is not ready.");
-      const html = runtime.getTruckControlHtml(startDate, endDate);
-      const filePath = await pickReportFilePath(
-        `controle-caminhoes-${startDate}-a-${endDate}.pdf`,
-        ["pdf"]
-      );
-      if (!filePath) return null;
-      const data = await renderHtmlToPdf(html);
-      const fs = await import("node:fs/promises");
-      await fs.writeFile(filePath, data);
-      return { path: filePath };
+      return runtime.getTruckControlReport(startDate, endDate, search);
+    }
+  );
+
+  // Exporta o controle de caminhoes em PDF ou Excel com o MESMO recorte da tela: se o
+  // operador digitou uma placa (ou parte dela) na busca, o arquivo sai so com os
+  // caminhoes que ficaram na lista, e com os totais desse recorte.
+  ipcMain.handle(
+    "desktop:export-truck-control",
+    async (_event, format: string, startDate: string, endDate: string, search?: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      if (format !== "pdf" && format !== "excel") {
+        throw new Error("Formato invalido para o controle de caminhoes (use PDF ou Excel).");
+      }
+      const saved = await saveReportDocuments([
+        runtime.buildTruckControlDocument(format, startDate, endDate, search)
+      ]);
+      return saved ? { path: saved.files[0] } : null;
     }
   );
 

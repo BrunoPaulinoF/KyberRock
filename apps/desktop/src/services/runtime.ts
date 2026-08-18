@@ -199,6 +199,12 @@ import {
 } from "./weighing-billing-report-render.js";
 import { ReportService } from "./reports.js";
 import {
+  filterTruckControlReport,
+  renderTruckControlHtml,
+  renderTruckControlSpreadsheet,
+  truckControlFileBaseName
+} from "./truck-control-report.js";
+import {
   sendEmail,
   verifySmtpConnection,
   type EmailSendInput,
@@ -2186,23 +2192,42 @@ export class DesktopRuntime {
     );
   }
 
+  /**
+   * Controle de caminhoes do periodo, ja recortado pela busca de placa/motorista quando
+   * ela vem preenchida — a tela, o PDF e a planilha partem deste mesmo relatorio.
+   */
   getTruckControlReport(
     startDate: string,
-    endDate: string
+    endDate: string,
+    search?: string | null
   ): ReturnType<ReportService["getTruckControlReport"]> {
-    return this.reportService.getTruckControlReport(
-      startDate,
-      endDate,
-      this.ensureIdentity().unitId
+    return filterTruckControlReport(
+      this.reportService.getTruckControlReport(startDate, endDate, this.ensureIdentity().unitId),
+      search
     );
   }
 
-  getTruckControlHtml(startDate: string, endDate: string): string {
-    return this.reportService.exportTruckControlToHtml(
-      startDate,
-      endDate,
-      this.ensureIdentity().unitId
-    );
+  getTruckControlHtml(startDate: string, endDate: string, search?: string | null): string {
+    return renderTruckControlHtml(this.getTruckControlReport(startDate, endDate, search));
+  }
+
+  /**
+   * Documento do controle de caminhoes pronto para gravar em disco, no formato pedido. O
+   * main so escolhe o destino e escreve, como nos demais relatorios.
+   */
+  buildTruckControlDocument(
+    format: "pdf" | "excel",
+    startDate: string,
+    endDate: string,
+    search?: string | null
+  ): { format: "pdf" | "excel"; fileName: string; html: string } {
+    const report = this.getTruckControlReport(startDate, endDate, search);
+    return {
+      format,
+      fileName: `${truckControlFileBaseName(report)}.${format === "pdf" ? "pdf" : "xls"}`,
+      html:
+        format === "pdf" ? renderTruckControlHtml(report) : renderTruckControlSpreadsheet(report)
+    };
   }
 
   // --- Relatorio por cliente -------------------------------------------------

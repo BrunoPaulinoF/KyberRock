@@ -166,10 +166,14 @@ const desktopApi = {
     formats: string[],
     options?: unknown
   ) => ipcRenderer.invoke("desktop:export-invoice-closing", startDate, endDate, formats, options),
-  getTruckControl: (startDate: string, endDate: string) =>
-    ipcRenderer.invoke("desktop:get-truck-control", startDate, endDate),
-  exportTruckControlPdf: (startDate: string, endDate: string) =>
-    ipcRenderer.invoke("desktop:export-truck-control-pdf", startDate, endDate),
+  getTruckControl: (startDate: string, endDate: string, search?: string) =>
+    ipcRenderer.invoke("desktop:get-truck-control", startDate, endDate, search),
+  exportTruckControl: (
+    format: "pdf" | "excel",
+    startDate: string,
+    endDate: string,
+    search?: string
+  ) => ipcRenderer.invoke("desktop:export-truck-control", format, startDate, endDate, search),
   listReportRecipients: () => ipcRenderer.invoke("desktop:list-report-recipients"),
   createReportRecipient: (input: unknown) =>
     ipcRenderer.invoke("desktop:create-report-recipient", input),
