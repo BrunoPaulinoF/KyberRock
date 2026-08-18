@@ -5001,6 +5001,7 @@ export async function reconcileOmieBillingFromOmie(
             omie_billed_at = COALESCE(omie_billed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
             omie_billing_message = ?,
             omie_order_number = COALESCE(?, omie_order_number),
+            omie_invoice_number = COALESCE(?, omie_invoice_number),
             omie_document_url = COALESCE(?, omie_document_url),
             omie_billing_checked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
       WHERE id = ?
@@ -5045,6 +5046,7 @@ export async function reconcileOmieBillingFromOmie(
     const changes = markBilled.run(
       buildBilledMessage(result),
       result.orderNumber,
+      result.invoiceNumber,
       result.documentUrl,
       result.operationId
     ).changes;
@@ -5327,6 +5329,7 @@ export async function processFiscalBillingNow(
       billed?: boolean;
       billingStatusCode?: string | null;
       billingStatusMessage?: string | null;
+      invoiceNumber?: string | null;
       documentUrl?: string | null;
     }>("omie-sync", {
       body: {
@@ -5399,6 +5402,7 @@ export async function processFiscalBillingNow(
         `UPDATE weighing_operations
          SET omie_sales_order_id = ?,
              omie_order_number = COALESCE(?, omie_order_number),
+             omie_invoice_number = COALESCE(?, omie_invoice_number),
              omie_billing_status = 'billed',
              omie_billing_message = ?,
              omie_billed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
@@ -5409,6 +5413,7 @@ export async function processFiscalBillingNow(
       .run(
         data.orderId,
         (data.orderNumber ?? "").trim() || null,
+        (data.invoiceNumber ?? "").trim() || null,
         data.billingStatusMessage ?? "Pedido faturado no OMIE.",
         data.documentUrl ?? null,
         operationId

@@ -610,6 +610,7 @@ export const documentationSections: DocumentationSection[] = [
       "Use Controle de caminhoes para acompanhar as viagens do periodo.",
       "Use Relatorio por cliente para gerar o relatorio simplificado e/ou completo de um cliente em PDF e/ou Excel.",
       "Use Conferencia de faturamento para ver o periodo pesagem a pesagem — cliente, data, produto, peso, frete e total de cada carregamento — e conferir contra o faturamento do OMIE.",
+      "Use Fechamento de faturas para puxar de uma vez a fatura de todos os clientes de um ciclo (quinzenal ou mensal), com nota fiscal, vale, placa e transportador carga a carga.",
       "Em Relatorios, cadastre quem recebe o fechamento diario por e-mail e, no card do relatorio financeiro (OMIE), quem recebe o resumo financeiro e em que horario."
     ],
     details: [
@@ -644,6 +645,51 @@ export const documentationSections: DocumentationSection[] = [
       "falta faturar",
       "grafico",
       "producao do dia"
+    ]
+  },
+  {
+    id: "invoice-closing",
+    title: "Fechamento de faturas dos clientes",
+    eyebrow: "Cobranca",
+    summary:
+      "Puxa de uma vez a fatura de TODOS os clientes de um ciclo — quinzenal, mensal ou semanal — com nota fiscal, vale, placa e transportador em cada carga, para Excel ou PDF.",
+    icon: Receipt,
+    steps: [
+      'Antes do primeiro fechamento, defina o ciclo de cada cliente: Cadastros > Clientes, aba do cliente, marque "Habilitar credito do cliente" e escolha a Periodicidade do fechamento (Mensal, Quinzenal ou Semanal), o dia (ou os dois dias, na quinzenal) em que a fatura fecha e quantos dias depois o boleto vence.',
+      "Abra Fechamento de faturas, escolha o periodo e clique no ciclo desejado — Quinzenal ou Mensal. Sem escolher ciclo, vem todos.",
+      "A lista traz uma linha por fatura: cliente, ciclo, data de fechamento, vencimento, quantidade de cargas, peso e total.",
+      'Clique em "Ver cargas" para abrir a fatura carga a carga, com data, vale, nota fiscal, pedido do OMIE, placa, transportador, motorista, produto, peso e valor.',
+      "Marque Excel (ou PDF) e clique em Gerar fechamento. O arquivo sai com exatamente as faturas que estao na tela."
+    ],
+    details: [
+      "Quinzenal devolve DUAS faturas do mesmo cliente quando o periodo pega os dois fechamentos do mes: cada carga cai no primeiro fechamento na data dela ou depois, e cada fechamento tem o seu proprio vencimento. E assim que a cobranca sai.",
+      "O numero do VALE e o codigo do cupom que saiu com o motorista (o COD impresso), com os mesmos zeros a esquerda do papel — e por ele que o cliente contesta uma carga.",
+      'A NOTA FISCAL e o BOLETO sao emitidos no OMIE, a partir do pedido que o KyberRock ja enviou. Carga sem numero de nota e carga que ainda espera a emissao la, e a coluna "Sem nota" mostra quantas sao antes de a fatura ir para o cliente.',
+      "O numero da nota chega sozinho: a conferencia periodica pergunta ao OMIE quais pedidos ja foram faturados e traz o numero junto. Nao ha nada para digitar aqui.",
+      "O bloco Transportadores e placas repete as mesmas viagens agrupadas por quem levou, com peso e frete por placa — o acerto do transportador sai da mesma lista que foi cobrada do cliente.",
+      'Cliente com carga no periodo mas sem periodicidade definida aparece em "Clientes fora do fechamento", e nao some calado: e o aviso de que falta configurar o cadastro dele.',
+      "A busca aceita cliente, placa, transportador, numero da nota e numero do vale, e o filtro vale tambem para o arquivo gerado."
+    ],
+    keywords: [
+      "fechamento de faturas",
+      "fechamento quinzenal",
+      "fechamento mensal",
+      "fatura do cliente",
+      "faturar todos os clientes",
+      "quinzenal",
+      "mensal",
+      "vale",
+      "numero do vale",
+      "numero da nota",
+      "nota fiscal",
+      "placa",
+      "transportador",
+      "transportadora",
+      "pagamento do transportador",
+      "boleto",
+      "vencimento",
+      "cobranca",
+      "excel"
     ]
   },
   {

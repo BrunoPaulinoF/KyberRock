@@ -1,0 +1,386 @@
+import {
+  SPREADSHEET_STYLE,
+  documentStyle,
+  escapeHtml,
+  formatBRL,
+  formatDayLabel,
+  formatTons,
+  kpiCards,
+  num,
+  section,
+  sheetTable,
+  slug,
+  table
+} from "./report-document.js";
+import { renderTotalBar } from "./report-total-bar.js";
+import { INVOICE_CLOSING_CYCLE_LABEL, formatCouponNumber } from "./invoice-closing-cycle.js";
+import type {
+  InvoiceClosingCarrierRow,
+  InvoiceClosingInvoice,
+  InvoiceClosingLine,
+  InvoiceClosingReport
+} from "./invoice-closing.js";
+
+/**
+ * Documentos do fechamento de faturas, nos dois formatos ja usados pelos demais
+ * relatorios: A4 paisagem (vira PDF pelo `renderHtmlToPdf` do main) e HTML de tabelas
+ * gravado como `.xls`.
+ *
+ * A PLANILHA e o formato principal aqui, e nao um extra: o fechamento e conferido lado a
+ * lado com o extrato do cliente e com o acerto do transportador, filtrando e somando
+ * coluna por coluna — coisa que num PDF nao se faz. O PDF continua existindo para o que
+ * vai anexado a cobranca.
+ *
+ * O documento repete o desenho do fechamento que a pedreira ja usava: um bloco POR
+ * FATURA, com o cliente no titulo, a lista carga a carga e, no fim, os dados da fatura
+ * (fechamento, vencimento e valor). Quem recebe o arquivo novo tem de reconhecer nele o
+ * arquivo antigo — trocar de sistema ja e mudanca demais para tambem trocar a leitura.
+ */
+
+/**
+ * Nota fixa nos dois formatos. Diz de onde vem cada coisa: o ciclo e do CADASTRO do
+ * cliente, a nota e do OMIE e o boleto tambem. Sem isso, "sem nota" seria lido como falha
+ * do KyberRock e a atendente procuraria defeito onde nao ha.
+ */
+export const INVOICE_CLOSING_NOTE =
+  "O ciclo de cada cliente (quinzenal, mensal ou semanal) vem da Periodicidade do " +
+  "fechamento no cadastro dele, em Cadastros > Clientes; a data de fechamento e o " +
+  "vencimento saem do dia de fechamento e do prazo de boleto ali configurados. A NOTA " +
+  "FISCAL e o BOLETO sao emitidos no OMIE, a partir do pedido que o KyberRock ja enviou — " +
+  "uma carga sem numero de nota e uma carga que ainda espera a emissao la, nao um erro " +
+  "daqui. Valores e pesos sao os fechados na balanca.";
+
+const LINE_HEADERS = [
+  "Data",
+  "Vale",
+  "Nota fiscal",
+  "Pedido OMIE",
+  "Placa",
+  "Transportador",
+  "Motorista",
+  "Produto",
+  "Peso (kg)",
+  "Produto (R$)",
+  "Frete (R$)",
+  "Total (R$)",
+  "Situacao"
+];
+
+const INVOICE_HEADERS = [
+  "Cliente",
+  "CNPJ/CPF",
+  "Ciclo",
+  "Fechamento",
+  "Vencimento",
+  "Cargas",
+  "Peso (kg)",
+  "Total (R$)",
+  "Sem nota"
+];
+
+const CARRIER_HEADERS = [
+  "Transportador / placa",
+  "Viagens",
+  "Peso (kg)",
+  "Frete (R$)",
+  "Total (R$)"
+];
+
+const PENDING_HEADERS = ["Cliente", "Cargas", "Total (R$)"];
+
+export function invoiceClosingFileBaseName(report: InvoiceClosingReport): string {
+  const cycles = report.filters.cycles.length
+    ? report.filters.cycles
+        .map((cycle) => slug(INVOICE_CLOSING_CYCLE_LABEL[cycle], "ciclo"))
+        .join("-")
+    : "todos";
+  return `fechamento-faturas-${cycles}-${report.startDate}-a-${report.endDate}`;
+}
+
+export function renderInvoiceClosingHtml(
+  report: InvoiceClosingReport,
+  generatedAt: Date = new Date()
+): string {
+  const { totals, withoutInvoice } = report;
+
+  const kpis: Array<[string, string]> = [
+    ["Faturas", num(report.invoices.length)],
+    ["Clientes", num(report.customers)],
+    ["Cargas", num(totals.operations)],
+    ["Tonelagem", formatTons(totals.netWeightKg)],
+    ["Frete", formatBRL(totals.freightCents)],
+    ["Total a faturar", formatBRL(totals.totalCents)],
+    ["Cargas sem nota", num(withoutInvoice.operations)],
+    ["Valor sem nota", formatBRL(withoutInvoice.totalCents)]
+  ];
+
+  const sections = [
+    section(
+      "Faturas do periodo",
+      `${table(
+        INVOICE_HEADERS,
+        report.invoices.map((invoice) => invoiceCells(invoice)),
+        report.invoices.length > 0 ? invoiceFooterCells(report) : null,
+        "Nenhum cliente com fechamento no periodo."
+      )}<p class="note">${escapeHtml(INVOICE_CLOSING_NOTE)}</p>`
+    ),
+    ...report.invoices.map((invoice) =>
+      section(
+        invoiceTitle(invoice),
+        table(
+          LINE_HEADERS,
+          invoice.lines.map((line) => lineCells(line)),
+          lineFooterCells(invoice),
+          "Sem cargas nesta fatura.",
+          "detail"
+        )
+      )
+    ),
+    section(
+      "Transportadores e placas",
+      table(
+        CARRIER_HEADERS,
+        carrierCells(report.byCarrier),
+        report.byCarrier.length > 0
+          ? [
+              "TOTAL",
+              num(totals.operations),
+              num(totals.netWeightKg),
+              formatBRL(totals.freightCents),
+              formatBRL(totals.totalCents)
+            ]
+          : null,
+        "Sem viagens no periodo."
+      )
+    ),
+    ...(report.pendingSetup.length > 0
+      ? [
+          section(
+            "Clientes fora do fechamento",
+            `${table(
+              PENDING_HEADERS,
+              report.pendingSetup.map((row) => [
+                row.customerName,
+                num(row.operations),
+                formatBRL(row.totalCents)
+              ]),
+              null,
+              "Nenhum."
+            )}<p class="note">${escapeHtml(
+              "Estes clientes tiveram carga no periodo mas nao entraram em fatura nenhuma: " +
+                "falta habilitar o credito e a periodicidade do fechamento no cadastro deles."
+            )}</p>`
+          )
+        ]
+      : [])
+  ];
+
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><title>${escapeHtml(
+    "Fechamento de faturas"
+  )}</title><style>${documentStyle("landscape")}
+</style></head><body>
+<div class="header"><div><h1>Fechamento de faturas</h1><p class="customer">${escapeHtml(
+    scopeText(report)
+  )}</p><p class="period">${escapeHtml(periodText(report))}</p><span class="badge">${escapeHtml(
+    "Carga a carga"
+  )}</span></div><div class="generated">Gerado em<br />${escapeHtml(
+    generatedAt.toLocaleString("pt-BR")
+  )}</div></div>
+${kpiCards(kpis)}
+${sections.join("\n")}
+${renderTotalBar([
+  { label: "Faturas", value: num(report.invoices.length) },
+  { label: "Cargas", value: num(totals.operations) },
+  { label: "Tonelagem", value: formatTons(totals.netWeightKg) },
+  { label: "Frete", value: formatBRL(totals.freightCents) },
+  { label: "Sem nota", value: formatBRL(withoutInvoice.totalCents) },
+  { label: "Total a faturar", value: formatBRL(totals.totalCents), emphasis: true }
+])}
+</body></html>`;
+}
+
+export function renderInvoiceClosingSpreadsheet(
+  report: InvoiceClosingReport,
+  generatedAt: Date = new Date()
+): string {
+  const { totals } = report;
+
+  const blocks = [
+    sheetTable(
+      "Faturas do periodo",
+      INVOICE_HEADERS,
+      report.invoices.map((invoice) => invoiceCells(invoice)),
+      report.invoices.length > 0 ? invoiceFooterCells(report) : null
+    ),
+    ...report.invoices.map((invoice) =>
+      sheetTable(
+        invoiceTitle(invoice),
+        LINE_HEADERS,
+        invoice.lines.map((line) => lineCells(line)),
+        lineFooterCells(invoice)
+      )
+    ),
+    sheetTable(
+      "Transportadores e placas",
+      CARRIER_HEADERS,
+      carrierCells(report.byCarrier),
+      report.byCarrier.length > 0
+        ? [
+            "TOTAL",
+            num(totals.operations),
+            num(totals.netWeightKg),
+            formatBRL(totals.freightCents),
+            formatBRL(totals.totalCents)
+          ]
+        : null
+    ),
+    ...(report.pendingSetup.length > 0
+      ? [
+          sheetTable(
+            "Clientes fora do fechamento",
+            PENDING_HEADERS,
+            report.pendingSetup.map((row) => [
+              row.customerName,
+              num(row.operations),
+              formatBRL(row.totalCents)
+            ]),
+            null
+          )
+        ]
+      : [])
+  ];
+
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><style>${SPREADSHEET_STYLE}</style></head><body>
+<h1>Fechamento de faturas</h1>
+<p class="sub">${escapeHtml(
+    `${scopeText(report)} - ${periodText(report)} - gerado em ${generatedAt.toLocaleString("pt-BR")}`
+  )}</p>
+${blocks.join("\n")}
+<p class="note">${escapeHtml(INVOICE_CLOSING_NOTE)}</p>
+</body></html>`;
+}
+
+/**
+ * Titulo do bloco da fatura. Traz cliente, ciclo, fechamento, vencimento e valor na mesma
+ * linha porque no arquivo e ele que separa uma fatura da outra: quem rola a planilha ate o
+ * meio precisa saber de quem e a lista sem voltar ao topo.
+ */
+function invoiceTitle(invoice: InvoiceClosingInvoice): string {
+  return (
+    `${invoice.customerName} — ${invoice.cycleLabel} — fecha ${formatDayLabel(invoice.closingDate)}` +
+    ` — vence ${formatDayLabel(invoice.dueDate)} — ${formatBRL(invoice.totals.totalCents)}`
+  );
+}
+
+function invoiceCells(invoice: InvoiceClosingInvoice): string[] {
+  return [
+    invoice.customerName,
+    invoice.customerDocument ?? "-",
+    invoice.cycleLabel,
+    formatDayLabel(invoice.closingDate),
+    formatDayLabel(invoice.dueDate),
+    num(invoice.totals.operations),
+    num(invoice.totals.netWeightKg),
+    formatBRL(invoice.totals.totalCents),
+    invoice.operationsWithoutInvoice === 0 ? "-" : num(invoice.operationsWithoutInvoice)
+  ];
+}
+
+function invoiceFooterCells(report: InvoiceClosingReport): string[] {
+  const { totals } = report;
+  return [
+    "TOTAL",
+    "",
+    "",
+    "",
+    "",
+    num(totals.operations),
+    num(totals.netWeightKg),
+    formatBRL(totals.totalCents),
+    report.withoutInvoice.operations === 0 ? "-" : num(report.withoutInvoice.operations)
+  ];
+}
+
+function lineCells(line: InvoiceClosingLine): string[] {
+  return [
+    formatDayLabel(line.date),
+    formatCouponNumber(line.couponNumber),
+    line.invoiceNumber ?? "-",
+    line.omieOrderNumber ?? "-",
+    line.plate,
+    line.carrierName,
+    line.driverName,
+    line.productDescription,
+    num(line.netWeightKg),
+    formatBRL(line.productTotalCents),
+    formatBRL(line.freightTotalCents),
+    formatBRL(line.totalCents),
+    line.situationLabel
+  ];
+}
+
+/** Rodape alinhado com `LINE_HEADERS`: so as colunas somaveis levam numero. */
+function lineFooterCells(invoice: InvoiceClosingInvoice): string[] | null {
+  if (invoice.lines.length === 0) return null;
+  const { totals } = invoice;
+  return [
+    "TOTAL",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    num(totals.netWeightKg),
+    formatBRL(totals.productCents),
+    formatBRL(totals.freightCents),
+    formatBRL(totals.totalCents),
+    ""
+  ];
+}
+
+/**
+ * Transportador e, logo abaixo, cada placa dele. A indentacao da placa e o que permite ler
+ * a tabela inteira de cima a baixo sem perder de vista de quem e o caminhao.
+ */
+function carrierCells(carriers: readonly InvoiceClosingCarrierRow[]): string[][] {
+  const rows: string[][] = [];
+  for (const carrier of carriers) {
+    rows.push([
+      carrier.carrierName,
+      num(carrier.trips),
+      num(carrier.netWeightKg),
+      formatBRL(carrier.freightCents),
+      formatBRL(carrier.totalCents)
+    ]);
+    for (const plate of carrier.plates) {
+      rows.push([
+        `   ${plate.plate}`,
+        num(plate.trips),
+        num(plate.netWeightKg),
+        formatBRL(plate.freightCents),
+        formatBRL(plate.totalCents)
+      ]);
+    }
+  }
+  return rows;
+}
+
+function scopeText(report: InvoiceClosingReport): string {
+  const parts: string[] = [
+    report.filters.cycles.length > 0
+      ? report.filters.cycles.map((cycle) => INVOICE_CLOSING_CYCLE_LABEL[cycle]).join(", ")
+      : "Todos os ciclos"
+  ];
+  if (report.filters.customerId) {
+    parts.push(report.invoices[0]?.customerName ?? "Cliente selecionado");
+  }
+  if (report.filters.search) parts.push(`busca "${report.filters.search}"`);
+  return parts.join(" - ");
+}
+
+function periodText(report: InvoiceClosingReport): string {
+  const range = `${formatDayLabel(report.startDate)} a ${formatDayLabel(report.endDate)}`;
+  return report.periodLabel ? `${report.periodLabel} - ${range}` : range;
+}

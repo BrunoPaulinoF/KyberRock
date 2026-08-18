@@ -25,6 +25,7 @@ import {
   User,
   UserSearch,
   ClipboardCheck,
+  ReceiptText,
   Users,
   Package,
   CreditCard,
@@ -145,6 +146,7 @@ import { DocumentationView } from "./DocumentationView";
 import { InsightsView } from "./InsightsView";
 import { CustomerReportView } from "./CustomerReportView";
 import { WeighingBillingReportView } from "./WeighingBillingReportView";
+import { InvoiceClosingView } from "./InvoiceClosingView";
 import { ReportsView } from "./ReportsView";
 import { TruckControlView, formatMinutes } from "./TruckControlView";
 import { WalletView } from "./WalletView";
@@ -252,6 +254,7 @@ type ActiveView =
   | "truck-control"
   | "customer-report"
   | "billing-conference"
+  | "invoice-closing"
   | "reports"
   | "documentation";
 
@@ -2539,6 +2542,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 tooltip={TIPS.nav.billingConference}
               />
               <SidebarItem
+                id="invoice-closing"
+                label="Fechamento de faturas"
+                icon={ReceiptText}
+                activeView={activeView}
+                onSelect={setActiveView}
+                tooltip={TIPS.nav.invoiceClosing}
+              />
+              <SidebarItem
                 id="reports"
                 label="Relatorios"
                 icon={FileText}
@@ -4609,6 +4620,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             ) : null}
             {activeView === "billing-conference" ? (
               <WeighingBillingReportView desktopApi={desktopApi} />
+            ) : null}
+            {activeView === "invoice-closing" ? (
+              <InvoiceClosingView desktopApi={desktopApi} />
             ) : null}
             {activeView === "reports" ? <ReportsView desktopApi={desktopApi} /> : null}
             {activeView === "documentation" ? <DocumentationView desktopApi={desktopApi} /> : null}

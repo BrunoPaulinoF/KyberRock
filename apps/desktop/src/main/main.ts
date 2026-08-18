@@ -60,6 +60,8 @@ import {
 import { isCustomerReportVariant } from "../services/customer-report.js";
 import { isWeighingBillingSituation } from "../services/weighing-billing-situation.js";
 import type { WeighingBillingReportOptions } from "../services/weighing-billing-report.js";
+import { isInvoiceClosingCycle } from "../services/invoice-closing-cycle.js";
+import type { InvoiceClosingOptions } from "../services/invoice-closing.js";
 import { GITHUB_UPDATER_TOKEN } from "./updater-config.js";
 import type { OperationType } from "../services/weighing-operations.js";
 
@@ -927,6 +929,45 @@ function registerIpcHandlers(): void {
           endDate,
           selectedFormats,
           sanitizeWeighingBillingOptions(options)
+        )
+      );
+    }
+  );
+
+  // Fechamento de faturas: a fatura de todos os clientes de um ciclo, de uma vez.
+  ipcMain.handle(
+    "desktop:get-invoice-closing",
+    (_event, startDate: string, endDate: string, options?: unknown) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.getInvoiceClosing(startDate, endDate, sanitizeInvoiceClosingOptions(options));
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:export-invoice-closing",
+    async (
+      _event,
+      startDate: string,
+      endDate: string,
+      formats: Array<"pdf" | "excel">,
+      options?: unknown
+    ) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      if (!mainWindow) return null;
+
+      const selectedFormats = (formats ?? []).filter(
+        (format): format is "pdf" | "excel" => format === "pdf" || format === "excel"
+      );
+      if (selectedFormats.length === 0) {
+        throw new Error("Selecione ao menos um formato de arquivo (PDF ou Excel).");
+      }
+
+      return saveReportDocuments(
+        runtime.buildInvoiceClosingDocuments(
+          startDate,
+          endDate,
+          selectedFormats,
+          sanitizeInvoiceClosingOptions(options)
         )
       );
     }
@@ -2442,6 +2483,22 @@ function sanitizeWeighingBillingOptions(options: unknown): WeighingBillingReport
   return {
     customerId: typeof raw.customerId === "string" && raw.customerId ? raw.customerId : null,
     situations,
+    search: typeof raw.search === "string" ? raw.search : null,
+    periodLabel: typeof raw.periodLabel === "string" ? raw.periodLabel : null
+  };
+}
+
+/**
+ * Filtros do fechamento de faturas vindos do renderer, pela mesma regra da conferencia:
+ * campo a campo, e o que nao for reconhecido nao desce ate a consulta.
+ */
+function sanitizeInvoiceClosingOptions(options: unknown): InvoiceClosingOptions {
+  if (!options || typeof options !== "object") return {};
+  const raw = options as Record<string, unknown>;
+  const cycles = Array.isArray(raw.cycles) ? raw.cycles.filter(isInvoiceClosingCycle) : [];
+  return {
+    cycles,
+    customerId: typeof raw.customerId === "string" && raw.customerId ? raw.customerId : null,
     search: typeof raw.search === "string" ? raw.search : null,
     periodLabel: typeof raw.periodLabel === "string" ? raw.periodLabel : null
   };

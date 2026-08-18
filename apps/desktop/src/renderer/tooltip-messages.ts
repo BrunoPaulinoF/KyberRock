@@ -18,6 +18,8 @@ export const TIPS = {
       "Relatorio por cliente: escolha o cliente e o periodo e gere o relatorio simplificado e/ou completo em PDF e/ou Excel.",
     billingConference:
       "Conferencia de faturamento: a lista pesagem a pesagem do periodo (cliente, data, produto, peso, frete e total) com a situacao de cada uma no OMIE.",
+    invoiceClosing:
+      "Fechamento de faturas: a fatura de todos os clientes de um ciclo (quinzenal, mensal ou semanal) de uma vez, com nota fiscal, vale, placa e transportador carga a carga.",
     reports:
       "Relatorios: cadastre destinatarios que receberao os relatorios automaticos por e-mail.",
     documentation:
@@ -35,6 +37,8 @@ export const TIPS = {
     customerReport: "Relatorio completo ou simplificado de um cliente no periodo, em PDF ou Excel.",
     billingConference:
       "Pesagem a pesagem do periodo com a situacao no OMIE: confira o que foi fechado contra o que foi faturado.",
+    invoiceClosing:
+      "A fatura de todos os clientes de um ciclo de uma vez, com nota, vale, placa e transportador.",
     reports: "Destinatarios dos relatorios automaticos por e-mail.",
     documentation: "Guias, duvidas, diagnostico guiado e assistente de IA da documentacao."
   },
