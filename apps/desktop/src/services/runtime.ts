@@ -183,6 +183,13 @@ import {
   renderCustomersOverviewHtml,
   renderCustomersOverviewSpreadsheet
 } from "./customer-report-render.js";
+import { InvoiceClosingService } from "./invoice-closing.js";
+import type { InvoiceClosingOptions } from "./invoice-closing.js";
+import {
+  invoiceClosingFileBaseName,
+  renderInvoiceClosingHtml,
+  renderInvoiceClosingSpreadsheet
+} from "./invoice-closing-render.js";
 import { WeighingBillingReportService } from "./weighing-billing-report.js";
 import type { WeighingBillingReportOptions } from "./weighing-billing-report.js";
 import {
@@ -588,6 +595,7 @@ export class DesktopRuntime {
   private reportService: ReportService;
   private customerReportService: CustomerReportService;
   private weighingBillingReportService: WeighingBillingReportService;
+  private invoiceClosingService: InvoiceClosingService;
 
   private constructor(initialized: InitializedDesktopDatabase) {
     this.database = initialized.database;
@@ -596,6 +604,7 @@ export class DesktopRuntime {
     this.reportService = new ReportService(this.database);
     this.customerReportService = new CustomerReportService(this.database);
     this.weighingBillingReportService = new WeighingBillingReportService(this.database);
+    this.invoiceClosingService = new InvoiceClosingService(this.database);
     this.ensureIdentity();
     ensureDefaultAccounts(this.database, this.ensureIdentity().companyId);
     ensureDefaultPaymentMethods(this.database, this.ensureIdentity().companyId);
@@ -2352,6 +2361,44 @@ export class DesktopRuntime {
         format === "pdf"
           ? renderWeighingBillingReportHtml(report)
           : renderWeighingBillingReportSpreadsheet(report)
+    }));
+  }
+
+  // --- Fechamento de faturas -------------------------------------------------
+
+  getInvoiceClosing(
+    startDate: string,
+    endDate: string,
+    options?: InvoiceClosingOptions
+  ): ReturnType<InvoiceClosingService["getReport"]> {
+    return this.invoiceClosingService.getReport(
+      startDate,
+      endDate,
+      this.ensureIdentity().unitId,
+      options
+    );
+  }
+
+  /**
+   * Os documentos do fechamento prontos para gravar. Recebem os MESMOS filtros da tela: o
+   * arquivo que vai para o cliente tem de trazer exatamente as faturas que a atendente
+   * estava olhando quando clicou em gerar.
+   */
+  buildInvoiceClosingDocuments(
+    startDate: string,
+    endDate: string,
+    formats: Array<"pdf" | "excel">,
+    options?: InvoiceClosingOptions
+  ): Array<{ format: "pdf" | "excel"; fileName: string; html: string }> {
+    const report = this.getInvoiceClosing(startDate, endDate, options);
+    const baseName = invoiceClosingFileBaseName(report);
+    return formats.map((format) => ({
+      format,
+      fileName: `${baseName}.${format === "pdf" ? "pdf" : "xls"}`,
+      html:
+        format === "pdf"
+          ? renderInvoiceClosingHtml(report)
+          : renderInvoiceClosingSpreadsheet(report)
     }));
   }
 

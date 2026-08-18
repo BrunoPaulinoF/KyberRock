@@ -158,6 +158,14 @@ const desktopApi = {
       formats,
       options
     ),
+  getInvoiceClosing: (startDate: string, endDate: string, options?: unknown) =>
+    ipcRenderer.invoke("desktop:get-invoice-closing", startDate, endDate, options),
+  exportInvoiceClosing: (
+    startDate: string,
+    endDate: string,
+    formats: string[],
+    options?: unknown
+  ) => ipcRenderer.invoke("desktop:export-invoice-closing", startDate, endDate, formats, options),
   getTruckControl: (startDate: string, endDate: string, search?: string) =>
     ipcRenderer.invoke("desktop:get-truck-control", startDate, endDate, search),
   exportTruckControl: (

@@ -57,6 +57,7 @@ import type {
   WeighingBillingReport,
   WeighingBillingReportOptions
 } from "../services/weighing-billing-report";
+import type { InvoiceClosingOptions, InvoiceClosingReport } from "../services/invoice-closing";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers";
 import type { UpdatePaymentMethodInput } from "../services/payment-methods";
 import type { SettleWalletInput, WalletQuery, WalletReport } from "../services/wallet";
@@ -286,6 +287,18 @@ export interface KyberRockDesktopApi {
     endDate: string,
     formats: Array<"pdf" | "excel">,
     options?: WeighingBillingReportOptions
+  ) => Promise<{ files: string[] } | null>;
+  /** Fechamento de faturas: as faturas do periodo dos clientes de cada ciclo. */
+  getInvoiceClosing: (
+    startDate: string,
+    endDate: string,
+    options?: InvoiceClosingOptions
+  ) => Promise<InvoiceClosingReport>;
+  exportInvoiceClosing: (
+    startDate: string,
+    endDate: string,
+    formats: Array<"pdf" | "excel">,
+    options?: InvoiceClosingOptions
   ) => Promise<{ files: string[] } | null>;
   /** `search` recorta o relatorio por placa ou motorista, como a busca da tela. */
   getTruckControl: (

@@ -2009,5 +2009,45 @@ CREATE INDEX IF NOT EXISTS idx_weighing_operations_future_billing_invoice
   ON weighing_operations(future_billing_invoice_id)
   WHERE future_billing_invoice_id IS NOT NULL;
 `
+  },
+  {
+    version: 55,
+    name: "operation_omie_invoice_number",
+    sql: `
+-- Numero da NOTA FISCAL emitida no OMIE para esta pesagem.
+--
+-- O numero ja vinha da conferencia de faturamento (\`check_order_billing\` devolve
+-- \`invoiceNumber\` junto com a situacao do documento), mas era gravado dentro da FRASE de
+-- \`omie_billing_message\` — "Faturado no OMIE — NF-e 28727.". Serve para o operador ler na
+-- linha; nao serve para nada mais: nao da para filtrar, nao da para ordenar e, sobretudo,
+-- nao da para levar a coluna "Nota Fiscal" do fechamento de faturas, que e por onde a
+-- atendente amarra o que a pedreira carregou com o que o cliente recebeu.
+--
+-- TEXT pelo mesmo motivo de \`omie_order_number\` e \`nfe_number\`: o numero pode chegar com
+-- zeros a esquerda, e transformar "000028727" em 28727 e perder o que se digita na busca.
+-- Nulo enquanto a nota nao foi emitida (ou enquanto a conferencia ainda nao passou por ali).
+ALTER TABLE weighing_operations ADD COLUMN omie_invoice_number TEXT;
+
+-- Recupera o numero das notas que JA foram conferidas.
+--
+-- A conferencia so pergunta ao OMIE pelos documentos que ainda nao constam faturados: quem
+-- ja esta em \`omie_billing_status = 'billed'\` nunca mais volta a ser perguntado. Sem esta
+-- releitura, todo o faturamento anterior a esta migracao estrearia no fechamento com a
+-- coluna da nota vazia — justamente o acervo que a atendente precisa conferir — e nada
+-- jamais a preencheria.
+--
+-- A frase tem forma fixa (a monta \`buildBilledMessage\`), entao a extracao e literal:
+-- do fim do rotulo ate o ponto final. Documento sem numero na frase fica nulo, que e o que
+-- ele e.
+UPDATE weighing_operations
+   SET omie_invoice_number = rtrim(substr(omie_billing_message, instr(omie_billing_message, 'NF-e ') + 5), '.')
+ WHERE omie_invoice_number IS NULL
+   AND omie_billing_message LIKE '%NF-e %';
+
+UPDATE weighing_operations
+   SET omie_invoice_number = rtrim(substr(omie_billing_message, instr(omie_billing_message, 'NFS-e ') + 6), '.')
+ WHERE omie_invoice_number IS NULL
+   AND omie_billing_message LIKE '%NFS-e %';
+`
   }
 ];

@@ -358,6 +358,12 @@ type CreateAndBillOrderResult = {
   billed: boolean;
   billingStatusCode: string | null;
   billingStatusMessage: string | null;
+  /**
+   * Numero da NOTA FISCAL emitida agora. Vem da consulta pos-faturamento, a mesma que a
+   * conferencia usa — e e a unica chance de captura-lo por aqui: a reconciliacao so
+   * pergunta pelos documentos que AINDA nao constam faturados, e este ja nasce faturado.
+   */
+  invoiceNumber: string | null;
   documentUrl: string | null;
 };
 
@@ -3952,6 +3958,10 @@ async function createAndBillOmieOrder(
     billed: true,
     billingStatusCode: billing.statusCode,
     billingStatusMessage: billing.statusMessage,
+    invoiceNumber:
+      extractOmieInvoiceNumber(consultedOrder) ??
+      extractOmieInvoiceNumber(orderDocument) ??
+      extractOmieInvoiceNumber(billing.raw),
     documentUrl
   };
 }
