@@ -6,6 +6,7 @@ import { AdminDashboard } from "./pages/AdminDashboard";
 import { LoaderLogin } from "./pages/LoaderLogin";
 import { LoaderDashboard } from "./pages/LoaderDashboard";
 import { SalesReport } from "./pages/SalesReport";
+import { WhatsappConnect } from "./pages/WhatsappConnect";
 
 function PrivateAdminRoute({ children }: { children: React.ReactNode }) {
   const { isAdmin, isLoading } = useAuth();
@@ -70,6 +71,13 @@ function AppRoutes() {
           </PrivateComercialRoute>
         }
       />
+      {/*
+        Link temporario de conexao do WhatsApp. Publica de proposito e sem
+        AuthProvider no caminho: quem abre e o dono do celular, que nao tem (nem
+        precisa ter) conta no sistema. O que autoriza e o token de 256 bits do
+        proprio endereco, conferido no servidor junto com o prazo de 15 minutos.
+      */}
+      <Route path="/whatsapp/:token" element={<WhatsappConnect />} />
       <Route path="/admin/login" element={<AdminLogin />} />
       <Route
         path="/admin"

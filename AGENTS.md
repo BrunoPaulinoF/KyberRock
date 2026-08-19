@@ -254,14 +254,23 @@ nunca está ali.
   carimba o vencimento é sempre a nuvem**; o desktop só respeita o que veio de lá, para relógio
   errado na balança não esticar link nenhum.
 - A Edge Function `whatsapp-link` (pública, `verify_jwt = false`, migração
-  `202608190001_whatsapp_connection_links.sql`) faz três coisas numa só: `POST /whatsapp-link`
-  cria/cancela o link autenticando por `deviceId` + `deviceToken`; `GET .../c/<token>` serve a
-  página que o convidado abre no celular; `POST .../c/<token>/state` devolve o QR atualizado.
+  `202608190001_whatsapp_connection_links.sql`) responde **só JSON**: `POST /whatsapp-link`
+  cria/cancela o link autenticando por `deviceId` + `deviceToken`, e
+  `POST .../c/<token>/state` devolve o QR atualizado.
+- **A página do convidado é a rota `/whatsapp/:token` do loader-web, não da Edge Function.** As
+  Edge Functions respondem HTML como `content-type: text/plain` + `nosniff` (proteção
+  anti-phishing do domínio `*.supabase.co`), então a mesma página servida de lá chega ao celular
+  do convidado como **código-fonte**. Só JSON atravessa esse filtro — por isso o QR vem por JSON e
+  quem desenha é o site. Não mova a página de volta para a função.
+- O endereço do site vem do secret **`KYBERROCK_SITE_URL`** (nome fixo em código, valor no
+  Supabase, como os segredos do financeiro). Sem ele a função **recusa** criar o link, com o
+  motivo na tela — melhor que devolver um endereço que não abre em lugar nenhum.
 - **A credencial da UAZAPI nunca chega ao navegador**: quem fala com a UAZAPI é a função, com o
   token que a pedreira já empurrou para `report_channel_settings`. O visitante recebe só a imagem
   do QR. O banco guarda apenas o **hash** do token do link — o valor em claro existe só na URL.
-- A UAZAPI é chamada **no `/state`, nunca no `GET` da página**: mandar o link pelo WhatsApp faz o
-  próprio WhatsApp buscar a página para montar a prévia, e prévia não pode rotacionar QR.
+- A UAZAPI é chamada **no `/state`**, ou seja, quando alguém realmente abriu a página: mandar o
+  link pelo WhatsApp faz o próprio WhatsApp buscar a página para montar a prévia, e prévia não
+  pode rotacionar QR.
 - O link morre de três formas: prazo, botão "Cancelar link" e o próprio pareamento (a função grava
   `connected_at` e o desktop apaga o registro local). Gerar um novo revoga os anteriores da mesma
   pedreira — dois links vivos são duas janelas de pareamento abertas.

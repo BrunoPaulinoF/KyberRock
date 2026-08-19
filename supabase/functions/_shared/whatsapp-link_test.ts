@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   WHATSAPP_LINK_TTL_MINUTES,
+  buildWhatsappLinkStateUrl,
   buildWhatsappLinkUrl,
   formatWhatsappLinkCountdown,
   generateWhatsappLinkToken,
@@ -101,15 +102,28 @@ describe("isWhatsappLinkToken", () => {
 });
 
 describe("buildWhatsappLinkUrl", () => {
-  it("builds the public address on the project domain", () => {
-    expect(buildWhatsappLinkUrl("https://projeto.supabase.co", "tok")).toBe(
-      "https://projeto.supabase.co/functions/v1/whatsapp-link/c/tok"
+  // A pagina NAO pode sair do dominio do Supabase: as Edge Functions respondem
+  // HTML como text/plain com nosniff, e o convidado veria codigo-fonte.
+  it("points the guest at the site, not at the Supabase project", () => {
+    expect(buildWhatsappLinkUrl("https://app.pedreira.com.br", "tok")).toBe(
+      "https://app.pedreira.com.br/whatsapp/tok"
+    );
+    expect(buildWhatsappLinkUrl("https://app.pedreira.com.br", "tok")).not.toContain(
+      "functions/v1"
     );
   });
 
   it("tolerates a trailing slash in the configured url", () => {
-    expect(buildWhatsappLinkUrl("https://projeto.supabase.co/", "tok")).toBe(
-      "https://projeto.supabase.co/functions/v1/whatsapp-link/c/tok"
+    expect(buildWhatsappLinkUrl("https://app.pedreira.com.br/", "tok")).toBe(
+      "https://app.pedreira.com.br/whatsapp/tok"
+    );
+  });
+});
+
+describe("buildWhatsappLinkStateUrl", () => {
+  it("keeps the QR feed on the Edge Function, where JSON passes untouched", () => {
+    expect(buildWhatsappLinkStateUrl("https://projeto.supabase.co/", "tok")).toBe(
+      "https://projeto.supabase.co/functions/v1/whatsapp-link/c/tok/state"
     );
   });
 });
@@ -123,13 +137,16 @@ describe("routeWhatsappLinkPath", () => {
       token: null
     });
     expect(routeWhatsappLinkPath("/whatsapp-link/")).toEqual({ kind: "api", token: null });
-    expect(routeWhatsappLinkPath(`/functions/v1/whatsapp-link/c/${token}`)).toEqual({
-      kind: "page",
-      token
-    });
-    expect(routeWhatsappLinkPath(`/whatsapp-link/c/${token}/state`)).toEqual({
+    expect(routeWhatsappLinkPath(`/functions/v1/whatsapp-link/c/${token}/state`)).toEqual({
       kind: "state",
       token
+    });
+  });
+
+  it("serves no page of its own — the guest page lives in the site", () => {
+    expect(routeWhatsappLinkPath(`/functions/v1/whatsapp-link/c/${token}`)).toEqual({
+      kind: "unknown",
+      token: null
     });
   });
 
