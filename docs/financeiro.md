@@ -165,10 +165,38 @@ Ajustar valor ou vencimento de uma fatura **já emitida** não muda o papel que 
 cliente recebeu: a fatura passa a exibir "reemita o boleto" e o botão de
 reemissão cancela o anterior antes de criar o novo.
 
+## A tela
+
+Três abas — **Faturas**, **Cobrança por pedreira** e **Configurações** — e, acima
+delas, o que precisa existir para a cobrança rodar.
+
+**Para a cobrança funcionar** (`buildActivationChecklist`, em
+`apps/loader-web/src/lib/billing.ts`) lista, com o nome exato do campo, o que
+ainda falta: secret do Mercado Pago, secret + URL + nome da instância de
+WhatsApp, emitente, e as pedreiras cujo cadastro não fecha ciclo. `pending`
+impede a cobrança; `warn` é recomendação (assinatura do webhook, sandbox
+selecionado, emitente incompleto). O painel só aparece nas outras abas enquanto
+houver pendência, e fica permanente em Configurações. Ele existe porque a
+cobrança depende de coisas guardadas em quatro lugares diferentes e, faltando
+qualquer uma, o sintoma só apareceria no fechamento — fatura sem boleto, boleto
+sem envio, ciclo que não fecha.
+
+**Faturar** abre a prévia (`preview_invoice`) antes de cobrar: ciclos já
+fechados com período, rateio e valor, o total, o que falta no cadastro para o
+boleto e para o envio, e duas opções — emitir boleto e enviar por WhatsApp — que
+podem ser desmarcadas para gerar só a fatura e conferir o valor. É de lá que sai
+também o **Antecipar fechamento** (`force`), para a pedreira que entrou fora do
+calendário. Antes, o clique em "Faturar" criava a fatura, emitia o boleto e
+disparava o WhatsApp de uma vez, sem nenhuma tela dizendo o valor.
+
+O **detalhe da fatura** mostra a trilha do `billing_events` (`invoice_events`),
+carregada só ao abrir. A aba **Configurações** exibe a URL do `billing-webhook`
+desta instalação, pronta para colar no painel do Mercado Pago.
+
 ## Operação
 
 - **Rodar cobrança agora** (topo da aba) executa a passada completa na hora.
-- **Gerar fatura** fecha os ciclos já vencidos de uma pedreira; **Antecipar
+- **Faturar** fecha os ciclos já vencidos de uma pedreira; **Antecipar
   fechamento** força o próximo ciclo (pedreira que entrou fora do calendário).
 - Fatura **paga** não pode ser excluída — é o registro do dinheiro que entrou.
   Para desfazer, cancele.

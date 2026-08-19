@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { supabaseConfig } from "../config/supabase-config";
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
 import {
+  billingEventLabel,
+  billingEventTone,
+  buildActivationChecklist,
   centsToInput,
+  countActivationBlockers,
   daysOverdue,
   describeNextClosing,
   downloadBase64Pdf,
@@ -13,12 +18,17 @@ import {
   formatDateTimeBr,
   invoiceStatusLabel,
   invoiceStatusTone,
+  isActivationComplete,
   parseMoneyToCents,
   summarizeInvoiceList
 } from "../lib/billing";
 import type {
+  ActivationStep,
+  ActivationTarget,
   BillingCompany,
+  BillingEvent,
   BillingInvoice,
+  BillingPeriodView,
   BillingSecretStatus,
   BillingSettingsView,
   BillingSummary
@@ -62,6 +72,14 @@ import type { Column } from "../components/admin";
 
 type FinancialTab = "invoices" | "companies" | "settings";
 
+/**
+ * URL publica do `billing-webhook` desta instalacao. Sai da mesma configuracao
+ * que o resto do loader-web usa para falar com o Supabase — digitar o projeto a
+ * mao na tela do Mercado Pago e o tipo de erro que so aparece no dia em que um
+ * cliente paga e a fatura continua em aberto.
+ */
+const BILLING_WEBHOOK_URL = `${supabaseConfig.url.replace(/\/+$/, "")}/functions/v1/billing-webhook`;
+
 interface FinancialData {
   today: string;
   settings: BillingSettingsView;
@@ -77,6 +95,32 @@ interface ConfirmState {
   onConfirm: () => void;
 }
 
+/** Previa do `preview_invoice`: o que sairia no fechamento, sem gravar nada. */
+interface InvoicePreview {
+  today: string;
+  monthlyAmountCents: number;
+  nextPeriod: BillingPeriodView;
+  duePeriods: BillingPeriodView[];
+  missing: { boleto: string[]; whatsapp: string[] };
+}
+
+interface GenerationState {
+  company: BillingCompany;
+  preview: InvoicePreview;
+}
+
+/** O que o operador quer disparar junto com a fatura. */
+interface GenerationOptions {
+  force: boolean;
+  issueBoleto: boolean;
+  sendWhatsapp: boolean;
+}
+
+type InvoiceEventsState =
+  | { status: "loading" }
+  | { status: "ready"; items: BillingEvent[] }
+  | { status: "error"; message: string };
+
 export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: () => void }) {
   const [tab, setTab] = useState<FinancialTab>("invoices");
   const [data, setData] = useState<FinancialData | null>(null);
@@ -89,8 +133,10 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
   const [search, setSearch] = useState("");
 
   const [openInvoiceId, setOpenInvoiceId] = useState<string | null>(null);
+  const [invoiceEvents, setInvoiceEvents] = useState<InvoiceEventsState | null>(null);
   const [editingCompany, setEditingCompany] = useState<BillingCompany | null>(null);
   const [editingInvoice, setEditingInvoice] = useState<BillingInvoice | null>(null);
+  const [generation, setGeneration] = useState<GenerationState | null>(null);
   const [confirming, setConfirming] = useState<ConfirmState | null>(null);
 
   const handleError = useCallback(
@@ -181,6 +227,88 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
     [data, openInvoiceId]
   );
 
+  /**
+   * Trilha da fatura (`billing_events`). Carregada ao abrir o detalhe e nao
+   * junto da tela: sao 100 linhas por fatura que ninguem le na lista.
+   */
+  const loadInvoiceEvents = useCallback(
+    async (invoiceId: string) => {
+      setInvoiceEvents({ status: "loading" });
+      try {
+        const response = await callAdminFunction<{ events: BillingEvent[] }>("admin-billing", {
+          action: "invoice_events",
+          payload: { invoiceId }
+        });
+        setInvoiceEvents({ status: "ready", items: response.events ?? [] });
+      } catch (error) {
+        if (error instanceof AdminSessionExpiredError) {
+          onSessionExpired();
+          return;
+        }
+        setInvoiceEvents({
+          status: "error",
+          message: error instanceof Error ? error.message : "Nao foi possivel ler o historico."
+        });
+      }
+    },
+    [onSessionExpired]
+  );
+
+  function openInvoiceDetail(invoice: BillingInvoice): void {
+    setOpenInvoiceId(invoice.id);
+    void loadInvoiceEvents(invoice.id);
+  }
+
+  function closeInvoiceDetail(): void {
+    setOpenInvoiceId(null);
+    setInvoiceEvents(null);
+  }
+
+  /**
+   * "Faturar" nao fecha nada de cara: primeiro pergunta ao motor o que sairia
+   * (`preview_invoice`) e mostra periodo, valor e o que falta no cadastro. Antes
+   * o clique ja criava fatura, emitia boleto e disparava WhatsApp de uma vez —
+   * sem nenhuma tela dizendo quanto ia ser cobrado.
+   */
+  async function openGeneration(company: BillingCompany): Promise<void> {
+    setBusy(`preview:${company.id}`);
+    setFeedback(null);
+    try {
+      const preview = await callAdminFunction<InvoicePreview>("admin-billing", {
+        action: "preview_invoice",
+        payload: { companyId: company.id }
+      });
+      setGeneration({ company, preview });
+    } catch (error) {
+      handleError(error, "Nao foi possivel calcular a previa do fechamento.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function generateInvoice(
+    company: BillingCompany,
+    options: GenerationOptions
+  ): Promise<void> {
+    const steps = [
+      options.force ? "Fechamento antecipado: fatura gerada." : "Fatura gerada.",
+      options.issueBoleto ? "Boleto emitido." : "Boleto nao emitido (opcao desmarcada).",
+      options.sendWhatsapp ? "Envio disparado." : "Envio nao disparado (opcao desmarcada)."
+    ];
+    const ok = await run(
+      `gen:${company.id}`,
+      "generate_invoice",
+      {
+        companyId: company.id,
+        force: options.force,
+        issueBoleto: options.issueBoleto,
+        sendWhatsapp: options.sendWhatsapp
+      },
+      steps.join(" ")
+    );
+    if (ok) setGeneration(null);
+  }
+
   async function downloadPdf(invoice: BillingInvoice): Promise<void> {
     setBusy(`pdf:${invoice.id}`);
     try {
@@ -221,6 +349,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
   }
 
   const { settings, summary } = data;
+  const activation = buildActivationChecklist({ settings, companies: data.companies });
 
   const invoiceColumns: Array<Column<BillingInvoice>> = [
     {
@@ -307,7 +436,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
               Boleto
             </LinkButton>
           )}
-          <Button size="sm" onClick={() => setOpenInvoiceId(invoice.id)}>
+          <Button size="sm" onClick={() => openInvoiceDetail(invoice)}>
             Detalhes
           </Button>
         </ButtonGroup>
@@ -382,22 +511,15 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
           </Button>
           <Button
             size="sm"
-            disabled={!company.billing_plan.readyToClose || busy === `gen:${company.id}`}
+            disabled={busy === `preview:${company.id}` || busy === `gen:${company.id}`}
             title={
               company.billing_plan.readyToClose
-                ? undefined
+                ? "Mostra o que seria cobrado antes de gerar"
                 : `Pendente: ${company.billing_plan.blockers.join(", ")}`
             }
-            onClick={() =>
-              void run(
-                `gen:${company.id}`,
-                "generate_invoice",
-                { companyId: company.id },
-                "Fatura gerada, boleto emitido e envio disparado."
-              )
-            }
+            onClick={() => void openGeneration(company)}
           >
-            Faturar
+            {busy === `preview:${company.id}` ? "Calculando..." : "Faturar..."}
           </Button>
           <Button
             size="sm"
@@ -416,7 +538,6 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
                       "A balanca desta pedreira para de operar ate a liberacao. O bloqueio manual nao e desfeito pela passada automatica.",
                     confirmLabel: "Bloquear acesso",
                     onConfirm: () => {
-                      setConfirming(null);
                       void run(
                         `block:${company.id}`,
                         "set_payment_block",
@@ -462,6 +583,10 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
       />
 
       {feedback && <Note tone={feedback.tone === "ok" ? "ok" : "danger"}>{feedback.text}</Note>}
+
+      {tab !== "settings" && !isActivationComplete(activation) && (
+        <ActivationPanel steps={activation} onGo={setTab} />
+      )}
 
       <StatGrid>
         <Stat
@@ -592,13 +717,16 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
       )}
 
       {tab === "settings" && (
-        <BillingSettingsForm
-          settings={settings}
-          busy={busy === "settings"}
-          onSave={(payload) =>
-            void run("settings", "update_settings", payload, "Configuracao salva.")
-          }
-        />
+        <>
+          <ActivationPanel steps={activation} onGo={setTab} />
+          <BillingSettingsForm
+            settings={settings}
+            busy={busy === "settings"}
+            onSave={(payload) =>
+              void run("settings", "update_settings", payload, "Configuracao salva.")
+            }
+          />
+        </>
       )}
 
       {detailInvoice && (
@@ -607,10 +735,12 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
           companyName={companiesById.get(detailInvoice.company_id) ?? "Pedreira removida"}
           today={data.today}
           busy={busy}
-          onClose={() => setOpenInvoiceId(null)}
+          events={invoiceEvents}
+          onReloadEvents={() => void loadInvoiceEvents(detailInvoice.id)}
+          onClose={closeInvoiceDetail}
           onEdit={() => {
             setEditingInvoice(detailInvoice);
-            setOpenInvoiceId(null);
+            closeInvoiceDetail();
           }}
           onDownloadPdf={() => void downloadPdf(detailInvoice)}
           onAction={(action, payload, message) =>
@@ -638,6 +768,17 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
         />
       )}
 
+      {generation && (
+        <InvoiceGenerationModal
+          company={generation.company}
+          preview={generation.preview}
+          busy={busy === `gen:${generation.company.id}`}
+          onClose={() => setGeneration(null)}
+          onConfirm={setConfirming}
+          onGenerate={(options) => void generateInvoice(generation.company, options)}
+        />
+      )}
+
       {editingInvoice && (
         <InvoiceEditModal
           invoice={editingInvoice}
@@ -660,11 +801,252 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
           title={confirming.title}
           message={confirming.message}
           confirmLabel={confirming.confirmLabel}
-          onConfirm={confirming.onConfirm}
+          // Fechar aqui, e nao em cada `onConfirm`: quem esquecia (baixa manual,
+          // cancelamento, exclusao) deixava a confirmacao aberta sobre a tela ja
+          // recarregada, como se a acao nao tivesse acontecido.
+          onConfirm={() => {
+            const confirmed = confirming.onConfirm;
+            setConfirming(null);
+            confirmed();
+          }}
           onCancel={() => setConfirming(null)}
         />
       )}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Ativacao
+// ---------------------------------------------------------------------------
+
+const ACTIVATION_BADGE = {
+  ok: { tone: "ok" as const, label: "Pronto" },
+  pending: { tone: "danger" as const, label: "Pendente" },
+  warn: { tone: "warn" as const, label: "Recomendado" }
+};
+
+/**
+ * "O que falta para a cobranca funcionar", em um lugar so.
+ *
+ * A cobranca depende de coisas que moram em telas diferentes — secret do
+ * Supabase, linha de configuracao, cadastro do emitente e cadastro de cada
+ * pedreira — e, faltando qualquer uma, o sintoma so aparecia no fechamento:
+ * fatura sem boleto, boleto sem envio, ciclo que nao fecha. Aqui a pendencia
+ * aparece antes, com o nome do campo e o botao que leva ate ele.
+ */
+function ActivationPanel({
+  steps,
+  onGo
+}: {
+  steps: ActivationStep[];
+  onGo: (target: ActivationTarget) => void;
+}) {
+  const blockers = countActivationBlockers(steps);
+  const complete = isActivationComplete(steps);
+
+  return (
+    <Panel
+      title="Para a cobranca funcionar"
+      description="Credencial, emitente e cadastro de cada pedreira. Item pendente aqui vira fatura sem boleto — ou ciclo que nao fecha — la na frente."
+    >
+      {complete ? (
+        <Note tone="ok">
+          Tudo configurado. O fechamento roda sozinho no dia marcado e o painel so precisa de voce
+          para acompanhar.
+        </Note>
+      ) : (
+        <>
+          <Note tone={blockers > 0 ? "danger" : "warn"}>
+            {blockers > 0
+              ? `${blockers} item(ns) impedem a cobranca de rodar.`
+              : "Nada impede a cobranca de rodar; os itens abaixo sao recomendacoes."}
+          </Note>
+          {steps.map((step) => {
+            const badge = ACTIVATION_BADGE[step.status];
+            return (
+              <div key={step.id} className="adm-checklist-row">
+                <div>
+                  <div className="adm-secret-title">
+                    <strong>{step.title}</strong>
+                  </div>
+                  <p className="adm-field-hint">{step.detail}</p>
+                  {step.items.length > 0 && (
+                    <ul className="adm-list">
+                      {step.items.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <ButtonGroup>
+                  <Badge tone={badge.tone} dot>
+                    {badge.label}
+                  </Badge>
+                  {step.status !== "ok" && (
+                    <Button size="sm" onClick={() => onGo(step.target)}>
+                      {step.target === "companies" ? "Abrir pedreiras" : "Abrir configuracoes"}
+                    </Button>
+                  )}
+                </ButtonGroup>
+              </div>
+            );
+          })}
+        </>
+      )}
+    </Panel>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Previa do fechamento
+// ---------------------------------------------------------------------------
+
+function describePeriod(period: BillingPeriodView): string {
+  const proration = period.isProrated
+    ? ` · proporcional a ${period.billedDays} de ${period.fullPeriodDays} dias`
+    : "";
+  return `${period.referenceLabel} · ${formatDateBr(period.periodStart)} a ${formatDateBr(period.periodEnd)} · vence ${formatDateBr(period.dueDate)}${proration}`;
+}
+
+/**
+ * O que sera cobrado, ANTES de cobrar. O botao "Faturar" antes criava a fatura,
+ * emitia o boleto e disparava o WhatsApp num clique so, sem nenhuma tela dizendo
+ * o valor — e boleto emitido errado so se conserta cancelando e reemitindo.
+ *
+ * Tambem e daqui que sai o "antecipar fechamento" (`force`), o caminho para a
+ * pedreira que entrou fora do calendario: o motor sempre soube fazer, mas a tela
+ * nao tinha botao.
+ */
+function InvoiceGenerationModal({
+  company,
+  preview,
+  busy,
+  onClose,
+  onConfirm,
+  onGenerate
+}: {
+  company: BillingCompany;
+  preview: InvoicePreview;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: (dialog: ConfirmState) => void;
+  onGenerate: (options: GenerationOptions) => void;
+}) {
+  const [issueBoleto, setIssueBoleto] = useState(true);
+  const [sendWhatsapp, setSendWhatsapp] = useState(true);
+
+  const duePeriods = preview.duePeriods ?? [];
+  const dueTotalCents = duePeriods.reduce((total, period) => total + (period.amountCents ?? 0), 0);
+  const hasDue = duePeriods.length > 0;
+  // O motor sempre devolve o proximo ciclo, mas a tela nao quebra se um backend
+  // mais antigo nao mandar: sem ele so some o caminho de antecipar.
+  const nextPeriod = preview.nextPeriod ?? null;
+  const nextAmountCents = nextPeriod?.amountCents ?? 0;
+
+  function fire(force: boolean): void {
+    onGenerate({ force, issueBoleto, sendWhatsapp });
+  }
+
+  return (
+    <Modal
+      title={`Faturar — ${company.name}`}
+      description={`Valor acertado ${formatCents(preview.monthlyAmountCents)} por mes. A primeira fatura sai proporcional aos dias usados.`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Fechar</Button>
+          {nextPeriod && (
+            <Button
+              disabled={busy}
+              title="Fecha o proximo ciclo antes da data — para pedreira que entrou fora do calendario."
+              onClick={() =>
+                onConfirm({
+                  title: `Antecipar o fechamento de ${company.name}`,
+                  message: `Fecha agora o ciclo ${describePeriod(nextPeriod)}, no valor de ${formatCents(nextAmountCents)}, mesmo sem ter chegado a data. O proximo ciclo passa a contar a partir dele.`,
+                  confirmLabel: "Antecipar e faturar",
+                  onConfirm: () => fire(true)
+                })
+              }
+            >
+              Antecipar fechamento
+            </Button>
+          )}
+          <Button variant="primary" disabled={busy || !hasDue} onClick={() => fire(false)}>
+            {busy
+              ? "Gerando..."
+              : hasDue
+                ? `Gerar ${duePeriods.length} fatura(s) — ${formatCents(dueTotalCents)}`
+                : "Nenhum ciclo fechado"}
+          </Button>
+        </>
+      }
+    >
+      <div className="adm-form">
+        {preview.missing.boleto.length > 0 && (
+          <Note tone="warn">
+            Falta no cadastro para o boleto: {preview.missing.boleto.join(", ")}. O Mercado Pago
+            recusa a emissao inteira faltando um deles — a fatura ate sai, o boleto nao.
+          </Note>
+        )}
+        {preview.missing.whatsapp.length > 0 && (
+          <Note tone="warn">
+            Falta para o envio: {preview.missing.whatsapp.join(", ")}. A fatura e o boleto ficam
+            prontos, mas nao chegam ao cliente.
+          </Note>
+        )}
+
+        <Fieldset legend="Ciclos ja fechados">
+          {hasDue ? (
+            <>
+              <ul className="adm-list">
+                {duePeriods.map((period) => (
+                  <li key={period.periodEnd}>
+                    {describePeriod(period)} —{" "}
+                    <strong className="adm-mono">{formatCents(period.amountCents ?? 0)}</strong>
+                  </li>
+                ))}
+              </ul>
+              <Note tone="ok">
+                Total a faturar: <strong className="adm-mono">{formatCents(dueTotalCents)}</strong>
+              </Note>
+            </>
+          ) : (
+            <p className="adm-field-hint">
+              Nenhum ciclo fechou ate hoje ({formatDateBr(preview.today)}).
+              {nextPeriod
+                ? ` O proximo fechamento e ${describePeriod(nextPeriod)}, no valor de ${formatCents(nextAmountCents)} — use "Antecipar fechamento" para cobrar assim mesmo.`
+                : ""}
+            </p>
+          )}
+        </Fieldset>
+
+        <Fieldset legend="O que fazer depois de gerar">
+          <div className="adm-grid adm-grid-spaced">
+            <label className="adm-check">
+              <input
+                type="checkbox"
+                checked={issueBoleto}
+                onChange={(event) => setIssueBoleto(event.target.checked)}
+              />
+              <span>Emitir o boleto no Mercado Pago</span>
+            </label>
+            <label className="adm-check">
+              <input
+                type="checkbox"
+                checked={sendWhatsapp}
+                onChange={(event) => setSendWhatsapp(event.target.checked)}
+              />
+              <span>Enviar a fatura por WhatsApp</span>
+            </label>
+          </div>
+          <p className="adm-field-hint">
+            Desmarcar as duas gera so a fatura — util para conferir valor antes de mandar cobranca
+            ao cliente. Boleto e envio continuam disponiveis no detalhe da fatura.
+          </p>
+        </Fieldset>
+      </div>
+    </Modal>
   );
 }
 
@@ -682,6 +1064,8 @@ function InvoiceDetailModal({
   companyName,
   today,
   busy,
+  events,
+  onReloadEvents,
   onClose,
   onEdit,
   onDownloadPdf,
@@ -692,6 +1076,8 @@ function InvoiceDetailModal({
   companyName: string;
   today: string;
   busy: string | null;
+  events: InvoiceEventsState | null;
+  onReloadEvents: () => void;
   onClose: () => void;
   onEdit: () => void;
   onDownloadPdf: () => void;
@@ -887,6 +1273,40 @@ function InvoiceDetailModal({
         {invoice.notes && <Note>{invoice.notes}</Note>}
         {invoice.cancel_reason && <Note tone="warn">Cancelamento: {invoice.cancel_reason}</Note>}
 
+        <Fieldset legend="Historico">
+          <div className="adm-form">
+            {events === null || events.status === "loading" ? (
+              <p className="adm-field-hint">Carregando o historico...</p>
+            ) : events.status === "error" ? (
+              <Note tone="warn">{events.message}</Note>
+            ) : events.items.length === 0 ? (
+              <p className="adm-field-hint">
+                Nada registrado ainda. A trilha e best-effort: perder um registro nao derruba a
+                cobranca.
+              </p>
+            ) : (
+              <ul className="adm-timeline">
+                {events.items.map((event) => (
+                  <li key={event.id}>
+                    <Badge tone={billingEventTone(event.event_type)} dot>
+                      {billingEventLabel(event.event_type)}
+                    </Badge>
+                    <span className="adm-mono adm-timeline-when">
+                      {formatDateTimeBr(event.created_at)}
+                    </span>
+                    {event.message && <p className="adm-cell-sub">{event.message}</p>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <ButtonGroup>
+              <Button size="sm" onClick={onReloadEvents}>
+                Atualizar historico
+              </Button>
+            </ButtonGroup>
+          </div>
+        </Fieldset>
+
         {invoice.status !== "paid" && (
           <Fieldset legend="Zona de risco">
             <ButtonGroup>
@@ -956,6 +1376,13 @@ function CompanyBillingModal({
   const [amountError, setAmountError] = useState<string | null>(null);
   const formId = "company-billing-form";
 
+  // O que trava o fechamento fora do cadastro de campos — os campos em falta a
+  // tela mostra separados por canal (boleto x envio), porque sao decisoes
+  // diferentes: sem endereco nao ha boleto, sem telefone o boleto sai igual.
+  const contractPending: string[] = [];
+  if (!company.billing_start_date) contractPending.push("data de virada do sistema");
+  if (!company.billing_monthly_amount_cents) contractPending.push("valor acertado");
+
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -1005,9 +1432,22 @@ function CompanyBillingModal({
       }
     >
       <form id={formId} className="adm-form" onSubmit={handleSubmit}>
-        {company.billing_plan.blockers.length > 0 && (
+        {contractPending.length > 0 && (
+          <Note tone="danger">
+            Falta no contrato: {contractPending.join(" e ")}. Sem isso o ciclo nao fecha.
+          </Note>
+        )}
+        {company.billing_plan.missing.boleto.length > 0 && (
           <Note tone="warn">
-            Pendente para faturar: {company.billing_plan.blockers.join(", ")}.
+            Falta para o boleto: {company.billing_plan.missing.boleto.join(", ")}. O Mercado Pago
+            exige documento, e-mail e endereco completo do pagador — faltando um deles, a emissao
+            inteira e recusada.
+          </Note>
+        )}
+        {company.billing_plan.missing.whatsapp.length > 0 && (
+          <Note tone="warn">
+            Falta para o envio: {company.billing_plan.missing.whatsapp.join(", ")}. A fatura sai,
+            mas nao chega ao cliente.
           </Note>
         )}
 
@@ -1404,6 +1844,24 @@ function BillingSettingsForm({
         <SecretStatusRow secret={findSecret(settings, "whatsappInstanceToken")} />
       </Panel>
 
+      <Panel
+        title="Webhook do Mercado Pago"
+        description="Cole esta URL no painel do Mercado Pago, evento Pagamentos. Cada boleto emitido ja carrega o endereco; a configuracao cobre as notificacoes posteriores a emissao."
+      >
+        <div className="adm-secret-row">
+          <div>
+            <code className="adm-secret-var">{BILLING_WEBHOOK_URL}</code>
+            <p className="adm-field-hint">
+              E por aqui que a fatura vira &quot;paga&quot; sozinha e o acesso da pedreira e
+              liberado.
+            </p>
+          </div>
+          <ButtonGroup>
+            <CopyButton value={BILLING_WEBHOOK_URL} label="Copiar URL" />
+          </ButtonGroup>
+        </div>
+      </Panel>
+
       <Panel title="Mercado Pago">
         <div className="adm-grid">
           <Field label="Ambiente">
@@ -1440,6 +1898,12 @@ function BillingSettingsForm({
             />
           </Field>
         </div>
+        {settings.whatsappStatus && (
+          <p className="adm-field-hint">
+            Situacao registrada da instancia:{" "}
+            <span className="adm-mono">{settings.whatsappStatus}</span>
+          </p>
+        )}
       </Panel>
 
       <Panel

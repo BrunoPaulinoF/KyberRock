@@ -974,6 +974,47 @@
   color: var(--adm-ink-2);
 }
 
+/* Checklist de ativacao: mesmo desenho do segredo — o que falta a esquerda,
+   situacao e atalho a direita. */
+.adm-checklist-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--adm-gap);
+  flex-wrap: wrap;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--adm-line);
+}
+
+.adm-checklist-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+/* Trilha da fatura: um evento por linha, do mais novo para o mais velho. */
+.adm-timeline {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.adm-timeline li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--adm-line);
+}
+
+.adm-timeline li:last-child {
+  border-bottom: none;
+}
+
+.adm-timeline-when {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--adm-muted);
+}
+
 .adm-list {
   margin: 0;
   padding-left: 18px;
