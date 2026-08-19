@@ -307,8 +307,13 @@ builds still publish, but installed apps cannot authenticate to download the upd
   the patch keeps coming from `run_number`.
 - **Fixed public download link**: `supabase/functions/desktop-download` (public, `verify_jwt=false`,
   needs `GH_RELEASES_TOKEN`) redirects to the latest release's `.exe`; loader-web nginx exposes it as
-  `GET /download`. Segue a ultima release **estavel**, entao instalacao nova nunca cai num build
-  parado nem num beta — que e o desejado.
+  `GET /download`. Ele **descarta pre-release**, entao serve sempre a ultima versao liberada para
+  producao e instalacao nova nunca cai num build parado — que e o desejado, porque numa maquina
+  recem-instalada nao ha versao anterior para voltar. Esse filtro so passou a existir junto com o
+  fluxo de dois passos: antes ele pulava so `draft`, e como todo build agora nasce pre-release, sem
+  ele o link publico passaria a entregar exatamente o que ainda nao foi aprovado. A escolha vive em
+  `desktop-download/release-pick.ts` (puro, coberto por `release-pick_test.ts`) justamente para nao
+  regredir de novo.
 - Code signing for external pilots is still pending (see `docs/phase-3.1/README.md`).
 - **Falta o outro lado do anel de teste**: o desktop ainda nao le o canal em tempo de execucao
   (`autoUpdater.channel` a partir de `local-settings` / `desktop-status`), entao hoje `beta.yml` nao
