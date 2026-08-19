@@ -1151,6 +1151,21 @@ function registerIpcHandlers(): void {
     return runtime.whatsappDisconnect();
   });
 
+  ipcMain.handle("desktop:whatsapp-connection-link-get", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.whatsappConnectionLink();
+  });
+
+  ipcMain.handle("desktop:whatsapp-connection-link-create", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.whatsappCreateConnectionLink();
+  });
+
+  ipcMain.handle("desktop:whatsapp-connection-link-revoke", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.whatsappRevokeConnectionLink();
+  });
+
   ipcMain.handle("desktop:get-price", (_event, customerId: string, productId: string) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");

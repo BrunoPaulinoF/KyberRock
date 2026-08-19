@@ -73,6 +73,14 @@ verify_jwt = false
 [functions.docs-assistant]
 verify_jwt = false
 
+# Link temporario (15 min) para parear o WhatsApp fora do computador da balanca.
+# A API de criar/cancelar autentica por deviceId + deviceToken; a pagina que o
+# convidado abre no celular e publica por necessidade -- quem chega nela e um
+# navegador sem sessao do Supabase. Quem protege e o token de 256 bits (guardado
+# como hash), o prazo e o cancelamento no pareamento.
+[functions.whatsapp-link]
+verify_jwt = false
+
 # --- Protegidas pelo JWT do Supabase -----------------------------------------
 
 [functions.cnpj-lookup]

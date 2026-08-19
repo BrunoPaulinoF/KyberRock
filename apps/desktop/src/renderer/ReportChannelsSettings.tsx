@@ -3,15 +3,27 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   KyberRockDesktopApi,
   ReportChannelSettingsView,
+  WhatsappConnectionLinkView,
   WhatsappInstanceStateView
 } from "../preload/api-types";
 import { IconActionButton } from "./IconActionButton";
 import { HelpTooltip } from "./Tooltip";
 import { useConfirm } from "./crud-ui";
+import {
+  formatWhatsappConnectionLinkCountdown,
+  isWhatsappConnectionLinkActive,
+  whatsappConnectionLinkRemainingMs
+} from "../services/whatsapp-connection-link";
 
 // Card de configuracao dos canais de envio (E-mail SMTP e WhatsApp/UAZAPI),
 // exibido na tela de Relatorios acima dos destinatarios. A conexao do WhatsApp
 // cria a instancia UAZAPI direto pelo app e mostra o QR code para parear.
+//
+// Ao lado do QR ha o LINK TEMPORARIO: o QR da tela so serve a quem esta na
+// frente da balanca, e o celular dono do numero quase nunca esta ali. O link
+// vale 15 minutos, some sozinho quando vence e mostra a contagem regressiva
+// enquanto vale -- prazo que nao aparece na tela e prazo que o operador
+// descobre pelo "nao abriu" de quem recebeu.
 
 interface FormState {
   smtpHost: string;
@@ -227,6 +239,31 @@ const styles = {
     background: "#fff",
     borderRadius: "8px"
   },
+  linkBox: {
+    display: "grid",
+    gap: "8px",
+    padding: "12px",
+    border: "1px solid var(--kr-border)",
+    borderRadius: "12px",
+    background: "var(--kr-surface)"
+  },
+  linkRow: {
+    display: "flex",
+    gap: "8px",
+    alignItems: "center",
+    flexWrap: "wrap" as const
+  },
+  linkInput: {
+    flex: "1 1 200px",
+    minWidth: 0,
+    border: "1px solid var(--kr-input-border)",
+    borderRadius: "10px",
+    padding: "8px 10px",
+    font: "inherit",
+    fontSize: "12px",
+    background: "var(--kr-input-bg)",
+    color: "var(--kr-text-strong)"
+  },
   buttonRow: {
     display: "flex",
     gap: "8px",
@@ -264,6 +301,11 @@ export function ReportChannelsSettings({ desktopApi }: { desktopApi: KyberRockDe
   const [form, setForm] = useState<FormState>(emptyForm);
   const [settings, setSettings] = useState<ReportChannelSettingsView | null>(null);
   const [whatsappState, setWhatsappState] = useState<WhatsappInstanceStateView | null>(null);
+  const [connectionLink, setConnectionLink] = useState<WhatsappConnectionLinkView | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+  // Redesenha a contagem regressiva do link a cada segundo; o valor em si vem
+  // sempre do vencimento que a nuvem carimbou, nunca de um contador local.
+  const [linkNow, setLinkNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -309,6 +351,8 @@ export function ReportChannelsSettings({ desktopApi }: { desktopApi: KyberRockDe
         const stored = await desktopApi.getReportChannelSettings();
         if (cancelled) return;
         applySettings(stored);
+        const storedLink = await desktopApi.whatsappConnectionLink().catch(() => null);
+        if (!cancelled) setConnectionLink(storedLink);
         if (stored.uazapiBaseUrl && stored.uazapiInstanceToken) {
           await refreshWhatsappStatus();
         }
@@ -350,6 +394,40 @@ export function ReportChannelsSettings({ desktopApi }: { desktopApi: KyberRockDe
       }
     };
   }, [whatsappState?.status, refreshWhatsappStatus]);
+
+  // Relogio de 1 s enquanto ha link vivo. Ele so existe para a contagem
+  // regressiva e para o link sumir sozinho no vencimento -- sem link na tela,
+  // nada fica ticando.
+  useEffect(() => {
+    if (!connectionLink) return;
+    const timer = setInterval(() => setLinkNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [connectionLink]);
+
+  const linkRemainingMs = connectionLink
+    ? whatsappConnectionLinkRemainingMs(connectionLink, new Date(linkNow))
+    : 0;
+  const activeLink =
+    connectionLink && isWhatsappConnectionLinkActive(connectionLink, new Date(linkNow))
+      ? connectionLink
+      : null;
+
+  // Vencido deixa de ser exibido e deixa de ser guardado: o proximo "gerar"
+  // precisa de um link novo, nao deste.
+  useEffect(() => {
+    if (connectionLink && !activeLink) {
+      setConnectionLink(null);
+      setLinkCopied(false);
+    }
+  }, [connectionLink, activeLink]);
+
+  // Conectou pelo link: ele ja cumpriu o papel e o runtime tambem o apagou.
+  useEffect(() => {
+    if (whatsappState?.status === "connected") {
+      setConnectionLink(null);
+      setLinkCopied(false);
+    }
+  }, [whatsappState?.status]);
 
   function clearMessages() {
     setError(null);
@@ -440,6 +518,64 @@ export function ReportChannelsSettings({ desktopApi }: { desktopApi: KyberRockDe
       setError(
         connectError instanceof Error ? connectError.message : "Falha ao conectar ao WhatsApp."
       );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Link temporario: salva a configuracao antes, porque a nuvem so consegue
+  // montar o QR da pagina com o servidor e o token da instancia que a balanca
+  // empurrou para la.
+  async function handleCreateConnectionLink() {
+    if (!desktopApi) return;
+    clearMessages();
+    setBusy(true);
+    try {
+      const saved = await handleSaveSilently();
+      if (!saved) return;
+      const link = await desktopApi.whatsappCreateConnectionLink();
+      setConnectionLink(link);
+      setLinkCopied(false);
+      setLinkNow(Date.now());
+    } catch (linkError) {
+      setError(
+        linkError instanceof Error ? linkError.message : "Falha ao gerar o link temporario."
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCopyConnectionLink() {
+    if (!activeLink) return;
+    try {
+      await navigator.clipboard.writeText(activeLink.url);
+      setLinkCopied(true);
+    } catch {
+      // Area de transferencia bloqueada: o endereco continua selecionavel no
+      // campo ao lado, entao isto e um aviso, nao uma falha da operacao.
+      setError("Nao foi possivel copiar automaticamente. Selecione o link e copie com Ctrl+C.");
+    }
+  }
+
+  async function handleRevokeConnectionLink() {
+    if (!desktopApi) return;
+    const confirmed = await requestConfirm({
+      title: "Cancelar o link temporario?",
+      description: "Quem ja recebeu o link deixa de conseguir conectar por ele.",
+      confirmLabel: "Cancelar link",
+      tone: "danger"
+    });
+    if (!confirmed) return;
+    clearMessages();
+    setBusy(true);
+    try {
+      await desktopApi.whatsappRevokeConnectionLink();
+      setConnectionLink(null);
+      setLinkCopied(false);
+      setSuccess("Link temporario cancelado.");
+    } catch (revokeError) {
+      setError(revokeError instanceof Error ? revokeError.message : "Falha ao cancelar o link.");
     } finally {
       setBusy(false);
     }
@@ -579,7 +715,7 @@ export function ReportChannelsSettings({ desktopApi }: { desktopApi: KyberRockDe
             >
               WhatsApp (UAZAPI)
               <HelpTooltip
-                content="A instancia e criada pela administracao direto na UAZAPI (uma por pedreira). Cole aqui o token da instancia e clique em conectar para gerar o QR code."
+                content="A instancia e criada pela administracao direto na UAZAPI (uma por pedreira). Cole aqui o token da instancia e clique em conectar para gerar o QR code. Se o celular do numero nao estiver aqui na balanca, gere o link temporario e mande para quem esta com o aparelho."
                 placement="right"
               />
             </h4>
@@ -628,6 +764,42 @@ export function ReportChannelsSettings({ desktopApi }: { desktopApi: KyberRockDe
               </div>
             ) : null}
 
+            {activeLink ? (
+              <div style={styles.linkBox}>
+                <p
+                  style={{ ...styles.helperText, fontWeight: 700, color: "var(--kr-text-strong)" }}
+                >
+                  Link temporario de conexao
+                </p>
+                <div style={styles.linkRow}>
+                  <input readOnly value={activeLink.url} style={styles.linkInput} />
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyConnectionLink()}
+                    style={styles.secondaryButton}
+                  >
+                    {linkCopied ? "Copiado!" : "Copiar link"}
+                  </button>
+                </div>
+                <p style={styles.helperText}>
+                  Expira em {formatWhatsappConnectionLinkCountdown(linkRemainingMs)}. Envie para
+                  quem esta com o celular do numero: ele abre o link, escaneia o QR por la e o
+                  WhatsApp conecta aqui. Quem abrir o link dentro do prazo consegue conectar um
+                  aparelho — nao publique em grupo.
+                </p>
+                <div style={styles.buttonRow}>
+                  <button
+                    type="button"
+                    onClick={() => void handleRevokeConnectionLink()}
+                    disabled={busy}
+                    style={styles.dangerButton}
+                  >
+                    Cancelar link
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             {uiStatus === "connected" ? (
               <p style={styles.success}>
                 Conectado
@@ -655,6 +827,17 @@ export function ReportChannelsSettings({ desktopApi }: { desktopApi: KyberRockDe
                   ? "Gerar novo QR code"
                   : "Conectar WhatsApp (gerar QR code)"}
               </button>
+              {uiStatus === "connected" ? null : (
+                <button
+                  type="button"
+                  onClick={() => void handleCreateConnectionLink()}
+                  disabled={busy}
+                  style={styles.secondaryButton}
+                  title="Gera um endereco que vale 15 minutos para conectar o WhatsApp de outro aparelho."
+                >
+                  {activeLink ? "Gerar outro link (15 min)" : "Gerar link temporario (15 min)"}
+                </button>
+              )}
               {uiStatus === "connected" || uiStatus === "connecting" ? (
                 <IconActionButton
                   icon="ban"

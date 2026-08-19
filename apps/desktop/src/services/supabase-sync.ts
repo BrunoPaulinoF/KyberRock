@@ -26,6 +26,10 @@ import { getFreightModalityInfo } from "./freight.js";
 import { isSellableProduct } from "./product-classification.js";
 import { readReportChannelSettings, toCloudChannelSettingsRow } from "./report-channels.js";
 import {
+  parseWhatsappConnectionLink,
+  type WhatsappConnectionLink
+} from "./whatsapp-connection-link.js";
+import {
   enqueueSyncJob,
   getSyncJobById,
   listRunnableSyncJobs,
@@ -5555,6 +5559,51 @@ export async function pushReportChannelSettings(
   await invokeDesktopSync(cloud, {
     reportChannelSettings: toCloudChannelSettingsRow(cloud.companyId, settings)
   });
+}
+
+/**
+ * Pede a nuvem um link temporario para parear o WhatsApp fora deste computador
+ * (Edge Function `whatsapp-link`). Quem carimba o prazo e a nuvem: o desktop so
+ * guarda o que ela devolveu. Exige que a configuracao do WhatsApp ja tenha
+ * chegado la -- e a funcao que recusa, com o motivo, quando nao chegou.
+ */
+export async function createWhatsappConnectionLink(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity
+): Promise<WhatsappConnectionLink> {
+  const cloud = getCloudSettings(database, identity);
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.functions.invoke<{
+    id?: string;
+    url?: string;
+    createdAt?: string;
+    expiresAt?: string;
+  }>("whatsapp-link", {
+    body: { deviceId: cloud.deviceId, deviceToken: cloud.deviceToken, action: "create" }
+  });
+  if (error) throw new Error(await getFunctionErrorMessage(error));
+  const link = parseWhatsappConnectionLink(data);
+  if (!link) throw new Error("A nuvem nao devolveu um link valido.");
+  return link;
+}
+
+/** Cancela o link antes do prazo (botao "Cancelar link" da tela). */
+export async function revokeWhatsappConnectionLink(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  linkId: string
+): Promise<void> {
+  const cloud = getCloudSettings(database, identity);
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.functions.invoke("whatsapp-link", {
+    body: {
+      deviceId: cloud.deviceId,
+      deviceToken: cloud.deviceToken,
+      action: "revoke",
+      linkId
+    }
+  });
+  if (error) throw new Error(await getFunctionErrorMessage(error));
 }
 
 /** Resultado por empresa devolvido pela edge function financial-report-email. */

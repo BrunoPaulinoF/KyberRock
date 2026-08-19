@@ -5,6 +5,12 @@
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { readLocalSetting, writeLocalSetting } from "./local-settings.js";
+import {
+  WHATSAPP_CONNECTION_LINK_SETTING_KEY,
+  isWhatsappConnectionLinkActive,
+  parseWhatsappConnectionLink,
+  type WhatsappConnectionLink
+} from "./whatsapp-connection-link.js";
 
 export const REPORT_CHANNELS_SETTING_KEY = "report_channel_settings";
 
@@ -63,6 +69,31 @@ export function writeReportChannelSettings(
   };
   writeLocalSetting(database, REPORT_CHANNELS_SETTING_KEY, next, next.updatedAt ?? undefined);
   return next;
+}
+
+/**
+ * Le o link temporario de conexao guardado neste computador, ja descartando o
+ * que venceu -- reabrir a tela dentro dos 15 minutos mostra o mesmo link (nao
+ * adianta gerar outro para quem ja recebeu o primeiro), e depois disso mostra
+ * nenhum. Fica em chave propria, fora do blob dos canais: o blob e empurrado
+ * para a nuvem, e o link (que carrega o token em claro na URL) nao sobe.
+ */
+export function readWhatsappConnectionLink(
+  database: DesktopDatabase,
+  now: Date = new Date()
+): WhatsappConnectionLink | null {
+  const stored = parseWhatsappConnectionLink(
+    readLocalSetting(database, WHATSAPP_CONNECTION_LINK_SETTING_KEY)
+  );
+  if (!stored) return null;
+  return isWhatsappConnectionLinkActive(stored, now) ? stored : null;
+}
+
+export function writeWhatsappConnectionLink(
+  database: DesktopDatabase,
+  link: WhatsappConnectionLink | null
+): void {
+  writeLocalSetting(database, WHATSAPP_CONNECTION_LINK_SETTING_KEY, link);
 }
 
 // Linha enviada ao cloud (tabela report_channel_settings). O cloud so precisa

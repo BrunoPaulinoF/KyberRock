@@ -611,10 +611,12 @@ export const documentationSections: DocumentationSection[] = [
       "Use Relatorio por cliente para gerar o relatorio simplificado e/ou completo de um cliente em PDF e/ou Excel.",
       "Use Conferencia de faturamento para ver o periodo pesagem a pesagem — cliente, data, produto, peso, frete e total de cada carregamento — e conferir contra o faturamento do OMIE.",
       "Use Fechamento de faturas para puxar de uma vez a fatura de todos os clientes de um ciclo (quinzenal ou mensal), com nota fiscal, vale, placa e transportador carga a carga.",
-      "Em Relatorios, cadastre quem recebe o fechamento diario por e-mail e, no card do relatorio financeiro (OMIE), quem recebe o resumo financeiro e em que horario."
+      "Em Relatorios, cadastre quem recebe o fechamento diario por e-mail e, no card do relatorio financeiro (OMIE), quem recebe o resumo financeiro e em que horario.",
+      "Para enviar por WhatsApp, abra Configuracao de envio em Relatorios e conecte o numero pelo QR code. Se o celular do numero nao estiver aqui na balanca, clique em 'Gerar link temporario (15 min)' e mande o endereco para quem esta com o aparelho."
     ],
     details: [
       "O fechamento diario e montado e enviado pela nuvem, entao ele nao depende do computador da balanca estar ligado no horario.",
+      "O link temporario do WhatsApp abre uma pagina com o mesmo QR code, que se renova sozinho ate alguem escanear. Ele vale 15 minutos, some da tela quando vence, sai de cena assim que o WhatsApp conecta e pode ser cancelado antes disso no botao 'Cancelar link'. Quem abrir o link dentro do prazo consegue conectar um aparelho ao WhatsApp da pedreira: mande para uma pessoa, nao para um grupo.",
       "O relatorio financeiro do OMIE tem horario proprio, separado do fechamento operacional.",
       "Relatorios usam os dados locais e os ja sincronizados. Pendencia de sincronizacao pode atrasar a consolidacao externa.",
       "Operacoes canceladas saem dos insights e dos relatorios, mas continuam auditaveis com motivo e horario.",
@@ -648,7 +650,11 @@ export const documentationSections: DocumentationSection[] = [
       "nao faturado",
       "falta faturar",
       "grafico",
-      "producao do dia"
+      "producao do dia",
+      "whatsapp",
+      "qr code",
+      "conectar whatsapp",
+      "link temporario"
     ]
   },
   {

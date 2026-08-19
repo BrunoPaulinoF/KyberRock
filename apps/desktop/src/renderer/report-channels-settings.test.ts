@@ -35,6 +35,20 @@ describe("ReportChannelsSettings", () => {
     expect(source).toContain("WhatsApp nao configurado");
   });
 
+  it("offers the temporary connection link next to the QR code", () => {
+    expect(source).toContain("Gerar link temporario (15 min)");
+    expect(source).toContain("whatsappCreateConnectionLink");
+    expect(source).toContain("whatsappRevokeConnectionLink");
+    expect(source).toContain("Copiar link");
+    expect(source).toContain("Cancelar link");
+  });
+
+  it("shows how long the link still has and drops it when the time is over", () => {
+    expect(source).toContain("formatWhatsappConnectionLinkCountdown");
+    expect(source).toContain("isWhatsappConnectionLinkActive");
+    expect(source).toContain("Expira em ");
+  });
+
   it("polls the status while the QR code is on screen", () => {
     expect(source).toContain("setInterval");
     expect(source).toContain("whatsappStatus");
