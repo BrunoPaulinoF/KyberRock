@@ -115,6 +115,39 @@ describe("exclusao de destinatario de relatorio", () => {
     }
   });
 
+  // Quem foi excluido ANTES desta versao esta na nuvem so como is_active = false:
+  // a exclusao nunca chegou la. Depois da migracao a coluna existe e vem nula —
+  // aceita-la de volta ressuscitaria justamente o destinatario que o operador
+  // apagou e que sumiu da tela.
+  it("nao ressuscita o destinatario que a nuvem conhece apenas como inativo", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      const recipient = createReportRecipient(database, {
+        companyId: "company-1",
+        email: "financeiro@pedreira.com.br"
+      });
+      await pushPendingReportRecipients(database, identity);
+      deleteReportRecipient(database, recipient.id, new Date("2026-08-19T12:00:00.000Z"));
+      await pushPendingReportRecipients(database, identity);
+
+      mockPull([cloudRecipient({ id: recipient.id, is_active: false, deleted_at: null })]);
+      await pullDesktopDataFromCloud(database, identity);
+      expect(listReportRecipients(database, "company-1")).toHaveLength(0);
+
+      // E o tombstone volta para a fila: o proximo push conta a exclusao para a nuvem.
+      invokeMock.mockClear();
+      invokeMock.mockResolvedValue({ data: { ok: true }, error: null });
+      await pushPendingReportRecipients(database, identity);
+      expect(pushedRecipients()).toMatchObject([
+        { id: recipient.id, is_active: false, deleted_at: "2026-08-19T12:00:00.000Z" }
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
   it("apaga aqui o destinatario excluido na outra balanca", async () => {
     const database = createMachine("desktop-b");
 
