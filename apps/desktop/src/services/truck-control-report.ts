@@ -1,4 +1,4 @@
-import type { TruckControlReport, TruckControlRow } from "./reports.js";
+import type { TruckControlReport, TruckControlRow, TruckControlTrip } from "./reports.js";
 import {
   SPREADSHEET_STYLE,
   documentStyle,
@@ -26,6 +26,11 @@ import { renderTotalBar } from "./report-total-bar.js";
  * digita a placa de um cliente e manda baixar espera o arquivo com aquelas linhas — e nao
  * o periodo inteiro —, entao o arquivo e gerado a partir do MESMO relatorio filtrado que
  * esta na tela, com os totais recalculados para o recorte.
+ *
+ * A mesma placa costuma carregar para varios clientes no mes. Por isso os documentos tem
+ * DUAS leituras do cliente: o resumo "Clientes atendidos" (quanto cada cliente levou
+ * naquela placa) e a lista "Cargas do periodo", carga a carga, com data, cliente, produto
+ * e peso — e essa que se confere contra a relacao de orcamentos por placa do OMIE.
  */
 
 const TRUCK_HEADERS = [
@@ -39,6 +44,20 @@ const TRUCK_HEADERS = [
 ];
 
 const PRODUCT_HEADERS = ["Placa", "Motorista", "Produto", "Operacoes", "Peso (kg)"];
+
+const CUSTOMER_HEADERS = ["Placa", "Motorista", "Cliente", "Operacoes", "Peso (kg)"];
+
+const TRIP_HEADERS = [
+  "Data",
+  "Placa",
+  "Motorista",
+  "Cliente",
+  "Produto",
+  "Peso (kg)",
+  "Entrada",
+  "Saida",
+  "Tempo"
+];
 
 /** Busca normalizada (maiuscula, sem espaco nas pontas). Vazio = sem filtro. */
 export function normalizeTruckSearch(search: string | null | undefined): string {
@@ -104,6 +123,8 @@ export function renderTruckControlHtml(
   ];
 
   const productRows = truckProductRows(report);
+  const customerRows = truckCustomerRows(report);
+  const tripRows = truckTripRows(report);
 
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><title>${escapeHtml(
     "Controle de caminhoes"
@@ -127,11 +148,20 @@ ${section(
   )
 )}
 ${section(
+  "Clientes atendidos",
+  table(CUSTOMER_HEADERS, customerRows, customerFooterCells(report), emptyMessage(report))
+)}
+${section(
   "Peso por produto",
   table(PRODUCT_HEADERS, productRows, productFooterCells(report), emptyMessage(report))
 )}
+${section(
+  "Cargas do periodo",
+  table(TRIP_HEADERS, tripRows, tripFooterCells(report), emptyMessage(report), "detail")
+)}
 ${renderTotalBar([
   { label: "Caminhoes", value: num(report.trucks.length) },
+  { label: "Clientes", value: num(countCustomers(report)) },
   { label: "Operacoes", value: num(report.totalOperations) },
   { label: "Tempo medio", value: formatMinutes(report.averageMinutes) },
   { label: "Tonelagem", value: formatTons(report.totalNetWeightKg), emphasis: true }
@@ -140,9 +170,10 @@ ${renderTotalBar([
 }
 
 /**
- * Mesmo recorte em planilha. O peso por produto sai numa tabela propria, uma linha por
- * placa e produto: no Excel isso e o que permite filtrar e somar por material, coisa que
- * a coluna com varios produtos empilhados do PDF nao permitiria.
+ * Mesmo recorte em planilha. O peso por produto e o peso por cliente saem em tabelas
+ * proprias, uma linha por placa e produto/cliente: no Excel isso e o que permite filtrar e
+ * somar por material ou por cliente, coisa que a coluna com varios itens empilhados do PDF
+ * nao permitiria. A ultima tabela e a lista carga a carga, para conferir viagem por viagem.
  */
 export function renderTruckControlSpreadsheet(
   report: TruckControlReport,
@@ -156,6 +187,7 @@ export function renderTruckControlSpreadsheet(
         ["Periodo", periodText(report)],
         ["Filtro (placa ou motorista)", report.search ?? "-"],
         ["Caminhoes", num(report.trucks.length)],
+        ["Clientes atendidos", num(countCustomers(report))],
         ["Operacoes", num(report.totalOperations)],
         ["Tempo medio na pedreira", formatMinutes(report.averageMinutes)],
         ["Peso liquido (kg)", num(report.totalNetWeightKg)],
@@ -170,11 +202,18 @@ export function renderTruckControlSpreadsheet(
       truckFooterCells(report)
     ),
     sheetTable(
+      "Clientes atendidos",
+      CUSTOMER_HEADERS,
+      truckCustomerRows(report),
+      customerFooterCells(report)
+    ),
+    sheetTable(
       "Peso por produto",
       PRODUCT_HEADERS,
       truckProductRows(report),
       productFooterCells(report)
-    )
+    ),
+    sheetTable("Cargas do periodo", TRIP_HEADERS, truckTripRows(report), tripFooterCells(report))
   ];
 
   const subtitle = [
@@ -231,6 +270,97 @@ function truckProductRows(report: TruckControlReport): string[][] {
 function productFooterCells(report: TruckControlReport): string[] | null {
   if (report.trucks.length === 0) return null;
   return ["TOTAL", "", "", num(report.totalOperations), num(report.totalNetWeightKg)];
+}
+
+/**
+ * Uma linha por placa e cliente: e a resposta direta para "essa placa carregou para
+ * quem?", com quantas viagens e quanto peso cada cliente levou naquele caminhao.
+ */
+function truckCustomerRows(report: TruckControlReport): string[][] {
+  return report.trucks.flatMap((truck) =>
+    truck.customers.map((customer) => [
+      truck.plate,
+      truck.driverName ?? "-",
+      customer.customerName,
+      num(customer.operations),
+      num(customer.totalNetWeightKg)
+    ])
+  );
+}
+
+function customerFooterCells(report: TruckControlReport): string[] | null {
+  if (report.trucks.length === 0) return null;
+  return ["TOTAL", "", "", num(report.totalOperations), num(report.totalNetWeightKg)];
+}
+
+/** Carga a carga, em ordem de entrada na balanca, das placas que estao no recorte. */
+function truckTripRows(report: TruckControlReport): string[][] {
+  return report.trucks
+    .flatMap((truck) => truck.trips.map((trip) => ({ truck, trip })))
+    .sort((a, b) => tripOrder(a.trip).localeCompare(tripOrder(b.trip)))
+    .map(({ truck, trip }) => [
+      formatTripDay(trip.entryAt),
+      truck.plate,
+      truck.driverName ?? "-",
+      trip.customerName,
+      trip.productDescription,
+      num(trip.netWeightKg),
+      formatClock(trip.entryAt),
+      formatClock(trip.exitAt),
+      formatMinutes(trip.minutes)
+    ]);
+}
+
+function tripFooterCells(report: TruckControlReport): string[] | null {
+  if (report.trucks.length === 0) return null;
+  const totalMinutes = report.trucks.reduce((sum, truck) => sum + truck.totalMinutes, 0);
+  return [
+    "TOTAL",
+    "",
+    "",
+    "",
+    `${num(report.totalOperations)} carga(s)`,
+    num(report.totalNetWeightKg),
+    "",
+    "",
+    formatMinutes(totalMinutes)
+  ];
+}
+
+/** Clientes distintos do recorte (a mesma empresa em duas placas conta uma vez so). */
+function countCustomers(report: TruckControlReport): number {
+  const names = new Set<string>();
+  for (const truck of report.trucks) {
+    for (const customer of truck.customers) names.add(customer.customerName);
+  }
+  return names.size;
+}
+
+function tripOrder(trip: TruckControlTrip): string {
+  return trip.entryAt ?? trip.exitAt ?? "";
+}
+
+/**
+ * Data e hora vem em UTC do banco; quem le o relatorio quer o horario da balanca, entao
+ * a conversao e a do computador que gera o documento. Timestamp que o `Date` nao entende
+ * sai cru, que ainda diz mais que um traco.
+ */
+function tripDate(value: string | null): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatTripDay(value: string | null): string {
+  const date = tripDate(value);
+  if (!date) return value ?? "-";
+  return date.toLocaleDateString("pt-BR");
+}
+
+function formatClock(value: string | null): string {
+  const date = tripDate(value);
+  if (!date) return value ?? "-";
+  return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
 /** Sem linha nenhuma, a mensagem diz se o periodo esta vazio ou se foi o filtro. */

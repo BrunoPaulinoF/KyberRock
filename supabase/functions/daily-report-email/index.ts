@@ -551,7 +551,9 @@ async function buildTruckSummary(
 ): Promise<TruckReport> {
   const { data, error } = await supabase
     .from("weighing_operations")
-    .select("plate, driver_name, product_description, net_weight_kg, created_at, closed_at")
+    .select(
+      "plate, driver_name, customer_name, product_description, net_weight_kg, created_at, closed_at"
+    )
     .eq("company_id", companyId)
     .eq("unit_id", unitId)
     .in("status", CLOSED_STATUSES)
@@ -564,6 +566,7 @@ async function buildTruckSummary(
   const rows: TruckReportRow[] = data.map((row) => ({
     plate: row.plate as string | null,
     driverName: row.driver_name as string | null,
+    customerName: row.customer_name as string | null,
     productDescription: row.product_description as string | null,
     netWeightKg: Number(row.net_weight_kg ?? 0),
     createdAt: row.created_at as string | null,

@@ -101,6 +101,26 @@ export interface TruckProductWeight {
   operations: number;
 }
 
+export interface TruckCustomerWeight {
+  customerName: string;
+  totalNetWeightKg: number;
+  operations: number;
+}
+
+/**
+ * Uma carga da placa: para quem foi, o que levou e quanto tempo ficou na pedreira. E a
+ * linha que responde "essa placa carregou para quem?" sem depender de outro relatorio.
+ */
+export interface TruckControlTrip {
+  operationId: string;
+  entryAt: string | null;
+  exitAt: string | null;
+  minutes: number;
+  customerName: string;
+  productDescription: string;
+  netWeightKg: number;
+}
+
 export interface TruckControlRow {
   plate: string;
   driverName: string | null;
@@ -110,6 +130,10 @@ export interface TruckControlRow {
   totalNetWeightKg: number;
   lastOperationAt: string | null;
   products: TruckProductWeight[];
+  /** Clientes atendidos pela placa no periodo, do maior peso para o menor. */
+  customers: TruckCustomerWeight[];
+  /** Carga a carga, em ordem de entrada — o detalhe por tras dos resumos acima. */
+  trips: TruckControlTrip[];
 }
 
 export interface TruckControlReport {
@@ -124,8 +148,10 @@ export interface TruckControlReport {
 }
 
 interface TruckControlOperationRow {
+  operation_id: string;
   plate: string | null;
   driver_name: string | null;
+  customer_name: string | null;
   product_description: string | null;
   net_weight_kg: number | null;
   entry_at: string | null;
@@ -552,8 +578,10 @@ export class ReportService {
       .prepare(
         `
       SELECT
+        wo.id as operation_id,
         COALESCE(v.plate, wo.remote_plate) as plate,
         COALESCE(d.name, wo.remote_driver_name) as driver_name,
+        COALESCE(c.legal_name, c.trade_name, wo.remote_customer_name) as customer_name,
         COALESCE(p.description, wo.remote_product_description) as product_description,
         wo.net_weight_kg as net_weight_kg,
         wo.entry_weight_captured_at as entry_at,
@@ -561,6 +589,7 @@ export class ReportService {
       FROM weighing_operations wo
       LEFT JOIN vehicles v ON v.id = wo.vehicle_id
       LEFT JOIN drivers d ON d.id = wo.driver_id
+      LEFT JOIN customers c ON c.id = wo.customer_id
       LEFT JOIN products p ON p.id = wo.product_id
       WHERE wo.unit_id = ?
         AND wo.deleted_at IS NULL
@@ -584,6 +613,8 @@ export class ReportService {
         totalNetWeightKg: number;
         lastOperationAt: string | null;
         products: Map<string, TruckProductWeight>;
+        customers: Map<string, TruckCustomerWeight>;
+        trips: TruckControlTrip[];
       }
     >();
 
@@ -606,7 +637,9 @@ export class ReportService {
           totalMinutes: 0,
           totalNetWeightKg: 0,
           lastOperationAt: null,
-          products: new Map()
+          products: new Map(),
+          customers: new Map(),
+          trips: []
         };
         byPlate.set(plate, entry);
       }
@@ -629,6 +662,28 @@ export class ReportService {
       product.operations += 1;
       entry.products.set(productKey, product);
 
+      // Para quem a placa carregou. A mesma chave serve ao resumo por cliente e a linha
+      // do detalhe, entao os dois nunca divergem no nome mostrado.
+      const customerKey = (row.customer_name ?? "").trim() || "N/A";
+      const customer = entry.customers.get(customerKey) ?? {
+        customerName: customerKey,
+        totalNetWeightKg: 0,
+        operations: 0
+      };
+      customer.totalNetWeightKg += weight;
+      customer.operations += 1;
+      entry.customers.set(customerKey, customer);
+
+      entry.trips.push({
+        operationId: row.operation_id,
+        entryAt: row.entry_at,
+        exitAt: row.exit_at,
+        minutes: Math.round(minutes),
+        customerName: customerKey,
+        productDescription: productKey,
+        netWeightKg: weight
+      });
+
       totalMinutesAll += minutes;
       totalOperations += 1;
       totalNetWeightKg += weight;
@@ -645,7 +700,11 @@ export class ReportService {
         lastOperationAt: entry.lastOperationAt,
         products: Array.from(entry.products.values()).sort(
           (a, b) => b.totalNetWeightKg - a.totalNetWeightKg
-        )
+        ),
+        customers: Array.from(entry.customers.values()).sort(
+          (a, b) => b.totalNetWeightKg - a.totalNetWeightKg
+        ),
+        trips: entry.trips
       }))
       .sort((a, b) => b.operations - a.operations || b.totalNetWeightKg - a.totalNetWeightKg);
 

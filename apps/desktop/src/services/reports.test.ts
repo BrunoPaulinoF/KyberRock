@@ -168,21 +168,24 @@ function insertTruckOperations(db: ReturnType<typeof createDatabase>) {
   ).run();
 
   const ops = [
-    // ABC1D23: 30 min (prod-1, 15000 kg)
+    // ABC1D23: 30 min (prod-1, 15000 kg) para o Cliente A
     {
       id: "t1",
       veh: "veh-abc",
       drv: "drv-1",
+      cust: "cust-1",
       prod: "prod-1",
       net: 15000,
       entry: "2026-06-06 08:00:00",
       exit: "2026-06-06 08:30:00"
     },
-    // ABC1D23: 60 min (prod-2, 10000 kg)
+    // ABC1D23: 60 min (prod-2, 10000 kg) para o Cliente B - a mesma placa carrega
+    // para mais de um cliente no periodo
     {
       id: "t2",
       veh: "veh-abc",
       drv: "drv-1",
+      cust: "cust-2",
       prod: "prod-2",
       net: 10000,
       entry: "2026-06-06 09:00:00",
@@ -193,6 +196,7 @@ function insertTruckOperations(db: ReturnType<typeof createDatabase>) {
       id: "t3",
       veh: "veh-xyz",
       drv: "drv-1",
+      cust: "cust-1",
       prod: "prod-1",
       net: 20000,
       entry: "2026-06-07 08:00:00",
@@ -203,6 +207,7 @@ function insertTruckOperations(db: ReturnType<typeof createDatabase>) {
       id: "t4",
       veh: "veh-abc",
       drv: "drv-1",
+      cust: "cust-1",
       prod: "prod-1",
       net: 5000,
       entry: "2026-05-01 08:00:00",
@@ -214,14 +219,14 @@ function insertTruckOperations(db: ReturnType<typeof createDatabase>) {
     db.prepare(
       `
       INSERT INTO weighing_operations (
-        id, company_id, unit_id, device_id, status, operation_type, vehicle_id, driver_id, product_id,
+        id, company_id, unit_id, device_id, status, operation_type, vehicle_id, driver_id, customer_id, product_id,
         net_weight_kg, entry_weight_captured_at, exit_weight_captured_at, created_at, updated_at
       ) VALUES (
-        ?, 'comp-1', 'unit-1', 'dev-1', 'closed_local', 'invoice', ?, ?, ?,
+        ?, 'comp-1', 'unit-1', 'dev-1', 'closed_local', 'invoice', ?, ?, ?, ?,
         ?, datetime(?), datetime(?), datetime(?), datetime(?)
       )
     `
-    ).run(op.id, op.veh, op.drv, op.prod, op.net, op.entry, op.exit, op.entry, op.exit);
+    ).run(op.id, op.veh, op.drv, op.cust, op.prod, op.net, op.entry, op.exit, op.entry, op.exit);
   }
 }
 
@@ -252,8 +257,22 @@ describe("ReportService truck control", () => {
         ])
       );
 
+      expect(abc?.customers).toEqual([
+        { customerName: "Cliente A", totalNetWeightKg: 15000, operations: 1 },
+        { customerName: "Cliente B", totalNetWeightKg: 10000, operations: 1 }
+      ]);
+      expect(abc?.trips.map((trip) => [trip.customerName, trip.productDescription])).toEqual([
+        ["Cliente A", "Brita 0"],
+        ["Cliente B", "Brita 1"]
+      ]);
+      expect(abc?.trips[0]?.minutes).toBe(30);
+      expect(abc?.trips[0]?.netWeightKg).toBe(15000);
+
       const xyz = report.trucks.find((t) => t.plate === "XYZ4E56");
       expect(xyz?.avgMinutes).toBe(90);
+      expect(xyz?.customers).toEqual([
+        { customerName: "Cliente A", totalNetWeightKg: 20000, operations: 1 }
+      ]);
     } finally {
       db.close();
     }
@@ -273,6 +292,9 @@ describe("ReportService truck control", () => {
       expect(html).toContain("Controle de caminhoes");
       expect(html).toContain("ABC1D23");
       expect(html).toContain("Brita 0");
+      expect(html).toContain("Clientes atendidos");
+      expect(html).toContain("Cliente A");
+      expect(html).toContain("Cliente B");
     } finally {
       db.close();
     }
