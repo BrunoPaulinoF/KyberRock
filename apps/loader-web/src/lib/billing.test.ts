@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  billingEventLabel,
+  billingEventTone,
+  buildActivationChecklist,
   centsToInput,
+  countActivationBlockers,
   daysOverdue,
   describeNextClosing,
   filterInvoices,
@@ -10,10 +14,11 @@ import {
   formatDateBr,
   invoiceStatusLabel,
   invoiceStatusTone,
+  isActivationComplete,
   parseMoneyToCents,
   summarizeInvoiceList
 } from "./billing";
-import type { BillingCompany, BillingInvoice } from "./billing";
+import type { BillingCompany, BillingInvoice, BillingSettingsView } from "./billing";
 
 function invoice(overrides: Partial<BillingInvoice> = {}): BillingInvoice {
   return {
@@ -303,5 +308,191 @@ describe("findSecret", () => {
     expect(
       findSecret({ secrets: undefined as unknown as typeof settings.secrets }, "x").configured
     ).toBe(false);
+  });
+});
+
+describe("billingEventLabel / billingEventTone", () => {
+  it("translates the known event types", () => {
+    expect(billingEventLabel("boleto_issued")).toBe("Boleto emitido");
+    expect(billingEventLabel("company_blocked")).toBe("Pedreira bloqueada");
+  });
+
+  it("shows an unknown type as it came instead of hiding it", () => {
+    expect(billingEventLabel("evento_novo_do_motor")).toBe("evento_novo_do_motor");
+    expect(billingEventTone("evento_novo_do_motor")).toBe("neutral");
+  });
+
+  it("paints failure red and delivery green", () => {
+    expect(billingEventTone("boleto_failed")).toBe("danger");
+    expect(billingEventTone("invoice_paid")).toBe("ok");
+  });
+});
+
+describe("buildActivationChecklist", () => {
+  function secret(key: string, configured: boolean) {
+    return {
+      key,
+      label: key,
+      purpose: "",
+      missingHint: "",
+      required: true,
+      envVar: key === "mercadoPagoAccessToken" ? "MERCADO_PAGO_ACCESS_TOKEN" : "UAZAPI_TOKEN",
+      configured,
+      preview: configured ? "••••3456" : ""
+    };
+  }
+
+  function settings(overrides: Partial<BillingSettingsView> = {}): BillingSettingsView {
+    return {
+      mercadoPagoEnvironment: "production",
+      secrets: [
+        secret("mercadoPagoAccessToken", true),
+        secret("mercadoPagoWebhookSecret", true),
+        secret("whatsappInstanceToken", true)
+      ],
+      whatsappUrl: "https://kybernan.uazapi.com",
+      whatsappInstanceName: "financeiro",
+      whatsappStatus: "connected",
+      defaultClosingDay: 25,
+      defaultDueDay: 5,
+      defaultGraceDays: 5,
+      autoCloseEnabled: true,
+      autoBoletoEnabled: true,
+      autoWhatsappEnabled: true,
+      autoBlockEnabled: true,
+      issuerName: "Kybernan",
+      issuerDocument: "12.345.678/0001-99",
+      issuerEmail: "financeiro@kybernan.com.br",
+      issuerPhone: "31999999999",
+      issuerPixKey: "",
+      invoiceDescriptionTemplate: "",
+      whatsappMessageTemplate: "",
+      ...overrides
+    };
+  }
+
+  function stepById(steps: ReturnType<typeof buildActivationChecklist>, id: string) {
+    const step = steps.find((candidate) => candidate.id === id);
+    if (!step) throw new Error(`passo ${id} nao encontrado`);
+    return step;
+  }
+
+  it("clears everything when settings, secrets and one company are complete", () => {
+    const steps = buildActivationChecklist({ settings: settings(), companies: [company()] });
+    expect(isActivationComplete(steps)).toBe(true);
+    expect(countActivationBlockers(steps)).toBe(0);
+  });
+
+  it("blocks on the Mercado Pago secret and names the variable to create", () => {
+    const steps = buildActivationChecklist({
+      settings: settings({
+        secrets: [
+          secret("mercadoPagoAccessToken", false),
+          secret("mercadoPagoWebhookSecret", true),
+          secret("whatsappInstanceToken", true)
+        ]
+      }),
+      companies: [company()]
+    });
+    const step = stepById(steps, "mercado-pago-token");
+    expect(step.status).toBe("pending");
+    expect(step.detail).toContain("MERCADO_PAGO_ACCESS_TOKEN");
+    expect(countActivationBlockers(steps)).toBe(1);
+  });
+
+  it("lists every missing piece of the WhatsApp delivery", () => {
+    const steps = buildActivationChecklist({
+      settings: settings({
+        whatsappUrl: "",
+        whatsappInstanceName: "",
+        secrets: [
+          secret("mercadoPagoAccessToken", true),
+          secret("mercadoPagoWebhookSecret", true),
+          secret("whatsappInstanceToken", false)
+        ]
+      }),
+      companies: [company()]
+    });
+    const step = stepById(steps, "whatsapp");
+    expect(step.status).toBe("pending");
+    expect(step.items).toHaveLength(3);
+  });
+
+  it("treats the issuer and the webhook signature as recommendations, not blockers", () => {
+    const steps = buildActivationChecklist({
+      settings: settings({
+        issuerDocument: "",
+        issuerEmail: "",
+        issuerPhone: "",
+        secrets: [
+          secret("mercadoPagoAccessToken", true),
+          secret("mercadoPagoWebhookSecret", false),
+          secret("whatsappInstanceToken", true)
+        ]
+      }),
+      companies: [company()]
+    });
+    expect(stepById(steps, "issuer").status).toBe("warn");
+    expect(stepById(steps, "issuer").items).toEqual([
+      "CNPJ do emitente",
+      "E-mail ou telefone de suporte"
+    ]);
+    expect(stepById(steps, "webhook-secret").status).toBe("warn");
+    expect(countActivationBlockers(steps)).toBe(0);
+    expect(isActivationComplete(steps)).toBe(false);
+  });
+
+  it("warns while the sandbox is selected", () => {
+    const steps = buildActivationChecklist({
+      settings: settings({ mercadoPagoEnvironment: "sandbox" }),
+      companies: [company()]
+    });
+    expect(stepById(steps, "environment").status).toBe("warn");
+  });
+
+  it("blocks when no company has billing turned on, showing what each one still needs", () => {
+    const steps = buildActivationChecklist({
+      settings: settings(),
+      companies: [
+        company({
+          billing_enabled: false,
+          billing_plan: {
+            ...company().billing_plan,
+            blockers: ["Valor acertado nao informado", "CEP em falta"],
+            readyToClose: false
+          }
+        })
+      ]
+    });
+    const step = stepById(steps, "companies");
+    expect(step.status).toBe("pending");
+    expect(step.items).toEqual([
+      "Pedreira Serra Azul: Cobranca automatica desligada, Valor acertado nao informado, CEP em falta"
+    ]);
+  });
+
+  it("only warns when part of the enabled companies is ready", () => {
+    const incomplete = company({
+      id: "company-2",
+      name: "Pedreira Ibiuna",
+      billing_plan: {
+        ...company().billing_plan,
+        blockers: ["Data de virada do sistema nao informada"],
+        readyToClose: false
+      }
+    });
+    const steps = buildActivationChecklist({
+      settings: settings(),
+      companies: [company(), incomplete]
+    });
+    const step = stepById(steps, "companies");
+    expect(step.status).toBe("warn");
+    expect(step.items).toEqual(["Pedreira Ibiuna: Data de virada do sistema nao informada"]);
+    expect(countActivationBlockers(steps)).toBe(0);
+  });
+
+  it("blocks when there is no company at all", () => {
+    const steps = buildActivationChecklist({ settings: settings(), companies: [] });
+    expect(stepById(steps, "companies").status).toBe("pending");
   });
 });

@@ -348,3 +348,254 @@ export function findSecret(
     }
   );
 }
+
+// ---------------------------------------------------------------------------
+// Trilha (billing_events)
+// ---------------------------------------------------------------------------
+
+export interface BillingEvent {
+  id: string;
+  company_id: string | null;
+  invoice_id: string | null;
+  event_type: string;
+  message: string | null;
+  created_at: string;
+}
+
+const BILLING_EVENT_LABELS: Record<string, string> = {
+  invoice_created: "Fatura criada",
+  invoice_updated: "Fatura ajustada",
+  invoice_canceled: "Fatura cancelada",
+  invoice_deleted: "Fatura excluida",
+  invoice_paid: "Pagamento confirmado",
+  invoice_sent: "Enviada por WhatsApp",
+  invoice_send_failed: "Falha no envio",
+  boleto_issued: "Boleto emitido",
+  boleto_failed: "Falha na emissao do boleto",
+  boleto_status_changed: "Situacao do boleto mudou",
+  company_blocked: "Pedreira bloqueada",
+  company_released: "Pedreira liberada",
+  company_blocked_manually: "Bloqueio manual",
+  company_released_manually: "Liberacao manual",
+  company_billing_updated: "Cadastro de cobranca alterado",
+  settings_updated: "Configuracao alterada",
+  billing_run_failed: "Passada automatica falhou",
+  webhook_orphan: "Notificacao sem fatura",
+  webhook_rejected: "Notificacao recusada"
+};
+
+/** Rotulo do evento; tipo desconhecido aparece cru em vez de sumir. */
+export function billingEventLabel(eventType: string): string {
+  return BILLING_EVENT_LABELS[eventType] ?? eventType;
+}
+
+const BILLING_EVENT_DANGER = new Set([
+  "invoice_send_failed",
+  "boleto_failed",
+  "company_blocked",
+  "company_blocked_manually",
+  "billing_run_failed",
+  "webhook_rejected"
+]);
+
+const BILLING_EVENT_OK = new Set([
+  "invoice_paid",
+  "invoice_sent",
+  "boleto_issued",
+  "company_released",
+  "company_released_manually"
+]);
+
+export function billingEventTone(eventType: string): StatusTone {
+  if (BILLING_EVENT_DANGER.has(eventType)) return "danger";
+  if (BILLING_EVENT_OK.has(eventType)) return "ok";
+  return "neutral";
+}
+
+// ---------------------------------------------------------------------------
+// Ativacao: o que ainda falta para a cobranca rodar
+// ---------------------------------------------------------------------------
+
+/** Aba que resolve o item — o botao da lista leva direto para la. */
+export type ActivationTarget = "companies" | "settings";
+
+/**
+ * `pending` impede a cobranca de funcionar; `warn` e recomendacao (o motor roda
+ * sem, mas alguem vai reclamar depois). A distincao existe para a tela nao
+ * pintar de vermelho o que e so capricho.
+ */
+export type ActivationStatus = "ok" | "pending" | "warn";
+
+export interface ActivationStep {
+  id: string;
+  title: string;
+  detail: string;
+  /** Detalhamento item a item (campo que falta, pedreira incompleta). */
+  items: string[];
+  status: ActivationStatus;
+  target: ActivationTarget;
+}
+
+function digitsOnly(value: string | null | undefined): string {
+  return (value ?? "").replace(/\D/g, "");
+}
+
+/**
+ * A lista de "o que falta preencher" da aba Financeiro, montada so com o que o
+ * `admin-billing` ja devolve na carga da tela.
+ *
+ * Existe porque a cobranca depende de quatro coisas em lugares diferentes —
+ * secret do Supabase, linha de configuracao, cadastro do emitente e cadastro de
+ * cada pedreira — e, faltando qualquer uma, o sintoma so aparecia no fechamento
+ * (fatura sem boleto, boleto sem envio, ciclo que nao fecha). Aqui o operador ve
+ * a pendencia antes, com o nome exato do campo.
+ */
+export function buildActivationChecklist(input: {
+  settings: BillingSettingsView;
+  companies: BillingCompany[];
+}): ActivationStep[] {
+  const { settings, companies } = input;
+  const steps: ActivationStep[] = [];
+
+  const accessToken = findSecret(settings, "mercadoPagoAccessToken");
+  steps.push({
+    id: "mercado-pago-token",
+    title: "Credencial do Mercado Pago",
+    detail: accessToken.configured
+      ? `Secret ${accessToken.envVar} configurado (${accessToken.preview}).`
+      : `Grave o access token da conta que emite os boletos em Supabase > Edge Functions > Secrets, com o nome ${accessToken.envVar || "MERCADO_PAGO_ACCESS_TOKEN"}. Sem ele nenhum boleto e emitido.`,
+    items: [],
+    status: accessToken.configured ? "ok" : "pending",
+    target: "settings"
+  });
+
+  const whatsappToken = findSecret(settings, "whatsappInstanceToken");
+  const whatsappMissing: string[] = [];
+  if (!whatsappToken.configured) {
+    whatsappMissing.push(`Secret ${whatsappToken.envVar || "UAZAPI_INSTANCE_TOKEN"} no Supabase`);
+  }
+  if (!settings.whatsappUrl.trim()) whatsappMissing.push("URL da instancia UAZAPI");
+  if (!settings.whatsappInstanceName.trim()) whatsappMissing.push("Nome da instancia");
+  steps.push({
+    id: "whatsapp",
+    title: "WhatsApp da cobranca",
+    detail:
+      whatsappMissing.length === 0
+        ? `Instancia ${settings.whatsappInstanceName} pronta para entregar fatura e boleto.`
+        : "Sem isso a fatura e gerada e o boleto sai, mas nada chega ao cliente.",
+    items: whatsappMissing,
+    status: whatsappMissing.length === 0 ? "ok" : "pending",
+    target: "settings"
+  });
+
+  const issuerMissing: string[] = [];
+  if (!settings.issuerName.trim()) issuerMissing.push("Nome do emitente");
+  const issuerDocument = digitsOnly(settings.issuerDocument);
+  if (issuerDocument.length !== 14 && issuerDocument.length !== 11) {
+    issuerMissing.push("CNPJ do emitente");
+  }
+  if (!settings.issuerEmail.trim() && !settings.issuerPhone.trim()) {
+    issuerMissing.push("E-mail ou telefone de suporte");
+  }
+  steps.push({
+    id: "issuer",
+    title: "Emitente da fatura",
+    detail:
+      issuerMissing.length === 0
+        ? `${settings.issuerName} identificada na fatura, no boleto e na mensagem.`
+        : "Aparece no cabecalho do PDF, na descricao do boleto e na mensagem do WhatsApp.",
+    items: issuerMissing,
+    status: issuerMissing.length === 0 ? "ok" : "warn",
+    target: "settings"
+  });
+
+  steps.push(buildCompaniesStep(companies));
+
+  const webhookSecret = findSecret(settings, "mercadoPagoWebhookSecret");
+  steps.push({
+    id: "webhook-secret",
+    title: "Assinatura do webhook (opcional)",
+    detail: webhookSecret.configured
+      ? `Secret ${webhookSecret.envVar} configurado.`
+      : "Sem ele a baixa continua funcionando: o webhook confirma o pagamento consultando a API do Mercado Pago. A assinatura so evita a consulta de um POST forjado.",
+    items: [],
+    status: webhookSecret.configured ? "ok" : "warn",
+    target: "settings"
+  });
+
+  const isSandbox = settings.mercadoPagoEnvironment === "sandbox";
+  steps.push({
+    id: "environment",
+    title: "Ambiente do Mercado Pago",
+    detail: isSandbox
+      ? "Sandbox: os boletos emitidos sao de teste e nao cobram ninguem. Troque para Producao antes de faturar de verdade."
+      : "Producao: os boletos emitidos cobram de verdade.",
+    items: [],
+    status: isSandbox ? "warn" : "ok",
+    target: "settings"
+  });
+
+  return steps;
+}
+
+function buildCompaniesStep(companies: BillingCompany[]): ActivationStep {
+  const base = { id: "companies", title: "Pedreiras a faturar", target: "companies" as const };
+
+  if (companies.length === 0) {
+    return {
+      ...base,
+      detail: "Nenhuma pedreira cadastrada. Cadastre em Pedreiras antes de configurar a cobranca.",
+      items: [],
+      status: "pending"
+    };
+  }
+
+  const enabled = companies.filter((company) => company.billing_enabled);
+  const incomplete = enabled.filter((company) => !company.billing_plan.readyToClose);
+  const ready = enabled.length - incomplete.length;
+
+  if (enabled.length === 0) {
+    return {
+      ...base,
+      detail:
+        'Nenhuma pedreira com cobranca ativa. Abra "Cobranca" na pedreira, informe o valor acertado e a data de virada e marque "Cobrar automaticamente no fechamento".',
+      items: companies.map(describeCompanyPending),
+      status: "pending"
+    };
+  }
+
+  if (incomplete.length > 0) {
+    return {
+      ...base,
+      detail:
+        ready > 0
+          ? `${ready} pedreira(s) prontas; ${incomplete.length} ainda nao fecham por falta de cadastro.`
+          : "Cobranca ativa, mas o cadastro nao permite fechar o ciclo.",
+      items: incomplete.map(describeCompanyPending),
+      status: ready > 0 ? "warn" : "pending"
+    };
+  }
+
+  return {
+    ...base,
+    detail: `${ready} pedreira(s) com cobranca ativa e cadastro completo.`,
+    items: [],
+    status: "ok"
+  };
+}
+
+/** "Pedreira X: Valor acertado nao informado, CEP em falta". */
+function describeCompanyPending(company: BillingCompany): string {
+  const pending = [...company.billing_plan.blockers];
+  if (!company.billing_enabled) pending.unshift("Cobranca automatica desligada");
+  return pending.length > 0 ? `${company.name}: ${pending.join(", ")}` : company.name;
+}
+
+/** Quantos itens ainda travam a cobranca (o `warn` nao conta). */
+export function countActivationBlockers(steps: ActivationStep[]): number {
+  return steps.filter((step) => step.status === "pending").length;
+}
+
+export function isActivationComplete(steps: ActivationStep[]): boolean {
+  return steps.every((step) => step.status === "ok");
+}
