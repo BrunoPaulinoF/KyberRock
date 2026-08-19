@@ -192,6 +192,9 @@ const desktopApi = {
   whatsappConnect: () => ipcRenderer.invoke("desktop:whatsapp-connect"),
   whatsappStatus: () => ipcRenderer.invoke("desktop:whatsapp-status"),
   whatsappDisconnect: () => ipcRenderer.invoke("desktop:whatsapp-disconnect"),
+  whatsappConnectionLink: () => ipcRenderer.invoke("desktop:whatsapp-connection-link-get"),
+  whatsappCreateConnectionLink: () => ipcRenderer.invoke("desktop:whatsapp-connection-link-create"),
+  whatsappRevokeConnectionLink: () => ipcRenderer.invoke("desktop:whatsapp-connection-link-revoke"),
   getReportDispatchConfig: () => ipcRenderer.invoke("desktop:report-dispatch-get-config"),
   saveReportDispatchConfig: (patch: unknown) =>
     ipcRenderer.invoke("desktop:report-dispatch-save-config", patch),

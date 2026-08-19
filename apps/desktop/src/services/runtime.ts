@@ -128,11 +128,13 @@ import {
   type ReceiptPrinter
 } from "./printing.js";
 import {
+  createWhatsappConnectionLink,
   initializeSupabaseFromSettings,
   pingSupabase,
   processCloudSyncQueue,
   pushPendingReportRecipients,
   pushReportChannelSettings,
+  revokeWhatsappConnectionLink,
   sendFinancialReportNow,
   type FinancialReportDispatchResult,
   syncOperationToSupabase,
@@ -227,14 +229,17 @@ import {
 import {
   normalizeUazapiBaseUrl,
   readReportChannelSettings,
+  readWhatsappConnectionLink,
   uazapiConnectInstance,
   uazapiDisconnectInstance,
   uazapiSendDocument,
   uazapiInstanceStatus,
   writeReportChannelSettings,
+  writeWhatsappConnectionLink,
   type ReportChannelSettings,
   type UazapiInstanceState
 } from "./report-channels.js";
+import type { WhatsappConnectionLink } from "./whatsapp-connection-link.js";
 import { renderTotalBar } from "./report-total-bar.js";
 import {
   createReportRecipient,
@@ -2768,6 +2773,12 @@ export class DesktopRuntime {
       uazapiProfileName: state.profileName ?? "",
       cloudPushPending: true
     });
+    // Conectou: o link temporario cumpriu o que tinha para fazer e sai da tela.
+    // A nuvem ja o encerrou do lado dela ao ver o pareamento; aqui e so nao
+    // continuar oferecendo um endereco que nao pareia mais nada.
+    if (state.status === "connected") {
+      writeWhatsappConnectionLink(this.database, null);
+    }
   }
 
   // Inicia a conexao da instancia UAZAPI ja provisionada (o token da instancia
@@ -2816,6 +2827,44 @@ export class DesktopRuntime {
       void this.pushChannelSettingsToCloud();
     }
     return state;
+  }
+
+  /**
+   * Link temporario guardado neste computador, ou null quando nao ha nenhum
+   * dentro do prazo. Quem descarta o vencido e o proprio leitor: um link que
+   * nao abre mais nao pode continuar na tela como se abrisse.
+   */
+  whatsappConnectionLink(): WhatsappConnectionLink | null {
+    return readWhatsappConnectionLink(this.database);
+  }
+
+  /**
+   * Gera o link temporario (15 min) para parear o WhatsApp fora daqui. Empurra
+   * a configuracao dos canais antes: a nuvem precisa do servidor e do token da
+   * instancia para montar o QR da pagina, e recusa o link enquanto nao tiver.
+   */
+  async whatsappCreateConnectionLink(): Promise<WhatsappConnectionLink> {
+    const settings = readReportChannelSettings(this.database);
+    if (!settings.uazapiBaseUrl || !settings.uazapiInstanceToken) {
+      throw new Error(
+        "Informe o servidor UAZAPI e o token da instancia e salve a configuracao antes de gerar o link."
+      );
+    }
+    const identity = this.ensureIdentity();
+    if (settings.cloudPushPending) {
+      await this.pushChannelSettingsToCloud();
+    }
+    const link = await createWhatsappConnectionLink(this.database, identity);
+    writeWhatsappConnectionLink(this.database, link);
+    return link;
+  }
+
+  /** Cancela o link antes do prazo. O registro local sai mesmo se a nuvem falhar. */
+  async whatsappRevokeConnectionLink(): Promise<void> {
+    const link = readWhatsappConnectionLink(this.database);
+    writeWhatsappConnectionLink(this.database, null);
+    if (!link) return;
+    await revokeWhatsappConnectionLink(this.database, this.ensureIdentity(), link.id);
   }
 
   async whatsappDisconnect(): Promise<UazapiInstanceState> {

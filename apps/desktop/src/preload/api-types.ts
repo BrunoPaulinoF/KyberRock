@@ -88,6 +88,7 @@ import type {
   ReportChannelSettings as ReportChannelSettingsView,
   UazapiInstanceState as WhatsappInstanceStateView
 } from "../services/report-channels";
+import type { WhatsappConnectionLink as WhatsappConnectionLinkView } from "../services/whatsapp-connection-link";
 import type {
   DispatchSendResult as ReportDispatchSendResultView,
   ReportDispatchSettings,
@@ -98,6 +99,7 @@ import type { FinancialReportDispatchResult as FinancialReportDispatchResultView
 export type {
   ReportChannelSettingsView,
   WhatsappInstanceStateView,
+  WhatsappConnectionLinkView,
   ReportDispatchSendResultView,
   FinancialReportDispatchResultView
 };
@@ -408,6 +410,10 @@ export interface KyberRockDesktopApi {
   whatsappConnect: () => Promise<WhatsappInstanceStateView>;
   whatsappStatus: () => Promise<WhatsappInstanceStateView>;
   whatsappDisconnect: () => Promise<WhatsappInstanceStateView>;
+  /** Link temporario guardado nesta maquina; null quando nao ha nenhum no prazo. */
+  whatsappConnectionLink: () => Promise<WhatsappConnectionLinkView | null>;
+  whatsappCreateConnectionLink: () => Promise<WhatsappConnectionLinkView>;
+  whatsappRevokeConnectionLink: () => Promise<void>;
   getReportDispatchConfig: () => Promise<ReportDispatchConfigView>;
   saveReportDispatchConfig: (
     patch: Partial<ReportDispatchConfigView["settings"]>
