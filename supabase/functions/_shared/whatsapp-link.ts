@@ -7,8 +7,9 @@
 //
 // Tudo o que decide se o link ainda vale mora aqui, puro e testado pelo vitest:
 // prazo, estado, contagem regressiva, formato do token e roteamento do caminho.
-// A Edge Function so faz banco, rede e HTML. O motivo e o de sempre -- prazo
-// calculado em dois lugares vira prazo diferente em dois lugares.
+// A Edge Function so faz banco e rede; a pagina do convidado e do loader-web. O
+// motivo e o de sempre -- prazo calculado em dois lugares vira prazo diferente
+// em dois lugares.
 
 /** Quinze minutos: o link e para usar na hora, com alguem do outro lado da linha. */
 export const WHATSAPP_LINK_TTL_MINUTES = 15;
@@ -91,13 +92,47 @@ export function isWhatsappLinkToken(value: unknown): value is string {
   return typeof value === "string" && new RegExp(`^[A-Za-z0-9_-]{${TOKEN_LENGTH}}$`).test(value);
 }
 
-/** Endereco publico do link, sempre no dominio do proprio projeto Supabase. */
-export function buildWhatsappLinkUrl(baseUrl: string, token: string): string {
-  const trimmed = baseUrl.trim().replace(/\/+$/, "");
-  return `${trimmed}/functions/v1/whatsapp-link/c/${token}`;
+/** Caminho da pagina do convidado dentro do site (rota do loader-web). */
+export const WHATSAPP_LINK_PAGE_PATH = "whatsapp";
+
+/**
+ * Endereco publico do loader-web hoje. Nao e segredo -- e a barra de enderecos
+ * do navegador de quem usa o site --, e por isso vive no codigo, como o
+ * `DEFAULT_SUPABASE_URL` do desktop e o destino do `/download` no nginx. Assim o
+ * link funciona numa instalacao nova sem nenhum passo manual no dashboard.
+ */
+export const DEFAULT_WHATSAPP_LINK_SITE_URL = "https://kybernan-kyber-rock.qdidmr.easypanel.host";
+
+/**
+ * Site de onde sai a pagina do convidado: o valor do ambiente manda, o padrao
+ * acima cobre o resto. Trocar de dominio e definir `KYBERROCK_SITE_URL` no
+ * projeto Supabase -- sem deploy, sem mexer no codigo.
+ */
+export function resolveWhatsappLinkSiteUrl(configured: string | undefined | null): string {
+  const trimmed = (configured ?? "").trim().replace(/\/+$/, "");
+  return trimmed || DEFAULT_WHATSAPP_LINK_SITE_URL;
 }
 
-export type WhatsappLinkRouteKind = "api" | "page" | "state" | "unknown";
+/**
+ * Endereco que o operador envia. Ele aponta para o SITE (loader-web), nao para
+ * o dominio do projeto Supabase: as Edge Functions respondem HTML como
+ * `text/plain` com `nosniff` -- protecao anti-phishing do `*.supabase.co` --
+ * entao uma pagina servida de la chegaria ao celular do convidado como
+ * codigo-fonte, nao como pagina. O QR continua vindo da Edge Function, mas em
+ * JSON, que passa sem problema.
+ */
+export function buildWhatsappLinkUrl(siteUrl: string, token: string): string {
+  const trimmed = siteUrl.trim().replace(/\/+$/, "");
+  return `${trimmed}/${WHATSAPP_LINK_PAGE_PATH}/${token}`;
+}
+
+/** Endpoint que a pagina consulta de 3 em 3 s para o QR e o estado (JSON). */
+export function buildWhatsappLinkStateUrl(supabaseUrl: string, token: string): string {
+  const trimmed = supabaseUrl.trim().replace(/\/+$/, "");
+  return `${trimmed}/functions/v1/whatsapp-link/c/${token}/state`;
+}
+
+export type WhatsappLinkRouteKind = "api" | "state" | "unknown";
 
 export interface WhatsappLinkRoute {
   kind: WhatsappLinkRouteKind;
@@ -120,7 +155,6 @@ export function routeWhatsappLinkPath(pathname: string): WhatsappLinkRoute {
 
   const token = rest[1] ?? "";
   if (!isWhatsappLinkToken(token)) return { kind: "unknown", token: null };
-  if (rest.length === 2) return { kind: "page", token };
   if (rest.length === 3 && rest[2] === "state") return { kind: "state", token };
   return { kind: "unknown", token: null };
 }

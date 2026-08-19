@@ -6,13 +6,13 @@ import {
   buildWhatsappLinkUrl,
   generateWhatsappLinkToken,
   normalizeQrCodeDataUrl,
+  resolveWhatsappLinkSiteUrl,
   routeWhatsappLinkPath,
   whatsappLinkExpiresAt,
   whatsappLinkRemainingMs,
   whatsappLinkState,
   type WhatsappLinkState
 } from "../_shared/whatsapp-link.ts";
-import { renderWhatsappLinkClosedPage, renderWhatsappLinkPage } from "./page.ts";
 
 // ---------------------------------------------------------------------------
 // Link temporario para conectar o WhatsApp da pedreira (15 minutos).
@@ -22,20 +22,26 @@ import { renderWhatsappLinkClosedPage, renderWhatsappLinkPage } from "./page.ts"
 // Aqui a balanca pede um endereco publico e curto, manda por qualquer meio para
 // quem tem o aparelho, e essa pessoa escaneia o QR pelo proprio celular.
 //
-// Tres caminhos numa funcao so:
+// Dois caminhos numa funcao so:
 //
-//   POST /whatsapp-link              -> API do desktop (deviceId + deviceToken):
-//                                       cria e cancela link.
-//   GET  /whatsapp-link/c/<token>    -> a pagina publica que o convidado abre.
-//   POST /whatsapp-link/c/<token>/state -> QR e estado atualizados, de 3 em 3 s.
+//   POST /whatsapp-link                 -> API do desktop (deviceId +
+//                                          deviceToken): cria e cancela link.
+//   POST /whatsapp-link/c/<token>/state -> QR e estado atualizados, de 3 em 3 s,
+//                                          consultados pela pagina do convidado.
+//
+// A PAGINA nao mora aqui: ela e a rota `/whatsapp/<token>` do loader-web. As
+// Edge Functions respondem HTML como `text/plain` com `nosniff` (protecao
+// anti-phishing do dominio `*.supabase.co`), entao uma pagina servida daqui
+// chegaria ao celular do convidado como codigo-fonte. O que atravessa esse
+// filtro e JSON -- e e so JSON que esta funcao devolve.
 //
 // O que NUNCA sai daqui e a credencial da instancia UAZAPI: quem fala com a
 // UAZAPI e esta funcao, com o token que a pedreira ja empurrou para
 // `report_channel_settings`. O navegador do convidado recebe so a imagem do QR.
 //
-// A UAZAPI so e chamada no POST /state, nunca no GET da pagina: quem manda o
-// link por WhatsApp faz o proprio WhatsApp buscar a pagina para montar a
-// previa, e uma previa nao pode rotacionar o QR de ninguem.
+// A UAZAPI so e chamada no /state, ou seja, quando alguem realmente abriu a
+// pagina: quem manda o link por WhatsApp faz o proprio WhatsApp buscar a pagina
+// para montar a previa, e uma previa nao pode rotacionar o QR de ninguem.
 //
 // Publica de proposito (verify_jwt = false em config.toml) -- quem abre e um
 // celular qualquer, sem sessao do Supabase. O que protege e o token de 256 bits
@@ -45,6 +51,8 @@ import { renderWhatsappLinkClosedPage, renderWhatsappLinkPage } from "./page.ts"
 
 const LINKS_TABLE = "whatsapp_connection_links";
 const CHANNEL_SETTINGS_TABLE = "report_channel_settings";
+/** Override do endereco publico do loader-web, quando o site trocar de dominio. */
+const SITE_URL_ENV = "KYBERROCK_SITE_URL";
 const UAZAPI_TIMEOUT_MS = 20_000;
 
 /**
@@ -96,17 +104,6 @@ type ChannelSettingsRow = {
   whatsapp_instance_token: string | null;
 };
 
-function htmlResponse(body: string, status = 200): Response {
-  return new Response(body, {
-    status,
-    headers: {
-      ...corsHeaders,
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store"
-    }
-  });
-}
-
 function serviceClient(): SupabaseClient {
   // O cast e a fronteira entre o client real e a forma minima acima. Sem os
   // tipos gerados do banco, comparar os dois tipos derruba o compilador com
@@ -119,10 +116,9 @@ function serviceClient(): SupabaseClient {
   return client as unknown as SupabaseClient;
 }
 
-/** Base publica do projeto; o request e o plano B do `supabase functions serve`. */
-function publicBaseUrl(req: Request): string {
-  const configured = (Deno.env.get("SUPABASE_URL") ?? "").trim();
-  return configured || new URL(req.url).origin;
+/** Site de onde sai a pagina do convidado (env manda, padrao do repo cobre). */
+function siteUrl(): string {
+  return resolveWhatsappLinkSiteUrl(Deno.env.get(SITE_URL_ENV));
 }
 
 // --- UAZAPI ----------------------------------------------------------------
@@ -227,11 +223,7 @@ async function revokeActiveLinks(
   await query;
 }
 
-async function handleCreate(
-  supabase: SupabaseClient,
-  device: DeviceRow,
-  req: Request
-): Promise<Response> {
+async function handleCreate(supabase: SupabaseClient, device: DeviceRow): Promise<Response> {
   const settings = await readChannelSettings(supabase, device.company_id);
   if (!settings) {
     // Sem a configuracao na nuvem o link abriria numa pagina que nao tem como
@@ -282,7 +274,7 @@ async function handleCreate(
 
   return jsonResponse({
     id: (data as { id: string }).id,
-    url: buildWhatsappLinkUrl(publicBaseUrl(req), token),
+    url: buildWhatsappLinkUrl(siteUrl(), token),
     createdAt: nowIso,
     expiresAt,
     ttlMinutes: WHATSAPP_LINK_TTL_MINUTES
@@ -314,7 +306,7 @@ async function handleApi(supabase: SupabaseClient, req: Request): Promise<Respon
   }
 
   const action = String(body.action ?? "create");
-  if (action === "create") return handleCreate(supabase, device, req);
+  if (action === "create") return handleCreate(supabase, device);
   if (action === "revoke") {
     await revokeActiveLinks(
       supabase,
@@ -338,49 +330,19 @@ async function findLink(supabase: SupabaseClient, token: string): Promise<LinkRo
   return (data ?? null) as LinkRow | null;
 }
 
-const CLOSED_PAGES: Record<
-  Exclude<WhatsappLinkState, "active">,
-  { icon: string; title: string; message: string }
-> = {
-  expired: {
-    icon: "⏳",
-    title: "Link expirado",
-    message: `Este link valia ${WHATSAPP_LINK_TTL_MINUTES} minutos e ja passou do prazo.`
-  },
-  revoked: {
-    icon: "🚫",
-    title: "Link cancelado",
-    message: "Quem gerou este link cancelou o acesso antes de ele ser usado."
-  },
-  connected: {
-    icon: "✅",
-    title: "WhatsApp ja conectado",
-    message: "O pareamento por este link ja foi concluido. Pode fechar esta pagina."
-  }
-};
-
-async function handlePage(
-  supabase: SupabaseClient,
-  token: string,
-  req: Request
-): Promise<Response> {
+async function handleState(supabase: SupabaseClient, token: string): Promise<Response> {
   const link = await findLink(supabase, token);
-  if (!link) {
-    return htmlResponse(
-      renderWhatsappLinkClosedPage({
-        icon: "🔒",
-        title: "Link invalido",
-        message: "Este endereco nao corresponde a nenhum link de conexao."
-      }),
-      404
-    );
-  }
+  // Link inexistente e link vencido dizem a mesma coisa ao visitante de
+  // proposito: nao ha nada aqui. Distinguir os dois so ensinaria a quem varre
+  // enderecos quais tokens ja existiram.
+  if (!link) return jsonResponse({ state: "expired" as WhatsappLinkState }, 404);
 
   const state = whatsappLinkState(link);
   if (state !== "active") {
-    return htmlResponse(renderWhatsappLinkClosedPage(CLOSED_PAGES[state]), 410);
+    return jsonResponse({ state, expiresAt: link.expires_at });
   }
 
+  // Cada abertura da pagina conta: e o unico rastro de quem usou o link.
   await supabase
     .from(LINKS_TABLE)
     .update({ last_opened_at: new Date().toISOString(), open_count: (link.open_count ?? 0) + 1 })
@@ -392,28 +354,10 @@ async function handlePage(
     .eq("id", link.company_id)
     .maybeSingle();
 
-  const base = publicBaseUrl(req);
-  return htmlResponse(
-    renderWhatsappLinkPage({
-      stateUrl: `${buildWhatsappLinkUrl(base, token)}/state`,
-      expiresAt: link.expires_at,
-      companyName: (company as { name?: string | null } | null)?.name?.trim() || null
-    })
-  );
-}
-
-async function handleState(supabase: SupabaseClient, token: string): Promise<Response> {
-  const link = await findLink(supabase, token);
-  if (!link) return jsonResponse({ state: "expired" as WhatsappLinkState }, 404);
-
-  const state = whatsappLinkState(link);
-  if (state !== "active") {
-    return jsonResponse({ state, expiresAt: link.expires_at });
-  }
-
   const settings = await readChannelSettings(supabase, link.company_id);
   const base = {
     state,
+    companyName: (company as { name?: string | null } | null)?.name?.trim() || null,
     expiresAt: link.expires_at,
     remainingMs: whatsappLinkRemainingMs(link.expires_at)
   };
@@ -488,12 +432,6 @@ Deno.serve(async (req) => {
       if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
       return await handleApi(supabase, req);
     }
-    if (route.kind === "page" && route.token) {
-      if (req.method !== "GET" && req.method !== "HEAD") {
-        return jsonResponse({ error: "Method not allowed" }, 405);
-      }
-      return await handlePage(supabase, route.token, req);
-    }
     if (route.kind === "state" && route.token) {
       if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
       return await handleState(supabase, route.token);
@@ -503,12 +441,5 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Falha interna no link de conexao." }, 500);
   }
 
-  return htmlResponse(
-    renderWhatsappLinkClosedPage({
-      icon: "🔒",
-      title: "Link invalido",
-      message: "Este endereco nao corresponde a nenhum link de conexao."
-    }),
-    404
-  );
+  return jsonResponse({ error: "Rota desconhecida." }, 404);
 });
