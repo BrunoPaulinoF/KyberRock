@@ -4,6 +4,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
 import { supabaseConfig } from "../config/supabase-config";
 import { AiAssistantSettings } from "./AiAssistantSettings";
+import { DesktopUpdates } from "./DesktopUpdates";
 import { FinancialBackoffice } from "./FinancialBackoffice";
 import {
   AdminShell,
@@ -157,7 +158,15 @@ export function matchesCadastroSearch(search: string, fields: Array<string | nul
   return terms.every((term) => haystack.includes(term));
 }
 
-type Section = "companies" | "units" | "loaders" | "comercial" | "devices" | "financeiro" | "ai";
+type Section =
+  | "companies"
+  | "units"
+  | "loaders"
+  | "comercial"
+  | "devices"
+  | "updates"
+  | "financeiro"
+  | "ai";
 
 /** Resposta de `reveal_credentials`. Ver `_shared/admin-credentials.ts`. */
 interface RevealedCredential {
@@ -430,6 +439,7 @@ export function AdminDashboard() {
       count: users.filter((user) => user.role === "comercial").length
     },
     { id: "devices", label: "Balancas", group: "Acessos", count: devices.length },
+    { id: "updates", label: "Atualizacoes", group: "Plataforma" },
     { id: "financeiro", label: "Financeiro", group: "Plataforma" },
     { id: "ai", label: "Assistente de IA", group: "Plataforma" }
   ];
@@ -1096,6 +1106,8 @@ export function AdminDashboard() {
               </Panel>
             </>
           )}
+
+          {section === "updates" && <DesktopUpdates onSessionExpired={() => void logout()} />}
 
           {section === "financeiro" && (
             <FinancialBackoffice onSessionExpired={() => void logout()} />

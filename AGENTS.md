@@ -287,7 +287,20 @@ manifesto da raiz; tambem por **workflow_dispatch**):
 > release" para toda a frota; se ela nao tiver `latest.yml` dentro, as balancas procuram, nao acham,
 > e o auto-update fica cego **em silencio**.
 
-**Passo 2 — `desktop-promote.yml`** (so **workflow_dispatch**; recebe `version`, `target` e
+**Passo 2 — pela aba Atualizacoes do painel (ou pelo `desktop-promote.yml` direto).** A tela
+(`apps/loader-web/src/pages/DesktopUpdates.tsx`) lista as versoes com a situacao de cada uma —
+**Parado**, **Em teste**, **Producao**, **Incompleto** — e oferece os dois unicos gestos que movem
+alguma coisa: _Enviar para teste_ e _Liberar para producao_. Ela tambem mostra quantas balancas
+estao em cada anel, porque uma versao em teste com zero balancas marcadas nunca sera avaliada.
+
+O painel **nao mexe em release**: ele so dispara o workflow (`admin-api` →
+`promote_desktop_release` → `POST /actions/workflows/desktop-promote.yml/dispatches`). Por isso o
+token de escrita precisa apenas de `Actions: write` — quem edita a release e o proprio Actions, com
+o `GITHUB_TOKEN` do run. A classificacao das versoes vive em `_shared/desktop-releases.ts` (puro e
+testado); as travas de verdade continuam no workflow, e as regras repetidas na tela servem so para
+nao oferecer um botao que seria recusado num run que ela nao acompanha.
+
+**O workflow `desktop-promote.yml`** (so **workflow_dispatch**; recebe `version`, `target` e
 `force`): copia `build.yml` para `beta.yml` (teste) ou `latest.yml` (producao); no caso de producao,
 tambem tira o `prerelease`. **Nao compila nada** — o `.exe` nao se move nem muda de URL, entao a
 balanca recebe exatamente o binario testado. Antes de agir ele confere que a release existe, que o
@@ -296,10 +309,17 @@ recusa (a menos que `force`) uma versao que nunca passou pelo teste ou que seja 
 atual. Depois da promocao a release guarda os dois ymls: `latest.yml` serve a frota e `beta.yml`
 mantem a maquina de teste na mesma versao, sem falso "ha atualizacao".
 
-Required repo secret (Settings → Secrets and variables → Actions):
-`GH_UPDATER_TOKEN` — a **fine-grained PAT scoped to this repo only, `Contents: read`**. This is the
-token embedded in the installed app so it can download releases from the private repo. Without it,
-builds still publish, but installed apps cannot authenticate to download the update.
+Tokens envolvidos — todos PAT fine-grained, **so este repositorio**:
+
+| Onde vive          | Nome                | Escopo           | Para que                                                         |
+| ------------------ | ------------------- | ---------------- | ---------------------------------------------------------------- |
+| Secret do Actions  | `GH_UPDATER_TOKEN`  | `Contents: read` | embutido no app instalado, para baixar a release do repo privado |
+| Secret do Supabase | `GH_RELEASES_TOKEN` | `Contents: read` | `desktop-download` e a listagem de versoes do painel             |
+| Secret do Supabase | `GH_ACTIONS_TOKEN`  | `Actions: write` | o painel disparar o `desktop-promote.yml`                        |
+
+Sem `GH_UPDATER_TOKEN` os builds ainda saem, mas o app instalado nao consegue autenticar para
+baixar a atualizacao. Sem `GH_ACTIONS_TOKEN` a aba Atualizacoes ainda lista tudo e explica como
+criar o token — a promocao so fica no GitHub ate ele existir.
 
 - **Security note**: the read token ships inside the app (`.asar`), so treat it as low-trust —
   keep it read-only + single-repo, and rotate it by updating the secret and re-running the workflow.
@@ -315,10 +335,15 @@ builds still publish, but installed apps cannot authenticate to download the upd
   `desktop-download/release-pick.ts` (puro, coberto por `release-pick_test.ts`) justamente para nao
   regredir de novo.
 - Code signing for external pilots is still pending (see `docs/phase-3.1/README.md`).
-- **Falta o outro lado do anel de teste**: o desktop ainda nao le o canal em tempo de execucao
-  (`autoUpdater.channel` a partir de `local-settings` / `desktop-status`), entao hoje `beta.yml` nao
-  e consumido por maquina nenhuma — instalar um build em teste e manual, baixando o `.exe` da
-  release. Enquanto isso nao existir, a unica distribuicao efetiva e `target: latest`.
+- **Qual balanca e a de teste** sai da aba **Balancas** do painel, coluna Atualizacao: Producao
+  (padrao) ou Teste. O valor vive em `device_registrations.update_channel`, viaja no
+  `desktop-status` e e aplicado em `main.ts` (`applyUpdateChannel`) a cada verificacao — trocar o
+  canal vale sem reiniciar o app. Os DOIS lados normalizam para `latest` qualquer valor que nao
+  seja exatamente `beta`: balanca de cliente nunca entra no anel de teste por acidente.
+- **Leituras da coluna sao tolerantes a ela nao existir** (`selectDeviceRow` no `desktop-status`,
+  `selectDevicesForList` no `admin-api`). As Edge Functions sao implantadas pelo CI a cada push e
+  as migracoes SQL sao aplicadas a parte: sem isso, nessa janela o `desktop-status` falharia e
+  bloquearia a frota inteira, e o painel deixaria de carregar.
 
 **Manual build (local / offline fallback):**
 
