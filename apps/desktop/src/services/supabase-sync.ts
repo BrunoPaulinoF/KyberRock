@@ -1814,7 +1814,7 @@ function upsertCloudReportRecipients(
       schedule_frequency, schedule_time, report_types, send_financial,
       financial_schedule_time, display_name, is_active, needs_push, sync_status,
       last_synced_at, created_at, updated_at, deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'synced', ?, ?, ?, NULL)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'synced', ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       email = CASE WHEN report_recipients.needs_push = 0 THEN excluded.email ELSE report_recipients.email END,
       whatsapp_phone = CASE WHEN report_recipients.needs_push = 0 THEN excluded.whatsapp_phone ELSE report_recipients.whatsapp_phone END,
@@ -1828,18 +1828,27 @@ function upsertCloudReportRecipients(
       display_name = CASE WHEN report_recipients.needs_push = 0 THEN excluded.display_name ELSE report_recipients.display_name END,
       is_active = CASE WHEN report_recipients.needs_push = 0 THEN excluded.is_active ELSE report_recipients.is_active END,
       updated_at = excluded.updated_at,
-      deleted_at = CASE WHEN report_recipients.needs_push = 0 THEN NULL ELSE report_recipients.deleted_at END
+      -- A exclusao viaja como tombstone (deleted_at preenchido), entao a nuvem e
+      -- espelhada como esta. Zerar a coluna aqui era o que fazia o destinatario
+      -- excluido VOLTAR: o proprio push marcava a linha como sincronizada e o
+      -- pull seguinte, ja com needs_push = 0, limpava o deleted_at recem-gravado.
+      deleted_at = CASE WHEN report_recipients.needs_push = 0 THEN excluded.deleted_at ELSE report_recipients.deleted_at END
   `);
 
   // UNIQUE(company_id, email) e o indice unico de whatsapp: o mesmo destinatario
   // cadastrado em duas maquinas antes do primeiro sync tem ids diferentes; mantem
   // o local e ignora a copia para nao violar o indice.
   const findConflict = database.prepare(
-    `SELECT id FROM report_recipients
+    `SELECT id, deleted_at, needs_push FROM report_recipients
      WHERE company_id = ?
        AND ((? IS NOT NULL AND email = ?) OR (? IS NOT NULL AND whatsapp_phone = ?))
      LIMIT 1`
   );
+  // Os indices unicos contam tambem a linha apagada: o tombstone local segurava
+  // para sempre o e-mail/WhatsApp e um destinatario recadastrado em outra maquina
+  // (id novo) nunca chegava aqui. Tombstone ja sincronizado sai para a linha viva entrar.
+  const dropSyncedTombstone = database.prepare("DELETE FROM report_recipients WHERE id = ?");
+  const findLocal = database.prepare("SELECT deleted_at FROM report_recipients WHERE id = ?");
 
   const frequencies = new Set(["daily", "weekly", "monthly"]);
   const reportTypes = new Set(["sales", "trucks", "both"]);
@@ -1850,10 +1859,23 @@ function upsertCloudReportRecipients(
     const email = nullableStringValue(row.email);
     const whatsapp = nullableStringValue(row.whatsapp_phone);
     if (!email && !whatsapp) continue;
+    // Nuvem sem a coluna deleted_at (migracao ainda nao aplicada) nao tem como
+    // dizer que a linha foi excluida — nem que continua viva. Nessa janela a
+    // exclusao local e que vale: repetir o proprio tombstone deixa apagado o que
+    // foi apagado aqui, em vez de o pull desfazer a exclusao do operador.
+    const localDeletedAt = (findLocal.get(id) as { deleted_at: string | null } | undefined)
+      ?.deleted_at;
+    const deletedAt =
+      "deleted_at" in row ? isoStringValue(row.deleted_at) : (localDeletedAt ?? null);
     const conflict = findConflict.get(companyId, email, email, whatsapp, whatsapp) as
-      | { id: string }
+      | { id: string; deleted_at: string | null; needs_push: number }
       | undefined;
-    if (conflict && conflict.id !== id) continue;
+    if (conflict && conflict.id !== id) {
+      const blockedBySyncedTombstone =
+        Boolean(conflict.deleted_at) && conflict.needs_push === 0 && !deletedAt;
+      if (!blockedBySyncedTombstone) continue;
+      dropSyncedTombstone.run(conflict.id);
+    }
     const frequency = stringValue(row.schedule_frequency);
     const type = stringValue(row.report_types);
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
@@ -1873,7 +1895,8 @@ function upsertCloudReportRecipients(
       booleanToSql(row.is_active, true),
       updatedAt,
       isoStringValue(row.created_at) || updatedAt,
-      updatedAt
+      updatedAt,
+      deletedAt
     );
     count++;
   }
@@ -5500,7 +5523,9 @@ export async function processFiscalBillingNow(
 
 // Empurra os destinatarios de relatorio pendentes (needs_push) para o Supabase,
 // para o envio automatico (daily-report-email) enxergar quem recebe o que.
-// Destinatarios removidos localmente sao enviados como inativos.
+// Destinatario removido localmente vai como inativo E com o deleted_at preenchido:
+// o inativo tira ele do envio, o tombstone e o que impede o pull seguinte (aqui e
+// nas outras balancas) de trazer de volta o que foi excluido.
 export async function pushPendingReportRecipients(
   database: DesktopDatabase,
   identity: LocalDesktopIdentity
@@ -5531,6 +5556,7 @@ export async function pushPendingReportRecipients(
     financial_schedule_time: row.financial_schedule_time,
     display_name: row.display_name,
     is_active: row.is_active === 1 && row.deleted_at === null,
+    deleted_at: row.deleted_at,
     updated_at: new Date().toISOString()
   }));
 

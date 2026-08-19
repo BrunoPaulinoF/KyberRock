@@ -4,6 +4,7 @@ import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase } from "../database/sqlite";
 import {
   createReportRecipient,
+  deleteReportRecipient,
   listReportRecipients,
   updateReportRecipient
 } from "./report-recipients";
@@ -202,6 +203,57 @@ describe("report recipients", () => {
 
       const updated = updateReportRecipient(db, other.id, { financialScheduleTime: "18:00" });
       expect(updated.financialScheduleTime).toBe("18:00");
+    } finally {
+      db.close();
+    }
+  });
+
+  // A exclusao e soft delete e os indices unicos contam a linha apagada: sem
+  // reaproveitar o cadastro excluido, recadastrar o mesmo contato logo depois de
+  // exclui-lo morria em "UNIQUE constraint failed".
+  it("recadastra um contato excluido reaproveitando o cadastro apagado", () => {
+    const db = createDatabase();
+
+    try {
+      const original = createReportRecipient(db, {
+        companyId: "comp-1",
+        email: "financeiro@pedreira.com.br",
+        whatsappPhone: "(11) 99999-9999",
+        sendWhatsapp: true,
+        displayName: "Financeiro"
+      });
+      deleteReportRecipient(db, original.id);
+      expect(listReportRecipients(db, "comp-1")).toHaveLength(0);
+
+      const again = createReportRecipient(db, {
+        companyId: "comp-1",
+        email: "financeiro@pedreira.com.br",
+        whatsappPhone: "(11) 99999-9999",
+        sendWhatsapp: true,
+        displayName: "Financeiro (novo)"
+      });
+
+      // Mesmo id: a linha correspondente na nuvem volta a viver em vez de brigar
+      // pelo indice unico com uma segunda linha do mesmo e-mail.
+      expect(again.id).toBe(original.id);
+      expect(again.displayName).toBe("Financeiro (novo)");
+      expect(listReportRecipients(db, "comp-1")).toMatchObject([
+        { id: original.id, email: "financeiro@pedreira.com.br", isActive: true }
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ainda recusa um e-mail em uso por um destinatario ativo", () => {
+    const db = createDatabase();
+
+    try {
+      createReportRecipient(db, { companyId: "comp-1", email: "financeiro@pedreira.com.br" });
+
+      expect(() =>
+        createReportRecipient(db, { companyId: "comp-1", email: "financeiro@pedreira.com.br" })
+      ).toThrow("Ja existe um destinatario com esse e-mail.");
     } finally {
       db.close();
     }
