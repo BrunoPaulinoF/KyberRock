@@ -289,6 +289,59 @@ export function ensureReportRecipientsTable(database: DesktopDatabase): void {
   database.exec(createIndexesSql);
 }
 
+/**
+ * Destinatario apagado (soft delete) que ainda segura este e-mail/WhatsApp.
+ *
+ * UNIQUE(company_id, email) e o indice unico do WhatsApp contam tambem a linha
+ * apagada: sem reaproveitar o tombstone, recadastrar um contato recem-excluido
+ * morria em "UNIQUE constraint failed". Reaproveitar o MESMO id tambem e o que
+ * ressuscita a linha correspondente na nuvem, em vez de brigar com ela pelo
+ * indice unico de la. Exclusao ainda nao sincronizada vem primeiro: e a linha
+ * que a nuvem ainda enxerga como viva.
+ */
+function findRecipientTombstone(
+  database: DesktopDatabase,
+  companyId: string,
+  email: string | null,
+  whatsappPhone: string | null
+): { id: string } | undefined {
+  return database
+    .prepare(
+      `SELECT id FROM report_recipients
+       WHERE company_id = ?
+         AND deleted_at IS NOT NULL
+         AND ((? IS NOT NULL AND email = ?) OR (? IS NOT NULL AND whatsapp_phone = ?))
+       ORDER BY needs_push DESC, updated_at DESC
+       LIMIT 1`
+    )
+    .get(companyId, email, email, whatsappPhone, whatsappPhone) as { id: string } | undefined;
+}
+
+/**
+ * Solta o e-mail/WhatsApp preso por OUTRO tombstone ja sincronizado (a exclusao
+ * dele ja chegou na nuvem, entao a linha local nao guarda mais nada) — o que
+ * sobra do caso em que o contato reaproveitado estava dividido entre dois
+ * cadastros excluidos.
+ */
+function releaseSyncedTombstones(
+  database: DesktopDatabase,
+  companyId: string,
+  keepId: string,
+  email: string | null,
+  whatsappPhone: string | null
+): void {
+  database
+    .prepare(
+      `DELETE FROM report_recipients
+       WHERE company_id = ?
+         AND deleted_at IS NOT NULL
+         AND needs_push = 0
+         AND id <> ?
+         AND ((? IS NOT NULL AND email = ?) OR (? IS NOT NULL AND whatsapp_phone = ?))`
+    )
+    .run(companyId, keepId, email, email, whatsappPhone, whatsappPhone);
+}
+
 export function listReportRecipients(
   database: DesktopDatabase,
   companyId: string
@@ -348,7 +401,42 @@ export function createReportRecipient(
     throw new Error("Ja existe um destinatario com esse WhatsApp.");
   }
 
-  const id = randomUUID();
+  const tombstone = findRecipientTombstone(database, input.companyId, email, whatsappPhone);
+  const id = tombstone?.id ?? randomUUID();
+  releaseSyncedTombstones(database, input.companyId, id, email, whatsappPhone);
+
+  if (tombstone) {
+    database
+      .prepare(
+        `UPDATE report_recipients
+         SET email = ?, whatsapp_phone = ?, send_email = ?, send_whatsapp = ?,
+             schedule_frequency = ?, schedule_time = ?, report_types = ?, send_financial = ?,
+             financial_schedule_time = ?, display_name = ?, is_active = ?,
+             deleted_at = NULL, needs_push = 1, sync_status = 'pending', last_error = NULL,
+             updated_at = ?
+         WHERE id = ?`
+      )
+      .run(
+        email,
+        whatsappPhone,
+        sendEmail ? 1 : 0,
+        sendWhatsapp ? 1 : 0,
+        scheduleFrequency,
+        scheduleTime,
+        reportTypes,
+        sendFinancial ? 1 : 0,
+        financialScheduleTime,
+        displayName,
+        isActive,
+        timestamp,
+        id
+      );
+
+    return mapRow(
+      database.prepare("SELECT * FROM report_recipients WHERE id = ?").get(id) as ReportRecipientRow
+    );
+  }
+
   database
     .prepare(
       `INSERT INTO report_recipients (
@@ -493,6 +581,13 @@ export function updateReportRecipient(
   }
 
   if (sets.length > 0) {
+    releaseSyncedTombstones(
+      database,
+      existing.company_id,
+      id,
+      normalizedCandidate.email,
+      normalizedCandidate.whatsappPhone
+    );
     sets.push("needs_push = 1");
     sets.push("sync_status = 'pending'");
     sets.push("last_error = NULL");
