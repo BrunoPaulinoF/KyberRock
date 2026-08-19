@@ -4200,3 +4200,178 @@ Deno.test("check_order_billing lista a OS pelo modulo de servicos", async () => 
   assertObjectMatch(results[0], { operationId: "op-1", billed: true, orderNumber: "000044" });
   assertObjectMatch(results[3], { operationId: "op-4", billed: false, orderNumber: "000041" });
 });
+
+// O nome do campo de ordenacao MUDA entre os modulos do OMIE, e mandar o do outro derruba a
+// chamada inteira ("Tag [ORDEM_DECRESCENTE] nao faz parte da estrutura do tipo complexo
+// [pvpListarRequest]"). Foi assim que a conferencia de faturamento de pedidos passou mais de
+// um dia no caminho caro em producao. Este teste existe para isso nao voltar calado.
+Deno.test(
+  "check_order_billing manda o campo de ordem que cada modulo do OMIE conhece",
+  async () => {
+    const { ids, fixtures } = await billingDependencies("listagem-ordem");
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarPedidos") {
+        return { pagina: 1, pedido_venda_produto: [salesListingRecord(9004, "60", "1004")] };
+      }
+      if (input.call === "ListarOS") {
+        return {
+          pagina: 1,
+          osCadastro: [{ Cabecalho: { nCodOS: 7004, cNumOS: "44", cEtapa: "60" } }]
+        };
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    await postOmieSync(
+      {
+        deviceId: ids.deviceId,
+        deviceToken: ids.token,
+        action: "check_order_billing",
+        payload: {
+          orders: [
+            { operationId: "op-1", orderType: "sales", omieOrderId: 9004 },
+            { operationId: "op-2", orderType: "sales", omieOrderId: 9003 },
+            { operationId: "op-3", orderType: "sales", omieOrderId: 9002 },
+            { operationId: "op-4", orderType: "sales", omieOrderId: 9001 },
+            { operationId: "op-5", orderType: "service", omieOrderId: 7004 },
+            { operationId: "op-6", orderType: "service", omieOrderId: 7003 },
+            { operationId: "op-7", orderType: "service", omieOrderId: 7002 },
+            { operationId: "op-8", orderType: "service", omieOrderId: 7001 }
+          ]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    // Vendas (pvpListarRequest): so `ordem_descrescente`, com o "s" a mais do proprio OMIE.
+    const salesParam = getParam(omieQueue.requests.find((r) => r.call === "ListarPedidos")!);
+    assertEquals(salesParam.ordem_descrescente, "S");
+    assertEquals(salesParam.ordem_decrescente, undefined);
+
+    // Servicos (osListarRequest): so `ordem_decrescente`, escrito certo.
+    const serviceParam = getParam(omieQueue.requests.find((r) => r.call === "ListarOS")!);
+    assertEquals(serviceParam.ordem_decrescente, "S");
+    assertEquals(serviceParam.ordem_descrescente, undefined);
+  }
+);
+
+// O campo de ordem decrescente de Vendas esta marcado como DEPRECATED na documentacao do
+// OMIE: ele pode ser aceito e ignorado, e ai a pagina 1 traz o cadastro mais VELHO. A
+// varredura tem de achar a outra ponta sozinha, senao gastaria as 10 paginas sem chegar
+// perto do movimento de hoje.
+Deno.test(
+  "check_order_billing vira a varredura quando o OMIE lista em ordem crescente",
+  async () => {
+    const { ids, fixtures } = await billingDependencies("listagem-crescente");
+    const pages: Record<number, unknown[]> = {
+      1: [
+        salesListingRecord(1001, "50", "1"),
+        salesListingRecord(1002, "50", "2"),
+        salesListingRecord(1003, "50", "3")
+      ],
+      4: [
+        salesListingRecord(9001, "50", "1001"),
+        salesListingRecord(9002, "60", "1002"),
+        salesListingRecord(9003, "50", "1003"),
+        salesListingRecord(9004, "60", "1004")
+      ]
+    };
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarPedidos") {
+        const page = Number(getParam(input).pagina);
+        return { pagina: page, total_de_paginas: 4, pedido_venda_produto: pages[page] ?? [] };
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: ids.deviceId,
+        deviceToken: ids.token,
+        action: "check_order_billing",
+        payload: {
+          orders: [
+            { operationId: "op-1", orderType: "sales", omieOrderId: 9001 },
+            { operationId: "op-2", orderType: "sales", omieOrderId: 9002 },
+            { operationId: "op-3", orderType: "sales", omieOrderId: 9003 },
+            { operationId: "op-4", orderType: "sales", omieOrderId: 9004 }
+          ]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    // Pagina 1 (velha) e, direto, a ultima — onde a ordem crescente guarda o movimento novo.
+    assertEquals(
+      omieQueue.requests.filter((r) => r.call === "ListarPedidos").map((r) => getParam(r).pagina),
+      [1, 4]
+    );
+    assertEquals(omieQueue.requests.filter((r) => r.call === "ConsultarPedido").length, 0);
+    const results = response.results as Array<Record<string, unknown>>;
+    assertEquals(
+      results.map((r) => [r.operationId, r.billed]),
+      [
+        ["op-1", false],
+        ["op-2", true],
+        ["op-3", false],
+        ["op-4", true]
+      ]
+    );
+  }
+);
+
+// Ordem crescente e sem `total_de_paginas`: nao da para achar a ponta nova da listagem.
+// Melhor largar a listagem depois de UMA chamada do que varrer o cadastro inteiro de tras
+// para frente — a consulta individual e exata, so mais cara por documento.
+Deno.test(
+  "check_order_billing larga a listagem crescente que nao diz o total de paginas",
+  async () => {
+    const { ids, fixtures } = await billingDependencies("listagem-crescente-cega");
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarPedidos") {
+        return {
+          pagina: Number(getParam(input).pagina),
+          pedido_venda_produto: [
+            salesListingRecord(1001, "50", "1"),
+            salesListingRecord(1002, "50", "2"),
+            salesListingRecord(1003, "50", "3")
+          ]
+        };
+      }
+      if (input.call === "ConsultarPedido") {
+        const codigo = Number(getParam(input).codigo_pedido);
+        return {
+          pedido_venda_produto: {
+            cabecalho: { codigo_pedido: codigo, numero_pedido: String(codigo), etapa: "60" }
+          }
+        };
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: ids.deviceId,
+        deviceToken: ids.token,
+        action: "check_order_billing",
+        payload: {
+          orders: [
+            { operationId: "op-1", orderType: "sales", omieOrderId: 9001 },
+            { operationId: "op-2", orderType: "sales", omieOrderId: 9002 },
+            { operationId: "op-3", orderType: "sales", omieOrderId: 9003 },
+            { operationId: "op-4", orderType: "sales", omieOrderId: 9004 }
+          ]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    assertEquals(omieQueue.requests.filter((r) => r.call === "ListarPedidos").length, 1);
+    assertEquals(omieQueue.requests.filter((r) => r.call === "ConsultarPedido").length, 4);
+    const results = response.results as Array<Record<string, unknown>>;
+    assertEquals(
+      results.every((r) => r.found === true && r.billed === true),
+      true
+    );
+  }
+);
