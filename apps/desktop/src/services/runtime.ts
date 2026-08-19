@@ -65,6 +65,7 @@ import {
   startOmieQueueDrainScheduler,
   type OmieQueueDrainSchedulerHandle
 } from "./omie-queue-scheduler.js";
+import { readUpdateChannel, type DesktopUpdateChannel } from "./update-channel.js";
 import {
   checkCustomerOmieReadiness,
   type OmieCustomerReadiness,
@@ -2086,6 +2087,16 @@ export class DesktopRuntime {
 
   getDesktopAccessStatus(): DesktopAccessStatus {
     return getStoredDesktopAccessStatus(this.database);
+  }
+
+  /**
+   * Canal de atualizacao desta balanca (`latest` = producao, `beta` = teste).
+   * Quem define e o painel administrativo; o `desktop-status` traz o valor e o
+   * `main.ts` aplica no `electron-updater`. Ler daqui e nao do banco direto
+   * mantem o `main.ts` sem acesso ao SQLite.
+   */
+  getUpdateChannel(): DesktopUpdateChannel {
+    return readUpdateChannel(this.database);
   }
 
   async validateDesktopAccess(

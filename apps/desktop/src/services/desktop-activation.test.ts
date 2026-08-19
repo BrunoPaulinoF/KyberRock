@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { activateDesktop, logoutDesktop, validateDesktopAccess } from "./desktop-activation";
+import { readUpdateChannel } from "./update-channel";
 import { readStoredSupabaseConfig, writeStoredSupabaseConfig } from "./supabase-sync";
 
 const invokeMock = vi.fn();
@@ -264,6 +265,115 @@ describe("desktop activation", () => {
 
     expect(recovered.canOperate).toBe(true);
     expect(recovered.lastError).toBeNull();
+  });
+
+  describe("canal de atualizacao vindo do painel", () => {
+    function activatedDatabase(): DesktopDatabase {
+      const database = createDatabase();
+      for (const [key, value] of [
+        ["cloud_company_id", "company-1"],
+        ["cloud_unit_id", "unit-1"],
+        ["cloud_device_id", "desktop-device-1"],
+        ["cloud_device_token", "device-token-1"]
+      ] as Array<[string, string]>) {
+        database
+          .prepare(
+            `INSERT INTO local_settings (key, value_json, updated_at) VALUES (?, ?, ?)
+             ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json`
+          )
+          .run(key, JSON.stringify(value), "2026-08-19T10:00:00.000Z");
+      }
+      return database;
+    }
+
+    /** `omitido` distingue "a nuvem nao mandou o campo" de "mandou null". */
+    const omitido = Symbol("sem updateChannel");
+
+    function approvedWith(updateChannel: unknown = omitido) {
+      const data: Record<string, unknown> = {
+        status: "approved",
+        allowed: true,
+        message: "Acesso aprovado. Sistema liberado.",
+        checkedAt: "2026-08-19T10:05:00.000Z"
+      };
+      if (updateChannel !== omitido) data.updateChannel = updateChannel;
+      return { data, error: null };
+    }
+
+    it("balanca nova comeca em producao", async () => {
+      const database = activatedDatabase();
+      invokeMock.mockResolvedValueOnce(approvedWith());
+
+      await validateDesktopAccess(database, { internetOnline: true, force: true });
+
+      expect(readUpdateChannel(database)).toBe("latest");
+    });
+
+    it("o painel move a balanca para o anel de teste", async () => {
+      const database = activatedDatabase();
+      invokeMock.mockResolvedValueOnce(approvedWith("beta"));
+
+      await validateDesktopAccess(database, { internetOnline: true, force: true });
+
+      expect(readUpdateChannel(database)).toBe("beta");
+    });
+
+    it("o painel devolve a balanca para producao", async () => {
+      const database = activatedDatabase();
+      invokeMock.mockResolvedValueOnce(approvedWith("beta"));
+      await validateDesktopAccess(database, { internetOnline: true, force: true });
+
+      invokeMock.mockResolvedValueOnce(approvedWith("latest"));
+      await validateDesktopAccess(database, { internetOnline: true, force: true });
+
+      expect(readUpdateChannel(database)).toBe("latest");
+    });
+
+    it("nuvem que NAO manda o campo nao rebaixa a maquina de teste", async () => {
+      // O caso que motivou a regra: entre o deploy da Edge Function e a
+      // aplicacao da migracao, a resposta vem sem `updateChannel`. Gravar o
+      // padrao ali tiraria do anel de teste a maquina que o administrador
+      // acabou de colocar nele.
+      const database = activatedDatabase();
+      invokeMock.mockResolvedValueOnce(approvedWith("beta"));
+      await validateDesktopAccess(database, { internetOnline: true, force: true });
+
+      invokeMock.mockResolvedValueOnce(approvedWith());
+      await validateDesktopAccess(database, { internetOnline: true, force: true });
+      invokeMock.mockResolvedValueOnce(approvedWith(null));
+      await validateDesktopAccess(database, { internetOnline: true, force: true });
+
+      expect(readUpdateChannel(database)).toBe("beta");
+    });
+
+    it("valor estranho da nuvem cai em producao, nunca em teste", async () => {
+      const database = activatedDatabase();
+      invokeMock.mockResolvedValueOnce(approvedWith("canal-inventado"));
+
+      await validateDesktopAccess(database, { internetOnline: true, force: true });
+
+      expect(readUpdateChannel(database)).toBe("latest");
+    });
+
+    it("acesso negado nao mexe no canal", async () => {
+      const database = activatedDatabase();
+      invokeMock.mockResolvedValueOnce(approvedWith("beta"));
+      await validateDesktopAccess(database, { internetOnline: true, force: true });
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          status: "payment_blocked",
+          allowed: false,
+          message: "Acesso bloqueado por falta de pagamento.",
+          updateChannel: "latest",
+          checkedAt: "2026-08-19T10:10:00.000Z"
+        },
+        error: null
+      });
+      await validateDesktopAccess(database, { internetOnline: true, force: true });
+
+      expect(readUpdateChannel(database)).toBe("beta");
+    });
   });
 
   it("keeps supabase connection settings after logout so the desktop can be reactivated", () => {

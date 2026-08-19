@@ -8,6 +8,7 @@ import {
   writeStoredSupabaseConfig
 } from "./supabase-sync.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
+import { writeUpdateChannel } from "./update-channel.js";
 import { upsertUnitDevices, type CloudUnitDevice } from "./unit-devices.js";
 
 export const DESKTOP_ACCESS_GRACE_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
@@ -105,8 +106,35 @@ interface DesktopStatusResponse {
   deviceName?: string;
   deviceColor?: string | null;
   deviceNumber?: number | null;
+  /**
+   * Anel de atualizacao definido no painel (`latest` = producao, `beta` = teste).
+   * Ausente quando a nuvem ainda nao conhece o campo — e nesse caso o canal
+   * gravado localmente NAO e tocado (ver `applyUpdateChannelFromCloud`).
+   */
+  updateChannel?: string | null;
   unitDevices?: CloudUnitDevice[];
   checkedAt?: string;
+}
+
+/**
+ * Guarda o canal que o painel definiu para esta balanca.
+ *
+ * So grava quando o campo VEM na resposta. Nuvem antiga (ou leitura de
+ * emergencia, sem a coluna) omite o campo, e sobrescrever com o padrao ali
+ * devolveria para producao uma balanca que o administrador acabou de colocar em
+ * teste. Best-effort: falha aqui nunca pode derrubar a validacao de acesso, que
+ * e o que libera a operacao.
+ */
+function applyUpdateChannelFromCloud(
+  database: DesktopDatabase,
+  updateChannel: string | null | undefined
+): void {
+  if (updateChannel === undefined || updateChannel === null) return;
+  try {
+    writeUpdateChannel(database, updateChannel);
+  } catch {
+    // Ignora: o canal atual continua valendo.
+  }
 }
 
 export async function activateDesktop(
@@ -290,6 +318,7 @@ export async function validateDesktopAccess(
     saveAccessStatus(database, status, message, checkedAt);
     if (data?.allowed) {
       writeLocalSetting(database, "last_license_check_at", checkedAt, checkedAt);
+      applyUpdateChannelFromCloud(database, data.updateChannel);
       // Atualiza a legenda multi-desktop (nome + cor de cada computador da
       // unidade). Best-effort: nunca derruba a validacao de acesso.
       if (Array.isArray(data.unitDevices) && data.unitDevices.length > 0) {
