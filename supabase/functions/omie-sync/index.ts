@@ -4305,11 +4305,14 @@ async function consultOmieOrderBilling(
 /**
  * Varre a listagem de pedidos (ou de OS) do OMIE atras dos documentos procurados.
  *
- * A listagem vem ordenada do codigo MAIOR para o menor — ou seja, do mais novo para o mais
- * velho —, e e isso que torna a varredura barata: os fechamentos de hoje estao na primeira
- * pagina. A varredura para em tres situacoes: achou todos, a pagina ja passou do documento
- * mais antigo que se procura (dali para tras so tem coisa mais velha), ou bateu no teto de
- * paginas.
+ * A varredura sai do documento mais novo e caminha para o mais velho — e isso que a torna
+ * barata: os fechamentos de hoje estao logo na primeira pagina lida. Ela para em tres
+ * situacoes: achou todos, a pagina ja passou do documento mais antigo que se procura (dali
+ * para tras so tem coisa mais velha), ou bateu no teto de paginas.
+ *
+ * Qual pagina e a "mais nova" depende da ordem que o OMIE devolver, e ela nao e garantida:
+ * o pedido de ordem decrescente esta marcado como DEPRECATED no modulo de Vendas. Por isso
+ * a ordem e conferida na primeira pagina, e nao presumida.
  *
  * Mapa vazio nao e erro: significa "a listagem nao resolveu", e quem chama cai na consulta
  * individual. E o que mantem a conferencia correta mesmo se o OMIE mudar a listagem.
@@ -4323,24 +4326,31 @@ async function listOmieOrderBillingStates(
   const smallestWanted = Math.min(...wantedIds);
   const found = new Map<number, ListedBillingState>();
 
-  for (let page = 1; page <= ORDER_LISTING_MAX_PAGES; page++) {
-    let records: unknown[];
+  // A varredura anda SEMPRE do documento mais novo para o mais velho — e so isso a torna
+  // barata. Com a listagem decrescente esse caminho e a pagina 1 em diante; quando o OMIE
+  // devolve crescente, e a ultima pagina para tras (ver a virada logo abaixo).
+  let nextPage = 1;
+  let step = 1;
+
+  for (let visited = 0; visited < ORDER_LISTING_MAX_PAGES; visited++) {
+    const pageNumber = nextPage;
+    let page: OrderListingPage;
     try {
-      records = await listOmieOrdersPage(credentials, orderType, page);
+      page = await listOmieOrdersPage(credentials, orderType, pageNumber);
     } catch (error) {
       // Listagem indisponivel (campo recusado, instabilidade): nao derruba a conferencia,
       // so a devolve para o caminho da consulta individual.
       console.error(
-        `[omie] listagem de ${orderType === "sales" ? "pedidos" : "OS"} falhou na pagina ${page}; ` +
+        `[omie] listagem de ${orderType === "sales" ? "pedidos" : "OS"} falhou na pagina ${pageNumber}; ` +
           "conferindo o faturamento por consulta individual",
         error
       );
       break;
     }
-    if (records.length === 0) break;
+    if (page.records.length === 0) break;
 
     let pageSmallestId = Number.POSITIVE_INFINITY;
-    for (const record of records) {
+    for (const record of page.records) {
       const id =
         orderType === "sales" ? extractSalesOrderId(record) : extractServiceOrderId(record);
       if (id === null) continue;
@@ -4355,26 +4365,65 @@ async function listOmieOrderBillingStates(
       if (found.size === wanted.size) return found;
     }
 
+    // A virada: a primeira pagina revela em que ordem o OMIE de fato respondeu. O campo de
+    // ordem decrescente de Vendas esta marcado como DEPRECATED, entao ele pode ser aceito e
+    // ignorado — e ai a pagina 1 traz os documentos mais VELHOS do cadastro, longe do
+    // movimento de hoje. Quando isso acontece a varredura segue pela outra ponta: da ultima
+    // pagina para tras, que e onde a ordem crescente guarda os fechamentos recentes.
+    if (visited === 0 && isOrderListingAscending(page.records, orderType)) {
+      // Sem `total_de_paginas` nao da para achar essa ponta: a listagem nao serve, e a
+      // conferencia cai na consulta individual — exata, so mais cara por documento.
+      if (page.totalPages === null || page.totalPages <= 1) break;
+      nextPage = page.totalPages;
+      step = -1;
+      continue;
+    }
+
     // Passou do mais antigo procurado: continuar so gastaria chamada com documento velho.
     if (pageSmallestId <= smallestWanted) break;
+
+    nextPage = pageNumber + step;
+    // Andando para tras, a pagina 1 ja foi lida na virada.
+    if (nextPage < (step === -1 ? 2 : 1)) break;
   }
 
   return found;
 }
 
 /**
- * Uma pagina da listagem, do codigo maior para o menor.
+ * O campo que pede a ordem decrescente — o nome MUDA entre os dois modulos do OMIE.
  *
- * A ordem decrescente e o que faz a varredura valer a pena, entao ela nao tem plano B: se o
- * OMIE recusar os campos de ordenacao, a listagem inteira e abandonada (o erro sobe) e a
- * conferencia cai na consulta individual. Listar em ordem crescente comecaria pelo pedido
- * mais antigo do cadastro e gastaria as 10 paginas sem chegar perto do movimento de hoje.
+ * Vendas (`pvpListarRequest`, de ListarPedidos) so conhece `ordem_descrescente`, com o
+ * "s" a mais; o erro de digitacao e do proprio OMIE e esta assim na documentacao dele.
+ * Servicos (`osListarRequest`, de ListarOS) conhece `ordem_decrescente`, escrito certo.
+ * Mandar o nome do outro modulo nao e ignorado: derruba a chamada INTEIRA com
+ * "Tag [...] nao faz parte da estrutura do tipo complexo", que foi o que manteve a
+ * conferencia de faturamento de pedidos no caminho caro por mais de um dia.
+ */
+function orderListingSortParam(isSales: boolean): Record<string, string> {
+  return isSales ? { ordem_descrescente: "S" } : { ordem_decrescente: "S" };
+}
+
+/** Uma pagina da listagem, com o que o envelope diz sobre o tamanho dela. */
+type OrderListingPage = {
+  records: unknown[];
+  /** `total_de_paginas` do envelope — a ponta nova da listagem quando ela vem crescente. */
+  totalPages: number | null;
+};
+
+/**
+ * Uma pagina da listagem.
+ *
+ * Pede a ordem decrescente, mas nao toma a resposta como garantida: no modulo de Vendas o
+ * campo esta marcado como DEPRECATED na documentacao do OMIE, entao ele pode ser aceito e
+ * ignorado. Quem chama confere a ordem que de fato veio (ver `listOmieOrderBillingStates`).
+ * Se o OMIE recusar a chamada, o erro sobe e a conferencia cai na consulta individual.
  */
 async function listOmieOrdersPage(
   credentials: OmieCredentials,
   orderType: "sales" | "service",
   page: number
-): Promise<unknown[]> {
+): Promise<OrderListingPage> {
   const isSales = orderType === "sales";
   const response = await callOmie<unknown, unknown>(
     credentials,
@@ -4385,10 +4434,41 @@ async function listOmieOrdersPage(
       registros_por_pagina: ORDER_LISTING_PAGE_SIZE,
       apenas_importado_api: "N",
       ordenar_por: "CODIGO",
-      ordem_decrescente: "S"
+      ...orderListingSortParam(isSales)
     }
   );
-  return extractOrderListRecords(response);
+  return {
+    records: extractOrderListRecords(response),
+    totalPages: extractOrderListTotalPages(response)
+  };
+}
+
+/** `total_de_paginas` do envelope da listagem, quando o OMIE o devolve. */
+function extractOrderListTotalPages(response: unknown): number | null {
+  if (!response || typeof response !== "object") return null;
+  return toIntOrNull((response as Record<string, unknown>).total_de_paginas);
+}
+
+/**
+ * A pagina veio do codigo MENOR para o maior?
+ *
+ * So responde "sim" com prova: precisa de um par em ordem crescente e de nenhum par
+ * decrescente. Pagina de um registro so — ou de registros cujo codigo nao se le — nao
+ * prova nada, e ai a varredura segue reto, como sempre seguiu.
+ */
+function isOrderListingAscending(records: unknown[], orderType: "sales" | "service"): boolean {
+  let previous: number | null = null;
+  let sawIncrease = false;
+  for (const record of records) {
+    const id = orderType === "sales" ? extractSalesOrderId(record) : extractServiceOrderId(record);
+    if (id === null) continue;
+    if (previous !== null) {
+      if (id < previous) return false;
+      if (id > previous) sawIncrease = true;
+    }
+    previous = id;
+  }
+  return sawIncrease;
 }
 
 /**
