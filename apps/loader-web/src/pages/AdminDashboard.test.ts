@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildDeleteConfirmationMessage,
   buildDeleteRequest,
-  matchesCadastroSearch
+  matchesCadastroSearch,
+  toDeviceUpdateChannel
 } from "./AdminDashboard";
 
 describe("buildDeleteConfirmationMessage", () => {
@@ -139,5 +140,21 @@ describe("matchesCadastroSearch", () => {
   it("ignora campo vazio ou ausente", () => {
     expect(matchesCadastroSearch("sul", [null, undefined, "Pedreira Sul"])).toBe(true);
     expect(matchesCadastroSearch("sul", [null, undefined])).toBe(false);
+  });
+});
+
+describe("toDeviceUpdateChannel", () => {
+  it("reconhece o anel de teste", () => {
+    expect(toDeviceUpdateChannel("beta")).toBe("beta");
+    expect(toDeviceUpdateChannel(" BETA ")).toBe("beta");
+  });
+
+  it("mostra como producao tudo que nao for beta", () => {
+    // A tela nunca pode sugerir que uma balanca de cliente esta recebendo
+    // versao em avaliacao quando nao se sabe se esta: nuvem sem a migracao
+    // omite o campo, e omissao tem que aparecer como producao.
+    for (const value of ["latest", "", "   ", "Beta2", null, undefined, 1, {}]) {
+      expect(toDeviceUpdateChannel(value)).toBe("latest");
+    }
   });
 });

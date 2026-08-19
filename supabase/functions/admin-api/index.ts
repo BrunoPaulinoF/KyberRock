@@ -81,6 +81,7 @@ type AdminAction =
   | "delete_loader"
   | "toggle_device"
   | "update_device_unit"
+  | "update_device_channel"
   | "delete_device"
   | "get_ai_settings"
   | "update_ai_settings"
@@ -155,6 +156,40 @@ async function readPasswordFromVault(
   }
 }
 
+/**
+ * Aneis de atualizacao do desktop. `beta` recebe as versoes em avaliacao antes da
+ * frota; `latest` (padrao) so recebe o que ja foi liberado para producao.
+ */
+type DesktopUpdateChannel = "latest" | "beta";
+
+function normalizeUpdateChannel(value: unknown): DesktopUpdateChannel {
+  return typeof value === "string" && value.trim().toLowerCase() === "beta" ? "beta" : "latest";
+}
+
+const DEVICE_LIST_COLUMNS =
+  "id, company_id, unit_id, name, color, installation_id, is_active, last_seen_at, created_at, updated_at";
+
+/**
+ * Lista as balancas tolerando a coluna `update_channel` ainda nao existir.
+ *
+ * As Edge Functions sao implantadas pelo CI a cada push, mas as migracoes SQL sao
+ * aplicadas a parte. Sem a segunda tentativa, nessa janela o painel inteiro
+ * deixaria de carregar (a `list` faz um Promise.all e qualquer erro derruba tudo)
+ * por causa de uma coluna cosmetica.
+ */
+async function selectDevicesForList(supabase: SupabaseAdminClient) {
+  const withChannel = await supabase
+    .from("device_registrations")
+    .select(`${DEVICE_LIST_COLUMNS}, update_channel`)
+    .order("created_at", { ascending: false });
+  if (!withChannel.error) return withChannel;
+
+  return await supabase
+    .from("device_registrations")
+    .select(DEVICE_LIST_COLUMNS)
+    .order("created_at", { ascending: false });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
@@ -190,12 +225,7 @@ Deno.serve(async (req) => {
           .select("id, company_id, name, timezone, is_active, created_at, updated_at")
           .order("created_at", { ascending: false }),
         supabase.from("user_profiles").select("*").order("created_at", { ascending: false }),
-        supabase
-          .from("device_registrations")
-          .select(
-            "id, company_id, unit_id, name, color, installation_id, is_active, last_seen_at, created_at, updated_at"
-          )
-          .order("created_at", { ascending: false })
+        selectDevicesForList(supabase)
       ]);
       if (companies.error) throw companies.error;
       if (units.error) throw units.error;
@@ -206,11 +236,20 @@ Deno.serve(async (req) => {
         omie_app_key: c.omie_app_key ? maskSecret(c.omie_app_key) : null,
         omie_app_secret: c.omie_app_secret ? "********" : null
       }));
+      // Normaliza aqui para a tela nunca precisar decidir o que fazer com uma
+      // balanca cujo canal a nuvem ainda nao conhece: ela aparece em producao,
+      // que e o padrao correto.
+      const normalizedDevices = (devices.data ?? []).map((device) => ({
+        ...device,
+        update_channel: normalizeUpdateChannel(
+          (device as { update_channel?: unknown }).update_channel
+        )
+      }));
       return jsonResponse({
         companies: maskedCompanies,
         units: units.data,
         users: users.data,
-        devices: devices.data
+        devices: normalizedDevices
       });
     }
 
@@ -502,6 +541,36 @@ Deno.serve(async (req) => {
         ok: true,
         deviceNumber: typeof assignedNumber === "number" ? assignedNumber : null
       });
+    }
+
+    if (body.action === "update_device_channel") {
+      const deviceId = String(payload.deviceId ?? "");
+      if (!deviceId) {
+        return jsonResponse({ error: "Informe a balanca" }, 400);
+      }
+      // Entrar no anel de teste tem que ser explicito: qualquer valor que nao
+      // seja exatamente `beta` devolve a balanca para producao, em vez de
+      // gravar lixo numa coluna que decide o que a maquina do cliente instala.
+      const updateChannel = normalizeUpdateChannel(payload.updateChannel);
+      const { error } = await supabase
+        .from("device_registrations")
+        .update({ update_channel: updateChannel, updated_at: new Date().toISOString() })
+        .eq("id", deviceId);
+      if (error) {
+        // Migracao ainda nao aplicada: diz o que fazer em vez de estourar um
+        // erro de PostgREST cru na tela.
+        if (/update_channel/.test(error.message ?? "")) {
+          return jsonResponse(
+            {
+              error:
+                "A coluna update_channel ainda nao existe no banco. Aplique a migracao 202608190001_device_update_channel.sql e tente de novo."
+            },
+            409
+          );
+        }
+        throw error;
+      }
+      return jsonResponse({ ok: true, updateChannel });
     }
 
     if (body.action === "update_company") {

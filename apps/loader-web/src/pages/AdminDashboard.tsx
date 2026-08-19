@@ -69,12 +69,28 @@ interface LoaderUser {
   isActive: boolean;
 }
 
+/** Anel de atualizacao: `beta` recebe as versoes em avaliacao antes da frota. */
+export type DeviceUpdateChannel = "latest" | "beta";
+
+/**
+ * Le o anel que a nuvem informou.
+ *
+ * So `beta` tira a balanca de producao. Campo ausente (nuvem sem a migracao),
+ * null, ou qualquer texto inesperado aparecem como producao — a tela nunca pode
+ * sugerir que uma balanca de cliente esta recebendo versao em avaliacao quando
+ * nao se sabe se esta.
+ */
+export function toDeviceUpdateChannel(value: unknown): DeviceUpdateChannel {
+  return typeof value === "string" && value.trim().toLowerCase() === "beta" ? "beta" : "latest";
+}
+
 interface Device {
   id: string;
   companyId: string;
   unitId: string;
   name: string;
   isActive: boolean;
+  updateChannel: DeviceUpdateChannel;
   lastSeenAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -257,6 +273,7 @@ export function AdminDashboard() {
           unit_id: string;
           name: string;
           is_active: boolean;
+          update_channel?: string | null;
           last_seen_at: string | null;
           created_at: string;
           updated_at: string;
@@ -304,6 +321,7 @@ export function AdminDashboard() {
           unitId: device.unit_id,
           name: device.name,
           isActive: device.is_active,
+          updateChannel: toDeviceUpdateChannel(device.update_channel),
           lastSeenAt: device.last_seen_at,
           createdAt: device.created_at,
           updatedAt: device.updated_at
@@ -752,6 +770,34 @@ export function AdminDashboard() {
                 {unit.name}
               </option>
             ))}
+        </select>
+      )
+    },
+    {
+      key: "channel",
+      header: "Atualizacao",
+      render: (device) => (
+        <select
+          className="adm-select"
+          aria-label={`Anel de atualizacao da balanca ${device.name}`}
+          title={
+            device.updateChannel === "beta"
+              ? "Recebe as versoes em avaliacao antes da frota."
+              : "So recebe versao ja liberada para producao."
+          }
+          value={device.updateChannel}
+          onChange={(event) =>
+            void run(
+              "update_device_channel",
+              { deviceId: device.id, updateChannel: event.target.value },
+              event.target.value === "beta"
+                ? "Balanca passou para o anel de teste."
+                : "Balanca voltou para producao."
+            )
+          }
+        >
+          <option value="latest">Producao</option>
+          <option value="beta">Teste</option>
         </select>
       )
     },
