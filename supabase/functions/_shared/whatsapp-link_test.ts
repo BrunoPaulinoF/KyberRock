@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_WHATSAPP_LINK_SITE_URL,
   WHATSAPP_LINK_TTL_MINUTES,
   buildWhatsappLinkStateUrl,
   buildWhatsappLinkUrl,
@@ -8,6 +9,7 @@ import {
   generateWhatsappLinkToken,
   isWhatsappLinkToken,
   normalizeQrCodeDataUrl,
+  resolveWhatsappLinkSiteUrl,
   routeWhatsappLinkPath,
   whatsappLinkExpiresAt,
   whatsappLinkRemainingMs,
@@ -117,6 +119,23 @@ describe("buildWhatsappLinkUrl", () => {
     expect(buildWhatsappLinkUrl("https://app.pedreira.com.br/", "tok")).toBe(
       "https://app.pedreira.com.br/whatsapp/tok"
     );
+  });
+});
+
+describe("resolveWhatsappLinkSiteUrl", () => {
+  it("uses the configured address when the project sets one", () => {
+    expect(resolveWhatsappLinkSiteUrl("https://app.pedreira.com.br/")).toBe(
+      "https://app.pedreira.com.br"
+    );
+  });
+
+  it("falls back to the deployed site so a fresh install needs no manual step", () => {
+    expect(resolveWhatsappLinkSiteUrl(undefined)).toBe(DEFAULT_WHATSAPP_LINK_SITE_URL);
+    expect(resolveWhatsappLinkSiteUrl("   ")).toBe(DEFAULT_WHATSAPP_LINK_SITE_URL);
+  });
+
+  it("never points the guest at the Supabase domain", () => {
+    expect(DEFAULT_WHATSAPP_LINK_SITE_URL).not.toContain("supabase.co");
   });
 });
 

@@ -7,8 +7,9 @@
 //
 // Tudo o que decide se o link ainda vale mora aqui, puro e testado pelo vitest:
 // prazo, estado, contagem regressiva, formato do token e roteamento do caminho.
-// A Edge Function so faz banco, rede e HTML. O motivo e o de sempre -- prazo
-// calculado em dois lugares vira prazo diferente em dois lugares.
+// A Edge Function so faz banco e rede; a pagina do convidado e do loader-web. O
+// motivo e o de sempre -- prazo calculado em dois lugares vira prazo diferente
+// em dois lugares.
 
 /** Quinze minutos: o link e para usar na hora, com alguem do outro lado da linha. */
 export const WHATSAPP_LINK_TTL_MINUTES = 15;
@@ -93,6 +94,24 @@ export function isWhatsappLinkToken(value: unknown): value is string {
 
 /** Caminho da pagina do convidado dentro do site (rota do loader-web). */
 export const WHATSAPP_LINK_PAGE_PATH = "whatsapp";
+
+/**
+ * Endereco publico do loader-web hoje. Nao e segredo -- e a barra de enderecos
+ * do navegador de quem usa o site --, e por isso vive no codigo, como o
+ * `DEFAULT_SUPABASE_URL` do desktop e o destino do `/download` no nginx. Assim o
+ * link funciona numa instalacao nova sem nenhum passo manual no dashboard.
+ */
+export const DEFAULT_WHATSAPP_LINK_SITE_URL = "https://kybernan-kyber-rock.qdidmr.easypanel.host";
+
+/**
+ * Site de onde sai a pagina do convidado: o valor do ambiente manda, o padrao
+ * acima cobre o resto. Trocar de dominio e definir `KYBERROCK_SITE_URL` no
+ * projeto Supabase -- sem deploy, sem mexer no codigo.
+ */
+export function resolveWhatsappLinkSiteUrl(configured: string | undefined | null): string {
+  const trimmed = (configured ?? "").trim().replace(/\/+$/, "");
+  return trimmed || DEFAULT_WHATSAPP_LINK_SITE_URL;
+}
 
 /**
  * Endereco que o operador envia. Ele aponta para o SITE (loader-web), nao para

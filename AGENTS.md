@@ -262,9 +262,11 @@ nunca está ali.
   anti-phishing do domínio `*.supabase.co`), então a mesma página servida de lá chega ao celular
   do convidado como **código-fonte**. Só JSON atravessa esse filtro — por isso o QR vem por JSON e
   quem desenha é o site. Não mova a página de volta para a função.
-- O endereço do site vem do secret **`KYBERROCK_SITE_URL`** (nome fixo em código, valor no
-  Supabase, como os segredos do financeiro). Sem ele a função **recusa** criar o link, com o
-  motivo na tela — melhor que devolver um endereço que não abre em lugar nenhum.
+- O endereço do site tem um padrão no código (`DEFAULT_WHATSAPP_LINK_SITE_URL`, o loader-web em
+  produção) e um override por ambiente, **`KYBERROCK_SITE_URL`**. Não é segredo — é a barra de
+  endereços de quem usa o site —, então segue a mesma convenção do `DEFAULT_SUPABASE_URL` do
+  desktop e do destino do `/download` no nginx: instalação nova funciona sem passo manual, e
+  trocar de domínio é definir a variável no projeto Supabase, sem deploy.
 - **A credencial da UAZAPI nunca chega ao navegador**: quem fala com a UAZAPI é a função, com o
   token que a pedreira já empurrou para `report_channel_settings`. O visitante recebe só a imagem
   do QR. O banco guarda apenas o **hash** do token do link — o valor em claro existe só na URL.

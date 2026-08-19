@@ -6,6 +6,7 @@ import {
   buildWhatsappLinkUrl,
   generateWhatsappLinkToken,
   normalizeQrCodeDataUrl,
+  resolveWhatsappLinkSiteUrl,
   routeWhatsappLinkPath,
   whatsappLinkExpiresAt,
   whatsappLinkRemainingMs,
@@ -50,7 +51,7 @@ import {
 
 const LINKS_TABLE = "whatsapp_connection_links";
 const CHANNEL_SETTINGS_TABLE = "report_channel_settings";
-/** Secret com o endereco publico do loader-web (ex.: https://app.suaempresa.com.br). */
+/** Override do endereco publico do loader-web, quando o site trocar de dominio. */
 const SITE_URL_ENV = "KYBERROCK_SITE_URL";
 const UAZAPI_TIMEOUT_MS = 20_000;
 
@@ -115,14 +116,9 @@ function serviceClient(): SupabaseClient {
   return client as unknown as SupabaseClient;
 }
 
-/**
- * Endereco publico do site (loader-web), de onde sai a pagina do convidado.
- * Nome fixo no codigo, valor no secret do Supabase -- mesma convencao dos
- * segredos do financeiro. Sem ele nao ha link para montar, e recusar com o
- * motivo e melhor que devolver um endereco que abre em lugar nenhum.
- */
+/** Site de onde sai a pagina do convidado (env manda, padrao do repo cobre). */
 function siteUrl(): string {
-  return (Deno.env.get(SITE_URL_ENV) ?? "").trim().replace(/\/+$/, "");
+  return resolveWhatsappLinkSiteUrl(Deno.env.get(SITE_URL_ENV));
 }
 
 // --- UAZAPI ----------------------------------------------------------------
@@ -228,16 +224,6 @@ async function revokeActiveLinks(
 }
 
 async function handleCreate(supabase: SupabaseClient, device: DeviceRow): Promise<Response> {
-  const site = siteUrl();
-  if (!site) {
-    return jsonResponse(
-      {
-        error: `O endereco do site nao esta configurado na nuvem (secret ${SITE_URL_ENV}). Fale com o suporte: sem ele o link nao tem para onde apontar.`
-      },
-      503
-    );
-  }
-
   const settings = await readChannelSettings(supabase, device.company_id);
   if (!settings) {
     // Sem a configuracao na nuvem o link abriria numa pagina que nao tem como
@@ -288,7 +274,7 @@ async function handleCreate(supabase: SupabaseClient, device: DeviceRow): Promis
 
   return jsonResponse({
     id: (data as { id: string }).id,
-    url: buildWhatsappLinkUrl(site, token),
+    url: buildWhatsappLinkUrl(siteUrl(), token),
     createdAt: nowIso,
     expiresAt,
     ttlMinutes: WHATSAPP_LINK_TTL_MINUTES
