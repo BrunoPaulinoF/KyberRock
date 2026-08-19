@@ -248,18 +248,53 @@ Every OMIE call uses a key of the form `kyberrock:{unitId}:{operationId}:{action
 
 ## Desktop versioning
 
-**Automated (default).** `.github/workflows/desktop-release.yml` builds and publishes the
-Windows installer to **GitHub Releases** on every push to `main` that touches `apps/desktop/**`,
-`packages/**` or the root manifest (also runnable via **workflow_dispatch**). The pipeline:
+**Compilar deixou de ser distribuir.** Um merge na `main` gera um build que fica **parado**: a
+release nasce como _pre-release_ com um metadado de nome neutro (`build.yml`) que **canal nenhum
+segue**. Distribuir e um ato explicito, feito pelo `desktop-promote.yml`, e em dois aneis:
 
-1. Derives the release version as `MAJOR.MINOR.<github.run_number>` from `apps/desktop/package.json`
-   (monotonically increasing, so `electron-updater` always sees a newer version — **no manual
-   bump needed**). The bump is done only in the build checkout; it is not committed back.
-2. Injects the read-only updater token (`GH_UPDATER_TOKEN` secret) into `src/main/updater-config.ts`.
-3. Runs `npm run dist:win:publish -w @kyberrock/desktop` on a Windows runner, which builds the
-   NSIS installer and `electron-builder --publish always` creates a **published** (non-draft)
-   Release `vX.Y.Z` with `latest.yml` + `*.exe` + `*.blockmap`. Publishing uses the automatic
-   `GITHUB_TOKEN` (write scope stays in CI). A copy is also uploaded as a run artifact.
+| Anel       | Asset na release | Quem recebe                                       |
+| ---------- | ---------------- | ------------------------------------------------- |
+| _(nenhum)_ | `build.yml`      | ninguem — o build so existe                       |
+| teste      | `beta.yml`       | so as balancas marcadas como teste (canal `beta`) |
+| producao   | `latest.yml`     | todas as balancas (canal `latest`, o padrao)      |
+
+Antes, todo merge que tocasse o desktop virava atualizacao automatica em todas as pedreiras em
+minutos, sem release de teste e sem como desfazer. Consequencia boa do modelo novo: **tres merges
+seguidos geram tres builds parados**; ao liberar so o ultimo, a balanca da um salto unico em vez de
+instalar tres vezes.
+
+**Passo 1 — `desktop-release.yml`** (push na `main` tocando `apps/desktop/**`, `packages/**` ou o
+manifesto da raiz; tambem por **workflow_dispatch**):
+
+1. Deriva a versao como `MAJOR.MINOR.<github.run_number>` a partir de `apps/desktop/package.json`
+   (sempre crescente, entao o `electron-updater` sempre ve uma versao nova — **sem bump manual**).
+   O bump vale so no checkout do build; nao volta para o Git.
+2. Injeta o token de leitura (`GH_UPDATER_TOKEN`) em `src/main/updater-config.ts`.
+3. Cria a Release `vX.Y.Z` **sempre marcada como pre-release**.
+4. Roda `npm run dist:win:ci -w @kyberrock/desktop` (`electron-builder --publish never`): so
+   compila. Quem sobe os assets e o passo de upload, o que elimina a race conhecida do publisher do
+   electron-builder e permite conferir o pacote antes de publicar.
+5. Confere que `better_sqlite3.node` entrou no pacote — **antes** de subir qualquer asset.
+6. Sobe `*.exe` + `*.blockmap` + o yml **renomeado para `build.yml`**, com o `GITHUB_TOKEN`
+   automatico.
+
+> **O yml e renomeado no upload, nunca gerado com outro nome.** Passar o canal para o
+> `electron-builder` tambem grava `channel: ...` no `app-update.yml` embutido no app — o binario
+> promovido continuaria procurando aquele nome para sempre, e a primeira promocao quebraria o
+> auto-update da frota inteira. O build gera sempre `latest.yml`; so o **asset** muda de nome.
+
+> **`prerelease: true` e a flag critica.** Uma release marcada como nao-prerelease vira "a ultima
+> release" para toda a frota; se ela nao tiver `latest.yml` dentro, as balancas procuram, nao acham,
+> e o auto-update fica cego **em silencio**.
+
+**Passo 2 — `desktop-promote.yml`** (so **workflow_dispatch**; recebe `version`, `target` e
+`force`): copia `build.yml` para `beta.yml` (teste) ou `latest.yml` (producao); no caso de producao,
+tambem tira o `prerelease`. **Nao compila nada** — o `.exe` nao se move nem muda de URL, entao a
+balanca recebe exatamente o binario testado. Antes de agir ele confere que a release existe, que o
+metadado bate com a versao pedida e que o instalador citado nele esta anexado; para producao ainda
+recusa (a menos que `force`) uma versao que nunca passou pelo teste ou que seja anterior a producao
+atual. Depois da promocao a release guarda os dois ymls: `latest.yml` serve a frota e `beta.yml`
+mantem a maquina de teste na mesma versao, sem falso "ha atualizacao".
 
 Required repo secret (Settings → Secrets and variables → Actions):
 `GH_UPDATER_TOKEN` — a **fine-grained PAT scoped to this repo only, `Contents: read`**. This is the
@@ -272,8 +307,13 @@ builds still publish, but installed apps cannot authenticate to download the upd
   the patch keeps coming from `run_number`.
 - **Fixed public download link**: `supabase/functions/desktop-download` (public, `verify_jwt=false`,
   needs `GH_RELEASES_TOKEN`) redirects to the latest release's `.exe`; loader-web nginx exposes it as
-  `GET /download`. Always serves the newest installer for fresh installs.
+  `GET /download`. Segue a ultima release **estavel**, entao instalacao nova nunca cai num build
+  parado nem num beta — que e o desejado.
 - Code signing for external pilots is still pending (see `docs/phase-3.1/README.md`).
+- **Falta o outro lado do anel de teste**: o desktop ainda nao le o canal em tempo de execucao
+  (`autoUpdater.channel` a partir de `local-settings` / `desktop-status`), entao hoje `beta.yml` nao
+  e consumido por maquina nenhuma — instalar um build em teste e manual, baixando o `.exe` da
+  release. Enquanto isso nao existir, a unica distribuicao efetiva e `target: latest`.
 
 **Manual build (local / offline fallback):**
 
@@ -281,10 +321,15 @@ builds still publish, but installed apps cannot authenticate to download the upd
    → `apps/desktop/release/KyberRock Desktop Setup X.Y.Z.exe`.
 2. Optionally tag `git tag -a desktop-vX.Y.Z -m "Desktop release X.Y.Z"` for a manual rollback point.
 3. **Never overwrite an existing tag** — bump the patch for a hotfix.
-4. **Rollback**: each release stays on GitHub Releases. To roll operators back, delete/mark as
-   pre-release the bad `vX.Y.Z` release (electron-updater then serves the previous published one),
-   or re-run the workflow from an older commit to publish a higher version built from good code.
-   `dist:win:publish` (used by CI) is the publishing variant of `dist:win`.
+4. **Rollback**: cada release fica no GitHub Releases. Para voltar a frota, **marque a release ruim
+   como pre-release** — o canal `latest` volta a enxergar a estavel anterior. Como o desktop nao faz
+   downgrade sozinho (`allowDowngrade` desligado), quem ja instalou a ruim so sai dela com uma versao
+   MAIOR: promova a proxima boa. Vale a regra que sustenta tudo isso: **migracao de SQLite so pode
+   adicionar**, nunca remover nem renomear coluna, senao a versao anterior nao roda no banco ja
+   migrado.
+5. As tres variantes do script: `dist:win` (local, com `npm rebuild` para Node no fim),
+   `dist:win:ci` (usado pelo CI, `--publish never`) e `dist:win:publish` (`--publish always`,
+   mantido para publicacao manual de emergencia).
 
 ## Edge Functions deploy
 

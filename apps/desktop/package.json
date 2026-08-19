@@ -10,6 +10,7 @@
     "rebuild:native:electron": "node rebuild-native-for-electron.cjs",
     "dist:win": "npm run build && npm run rebuild:native:electron && node -e \"const fs=require('fs'); fs.rmSync('release/win-unpacked',{recursive:true,force:true}); fs.rmSync('release/builder-debug.yml',{force:true});\" && electron-builder --win --publish never && npm rebuild better-sqlite3",
     "dist:win:publish": "npm run build && npm run rebuild:native:electron && node -e \"const fs=require('fs'); fs.rmSync('release/win-unpacked',{recursive:true,force:true}); fs.rmSync('release/builder-debug.yml',{force:true});\" && electron-builder --win --publish always",
+    "dist:win:ci": "npm run build && npm run rebuild:native:electron && node -e \"const fs=require('fs'); fs.rmSync('release/win-unpacked',{recursive:true,force:true}); fs.rmSync('release/builder-debug.yml',{force:true});\" && electron-builder --win --publish never",
     "dev": "vite --config vite.config.ts --host 0.0.0.0 --port 5174",
     "start": "npm run build && electron .",
     "clientes": "node dist/scripts/import-customers.js"

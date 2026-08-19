@@ -1,17 +1,35 @@
 name: Desktop release
 
-# Gera e publica o instalador Windows do KyberRock Desktop no GitHub Releases
-# automaticamente sempre que a `main` muda. O `electron-updater` no app dos
-# operadores baixa a nova versao em segundo plano e instala ao fechar o app
-# (ver `apps/desktop/src/main/main.ts` -> configureAutoUpdater).
+# Gera o instalador Windows do KyberRock Desktop e o deixa PARADO no GitHub
+# Releases, como pre-release, com um metadado de nome NEUTRO (`build.yml`).
+#
+# Nenhuma balanca segue `build.yml` — nem as de producao (canal `latest`), nem a
+# de teste (canal `beta`). Compilar deixou de ser sinonimo de distribuir: quem
+# move uma versao para teste ou para producao e o workflow `desktop-promote.yml`,
+# sempre por acao explicita.
+#
+# Antes desta mudanca, todo merge na `main` que tocasse o desktop virava
+# atualizacao automatica em TODAS as pedreiras em questao de minutos, sem release
+# de teste, sem rollout parcial e sem como desfazer. Efeito colateral bom do novo
+# modelo: tres merges seguidos geram tres builds parados; ao liberar so o ultimo,
+# a balanca da um salto unico em vez de instalar tres vezes.
 #
 # Fluxo:
 #   1. push na main (tocando o desktop) ou disparo manual;
 #   2. a versao vira MAJOR.MINOR.<run_number> (sempre crescente, sem bump manual);
 #   3. o token de LEITURA (secret GH_UPDATER_TOKEN) e injetado no app;
-#   4. build do instalador NSIS + latest.yml + .blockmap;
-#   5. electron-builder publica um GitHub Release `vX.Y.Z` com esses arquivos,
-#      usando o GITHUB_TOKEN automatico do Actions (escopo de escrita fica no CI).
+#   4. build do instalador NSIS + latest.yml + .blockmap (sem publicar);
+#   5. confere que o binario nativo entrou no pacote — ANTES de subir qualquer
+#      asset, para nunca publicar um instalador que nao abriria;
+#   6. sobe .exe + .blockmap + o yml renomeado para `build.yml` na release
+#      `vX.Y.Z`, marcada como pre-release.
+#
+# Por que o yml e RENOMEADO no upload em vez de o electron-builder gera-lo com
+# outro nome: passar o canal para o electron-builder tambem grava `channel: ...`
+# no `app-update.yml` embutido no app. O binario promovido continuaria procurando
+# aquele nome pelo resto da vida — a primeira promocao quebraria o auto-update de
+# toda a frota. Gerando sempre `latest.yml` e renomeando so o ASSET, o app fica
+# com o canal padrao e quem escolhe o canal e o proprio desktop, em execucao.
 
 on:
   # Push na main que toca o desktop (ou suas dependencias) gera uma versao nova
@@ -40,11 +58,17 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write # necessario para o electron-builder criar o GitHub Release
+  contents: write # necessario para criar o GitHub Release e subir os assets
 
 jobs:
   release:
     name: Build and publish Windows installer
+    env:
+      # Nome do asset de metadados que este workflow publica. NEUTRO de proposito:
+      # nenhum canal de atualizacao aponta para ele, entao um build recem-saido
+      # nao alcanca maquina nenhuma. O `desktop-promote.yml` e quem copia este
+      # arquivo para `beta.yml` (teste) ou `latest.yml` (producao).
+      BUILD_METADATA_ASSET: build.yml
     # windows-2022 traz o Visual Studio 2022, que o node-gyp reconhece. O
     # windows-latest passou a trazer um VS mais novo (v18) que o node-gyp
     # empacotado nao detecta, quebrando a compilacao nativa do better-sqlite3.
@@ -62,7 +86,7 @@ jobs:
       - name: Install dependencies
         # --ignore-scripts evita o postinstall do better-sqlite3 tentar compilar
         # para o runtime de Node. O binario para o Electron e produzido depois
-        # pelo rebuild:native:electron (dentro de dist:win:publish).
+        # pelo rebuild:native:electron (dentro de dist:win:ci).
         run: npm ci --ignore-scripts
 
       - name: Resolve version (MAJOR.MINOR.run_number)
@@ -101,23 +125,42 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Criamos a release (e a tag) via API ANTES do electron-builder. Assim ele
-        # so anexa os assets a uma release existente. Sem isto, o electron-builder
-        # dispara duas criacoes concorrentes de release (uma por asset): a primeira
-        # cria e a segunda falha com 422 "already_exists", abortando o upload do
-        # .exe/latest.yml. Passo idempotente. Criar release ja cria a tag; push de
-        # tag/release nao dispara o workflow (o gatilho e so branches: [main]).
+        # Criamos a release (e a tag) via API ANTES do build, para que o passo de
+        # upload so anexe assets a uma release que ja existe. Passo idempotente.
+        # Criar release ja cria a tag; push de tag/release nao dispara o workflow
+        # (o gatilho e so branches: [main]).
+        #
+        # SEMPRE pre-release. E a flag mais importante deste workflow: uma release
+        # marcada como nao-prerelease vira "a ultima release" para toda a frota, e
+        # esta so tem `build.yml` dentro — as balancas procurariam `latest.yml`,
+        # nao achariam, e o auto-update ficaria cego EM SILENCIO. Quem tira o
+        # pre-release e o `desktop-promote.yml`, no momento de liberar producao.
+        #
+        # Efeito colateral bem-vindo: se o build falhar depois deste passo, o que
+        # fica para tras e uma release vazia marcada como pre-release, que a frota
+        # ignora. Antes ficava uma release estavel vazia, com o mesmo sintoma de
+        # updater cego descrito acima.
         run: |
           set -euo pipefail
           TAG="v${{ steps.version.outputs.version }}"
           REPO="${{ github.repository }}"
-          code=$(curl -s -o /dev/null -w "%{http_code}" \
+          echo "Publicando build parado (pre-release, metadado $BUILD_METADATA_ASSET)."
+
+          existing=$(curl -s \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/$REPO/releases/tags/$TAG")
-          if [ "$code" = "200" ]; then
-            echo "Release $TAG ja existe, seguindo."
+          release_id=$(echo "$existing" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const r=JSON.parse(s);console.log(r.id||'')})")
+
+          if [ -n "$release_id" ]; then
+            echo "Release $TAG ja existe (id=$release_id). Garantindo prerelease=true..."
+            curl -s -f -X PATCH \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$REPO/releases/$release_id" \
+              -d '{"prerelease":true}' > /dev/null
           else
             echo "Criando release $TAG..."
             curl -s -f -X POST \
@@ -125,46 +168,72 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/$REPO/releases" \
-              -d "{\"tag_name\":\"$TAG\",\"target_commitish\":\"${{ github.sha }}\",\"name\":\"KyberRock Desktop ${{ steps.version.outputs.version }}\",\"draft\":false,\"prerelease\":false}" \
+              -d "{\"tag_name\":\"$TAG\",\"target_commitish\":\"${{ github.sha }}\",\"name\":\"KyberRock Desktop ${{ steps.version.outputs.version }}\",\"draft\":false,\"prerelease\":true}" \
               > /dev/null
             echo "Release $TAG criada."
           fi
 
-      - name: Build and publish to GitHub Releases
+      - name: Build the Windows installer (no publish)
         id: publish
         shell: bash
-        # continue-on-error: o upload do electron-builder tem uma race conhecida
-        # (ver run 29839470541: publicou o .exe mas abortou com 422 antes do
-        # latest.yml/blockmap, deixando o auto-update cego). O passo seguinte
-        # confere e completa os assets; se o build em si falhou, ele reprova o
-        # job porque os arquivos nao existem localmente.
-        continue-on-error: true
-        env:
-          # Token de PUBLICACAO (escrita) -- o GITHUB_TOKEN automatico do Actions,
-          # limitado a este repo e ao run. Distinto do token de leitura embutido.
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run dist:win:publish --workspace @kyberrock/desktop
+        # `--publish never`: quem sobe os assets e o passo de upload abaixo, que
+        # ja existia como rede de seguranca e agora e o caminho unico. Isso
+        # elimina de vez a race conhecida do publisher do electron-builder (ver
+        # run 29839470541: publicou o .exe mas abortou com 422 antes do
+        # latest.yml/blockmap, deixando o auto-update cego) e e o que permite
+        # renomear o yml por canal e conferir o pacote antes de publicar.
+        #
+        # Sem `continue-on-error`: com o publish fora deste passo, qualquer falha
+        # aqui e falha de BUILD, e build quebrado tem que reprovar o run.
+        run: npm run dist:win:ci --workspace @kyberrock/desktop
 
-      - name: Ensure every release asset is uploaded (self-heal)
+      - name: Verify the native module is inside the package
+        shell: bash
+        # O app so abre se o better_sqlite3.node (binario nativo compilado para o
+        # Electron) estiver empacotado (desempacotado do asar). Falhamos o run se
+        # nao estiver, para nao dar por bom um instalador que nao abre.
+        #
+        # Roda ANTES da publicacao (antes ficava depois): com o upload separado do
+        # build, da para reprovar um pacote quebrado sem ter subido nada. Release
+        # que nao presta nao chega nem a existir com assets.
+        run: |
+          echo "Procurando better_sqlite3.node em release/win-unpacked/resources..."
+          found=$(find "apps/desktop/release/win-unpacked/resources" -name "better_sqlite3.node" 2>/dev/null || true)
+          echo "Encontrado: ${found:-<nenhum>}"
+          if [ -z "$found" ]; then
+            echo "::error title=Nativo ausente::better_sqlite3.node NAO foi empacotado — o app nao abriria."
+            echo "Todos os .node encontrados:"
+            find "apps/desktop/release/win-unpacked/resources" -name "*.node" 2>/dev/null || true
+            exit 1
+          fi
+          echo "OK: binario nativo presente no pacote."
+
+      - name: Upload the release assets (exe + blockmap + build.yml)
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Uma release sem latest.yml (ou sem o .exe/.blockmap) quebra o
-        # electron-updater silenciosamente. Este passo garante o trio completo:
-        # sobe qualquer asset que o electron-builder nao subiu e falha o run se
-        # o build nao produziu os arquivos.
+        # Uma release sem o yml de metadados (ou sem o .exe/.blockmap) quebra o
+        # electron-updater silenciosamente. Este passo garante o trio completo e
+        # e idempotente: asset que ja existe com o mesmo nome e mantido.
+        #
+        # O yml sobe RENOMEADO para `build.yml`. O arquivo que o electron-builder
+        # gera se chama sempre `latest.yml` — e tem que continuar assim, porque o
+        # nome do canal no build tambem iria parar dentro do app (ver o cabecalho
+        # deste arquivo). Aqui so o ASSET muda de nome, e para um nome que canal
+        # nenhum segue.
         run: |
           set -euo pipefail
           TAG="v${{ steps.version.outputs.version }}"
           REPO="${{ github.repository }}"
           DIR="apps/desktop/release"
+          YML_ASSET="$BUILD_METADATA_ASSET"
 
           exe=$(find "$DIR" -maxdepth 1 -name "*.exe" -not -name "*uninstaller*" | head -n1)
           blockmap=$(find "$DIR" -maxdepth 1 -name "*.exe.blockmap" | head -n1)
           latest="$DIR/latest.yml"
           for f in "$exe" "$blockmap" "$latest"; do
             if [ -z "$f" ] || [ ! -f "$f" ]; then
-              echo "::error title=Build incompleto::Arquivo de release ausente localmente (exe='$exe' blockmap='$blockmap' latest.yml existe=$([ -f "$latest" ] && echo sim || echo nao)). O dist:win:publish falhou antes de gerar o instalador."
+              echo "::error title=Build incompleto::Arquivo de release ausente localmente (exe='$exe' blockmap='$blockmap' latest.yml existe=$([ -f "$latest" ] && echo sim || echo nao)). O dist:win:ci falhou antes de gerar o instalador."
               exit 1
             fi
           done
@@ -179,37 +248,42 @@ jobs:
           echo "Assets ja presentes na release $TAG:"
           echo "${existing:-<nenhum>}"
 
-          for f in "$exe" "$blockmap" "$latest"; do
-            base=$(basename "$f")
-            name="${base// /-}" # electron-builder troca espacos por '-' no nome do asset
+          upload() {
+            local file="$1" name="$2"
             if printf '%s\n' "$existing" | grep -qxF "$name"; then
               echo "OK: $name"
-            else
-              echo "Subindo asset ausente: $name"
-              curl -s -f -X POST \
-                -H "Authorization: Bearer $GH_TOKEN" \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                -H "Content-Type: application/octet-stream" \
-                --data-binary @"$f" \
-                "https://uploads.github.com/repos/$REPO/releases/$release_id/assets?name=$name" > /dev/null
-              echo "Enviado: $name"
+              return
             fi
-          done
-          echo "Release $TAG completa (exe + blockmap + latest.yml)."
+            echo "Subindo asset: $name"
+            curl -s -f -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$file" \
+              "https://uploads.github.com/repos/$REPO/releases/$release_id/assets?name=$name" > /dev/null
+            echo "Enviado: $name"
+          }
 
-      - name: Verify the native module is inside the package
+          for f in "$exe" "$blockmap"; do
+            base=$(basename "$f")
+            upload "$f" "${base// /-}" # electron-builder troca espacos por '-' no nome do asset
+          done
+          upload "$latest" "$YML_ASSET"
+
+          echo "Release $TAG completa (exe + blockmap + $YML_ASSET)."
+
+      - name: Summary
         shell: bash
-        # O app so abre se o better_sqlite3.node (binario nativo compilado para o
-        # Electron) estiver empacotado (desempacotado do asar). Falhamos o run se
-        # nao estiver, para nao dar por bom um instalador que nao abre.
         run: |
-          echo "Procurando better_sqlite3.node em release/win-unpacked/resources..."
-          found=$(find "apps/desktop/release/win-unpacked/resources" -name "better_sqlite3.node" 2>/dev/null || true)
-          echo "Encontrado: ${found:-<nenhum>}"
-          if [ -z "$found" ]; then
-            echo "::error title=Nativo ausente::better_sqlite3.node NAO foi empacotado — o app nao abriria."
-            echo "Todos os .node encontrados:"
-            find "apps/desktop/release/win-unpacked/resources" -name "*.node" 2>/dev/null || true
-            exit 1
-          fi
-          echo "OK: binario nativo presente no pacote."
+          VERSION="${{ steps.version.outputs.version }}"
+          {
+            echo "## KyberRock Desktop $VERSION"
+            echo ""
+            echo "Build **parado**: publicado como pre-release com \`$BUILD_METADATA_ASSET\`."
+            echo "Nenhuma balanca — nem a de teste — recebe esta versao sozinha."
+            echo ""
+            echo "Para distribuir, rode o workflow **Desktop promote** com a versao \`$VERSION\`:"
+            echo ""
+            echo "- \`target: beta\` → vai para as balancas marcadas como teste;"
+            echo "- \`target: latest\` → libera para todas as balancas de producao."
+          } >> "$GITHUB_STEP_SUMMARY"
