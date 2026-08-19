@@ -627,7 +627,8 @@ export const documentationSections: DocumentationSection[] = [
       "A coluna Pedido/OS OMIE traz o codigo da integracao e, entre parenteses, o numero como o OMIE o mostra na tela — e esse numero entre parenteses que se digita na busca do OMIE. Do outro lado, o pedido e a ordem de servico chegam la com 'Pesagem KyberRock 000123' nos dados adicionais, que e o codigo do cupom.",
       "O PDF e a planilha da conferencia saem com as mesmas pesagens que estao na tela, com os filtros aplicados.",
       "No Controle de caminhoes vale o mesmo: digite a placa (ou o nome do motorista) na busca e os botoes de PDF e Excel geram o arquivo so com os caminhoes que ficaram na lista, um ou varios, com os totais desse recorte. Com a busca vazia, sai o periodo inteiro.",
-      "A planilha do Controle de caminhoes traz duas tabelas: uma linha por caminhao e outra com o peso por produto de cada placa, para filtrar e somar por material no Excel."
+      "A planilha do Controle de caminhoes traz quatro tabelas: uma linha por caminhao, o peso por cliente de cada placa, o peso por produto e a lista carga a carga (data, cliente, produto, peso e horarios), para filtrar e somar por cliente ou por material no Excel. O PDF sai com as mesmas quatro.",
+      "Para saber para quem uma placa carregou no periodo, busque a placa no Controle de caminhoes: a coluna 'Clientes atendidos' mostra cada cliente com o peso e o numero de viagens, e o botao 'Ver cargas' abre a lista viagem por viagem — e essa lista que se confere contra a relacao por placa do OMIE."
     ],
     keywords: [
       "relatorio",
@@ -641,6 +642,9 @@ export const documentationSections: DocumentationSection[] = [
       "exportar",
       "controle de caminhoes",
       "placa",
+      "clientes da placa",
+      "para quem a placa carregou",
+      "cargas da placa",
       "baixar excel",
       "relatorio por cliente",
       "conferencia de faturamento",

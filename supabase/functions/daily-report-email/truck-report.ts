@@ -4,6 +4,7 @@
 export interface TruckReportRow {
   plate: string | null;
   driverName: string | null;
+  customerName: string | null;
   productDescription: string | null;
   netWeightKg: number | null;
   createdAt: string | null;
@@ -15,6 +16,13 @@ export interface TruckReportProduct {
   weightKg: number;
 }
 
+/** Para quem a placa carregou no periodo — a mesma placa costuma atender varios clientes. */
+export interface TruckReportCustomer {
+  name: string;
+  weightKg: number;
+  operations: number;
+}
+
 export interface TruckReportTruck {
   plate: string;
   driverName: string | null;
@@ -23,6 +31,7 @@ export interface TruckReportTruck {
   avgMinutes: number;
   totalNetWeightKg: number;
   products: TruckReportProduct[];
+  customers: TruckReportCustomer[];
 }
 
 export interface TruckReport {
@@ -59,6 +68,7 @@ export function buildTruckReport(rows: TruckReportRow[]): TruckReport {
       totalMinutes: number;
       totalNetWeightKg: number;
       products: Map<string, TruckReportProduct>;
+      customers: Map<string, TruckReportCustomer>;
     }
   >();
 
@@ -80,7 +90,8 @@ export function buildTruckReport(rows: TruckReportRow[]): TruckReport {
         operations: 0,
         totalMinutes: 0,
         totalNetWeightKg: 0,
-        products: new Map()
+        products: new Map(),
+        customers: new Map()
       };
       byPlate.set(plate, truck);
     }
@@ -95,6 +106,16 @@ export function buildTruckReport(rows: TruckReportRow[]): TruckReport {
     product.weightKg += weight;
     truck.products.set(key, product);
 
+    const customerKey = (row.customerName ?? "").trim() || "N/A";
+    const customer = truck.customers.get(customerKey) ?? {
+      name: customerKey,
+      weightKg: 0,
+      operations: 0
+    };
+    customer.weightKg += weight;
+    customer.operations += 1;
+    truck.customers.set(customerKey, customer);
+
     totalMinutesAll += minutes;
     totalOperations += 1;
     totalNetWeightKg += weight;
@@ -108,7 +129,8 @@ export function buildTruckReport(rows: TruckReportRow[]): TruckReport {
       totalMinutes: Math.round(truck.totalMinutes),
       avgMinutes: truck.operations > 0 ? Math.round(truck.totalMinutes / truck.operations) : 0,
       totalNetWeightKg: truck.totalNetWeightKg,
-      products: Array.from(truck.products.values()).sort((a, b) => b.weightKg - a.weightKg)
+      products: Array.from(truck.products.values()).sort((a, b) => b.weightKg - a.weightKg),
+      customers: Array.from(truck.customers.values()).sort((a, b) => b.weightKg - a.weightKg)
     }))
     .sort((a, b) => b.operations - a.operations || b.totalNetWeightKg - a.totalNetWeightKg);
 
@@ -142,13 +164,20 @@ export function renderTruckReportHtml(input: {
         truck.products
           .map((p) => `${escapeHtml(p.description)}: ${p.weightKg.toLocaleString("pt-BR")} kg`)
           .join("<br />") || "-";
+      const customers =
+        truck.customers
+          .map(
+            (c) =>
+              `${escapeHtml(c.name)}: ${c.weightKg.toLocaleString("pt-BR")} kg (${c.operations}x)`
+          )
+          .join("<br />") || "-";
       return `<tr><td>${escapeHtml(truck.plate)}</td><td>${escapeHtml(
         truck.driverName ?? "-"
       )}</td><td style="text-align:right">${truck.operations}</td><td style="text-align:right">${formatMinutes(
         truck.avgMinutes
       )}</td><td style="text-align:right">${truck.totalNetWeightKg.toLocaleString(
         "pt-BR"
-      )}</td><td>${products}</td></tr>`;
+      )}</td><td>${customers}</td><td>${products}</td></tr>`;
     })
     .join("");
 
@@ -160,8 +189,8 @@ export function renderTruckReportHtml(input: {
     input.unitName
   )}</p><table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #cbd5e1"><thead><tr style="background:#1e293b;color:#fff"><th>Caminhoes</th><th>Operacoes</th><th>Tempo medio na pedreira</th></tr></thead><tbody><tr><td style="text-align:center">${report.trucks.length}</td><td style="text-align:center">${report.totalOperations}</td><td style="text-align:center">${formatMinutes(
     report.averageMinutes
-  )}</td></tr></tbody></table><h2 style="margin:24px 0 8px;font-size:16px">Por caminhao</h2><table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #cbd5e1"><thead><tr style="background:#e2e8f0"><th>Placa</th><th>Motorista</th><th>Operacoes</th><th>Tempo medio</th><th>Peso</th><th>Peso por produto</th></tr></thead><tbody>${
-    rows || '<tr><td colspan="6">Sem operacoes no periodo.</td></tr>'
+  )}</td></tr></tbody></table><h2 style="margin:24px 0 8px;font-size:16px">Por caminhao</h2><table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #cbd5e1"><thead><tr style="background:#e2e8f0"><th>Placa</th><th>Motorista</th><th>Operacoes</th><th>Tempo medio</th><th>Peso</th><th>Clientes atendidos</th><th>Peso por produto</th></tr></thead><tbody>${
+    rows || '<tr><td colspan="7">Sem operacoes no periodo.</td></tr>'
   }</tbody></table></body></html>`;
 }
 

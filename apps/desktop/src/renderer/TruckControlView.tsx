@@ -154,8 +154,53 @@ const styles = {
     borderRadius: "8px",
     fontSize: "13px"
   },
-  aboveAvg: { color: "#b45309", fontWeight: 800 }
+  aboveAvg: { color: "#b45309", fontWeight: 800 },
+  linkButton: {
+    border: "1px solid var(--kr-border)",
+    background: "var(--kr-surface-soft)",
+    color: "var(--kr-text-strong)",
+    borderRadius: "8px",
+    padding: "4px 8px",
+    cursor: "pointer",
+    fontWeight: 700,
+    fontSize: "12px",
+    whiteSpace: "nowrap" as const
+  },
+  tripCell: { padding: "0 12px 12px", borderTop: "none", background: "var(--kr-surface-soft)" },
+  tripTable: {
+    width: "100%",
+    borderCollapse: "collapse" as const,
+    fontSize: "12px",
+    background: "var(--kr-surface)"
+  },
+  tripTh: {
+    padding: "6px 8px",
+    textAlign: "left" as const,
+    color: "var(--kr-muted)",
+    borderBottom: "1px solid var(--kr-border)",
+    fontSize: "10px",
+    fontWeight: 800,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.04em",
+    whiteSpace: "nowrap" as const
+  },
+  tripTd: { padding: "6px 8px", borderTop: "1px solid var(--kr-border)" }
 };
+
+/** Data e hora da balanca (o banco guarda em UTC) para a lista de cargas da placa. */
+function formatDay(value: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("pt-BR");
+}
+
+function formatClock(value: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
 
 export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopApi | null }) {
   const [startDate, setStartDate] = useState<string>(isoDaysAgo(30));
@@ -166,6 +211,9 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Placa com a lista de cargas aberta. Uma de cada vez: a lista e longa e o que interessa
+  // e conferir uma placa por vez, do mesmo jeito que se olha a relacao por placa do OMIE.
+  const [openPlate, setOpenPlate] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!desktopApi) return;
@@ -226,7 +274,7 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Controle de caminhoes</h2>
           <HelpTooltip
-            content="Tempo dentro da pedreira, numero de operacoes e peso por produto de cada caminhao no periodo. Caminhoes acima do tempo medio do periodo ficam destacados. O PDF e o Excel saem com os caminhoes que estao na lista: com a busca preenchida, o arquivo traz so eles."
+            content="Tempo dentro da pedreira, numero de operacoes, clientes atendidos e peso por produto de cada caminhao no periodo. Em 'Cargas' voce ve carga a carga: data, cliente, produto, peso e horarios. Caminhoes acima do tempo medio do periodo ficam destacados. O PDF e o Excel saem com os caminhoes que estao na lista (e com as mesmas cargas e clientes): com a busca preenchida, o arquivo traz so eles."
             placement="right"
           />
         </div>
@@ -350,27 +398,30 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
               <th style={{ ...styles.th, ...styles.num }}>Tempo medio</th>
               <th style={{ ...styles.th, ...styles.num }}>Tempo total</th>
               <th style={{ ...styles.th, ...styles.num }}>Peso (kg)</th>
+              <th style={styles.th}>Clientes atendidos</th>
               <th style={styles.th}>Peso por produto</th>
+              <th style={styles.th}>Cargas</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td style={styles.td} colSpan={7}>
+                <td style={styles.td} colSpan={10}>
                   Carregando...
                 </td>
               </tr>
             ) : filteredTrucks.length === 0 ? (
               <tr>
-                <td style={styles.td} colSpan={7}>
+                <td style={styles.td} colSpan={10}>
                   {filtered ? "Nenhum caminhao para essa busca." : "Nenhum caminhao no periodo."}
                 </td>
               </tr>
             ) : (
-              filteredTrucks.map((truck) => {
+              filteredTrucks.flatMap((truck) => {
                 const aboveAvg =
                   truck.avgMinutes > periodAverageMinutes && periodAverageMinutes > 0;
-                return (
+                const open = openPlate === truck.plate;
+                return [
                   <tr key={truck.plate}>
                     <td style={styles.td}>
                       <span style={styles.plate}>{truck.plate}</span>
@@ -390,6 +441,17 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
                       {truck.totalNetWeightKg.toLocaleString("pt-BR")}
                     </td>
                     <td style={styles.td}>
+                      {truck.customers.length === 0
+                        ? "-"
+                        : truck.customers.map((customer) => (
+                            <div key={customer.customerName}>
+                              {customer.customerName}:{" "}
+                              {customer.totalNetWeightKg.toLocaleString("pt-BR")} kg (
+                              {customer.operations}x)
+                            </div>
+                          ))}
+                    </td>
+                    <td style={styles.td}>
                       {truck.products.length === 0
                         ? "-"
                         : truck.products.map((product) => (
@@ -399,7 +461,67 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
                             </div>
                           ))}
                     </td>
+                    <td style={styles.td}>
+                      <button
+                        type="button"
+                        style={styles.linkButton}
+                        onClick={() => setOpenPlate(open ? null : truck.plate)}
+                      >
+                        {open ? "Ocultar cargas" : `Ver ${truck.trips.length} carga(s)`}
+                      </button>
+                    </td>
                   </tr>
+                ].concat(
+                  open
+                    ? [
+                        <tr key={`${truck.plate}-trips`}>
+                          <td style={styles.tripCell} colSpan={10}>
+                            <table style={styles.tripTable}>
+                              <thead>
+                                <tr>
+                                  <th style={styles.tripTh}>Data</th>
+                                  <th style={styles.tripTh}>Cliente</th>
+                                  <th style={styles.tripTh}>Produto</th>
+                                  <th style={{ ...styles.tripTh, ...styles.num }}>Peso (kg)</th>
+                                  <th style={{ ...styles.tripTh, ...styles.num }}>Entrada</th>
+                                  <th style={{ ...styles.tripTh, ...styles.num }}>Saida</th>
+                                  <th style={{ ...styles.tripTh, ...styles.num }}>Tempo</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {truck.trips.length === 0 ? (
+                                  <tr>
+                                    <td style={styles.tripTd} colSpan={7}>
+                                      Sem cargas no periodo.
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  truck.trips.map((trip) => (
+                                    <tr key={trip.operationId}>
+                                      <td style={styles.tripTd}>{formatDay(trip.entryAt)}</td>
+                                      <td style={styles.tripTd}>{trip.customerName}</td>
+                                      <td style={styles.tripTd}>{trip.productDescription}</td>
+                                      <td style={{ ...styles.tripTd, ...styles.num }}>
+                                        {trip.netWeightKg.toLocaleString("pt-BR")}
+                                      </td>
+                                      <td style={{ ...styles.tripTd, ...styles.num }}>
+                                        {formatClock(trip.entryAt)}
+                                      </td>
+                                      <td style={{ ...styles.tripTd, ...styles.num }}>
+                                        {formatClock(trip.exitAt)}
+                                      </td>
+                                      <td style={{ ...styles.tripTd, ...styles.num }}>
+                                        {formatMinutes(trip.minutes)}
+                                      </td>
+                                    </tr>
+                                  ))
+                                )}
+                              </tbody>
+                            </table>
+                          </td>
+                        </tr>
+                      ]
+                    : []
                 );
               })
             )}

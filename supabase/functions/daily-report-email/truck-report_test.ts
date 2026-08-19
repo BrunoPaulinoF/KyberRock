@@ -11,6 +11,7 @@ const rows: TruckReportRow[] = [
   {
     plate: "ABC1D23",
     driverName: "Joao",
+    customerName: "Pedreira Sul",
     productDescription: "Brita 0",
     netWeightKg: 15000,
     createdAt: "2026-06-06T08:00:00Z",
@@ -19,6 +20,7 @@ const rows: TruckReportRow[] = [
   {
     plate: "ABC1D23",
     driverName: "Joao",
+    customerName: "Construtora Norte",
     productDescription: "Brita 1",
     netWeightKg: 10000,
     createdAt: "2026-06-06T09:00:00Z",
@@ -27,6 +29,7 @@ const rows: TruckReportRow[] = [
   {
     plate: "XYZ4E56",
     driverName: "Maria",
+    customerName: "Asfalto Leste",
     productDescription: "Brita 0",
     netWeightKg: 20000,
     createdAt: "2026-06-06T08:00:00Z",
@@ -36,6 +39,7 @@ const rows: TruckReportRow[] = [
   {
     plate: "NAO1234",
     driverName: null,
+    customerName: "Pedreira Sul",
     productDescription: "Brita 0",
     netWeightKg: 5000,
     createdAt: "2026-06-06T08:00:00Z",
@@ -58,6 +62,11 @@ describe("buildTruckReport", () => {
     expect(abc?.products).toEqual([
       { description: "Brita 0", weightKg: 15000 },
       { description: "Brita 1", weightKg: 10000 }
+    ]);
+    // A mesma placa carregou para dois clientes no dia: os dois aparecem no relatorio.
+    expect(abc?.customers).toEqual([
+      { name: "Pedreira Sul", weightKg: 15000, operations: 1 },
+      { name: "Construtora Norte", weightKg: 10000, operations: 1 }
     ]);
   });
 
@@ -84,5 +93,8 @@ describe("buildTruckReport", () => {
     expect(html).toContain("Controle de caminhoes 2026-06-06");
     expect(html).toContain("ABC1D23");
     expect(html).toContain("Brita 0");
+    expect(html).toContain("Clientes atendidos");
+    expect(html).toContain("Pedreira Sul");
+    expect(html).toContain("Construtora Norte");
   });
 });

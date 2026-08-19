@@ -28,6 +28,30 @@ function buildReport(): TruckControlReport {
         products: [
           { productDescription: "Brita 0", totalNetWeightKg: 15000, operations: 1 },
           { productDescription: "Brita 1", totalNetWeightKg: 10000, operations: 1 }
+        ],
+        customers: [
+          { customerName: "Pedreira Sul", totalNetWeightKg: 15000, operations: 1 },
+          { customerName: "Construtora Norte", totalNetWeightKg: 10000, operations: 1 }
+        ],
+        trips: [
+          {
+            operationId: "op-1",
+            entryAt: "2026-06-06 08:00:00",
+            exitAt: "2026-06-06 08:30:00",
+            minutes: 30,
+            customerName: "Pedreira Sul",
+            productDescription: "Brita 0",
+            netWeightKg: 15000
+          },
+          {
+            operationId: "op-2",
+            entryAt: "2026-06-06 09:00:00",
+            exitAt: "2026-06-06 10:00:00",
+            minutes: 60,
+            customerName: "Construtora Norte",
+            productDescription: "Brita 1",
+            netWeightKg: 10000
+          }
         ]
       },
       {
@@ -38,7 +62,19 @@ function buildReport(): TruckControlReport {
         avgMinutes: 90,
         totalNetWeightKg: 20000,
         lastOperationAt: "2026-06-07 09:30:00",
-        products: [{ productDescription: "Brita 0", totalNetWeightKg: 20000, operations: 1 }]
+        products: [{ productDescription: "Brita 0", totalNetWeightKg: 20000, operations: 1 }],
+        customers: [{ customerName: "Asfalto Leste", totalNetWeightKg: 20000, operations: 1 }],
+        trips: [
+          {
+            operationId: "op-3",
+            entryAt: "2026-06-07 08:00:00",
+            exitAt: "2026-06-07 09:30:00",
+            minutes: 90,
+            customerName: "Asfalto Leste",
+            productDescription: "Brita 0",
+            netWeightKg: 20000
+          }
+        ]
       }
     ]
   };
@@ -120,6 +156,20 @@ describe("renderTruckControlHtml", () => {
     expect(html).toContain("Filtro &quot;ABC1D23&quot;");
     expect(html).toContain("25.000");
   });
+
+  it("lists every customer the plate loaded for, and the trips behind them", () => {
+    const html = renderTruckControlHtml(
+      filterTruckControlReport(buildReport(), "ABC1D23"),
+      new Date("2026-07-01T12:00:00Z")
+    );
+
+    expect(html).toContain("Clientes atendidos");
+    expect(html).toContain("Pedreira Sul");
+    expect(html).toContain("Construtora Norte");
+    expect(html).not.toContain("Asfalto Leste");
+    expect(html).toContain("Cargas do periodo");
+    expect(html).toContain("06/06/2026");
+  });
 });
 
 describe("renderTruckControlSpreadsheet", () => {
@@ -132,6 +182,16 @@ describe("renderTruckControlSpreadsheet", () => {
     expect(sheet).toContain("XYZ4E56");
   });
 
+  it("brings the customers of each plate and the trip by trip list", () => {
+    const sheet = renderTruckControlSpreadsheet(buildReport(), new Date("2026-07-01T12:00:00Z"));
+
+    expect(sheet).toContain("Clientes atendidos");
+    expect(sheet).toContain("Pedreira Sul");
+    expect(sheet).toContain("Construtora Norte");
+    expect(sheet).toContain("Asfalto Leste");
+    expect(sheet).toContain("Cargas do periodo");
+  });
+
   it("brings only the searched truck", () => {
     const sheet = renderTruckControlSpreadsheet(
       filterTruckControlReport(buildReport(), "XYZ4E56"),
@@ -142,5 +202,8 @@ describe("renderTruckControlSpreadsheet", () => {
     expect(sheet).not.toContain("ABC1D23");
     expect(sheet).not.toContain("Joao");
     expect(sheet).toContain("20.000");
+    // O recorte leva junto os clientes e as cargas: nada da outra placa entra no arquivo.
+    expect(sheet).toContain("Asfalto Leste");
+    expect(sheet).not.toContain("Pedreira Sul");
   });
 });
