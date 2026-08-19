@@ -1849,6 +1849,12 @@ function upsertCloudReportRecipients(
   // (id novo) nunca chegava aqui. Tombstone ja sincronizado sai para a linha viva entrar.
   const dropSyncedTombstone = database.prepare("DELETE FROM report_recipients WHERE id = ?");
   const findLocal = database.prepare("SELECT deleted_at FROM report_recipients WHERE id = ?");
+  // A nuvem ainda nao sabe da exclusao: reenvia o tombstone no proximo push em
+  // vez de deixar a linha viva la para sempre, disputando com este apagado.
+  const resendTombstone = database.prepare(
+    `UPDATE report_recipients SET needs_push = 1, sync_status = 'pending'
+     WHERE id = ? AND deleted_at IS NOT NULL`
+  );
 
   const frequencies = new Set(["daily", "weekly", "monthly"]);
   const reportTypes = new Set(["sales", "trucks", "both"]);
@@ -1859,14 +1865,18 @@ function upsertCloudReportRecipients(
     const email = nullableStringValue(row.email);
     const whatsapp = nullableStringValue(row.whatsapp_phone);
     if (!email && !whatsapp) continue;
-    // Nuvem sem a coluna deleted_at (migracao ainda nao aplicada) nao tem como
-    // dizer que a linha foi excluida — nem que continua viva. Nessa janela a
-    // exclusao local e que vale: repetir o proprio tombstone deixa apagado o que
-    // foi apagado aqui, em vez de o pull desfazer a exclusao do operador.
-    const localDeletedAt = (findLocal.get(id) as { deleted_at: string | null } | undefined)
-      ?.deleted_at;
-    const deletedAt =
-      "deleted_at" in row ? isoStringValue(row.deleted_at) : (localDeletedAt ?? null);
+    const localDeletedAt =
+      (findLocal.get(id) as { deleted_at: string | null } | undefined)?.deleted_at ?? null;
+    const cloudDeletedAt = "deleted_at" in row ? isoStringValue(row.deleted_at) : null;
+    // Exclusao local so e desfeita quando a nuvem devolve o destinatario vivo E
+    // ativo — o unico sinal que separa "recadastrado em outra balanca" de "a nuvem
+    // nunca soube da exclusao". Nao saber acontece com quem foi excluido antes
+    // desta versao (a projecao so recebia is_active = false) e enquanto a migracao
+    // que criou deleted_at na nuvem nao e aplicada; nos dois casos aceitar a linha
+    // de la ressuscitaria o que o operador apagou.
+    const keepLocalTombstone =
+      Boolean(localDeletedAt) && !cloudDeletedAt && booleanToSql(row.is_active, true) === 0;
+    const deletedAt = keepLocalTombstone ? localDeletedAt : cloudDeletedAt;
     const conflict = findConflict.get(companyId, email, email, whatsapp, whatsapp) as
       | { id: string; deleted_at: string | null; needs_push: number }
       | undefined;
@@ -1898,6 +1908,7 @@ function upsertCloudReportRecipients(
       updatedAt,
       deletedAt
     );
+    if (keepLocalTombstone) resendTombstone.run(id);
     count++;
   }
   return count;
