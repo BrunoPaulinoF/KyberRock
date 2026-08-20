@@ -3,7 +3,9 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 // Functions so resolve especificadores jsr:/npm:, entao nada de deno.land aqui.
 import nodemailer from "npm:nodemailer@9.0.1";
 import {
+  coversSameWindow,
   localNow,
+  monthToDatePeriod,
   reportPeriod,
   shouldSendAt,
   type ReportPeriod
@@ -188,6 +190,13 @@ interface UnitContent {
   truckWhatsapp: string | null;
 }
 
+// Vendas acumuladas do mes corrente, montadas uma vez por unidade e anexadas a
+// todo envio de vendas — independente da frequencia do destinatario.
+interface MonthToDateContent {
+  salesHtml: string | null;
+  salesWhatsapp: string | null;
+}
+
 async function dispatchForUnit(params: {
   supabase: ReturnType<typeof createClient>;
   company: { id: string; name: string };
@@ -341,6 +350,36 @@ async function dispatchForUnit(params: {
     return content;
   };
 
+  // Vendas do mes corrente (dia 1 ate a data de referencia): sai junto de todo
+  // envio de vendas, para o destinatario acompanhar o acumulado do mes sem
+  // depender da frequencia que ele escolheu.
+  const monthPeriod = monthToDatePeriod(targetDate);
+  let monthContent: MonthToDateContent | null = null;
+  const monthToDate = async (): Promise<MonthToDateContent> => {
+    if (monthContent) return monthContent;
+    const summary = await buildSalesSummary(supabase, company.id, unit.id, monthPeriod);
+    const title = `Vendas do mes ${monthPeriod.label}`;
+    monthContent = {
+      salesHtml: summary
+        ? renderEmailHtml({
+            companyName: company.name,
+            unitName: unit.name,
+            title,
+            summary
+          })
+        : null,
+      salesWhatsapp: summary
+        ? renderWhatsappText({
+            companyName: company.name,
+            unitName: unit.name,
+            title,
+            summary
+          })
+        : null
+    };
+    return monthContent;
+  };
+
   let dispatched = 0;
   let targets = 0;
   const errors: string[] = [];
@@ -349,12 +388,24 @@ async function dispatchForUnit(params: {
     const content = await contentFor(recipient.scheduleFrequency);
     const wantsSales = recipient.reportTypes === "sales" || recipient.reportTypes === "both";
     const wantsTrucks = recipient.reportTypes === "trucks" || recipient.reportTypes === "both";
+    // No dia 1 o periodo do destinatario diario ja e o proprio acumulado do
+    // mes; nesse caso o relatorio nao vai repetido.
+    const month =
+      wantsSales && !coversSameWindow(content.period, monthPeriod) ? await monthToDate() : null;
     const emailHtml =
-      [wantsSales ? content.salesHtml : null, wantsTrucks ? content.truckHtml : null]
+      [
+        wantsSales ? content.salesHtml : null,
+        month?.salesHtml ?? null,
+        wantsTrucks ? content.truckHtml : null
+      ]
         .filter((part): part is string => Boolean(part))
         .join('<hr style="margin:28px 0;border:none;border-top:1px solid #cbd5e1" />') || null;
     const whatsappBody =
-      [wantsSales ? content.salesWhatsapp : null, wantsTrucks ? content.truckWhatsapp : null]
+      [
+        wantsSales ? content.salesWhatsapp : null,
+        month?.salesWhatsapp ?? null,
+        wantsTrucks ? content.truckWhatsapp : null
+      ]
         .filter((part): part is string => Boolean(part))
         .join("\n\n") || null;
     const subject = wantsSales

@@ -143,3 +143,29 @@ export function reportPeriod(frequency: string, referenceDate: string): ReportPe
     label: formatDateBr(referenceDate)
   };
 }
+
+// Vendas do mes corrente, do dia 1 ate o dia de referencia (inclusive). Nao e
+// uma frequencia de agendamento: e o acumulado que acompanha TODO envio, para
+// que quem recebe o diario ou o semanal veja tambem como o mes esta fechando
+// sem esperar a virada (o pacote "monthly" cobre o mes ANTERIOR).
+export function monthToDatePeriod(referenceDate: string): ReportPeriod {
+  const reference = utcDateFrom(referenceDate);
+  const start = toDateString(
+    new Date(Date.UTC(reference.getUTCFullYear(), reference.getUTCMonth(), 1))
+  );
+  const endExclusive = addDays(referenceDate, 1);
+  return {
+    start,
+    endExclusive,
+    startUtc: localDayStartUtc(start),
+    endUtc: localDayStartUtc(endExclusive),
+    frequencyLabel: "do mes",
+    label: `${monthLabel(start)} (ate ${formatDateBr(referenceDate)})`
+  };
+}
+
+// O periodo do destinatario ja e exatamente o acumulado do mes? (Acontece no
+// dia 1: o diario cobre a mesma janela.) Evita anexar o relatorio duas vezes.
+export function coversSameWindow(left: ReportPeriod, right: ReportPeriod): boolean {
+  return left.start === right.start && left.endExclusive === right.endExclusive;
+}

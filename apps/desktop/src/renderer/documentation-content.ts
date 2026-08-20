@@ -616,6 +616,7 @@ export const documentationSections: DocumentationSection[] = [
     ],
     details: [
       "O fechamento diario e montado e enviado pela nuvem, entao ele nao depende do computador da balanca estar ligado no horario.",
+      "Todo envio para os destinatarios leva junto as vendas do mes corrente, do dia 1 ate a data do envio: quem recebe o fechamento diario ou o semanal ve no mesmo e-mail como o mes esta acumulando, sem esperar a virada. So quem recebe apenas Caminhoes fica de fora. O relatorio mensal continua sendo o do mes ANTERIOR, enviado na virada.",
       "O link temporario do WhatsApp abre uma pagina com o mesmo QR code, que se renova sozinho ate alguem escanear. Ele vale 15 minutos, some da tela quando vence, sai de cena assim que o WhatsApp conecta e pode ser cancelado antes disso no botao 'Cancelar link'. Quem abrir o link dentro do prazo consegue conectar um aparelho ao WhatsApp da pedreira: mande para uma pessoa, nao para um grupo.",
       "O relatorio financeiro do OMIE tem horario proprio, separado do fechamento operacional.",
       "Relatorios usam os dados locais e os ja sincronizados. Pendencia de sincronizacao pode atrasar a consolidacao externa.",
@@ -636,6 +637,8 @@ export const documentationSections: DocumentationSection[] = [
       "painel",
       "kpi",
       "fechamento diario",
+      "vendas do mes",
+      "acumulado do mes",
       "email",
       "pdf",
       "excel",
