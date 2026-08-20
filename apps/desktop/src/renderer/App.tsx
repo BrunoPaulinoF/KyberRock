@@ -459,6 +459,31 @@ export function writeStoredThemeMode(
  */
 const MULTI_DESKTOP_PULL_INTERVAL_MS = 15_000;
 
+/**
+ * Compara duas leituras da legenda multi-desktop (nome, cor, numero e situacao
+ * de cada computador da unidade).
+ *
+ * A legenda passou a ser relida a cada validacao de acesso (5 s) para o apelido
+ * trocado no painel administrativo aparecer quase na hora. Sem esta comparacao,
+ * cada leitura devolveria um array novo e re-renderizaria a tela de Operacoes
+ * inteira de 5 em 5 segundos so para desenhar exatamente a mesma legenda.
+ */
+function isSameUnitDeviceList(current: UnitDeviceInfo[], next: UnitDeviceInfo[]): boolean {
+  if (current.length !== next.length) return false;
+  return current.every((device, index) => {
+    const other = next[index];
+    return (
+      other !== undefined &&
+      device.id === other.id &&
+      device.name === other.name &&
+      device.color === other.color &&
+      device.deviceNumber === other.deviceNumber &&
+      device.isActive === other.isActive &&
+      device.isSelf === other.isSelf
+    );
+  });
+}
+
 export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }: AppProps = {}) {
   const [phase, setPhase] = useState<AppPhase>("checking_access");
   // Confirmacoes estilizadas do app (logout, reset OMIE, limpar canceladas).
@@ -1280,15 +1305,28 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
 
     let active = true;
+    const api = desktopApi;
 
     async function checkAccess(): Promise<void> {
-      if (!active || !desktopApi) return;
+      if (!active) return;
       try {
-        const access = await desktopApi.validateDesktopAccess(navigator.onLine, false);
+        const access = await api.validateDesktopAccess(navigator.onLine, false);
+        if (!active) return;
         setAccessStatus(access);
         if (!access.canOperate) {
           setPhase("locked");
+          return;
         }
+        // A mesma validacao ja trouxe do `desktop-status` a lista de computadores
+        // da unidade e regravou o espelho local. Reler a legenda aqui e uma
+        // consulta local barata, e e o que faz o apelido trocado no painel
+        // (loader-web) aparecer nesta maquina neste mesmo ciclo de 5 s, sem
+        // esperar o pull multi-desktop nem a sincronizacao agendada.
+        const nextDevices = await api.listUnitDevices();
+        if (!active) return;
+        setUnitDevices((current) =>
+          isSameUnitDeviceList(current, nextDevices) ? current : nextDevices
+        );
       } catch (error) {
         console.error("Erro ao verificar acesso:", error);
       }

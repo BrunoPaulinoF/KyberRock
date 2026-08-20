@@ -3,6 +3,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { verifyAdminSession } from "../_shared/admin-session.ts";
 import { deviceUnitAssignment } from "../_shared/device-unit.ts";
+import { parseDeviceName } from "../_shared/device-name.ts";
 import { sha256Hex } from "../_shared/crypto.ts";
 import {
   deleteAuthUser,
@@ -81,6 +82,7 @@ type AdminAction =
   | "update_loader_password"
   | "delete_loader"
   | "toggle_device"
+  | "update_device_name"
   | "update_device_unit"
   | "update_device_channel"
   | "delete_device"
@@ -530,6 +532,29 @@ Deno.serve(async (req) => {
       const { error } = await supabase.from("device_registrations").delete().eq("id", deviceId);
       if (error) throw error;
       return jsonResponse({ ok: true });
+    }
+
+    /**
+     * Renomeia um desktop ja ativado.
+     *
+     * O nome nao vale so para a lista do painel: ele e o rotulo que TODAS as
+     * maquinas da pedreira exibem para essa balanca (legenda de cores da tela de
+     * Operacoes e o campo "Computador" do detalhe). Cada desktop reescreve o
+     * espelho local `devices` com o que vem do `desktop-status`, que ele chama a
+     * cada 5 s, entao a troca aparece nas outras maquinas em segundos — sem
+     * reativar nada e sem tocar em token, numero de cupom ou unidade.
+     */
+    if (body.action === "update_device_name") {
+      const deviceId = String(payload.deviceId ?? "");
+      if (!deviceId) return jsonResponse({ error: "Dispositivo nao informado" }, 400);
+      const parsed = parseDeviceName(payload.name);
+      if (!parsed.ok) return jsonResponse({ error: parsed.error }, 400);
+      const { error } = await supabase
+        .from("device_registrations")
+        .update({ name: parsed.name, updated_at: new Date().toISOString() })
+        .eq("id", deviceId);
+      if (error) throw error;
+      return jsonResponse({ ok: true, name: parsed.name });
     }
 
     // Move um desktop ja ativado para a pedreira certa. A projecao das operacoes
