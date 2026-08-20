@@ -385,7 +385,9 @@ versao pedida e que o instalador citado nele esta anexado. Para producao ainda r
 
 `parar` e o unico jeito de tirar do ar uma prerelease que nao deveria estar publicada — e como uma
 prerelease incompleta derruba o anel de teste inteiro (ver acima), e ele o botao de emergencia
-desse anel. O painel nao o expoe: e acao rara, feita pela pagina do workflow no Actions.
+desse anel. Por isso ele **dispensa a conferencia de metadados**: tirar do ar nao pode depender de
+a release estar boa, senao a unica coisa que conserta o anel fica bloqueada exatamente na release
+que o quebrou. O painel nao o expoe: e acao rara, feita pela pagina do workflow no Actions.
 
 Tokens envolvidos — todos PAT fine-grained, **so este repositorio**:
 
