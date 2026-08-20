@@ -48,7 +48,9 @@ export const INVOICE_CLOSING_NOTE =
   "vencimento saem do dia de fechamento e do prazo de boleto ali configurados. A NOTA " +
   "FISCAL e o BOLETO sao emitidos no OMIE, a partir do pedido que o KyberRock ja enviou — " +
   "uma carga sem numero de nota e uma carga que ainda espera a emissao la, nao um erro " +
-  "daqui. Valores e pesos sao os fechados na balanca.";
+  "daqui. Valores e pesos sao os fechados na balanca. A lista PESAGEM A PESAGEM cobre o " +
+  "periodo inteiro, incluindo as cargas dos clientes que ficaram fora do fechamento — por " +
+  "isso o total dela pode ser maior que o total a faturar das faturas.";
 
 const LINE_HEADERS = [
   "Data",
@@ -115,12 +117,12 @@ const CARRIER_HEADERS = [
 const PENDING_HEADERS = ["Cliente", "Cargas", "Total (R$)"];
 
 /**
- * A lista "pesagem a pesagem": as mesmas cargas das faturas, numa tabela unica com a coluna
- * do CLIENTE.
+ * A lista "pesagem a pesagem": TODAS as cargas do periodo, numa tabela unica com a coluna do
+ * CLIENTE — inclusive as dos clientes que ficaram fora do fechamento.
  *
- * E o formato que se filtra e soma na planilha. Os blocos por fatura acima contam a mesma
- * historia, mas cada um e uma tabela separada — nao da para ordenar por peso, filtrar uma
- * placa ou somar uma coluna atravessando todos os clientes de uma vez.
+ * E o formato que se filtra e soma na planilha. Os blocos por fatura acima cobrem so o que
+ * esta sendo cobrado, e cada um e uma tabela separada — nao da para ordenar por peso,
+ * filtrar uma placa ou somar uma coluna atravessando todos os clientes de uma vez.
  */
 const DETAIL_HEADERS = [
   "Op.",
@@ -206,7 +208,7 @@ export function renderInvoiceClosingHtml(
       )
     ),
     section(
-      `Pesagem a pesagem (${num(report.rows.length)})`,
+      detailTitle(report),
       table(
         DETAIL_HEADERS,
         report.rows.map((line) => detailCells(line)),
@@ -300,7 +302,7 @@ export function renderInvoiceClosingSpreadsheet(
       )
     ),
     sheetTable(
-      `Pesagem a pesagem (${num(report.rows.length)})`,
+      detailTitle(report),
       DETAIL_HEADERS,
       report.rows.map((line) => detailCells(line)),
       detailFooterCells(report)
@@ -345,6 +347,17 @@ ${blocks.join("\n")}
 </body></html>`;
 }
 
+/**
+ * Titulo da secao. Diz quantas cargas do periodo estao FORA do fechamento sempre que houver
+ * alguma: quem abre a planilha precisa saber que a lista e maior que as faturas antes de
+ * comparar os dois totais e achar que um deles esta errado.
+ */
+function detailTitle(report: InvoiceClosingReport): string {
+  const outside = report.rows.filter((line) => line.closingDate === null).length;
+  const base = `Pesagem a pesagem (${num(report.rows.length)})`;
+  return outside > 0 ? `${base} - ${num(outside)} fora do fechamento` : base;
+}
+
 function detailCells(line: InvoiceClosingLine): string[] {
   return [
     line.couponNumber === null ? "-" : String(line.couponNumber),
@@ -365,8 +378,8 @@ function detailCells(line: InvoiceClosingLine): string[] {
     line.situationLabel,
     line.invoiceNumber ?? "-",
     omieReference(line),
-    formatDayLabel(line.closingDate),
-    formatDayLabel(line.dueDate)
+    line.closingDate ? formatDayLabel(line.closingDate) : "Fora do fechamento",
+    line.dueDate ? formatDayLabel(line.dueDate) : "-"
   ];
 }
 
@@ -385,9 +398,11 @@ function omieReference(line: InvoiceClosingLine): string {
 /** Rodape alinhado com `DETAIL_HEADERS`: so as colunas somaveis levam numero. */
 function detailFooterCells(report: InvoiceClosingReport): string[] | null {
   if (report.rows.length === 0) return null;
-  const { totals } = report;
+  // O total DA LISTA (o periodo inteiro), nao o das faturas: somar aqui o total a faturar
+  // daria um rodape que nao fecha com as linhas logo acima dele.
+  const totals = report.rowTotals;
   return [
-    "TOTAL",
+    "TOTAL DO PERIODO",
     "",
     "",
     "",

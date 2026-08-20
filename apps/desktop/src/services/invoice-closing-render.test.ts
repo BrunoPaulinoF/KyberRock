@@ -115,6 +115,13 @@ function report(overrides: Partial<InvoiceClosingReport> = {}): InvoiceClosingRe
     pendingSetup: [],
     availablePlates: ["CVP7E80"],
     rows: invoices.flatMap((entry) => entry.lines),
+    rowTotals: {
+      operations: 1,
+      netWeightKg: 31_000,
+      productCents: 150_000,
+      freightCents: 16_194,
+      totalCents: 166_194
+    },
     ...overrides
   };
 }
@@ -184,6 +191,43 @@ describe("invoice-closing-render", () => {
       // mil vezes diferentes. (O "R$" sai com espaco fino, entao a busca e pelo numero.)
       expect(document).toContain("48,39/t");
       expect(document).toContain("JOSE CORDEIRO");
+    }
+  });
+
+  it("a carga fora do fechamento sai na lista marcada, e o rodape soma o periodo inteiro", () => {
+    const fora = line({
+      operationId: "op-fora",
+      customerName: "BETA PAVIMENTACAO",
+      closingDate: null,
+      dueDate: null,
+      invoiceNumber: null,
+      totalCents: 100_000,
+      netWeightKg: 20_000,
+      productTotalCents: 100_000,
+      freightTotalCents: 0
+    });
+    const withOutside = report({
+      rows: [line(), fora],
+      rowTotals: {
+        operations: 2,
+        netWeightKg: 51_000,
+        productCents: 250_000,
+        freightCents: 16_194,
+        totalCents: 266_194
+      }
+    });
+
+    for (const document of [
+      renderInvoiceClosingSpreadsheet(withOutside),
+      renderInvoiceClosingHtml(withOutside)
+    ]) {
+      // O titulo avisa antes de alguem comparar os dois totais e achar um deles errado.
+      expect(document).toContain("Pesagem a pesagem (2) - 1 fora do fechamento");
+      expect(document).toContain("Fora do fechamento");
+      expect(document).toContain("BETA PAVIMENTACAO");
+      // O rodape fecha com as LINHAS da lista, nao com o total a faturar das faturas.
+      expect(document).toContain("TOTAL DO PERIODO");
+      expect(document).toContain("2.661,94");
     }
   });
 
