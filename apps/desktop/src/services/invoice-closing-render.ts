@@ -114,6 +114,29 @@ const CARRIER_HEADERS = [
 
 const PENDING_HEADERS = ["Cliente", "Cargas", "Total (R$)"];
 
+/**
+ * A lista "pesagem a pesagem": as mesmas cargas das faturas, numa tabela unica com a coluna
+ * do CLIENTE.
+ *
+ * E o formato que se filtra e soma na planilha. Os blocos por fatura acima contam a mesma
+ * historia, mas cada um e uma tabela separada — nao da para ordenar por peso, filtrar uma
+ * placa ou somar uma coluna atravessando todos os clientes de uma vez.
+ */
+const DETAIL_HEADERS = [
+  "Op.",
+  "Data",
+  "Cliente",
+  "Produto",
+  "Placa",
+  "Peso (kg)",
+  "Preco unit.",
+  "Produto (R$)",
+  "Frete (R$)",
+  "Total (R$)",
+  "Nota fiscal",
+  "Situacao"
+];
+
 export function invoiceClosingFileBaseName(report: InvoiceClosingReport): string {
   const cycles = report.filters.cycles.length
     ? report.filters.cycles
@@ -172,6 +195,16 @@ export function renderInvoiceClosingHtml(
           "Sem cargas nesta fatura.",
           "detail"
         )
+      )
+    ),
+    section(
+      `Pesagem a pesagem (${num(report.rows.length)})`,
+      table(
+        DETAIL_HEADERS,
+        report.rows.map((line) => detailCells(line)),
+        detailFooterCells(report),
+        "Nenhuma pesagem nas faturas do periodo.",
+        "detail"
       )
     ),
     section(
@@ -259,6 +292,12 @@ export function renderInvoiceClosingSpreadsheet(
       )
     ),
     sheetTable(
+      `Pesagem a pesagem (${num(report.rows.length)})`,
+      DETAIL_HEADERS,
+      report.rows.map((line) => detailCells(line)),
+      detailFooterCells(report)
+    ),
+    sheetTable(
       "Transportadores e placas",
       CARRIER_HEADERS,
       carrierCells(report.byCarrier),
@@ -296,6 +335,53 @@ export function renderInvoiceClosingSpreadsheet(
 ${blocks.join("\n")}
 <p class="note">${escapeHtml(INVOICE_CLOSING_NOTE)}</p>
 </body></html>`;
+}
+
+function detailCells(line: InvoiceClosingLine): string[] {
+  return [
+    line.couponNumber === null ? "-" : String(line.couponNumber),
+    formatDayLabel(line.date),
+    line.customerName,
+    line.productDescription,
+    line.plate,
+    num(line.netWeightKg),
+    unitPriceLabel(line),
+    formatBRL(line.productTotalCents),
+    formatBRL(line.freightTotalCents),
+    formatBRL(line.totalCents),
+    line.invoiceNumber ?? "-",
+    line.situationLabel
+  ];
+}
+
+/** Rodape alinhado com `DETAIL_HEADERS`: so as colunas somaveis levam numero. */
+function detailFooterCells(report: InvoiceClosingReport): string[] | null {
+  if (report.rows.length === 0) return null;
+  const { totals } = report;
+  return [
+    "TOTAL",
+    "",
+    "",
+    "",
+    "",
+    num(totals.netWeightKg),
+    "",
+    formatBRL(totals.productCents),
+    formatBRL(totals.freightCents),
+    formatBRL(totals.totalCents),
+    "",
+    ""
+  ];
+}
+
+/**
+ * O preco unitario com a unidade em que ele foi aplicado. Sem o "/t" ou "/kg" o numero
+ * sozinho nao da para conferir: R$ 42,00 por tonelada e por quilo sao contas mil vezes
+ * diferentes.
+ */
+function unitPriceLabel(line: InvoiceClosingLine): string {
+  if (line.unitPriceCents === null) return "-";
+  return `${formatBRL(line.unitPriceCents)}/${line.priceUnit === "kg" ? "kg" : "t"}`;
 }
 
 /**

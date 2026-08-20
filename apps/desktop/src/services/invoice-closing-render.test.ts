@@ -19,11 +19,15 @@ function line(overrides: Partial<InvoiceClosingLine> = {}): InvoiceClosingLine {
     date: "2026-07-22",
     invoiceNumber: "000028727",
     omieOrderNumber: "50139",
+    customerId: "cust-1",
+    customerName: "JOSE CORDEIRO",
     plate: "CVP7E80",
     carrierName: "Transportes Silva",
     driverName: "Joao",
     productDescription: "Brita 1",
     netWeightKg: 31_000,
+    unitPriceCents: 4_839,
+    priceUnit: "ton",
     productTotalCents: 150_000,
     freightTotalCents: 16_194,
     totalCents: 166_194,
@@ -102,6 +106,7 @@ function report(overrides: Partial<InvoiceClosingReport> = {}): InvoiceClosingRe
     ],
     pendingSetup: [],
     availablePlates: ["CVP7E80"],
+    rows: invoices.flatMap((entry) => entry.lines),
     ...overrides
   };
 }
@@ -138,6 +143,20 @@ describe("invoice-closing-render", () => {
         })
       )
     ).toBe("fechamento-faturas-todos-4-placas-2026-07-16-a-2026-07-31");
+  });
+
+  it("os documentos trazem a lista pesagem a pesagem, com cliente e preco unitario em cada linha", () => {
+    for (const document of [
+      renderInvoiceClosingSpreadsheet(report()),
+      renderInvoiceClosingHtml(report())
+    ]) {
+      expect(document).toContain("Pesagem a pesagem (1)");
+      expect(document).toContain("Preco unit.");
+      // A unidade vai junto do preco: R$ 48,39 por tonelada e por quilo sao contas
+      // mil vezes diferentes. (O "R$" sai com espaco fino, entao a busca e pelo numero.)
+      expect(document).toContain("48,39/t");
+      expect(document).toContain("JOSE CORDEIRO");
+    }
   });
 
   it("separado por placa, os documentos ganham a coluna Placa e dizem de qual caminhao e cada fatura", () => {

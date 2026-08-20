@@ -43,6 +43,15 @@ import type { InvoiceClosingCycle } from "./invoice-closing-cycle.js";
 export interface InvoiceClosingLine {
   operationId: string;
   /**
+   * O cliente da pesagem, repetido em cada linha.
+   *
+   * Dentro da fatura ele e obvio — e o do titulo. Ele existe aqui para a lista "pesagem a
+   * pesagem", que mistura os clientes todos numa tabela so: sem a coluna, uma linha
+   * solta nao diria de quem e a carga.
+   */
+  customerId: string;
+  customerName: string;
+  /**
    * Numero do VALE: o codigo do cupom que saiu com o motorista (`operation_code`, o "COD"
    * impresso). E por ele que o cliente contesta uma carga, entao e ele que tem de estar na
    * fatura.
@@ -59,6 +68,9 @@ export interface InvoiceClosingLine {
   driverName: string;
   productDescription: string;
   netWeightKg: number;
+  /** Preco aplicado na pesagem, e a unidade dele ("ton" / "kg"), para conferir a conta. */
+  unitPriceCents: number | null;
+  priceUnit: string | null;
   productTotalCents: number;
   freightTotalCents: number;
   totalCents: number;
@@ -156,6 +168,15 @@ export interface InvoiceClosingReport {
   filters: InvoiceClosingFilters;
   /** Uma fatura por (cliente, fechamento), do fechamento mais antigo para o mais novo. */
   invoices: InvoiceClosingInvoice[];
+  /**
+   * As MESMAS pesagens das faturas, numa lista so, na ordem em que foram feitas.
+   *
+   * As faturas respondem "quanto cada cliente deve"; esta lista responde a pergunta de
+   * conferencia — "cade a carga tal?" —, que numa tela dividida em blocos por cliente
+   * obrigaria a abrir fatura por fatura ate achar. E tambem a forma que se filtra e soma
+   * na planilha: uma tabela unica com a coluna do cliente, e nao um bloco por cliente.
+   */
+  rows: InvoiceClosingLine[];
   totals: InvoiceClosingTotals;
   /** Quantos clientes distintos entraram no fechamento. */
   customers: number;
@@ -208,6 +229,8 @@ interface InvoiceClosingSourceRow {
   carrier_name: string | null;
   driver_name: string | null;
   net_weight_kg: number | null;
+  unit_price_cents: number | null;
+  price_unit: string | null;
   product_total_cents: number | null;
   freight_total_cents: number | null;
   total_cents: number | null;
@@ -303,6 +326,7 @@ export class InvoiceClosingService {
       periodLabel: options.periodLabel ?? null,
       filters: { cycles, customerId, plates, search: search || null },
       invoices: orderedInvoices,
+      rows: lines,
       totals: buildTotals(lines),
       customers: new Set(orderedInvoices.map((invoice) => invoice.customerId)).size,
       withoutInvoice: buildTotals(lines.filter((line) => !line.invoiceNumber)),
@@ -335,7 +359,8 @@ export class InvoiceClosingService {
            -- de quem o caminhao e quando ninguem escolheu nada na balanca.
            COALESCE(crr.name, vcrr.name) as carrier_name,
            COALESCE(d.name, o.remote_driver_name) as driver_name,
-           o.net_weight_kg, o.product_total_cents, o.freight_total_cents, o.total_cents,
+           o.net_weight_kg, o.unit_price_cents, o.price_unit,
+           o.product_total_cents, o.freight_total_cents, o.total_cents,
            o.omie_sales_order_id, o.omie_service_order_id, o.omie_order_number,
            o.omie_invoice_number, o.omie_billing_status
          FROM weighing_operations o
@@ -361,6 +386,8 @@ function mapLine(row: InvoiceClosingSourceRow): InvoiceClosingLine {
   const situation = resolveSituation(row);
   return {
     operationId: row.id,
+    customerId: row.customer_id,
+    customerName: customerName(row),
     couponNumber: row.operation_code,
     date: row.created_at.slice(0, 10),
     invoiceNumber: (row.omie_invoice_number ?? "").trim() || null,
@@ -370,6 +397,8 @@ function mapLine(row: InvoiceClosingSourceRow): InvoiceClosingLine {
     driverName: (row.driver_name ?? "").trim() || "-",
     productDescription: (row.product_description ?? "").trim() || "N/A",
     netWeightKg: row.net_weight_kg ?? 0,
+    unitPriceCents: row.unit_price_cents,
+    priceUnit: row.price_unit,
     productTotalCents: row.product_total_cents ?? 0,
     freightTotalCents: row.freight_total_cents ?? 0,
     totalCents: row.total_cents ?? 0,
@@ -468,7 +497,7 @@ function matchesSearch(
   if (!search) return true;
   const term = search.toLowerCase();
   return [
-    customerName(row),
+    line.customerName,
     row.customer_document ?? "",
     line.plate,
     line.carrierName,

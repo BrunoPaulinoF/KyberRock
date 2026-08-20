@@ -99,6 +99,8 @@ interface OperationSeed {
   productCents?: number;
   freightCents?: number;
   net?: number;
+  unitPriceCents?: number | null;
+  priceUnit?: string | null;
   vehicle?: string | null;
   carrier?: string | null;
   driver?: string | null;
@@ -117,10 +119,11 @@ function insertOperation(db: Database, seed: OperationSeed): void {
     `INSERT INTO weighing_operations
        (id, company_id, unit_id, device_id, operation_code, status, operation_type,
         customer_id, vehicle_id, carrier_id, driver_id, product_id,
-        net_weight_kg, product_total_cents, freight_total_cents, total_cents,
+        net_weight_kg, unit_price_cents, price_unit,
+        product_total_cents, freight_total_cents, total_cents,
         omie_sales_order_id, omie_order_number, omie_invoice_number, omie_billing_status,
         created_at, updated_at, deleted_at)
-     VALUES (?, 'comp-1', ?, 'dev-1', ?, ?, ?, ?, ?, ?, ?, 'prod-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, 'comp-1', ?, 'dev-1', ?, ?, ?, ?, ?, ?, ?, 'prod-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     seed.id,
     seed.unitId ?? "unit-1",
@@ -132,6 +135,8 @@ function insertOperation(db: Database, seed: OperationSeed): void {
     seed.carrier ?? null,
     seed.driver ?? "drv-1",
     seed.net ?? 10_000,
+    seed.unitPriceCents === undefined ? 4_200 : seed.unitPriceCents,
+    seed.priceUnit === undefined ? "ton" : seed.priceUnit,
     seed.productCents ?? 90_000,
     seed.freightCents ?? 10_000,
     seed.totalCents ?? 100_000,
@@ -503,6 +508,66 @@ describe("InvoiceClosingService", () => {
       expect(result.invoices).toHaveLength(1);
       expect(result.invoices[0].lines.map((line) => line.operationId)).toEqual(["op-2"]);
       expect(result.byCarrier.map((carrier) => carrier.carrierName)).toEqual(["Transportes Souza"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("a lista pesagem a pesagem traz as mesmas cargas das faturas, com cliente e preco em cada linha", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, { id: "cust-1", name: "Alfa", closingDay: 31, boletoDays: 10 });
+      insertCustomer(db, { id: "cust-2", name: "Beta", closingDay: 31, boletoDays: 10 });
+      insertOperation(db, { id: "op-1", code: 22, customer: "cust-1", createdAt: "2026-07-10" });
+      insertOperation(db, {
+        id: "op-2",
+        code: 23,
+        customer: "cust-2",
+        createdAt: "2026-07-11",
+        vehicle: "veh-2"
+      });
+
+      const result = report(db);
+      // Uma fatura por cliente, mas UMA lista com as duas cargas, na ordem em que rodaram.
+      expect(result.invoices).toHaveLength(2);
+      expect(result.rows.map((line) => line.operationId)).toEqual(["op-1", "op-2"]);
+      expect(result.rows.map((line) => line.customerName)).toEqual(["Alfa", "Beta"]);
+      expect(result.rows.map((line) => line.plate)).toEqual(["ABC1D23", "XYZ4E56"]);
+      expect(result.rows.map((line) => line.unitPriceCents)).toEqual([4200, 4200]);
+      expect(result.rows.map((line) => line.priceUnit)).toEqual(["ton", "ton"]);
+      // O rodape da lista e o mesmo total a faturar: as duas tabelas somam as mesmas cargas.
+      expect(result.rows.reduce((total, line) => total + line.totalCents, 0)).toBe(
+        result.totals.totalCents
+      );
+      expect(result.rows).toHaveLength(result.totals.operations);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("a lista pesagem a pesagem obedece aos filtros da tela", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, { id: "cust-1", name: "Alfa", closingDay: 31, boletoDays: 10 });
+      // Cliente sem periodicidade: nao entra em fatura nenhuma, e por isso nao entra na lista.
+      insertCustomer(db, { id: "cust-2", name: "Beta", creditEnabled: false });
+      insertOperation(db, { id: "op-1", customer: "cust-1", createdAt: "2026-07-10" });
+      insertOperation(db, {
+        id: "op-2",
+        customer: "cust-1",
+        createdAt: "2026-07-11",
+        vehicle: "veh-2"
+      });
+      insertOperation(db, { id: "op-fora", customer: "cust-2", createdAt: "2026-07-12" });
+
+      expect(report(db).rows.map((line) => line.operationId)).toEqual(["op-1", "op-2"]);
+      expect(report(db).pendingSetup.map((row) => row.customerId)).toEqual(["cust-2"]);
+      expect(report(db, { plates: ["XYZ4E56"] }).rows.map((line) => line.operationId)).toEqual([
+        "op-2"
+      ]);
+      expect(report(db, { customerId: "cust-2" }).rows).toEqual([]);
     } finally {
       db.close();
     }
