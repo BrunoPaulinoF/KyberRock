@@ -425,6 +425,89 @@ describe("InvoiceClosingService", () => {
     }
   });
 
+  it("sem placa escolhida, a fatura e a do cliente inteiro e as placas do periodo vem listadas", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, { id: "cust-1", name: "Alfa", closingDay: 31, boletoDays: 10 });
+      insertOperation(db, { id: "op-1", customer: "cust-1", createdAt: "2026-07-10" });
+      insertOperation(db, {
+        id: "op-2",
+        customer: "cust-1",
+        createdAt: "2026-07-11",
+        vehicle: "veh-2"
+      });
+
+      const result = report(db);
+      expect(result.filters.plates).toEqual([]);
+      expect(result.availablePlates).toEqual(["ABC1D23", "XYZ4E56"]);
+      expect(result.invoices).toHaveLength(1);
+      expect(result.invoices[0].plate).toBeNull();
+      expect(result.invoices[0].totals.operations).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("com placas escolhidas, o mesmo cliente sai com uma fatura por placa", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, { id: "cust-1", name: "Alfa", closingDay: 31, boletoDays: 10 });
+      // Duas viagens da primeira placa e uma da segunda, no mesmo fechamento.
+      insertOperation(db, { id: "op-1", customer: "cust-1", createdAt: "2026-07-10" });
+      insertOperation(db, { id: "op-2", customer: "cust-1", createdAt: "2026-07-12" });
+      insertOperation(db, {
+        id: "op-3",
+        customer: "cust-1",
+        createdAt: "2026-07-11",
+        vehicle: "veh-2"
+      });
+
+      const result = report(db, { plates: ["ABC1D23", "XYZ4E56"] });
+      expect(result.filters.plates).toEqual(["ABC1D23", "XYZ4E56"]);
+      expect(result.invoices).toHaveLength(2);
+      expect(result.invoices.map((invoice) => invoice.plate)).toEqual(["ABC1D23", "XYZ4E56"]);
+      expect(result.invoices.map((invoice) => invoice.totals.operations)).toEqual([2, 1]);
+      // Cada fatura por placa mantem o fechamento e o vencimento do cliente.
+      expect(result.invoices.every((invoice) => invoice.closingDate === "2026-07-31")).toBe(true);
+      expect(result.invoices.every((invoice) => invoice.dueDate === "2026-08-10")).toBe(true);
+      // O cliente continua sendo um so, e o total do periodo nao muda com o corte.
+      expect(result.customers).toBe(1);
+      expect(result.totals.totalCents).toBe(300_000);
+      // A lista de opcoes sai de antes do filtro: escolher uma placa nao apaga a outra.
+      expect(report(db, { plates: ["ABC1D23"] }).availablePlates).toEqual(["ABC1D23", "XYZ4E56"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("a placa escolhida corta as cargas das outras placas, inclusive nos totais", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, { id: "cust-1", name: "Alfa", closingDay: 31, boletoDays: 10 });
+      insertOperation(db, { id: "op-1", customer: "cust-1", createdAt: "2026-07-10" });
+      insertOperation(db, {
+        id: "op-2",
+        customer: "cust-1",
+        createdAt: "2026-07-11",
+        vehicle: "veh-2",
+        carrier: "carr-2"
+      });
+
+      // Placa escrita de qualquer jeito acha a mesma carga: o filtro normaliza os dois lados.
+      const result = report(db, { plates: [" xyz4e56 "] });
+      expect(result.filters.plates).toEqual(["XYZ4E56"]);
+      expect(result.totals.operations).toBe(1);
+      expect(result.invoices).toHaveLength(1);
+      expect(result.invoices[0].lines.map((line) => line.operationId)).toEqual(["op-2"]);
+      expect(result.byCarrier.map((carrier) => carrier.carrierName)).toEqual(["Transportes Souza"]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("a pesagem do dia do fechamento entra nele, e a do dia seguinte no proximo", () => {
     const db = createDatabase();
     try {

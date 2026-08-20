@@ -31,6 +31,11 @@ import type { InsightsPeriod } from "./insights-period";
  * que a cobranca precisa —, e o mesmo periodo ainda sai resumido por transportador e
  * placa, que e como o acerto do frete e feito. A planilha e o PDF saem com exatamente as
  * faturas que estao na tela.
+ *
+ * O filtro de PLACA e o unico que troca o formato da lista: enquanto esta vazio, o
+ * fechamento e um por cliente; marcando placas, o mesmo cliente passa a render uma fatura
+ * por caminhao. E a pergunta de quem paga o frete por placa — "quanto este caminhao levou
+ * deste cliente na quinzena?" — sem tirar do fechamento a conta que vai para o cliente.
  */
 
 const ALL_CUSTOMERS = "";
@@ -61,6 +66,8 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
   const [customStart, setCustomStart] = useState(() => toIsoDate(new Date()));
   const [customEnd, setCustomEnd] = useState(() => toIsoDate(new Date()));
   const [cycles, setCycles] = useState<InvoiceClosingCycle[]>([]);
+  const [plates, setPlates] = useState<string[]>([]);
+  const [plateSearch, setPlateSearch] = useState("");
   const [search, setSearch] = useState("");
   const [report, setReport] = useState<InvoiceClosingReport | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -89,10 +96,11 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
     () => ({
       cycles,
       customerId: customerId || null,
+      plates,
       search: search.trim() || null,
       periodLabel: range.label
     }),
-    [cycles, customerId, search, range.label]
+    [cycles, customerId, plates, search, range.label]
   );
 
   useEffect(() => {
@@ -137,6 +145,14 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
     );
   }
 
+  function togglePlate(plate: string): void {
+    setPlates((current) =>
+      current.includes(plate)
+        ? current.filter((item) => item !== plate)
+        : [...current, plate].sort((a, b) => a.localeCompare(b, "pt-BR"))
+    );
+  }
+
   async function handleExport(): Promise<void> {
     if (!desktopApi) return;
     if (selectedFormats.length === 0) {
@@ -167,6 +183,19 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
   }
 
   const totals = report?.totals ?? null;
+  const splitByPlate = plates.length > 0;
+
+  // As placas do periodo mais as ja marcadas: uma placa escolhida antes de trocar o periodo
+  // continua visivel (e desmarcavel) mesmo quando ela nao rodou no periodo novo.
+  const plateOptions = useMemo(() => {
+    const all = new Set([...(report?.availablePlates ?? []), ...plates]);
+    return [...all].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [report?.availablePlates, plates]);
+
+  const visiblePlates = useMemo(() => {
+    const term = plateSearch.trim().toUpperCase();
+    return term ? plateOptions.filter((plate) => plate.includes(term)) : plateOptions;
+  }, [plateOptions, plateSearch]);
 
   return (
     <section style={styles.page}>
@@ -174,7 +203,7 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Fechamento de faturas</h2>
           <HelpTooltip
-            content="Puxa de uma vez a fatura de todos os clientes de um ciclo: escolha Quinzenal ou Mensal e o periodo. Cada fatura sai com a data de fechamento, o vencimento e a lista carga a carga com nota fiscal, vale, placa e transportador. O ciclo, o dia do fechamento e o prazo do boleto vem do cadastro do cliente. O Excel e o PDF saem com as mesmas faturas que estao na tela."
+            content="Puxa de uma vez a fatura de todos os clientes de um ciclo: escolha Quinzenal ou Mensal e o periodo. Cada fatura sai com a data de fechamento, o vencimento e a lista carga a carga com nota fiscal, vale, placa e transportador. O ciclo, o dia do fechamento e o prazo do boleto vem do cadastro do cliente. Marcando placas no filtro de Placa, o fechamento sai separado por placa — uma fatura por caminhao dentro de cada cliente; com o filtro vazio, sai a fatura inteira do cliente. O Excel e o PDF saem com as mesmas faturas que estao na tela."
             placement="right"
           />
         </div>
@@ -288,6 +317,64 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
           </div>
 
           <div style={styles.filterBlock}>
+            <div style={styles.filterLabelRow}>
+              <span style={styles.filterLabel}>Placa</span>
+              {splitByPlate ? (
+                <button type="button" onClick={() => setPlates([])} style={styles.clearButton}>
+                  Limpar ({formatCount(plates.length)})
+                </button>
+              ) : null}
+            </div>
+            <input
+              value={plateSearch}
+              onChange={(event) => setPlateSearch(event.target.value)}
+              placeholder="Filtrar placas..."
+              aria-label="Filtrar a lista de placas"
+              style={styles.input}
+            />
+            {plates.length > 0 ? (
+              <div style={styles.chipRow}>
+                {plates.map((plate) => (
+                  <button
+                    key={plate}
+                    type="button"
+                    onClick={() => togglePlate(plate)}
+                    title={`Tirar ${plate} do filtro`}
+                    style={styles.chipActive}
+                  >
+                    {plate} ×
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <div style={styles.plateList}>
+              {visiblePlates.length === 0 ? (
+                <p style={styles.hint}>
+                  {plateOptions.length === 0
+                    ? "Nenhuma placa rodou no periodo."
+                    : "Nenhuma placa com esse texto."}
+                </p>
+              ) : (
+                visiblePlates.map((plate) => (
+                  <label key={plate} style={styles.checkbox}>
+                    <input
+                      type="checkbox"
+                      checked={plates.includes(plate)}
+                      onChange={() => togglePlate(plate)}
+                    />
+                    {plate}
+                  </label>
+                ))
+              )}
+            </div>
+            <p style={styles.hint}>
+              {splitByPlate
+                ? "Uma fatura por placa: o mesmo cliente aparece uma vez para cada caminhao escolhido."
+                : "Vazio: uma fatura por cliente, com todas as placas juntas."}
+            </p>
+          </div>
+
+          <div style={styles.filterBlock}>
             <span style={styles.filterLabel}>Formato do arquivo</span>
             <div style={styles.chipRow}>
               <label style={styles.checkbox}>
@@ -368,10 +455,15 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
           ) : null}
 
           <div style={styles.card}>
-            <h3 style={styles.cardTitle}>Faturas ({formatCount(report.invoices.length)})</h3>
+            <h3 style={styles.cardTitle}>
+              {splitByPlate ? "Faturas por placa" : "Faturas"} (
+              {formatCount(report.invoices.length)})
+            </h3>
             {report.invoices.length === 0 ? (
               <p style={styles.hint}>
-                Nenhum cliente com fechamento no periodo e nos ciclos escolhidos.
+                {splitByPlate
+                  ? "Nenhuma carga das placas escolhidas nos ciclos e no periodo."
+                  : "Nenhum cliente com fechamento no periodo e nos ciclos escolhidos."}
               </p>
             ) : (
               <div style={styles.tableScrollTall}>
@@ -379,6 +471,9 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
                   <thead>
                     <tr>
                       <th style={{ ...styles.th, textAlign: "left" }}>Cliente</th>
+                      {splitByPlate ? (
+                        <th style={{ ...styles.th, textAlign: "left" }}>Placa</th>
+                      ) : null}
                       <th style={{ ...styles.th, textAlign: "left" }}>Ciclo</th>
                       <th style={{ ...styles.th, textAlign: "left" }}>Fechamento</th>
                       <th style={{ ...styles.th, textAlign: "left" }}>Vencimento</th>
@@ -392,21 +487,24 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
                   <tbody>
                     {report.invoices.map((invoice) => (
                       <InvoiceRows
-                        key={`${invoice.customerId}|${invoice.closingDate}`}
+                        key={invoiceKey(invoice)}
                         invoice={invoice}
-                        expanded={expanded === `${invoice.customerId}|${invoice.closingDate}`}
+                        showPlate={splitByPlate}
+                        expanded={expanded === invoiceKey(invoice)}
                         onToggle={() =>
-                          setExpanded((current) => {
-                            const key = `${invoice.customerId}|${invoice.closingDate}`;
-                            return current === key ? null : key;
-                          })
+                          setExpanded((current) =>
+                            current === invoiceKey(invoice) ? null : invoiceKey(invoice)
+                          )
                         }
                       />
                     ))}
                   </tbody>
                   <tfoot>
                     <tr>
-                      <td style={{ ...styles.tdTotal, textAlign: "left" }} colSpan={4}>
+                      <td
+                        style={{ ...styles.tdTotal, textAlign: "left" }}
+                        colSpan={splitByPlate ? 5 : 4}
+                      >
                         TOTAL
                       </td>
                       <td style={styles.tdTotal}>{formatCount(totals.operations)}</td>
@@ -497,10 +595,12 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
  */
 function InvoiceRows({
   invoice,
+  showPlate,
   expanded,
   onToggle
 }: {
   invoice: InvoiceClosingInvoice;
+  showPlate: boolean;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -513,6 +613,11 @@ function InvoiceRows({
         >
           {invoice.customerName}
         </td>
+        {showPlate ? (
+          <td style={{ ...styles.td, textAlign: "left", fontWeight: 700 }}>
+            {invoice.plate ?? "-"}
+          </td>
+        ) : null}
         <td style={{ ...styles.td, textAlign: "left" }}>{invoice.cycleLabel}</td>
         <td style={{ ...styles.td, textAlign: "left" }}>{formatDayLabel(invoice.closingDate)}</td>
         <td style={{ ...styles.td, textAlign: "left" }}>{formatDayLabel(invoice.dueDate)}</td>
@@ -537,7 +642,7 @@ function InvoiceRows({
       </tr>
       {expanded ? (
         <tr>
-          <td style={{ ...styles.td, padding: 0 }} colSpan={9}>
+          <td style={{ ...styles.td, padding: 0 }} colSpan={showPlate ? 10 : 9}>
             <div style={styles.detailBox}>
               <table style={styles.table}>
                 <thead>
@@ -598,6 +703,14 @@ function InvoiceRows({
       ) : null}
     </>
   );
+}
+
+/**
+ * A chave da fatura na tela. Inclui a PLACA porque, com o filtro de placas em uso, o mesmo
+ * cliente tem varias faturas no mesmo fechamento — sem ela, abrir uma abriria todas.
+ */
+function invoiceKey(invoice: InvoiceClosingInvoice): string {
+  return `${invoice.customerId}|${invoice.closingDate}|${invoice.plate ?? ""}`;
 }
 
 function Kpi({
@@ -669,6 +782,32 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: "column",
     gap: "6px",
     minWidth: 0
+  },
+  filterLabelRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "8px"
+  },
+  clearButton: {
+    border: "none",
+    background: "none",
+    color: "var(--kr-primary-strong)",
+    fontSize: "11px",
+    fontWeight: 700,
+    cursor: "pointer",
+    padding: 0
+  },
+  plateList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    maxHeight: "132px",
+    overflowY: "auto",
+    border: "1px solid var(--kr-card-border)",
+    borderRadius: "10px",
+    padding: "6px 8px",
+    background: "var(--kr-surface)"
   },
   filterLabel: {
     fontSize: "11px",
