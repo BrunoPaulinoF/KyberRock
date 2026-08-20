@@ -120,37 +120,49 @@ jobs:
           # ---------------------------------------------------------------
           # 2. A release esta completa?
           #
-          # Vale para os tres alvos, inclusive `parar`: se algo aqui estiver
-          # errado, e melhor saber agora do que depois de publicar.
+          # So para quem vai PUBLICAR. `parar` pula esta secao de proposito:
+          # despublicar precisa funcionar justamente na release incompleta,
+          # porque e ela que derruba o anel de teste (uma prerelease sem
+          # `latest.yml` vira a candidata mais nova e o updater erra em vez de
+          # cair para a anterior). Exigir o metadado aqui bloquearia o unico
+          # conserto possivel — foi o que aconteceu com as releases herdadas do
+          # modelo antigo, que sairam com `build.yml` no lugar de `latest.yml`.
           # ---------------------------------------------------------------
-          metadata_id=$(asset_id latest.yml)
-          if [ -z "$metadata_id" ]; then
-            echo "::error title=Release sem metadados::A release $TAG nao tem latest.yml. Sem ele o updater acha a release e nao acha o metadado — ficaria cego em silencio. O build nao foi publicado por completo."
+          exe_name=""
+          if [ "$TARGET" = "parar" ]; then
+            echo "Alvo 'parar': conferencia de metadados dispensada — tirar do ar nunca pode depender de a release estar boa."
             echo "Assets presentes:"
             echo "$release" | jq -r '.assets[].name'
-            exit 1
+          else
+            metadata_id=$(asset_id latest.yml)
+            if [ -z "$metadata_id" ]; then
+              echo "::error title=Release sem metadados::A release $TAG nao tem latest.yml. Sem ele o updater acha a release e nao acha o metadado — ficaria cego em silencio. O build nao foi publicado por completo."
+              echo "Assets presentes:"
+              echo "$release" | jq -r '.assets[].name'
+              exit 1
+            fi
+
+            curl -sS -f "${AUTH[@]}" -H "Accept: application/octet-stream" \
+              -L "$API/releases/assets/$metadata_id" -o metadata.yml
+
+            yml_version=$(grep -m1 '^version:' metadata.yml | sed 's/^version:[[:space:]]*//' | tr -d '\r')
+            yml_path=$(grep -m1 '^path:' metadata.yml | sed 's/^path:[[:space:]]*//' | tr -d '\r')
+            echo "Metadados: versao=$yml_version arquivo=$yml_path"
+
+            if [ "$yml_version" != "$VERSION" ]; then
+              echo "::error title=Versao divergente::O metadado da release $TAG diz versao '$yml_version'. Promocao abortada para nao publicar metadado errado."
+              exit 1
+            fi
+
+            exe_name="${yml_path// /-}"
+            if [ -z "$(asset_id "$exe_name")" ]; then
+              echo "::error title=Instalador ausente::O metadado aponta para '$exe_name', que nao esta anexado a release $TAG."
+              echo "Assets presentes:"
+              echo "$release" | jq -r '.assets[].name'
+              exit 1
+            fi
+            echo "OK: instalador '$exe_name' presente na release."
           fi
-
-          curl -sS -f "${AUTH[@]}" -H "Accept: application/octet-stream" \
-            -L "$API/releases/assets/$metadata_id" -o metadata.yml
-
-          yml_version=$(grep -m1 '^version:' metadata.yml | sed 's/^version:[[:space:]]*//' | tr -d '\r')
-          yml_path=$(grep -m1 '^path:' metadata.yml | sed 's/^path:[[:space:]]*//' | tr -d '\r')
-          echo "Metadados: versao=$yml_version arquivo=$yml_path"
-
-          if [ "$yml_version" != "$VERSION" ]; then
-            echo "::error title=Versao divergente::O metadado da release $TAG diz versao '$yml_version'. Promocao abortada para nao publicar metadado errado."
-            exit 1
-          fi
-
-          exe_name="${yml_path// /-}"
-          if [ -z "$(asset_id "$exe_name")" ]; then
-            echo "::error title=Instalador ausente::O metadado aponta para '$exe_name', que nao esta anexado a release $TAG."
-            echo "Assets presentes:"
-            echo "$release" | jq -r '.assets[].name'
-            exit 1
-          fi
-          echo "OK: instalador '$exe_name' presente na release."
 
           # Producao de hoje, para as guardas de regressao. Uma release ainda em
           # rascunho ou pre-release nunca aparece aqui.
@@ -220,7 +232,9 @@ jobs:
           {
             echo "## $VERSION → \`$TARGET\`"
             echo ""
-            echo "- Instalador: \`$exe_name\` (o mesmo do build, nao foi recompilado)"
+            if [ -n "$exe_name" ]; then
+              echo "- Instalador: \`$exe_name\` (o mesmo do build, nao foi recompilado)"
+            fi
             case "$TARGET" in
               latest)
                 echo "- Producao anterior: ${current:-<nenhuma>}"
