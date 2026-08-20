@@ -62,7 +62,7 @@ interface ReleasesResponse {
   actionsUrl: string;
 }
 
-const STATE_LABEL: Record<ReleaseState, { text: string; tone: Tone }> = {
+const STATE_LABEL: Record<string, { text: string; tone: Tone }> = {
   producao: { text: "Producao", tone: "ok" },
   teste: { text: "Em teste", tone: "info" },
   parado: { text: "Parado", tone: "neutral" },
@@ -79,6 +79,19 @@ const PROMOTE_FEEDBACK: Record<"beta" | "latest" | "reprovar", (version: string)
   reprovar: (v) =>
     `Versao ${v} reprovada. Ela saiu do ar e nao pode mais ser distribuida; a balanca de teste volta para a ultima aprovada na proxima verificacao.`
 };
+
+/**
+ * Rotulo da situacao, tolerante a um estado que este bundle ainda nao conhece.
+ *
+ * As Edge Functions sao implantadas pelo CI a cada push; o loader-web e
+ * publicado a mao (Docker/EasyPanel). Nessa janela a funcao ja devolve estados
+ * novos para uma tela antiga — e `STATE_LABEL[estado].tone` num estado ausente
+ * derruba a aba inteira com TypeError. Uma situacao desconhecida tem que virar
+ * um rotulo feio, nunca uma tela em branco.
+ */
+function stateLabel(state: string): { text: string; tone: Tone } {
+  return STATE_LABEL[state] ?? { text: state, tone: "neutral" };
+}
 
 function formatDateTime(value: string | null): string {
   if (!value) return "—";
@@ -168,8 +181,8 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
       header: "Situacao",
       render: (release) => (
         <>
-          <Badge tone={STATE_LABEL[release.state].tone} dot>
-            {STATE_LABEL[release.state].text}
+          <Badge tone={stateLabel(release.state).tone} dot>
+            {stateLabel(release.state).text}
           </Badge>
           {release.isCurrentProduction && (
             <p className="adm-cell-sub">E a versao que a frota esta recebendo.</p>
