@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
 
+import { isDesktopDataAccessError } from "../database/data-access.js";
 import { DesktopRuntime, type FiscalDocumentPrinter } from "../services/runtime.js";
 import type { ActivateDesktopInput } from "../services/desktop-activation.js";
 import type { CacheQueryOptions } from "../services/cache-store.js";
@@ -2637,6 +2638,13 @@ async function bootstrap(): Promise<void> {
 
 void bootstrap().catch((error: unknown) => {
   writeStartupLog("bootstrap:error", error);
+  // Falta de permissao na pasta de dados ja vem escrita para o operador, com o
+  // comando de reparo: mostrar o stack no lugar dela so esconderia a solucao.
+  if (isDesktopDataAccessError(error)) {
+    dialog.showErrorBox("KyberRock Desktop", error.message);
+    app.quit();
+    return;
+  }
   const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
   dialog.showErrorBox("KyberRock Desktop", `Falha ao abrir o aplicativo.\n\n${message}`);
   app.quit();

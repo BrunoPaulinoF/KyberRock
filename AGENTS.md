@@ -40,6 +40,17 @@ npm run dist:win -w @kyberrock/desktop      # NSIS installer -> apps/desktop/rel
 - **Electron security**: `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`. All Node / IPC flows through `src/preload/preload.ts` and `ipcMain.handle("desktop:*", …)` in `src/main/main.ts`.
 - **Auto-update** (`electron-updater`): `autoDownload: true`, `autoInstallOnAppQuit: true` (see `AUTO_DOWNLOAD_UPDATES` / `AUTO_INSTALL_ON_QUIT` in `src/services/update-flow.ts`). Provider is **GitHub Releases** on this (private) repo. Because the repo is private, the app carries a read-only token to fetch the release; the token is **not** in Git — it lives in the `GH_UPDATER_TOKEN` secret and is injected into `src/main/updater-config.ts` at build time by CI, then set as `process.env.GH_TOKEN` at runtime (`configureAutoUpdater`). Checks every 30 min **only when `app.isPackaged`**, downloads new versions in the background, and installs them the next time the operator quits the app — no mid-operation interruption. The manual "check / install now" buttons still work as an override. The installer itself is generated and published automatically by CI (see "Desktop versioning").
 - **SQLite path**: `%ProgramData%\\KyberRock\\data\\kyberrock.sqlite3` (see `src/database/paths.ts`).
+- **Permissao da pasta de dados**: como o banco fica em `%ProgramData%`, quem cria a pasta vira
+  dono (CREATOR OWNER = controle total) e os demais usuarios do Windows herdam **somente
+  leitura**. Se a instalacao ou a primeira execucao foi feita por outro usuario (o tecnico, ou
+  "executar como administrador"), a operadora abre o app e o SQLite estoura
+  `attempt to write a readonly database` no primeiro INSERT. `src/database/data-access.ts`
+  cuida disso: ao **criar** a arvore concede controle total ao grupo Usuarios (SID
+  `*S-1-5-32-545`, o nome muda de idioma), e quando ja existe sem permissao tenta o mesmo
+  reparo + limpar o atributo somente-leitura antes de desistir. Sem jeito, sobe um
+  `DesktopDataAccessError` cuja mensagem e escrita para o operador (com o comando `icacls` a
+  rodar como administrador) e `main.ts` a mostra **sem stack**. O teste de escrita e uma
+  gravacao real: `fs.accessSync(W_OK)` no Windows ignora a ACL.
 - **Manutencao diaria**: `runAutomaticBackup` (`services/runtime.ts`) chama `runDatabaseMaintenance`
   logo **apos** o backup — nessa ordem de proposito, para que tudo o que e podado ja esteja
   dentro do backup recem-criado. Ela poda os jobs `done` do `sync_queue` com mais de 90 dias
