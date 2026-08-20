@@ -1,8 +1,5 @@
-import {
-  ensureDesktopDataDirectories,
-  getDesktopDataPaths,
-  type DesktopDataPaths
-} from "./paths.js";
+import { ensureDesktopDataAccess } from "./data-access.js";
+import { getDesktopDataPaths, type DesktopDataPaths } from "./paths.js";
 import { runDesktopMigrations, type AppliedMigration } from "./migrate.js";
 import { openDesktopDatabase, type DesktopDatabase } from "./sqlite.js";
 
@@ -14,7 +11,7 @@ export interface InitializedDesktopDatabase {
 
 export function initializeDesktopDatabase(baseDirectory?: string): InitializedDesktopDatabase {
   const paths = getDesktopDataPaths(baseDirectory);
-  ensureDesktopDataDirectories(paths);
+  ensureDesktopDataAccess(paths);
 
   const database = openDesktopDatabase({ databasePath: paths.databasePath });
   const appliedMigrations = runDesktopMigrations(database);
