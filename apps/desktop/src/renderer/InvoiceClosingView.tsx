@@ -38,8 +38,11 @@ import type { InsightsPeriod } from "./insights-period";
  * placa, que e como o acerto do frete e feito. A planilha e o PDF saem com exatamente as
  * faturas que estao na tela.
  *
- * No fim da tela vem a lista "pesagem a pesagem": as MESMAS cargas das faturas, numa tabela
- * unica e na ordem em que foram feitas, com a operacao INTEIRA em cada linha. As faturas respondem "quanto
+ * No fim da tela vem a lista "pesagem a pesagem": TODAS as cargas do periodo, numa tabela
+ * unica e na ordem em que foram feitas, com a operacao INTEIRA em cada linha. O escopo dela
+ * e o PERIODO, e nao as faturas, de proposito: numa pedreira onde a maior parte dos clientes
+ * ainda nao tem periodicidade no cadastro, uma lista so das faturas viria quase vazia e
+ * esconderia justamente as cargas que ninguem esta cobrando. As faturas respondem "quanto
  * cada cliente deve"; esta lista responde a pergunta de conferencia — "cade a carga tal?" —,
  * que com a tela dividida em blocos por cliente obrigaria a abrir fatura por fatura ate
  * achar. E a mesma estrutura da Conferencia de faturamento, de proposito: quem confere passa
@@ -219,6 +222,9 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
 
   const totals = report?.totals ?? null;
   const splitByPlate = plates.length > 0;
+  // Quantas cargas da lista nao entraram em fatura nenhuma. Sao as que a tela precisa
+  // gritar: elas foram pesadas, sairam da pedreira e nao estao sendo cobradas de ninguem.
+  const outsideClosing = report?.rows.filter((line) => line.closingDate === null).length ?? 0;
 
   // As placas do periodo mais as ja marcadas: uma placa escolhida antes de trocar o periodo
   // continua visivel (e desmarcavel) mesmo quando ela nao rodou no periodo novo.
@@ -238,7 +244,7 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Fechamento de faturas</h2>
           <HelpTooltip
-            content="Puxa de uma vez a fatura de todos os clientes de um ciclo: escolha Quinzenal ou Mensal e o periodo. Cada fatura sai com a data de fechamento, o vencimento e a lista carga a carga com nota fiscal, vale, placa e transportador. O ciclo, o dia do fechamento e o prazo do boleto vem do cadastro do cliente. Marcando placas no filtro de Placa, o fechamento sai separado por placa — uma fatura por caminhao dentro de cada cliente; com o filtro vazio, sai a fatura inteira do cliente. No fim da tela, a lista pesagem a pesagem traz as mesmas cargas das faturas numa tabela so, com a operacao inteira em cada linha — vale, cliente, produto, quem levou, valores, situacao no OMIE e a fatura em que ela caiu —, para achar e conferir uma carga sem abrir fatura por fatura. O Excel e o PDF saem com as mesmas faturas que estao na tela."
+            content="Puxa de uma vez a fatura de todos os clientes de um ciclo: escolha Quinzenal ou Mensal e o periodo. Cada fatura sai com a data de fechamento, o vencimento e a lista carga a carga com nota fiscal, vale, placa e transportador. O ciclo, o dia do fechamento e o prazo do boleto vem do cadastro do cliente. Marcando placas no filtro de Placa, o fechamento sai separado por placa — uma fatura por caminhao dentro de cada cliente; com o filtro vazio, sai a fatura inteira do cliente. No fim da tela, a lista pesagem a pesagem traz TODAS as cargas do periodo numa tabela so — inclusive as dos clientes fora do fechamento, marcadas como tal —, com a operacao inteira em cada linha — vale, cliente, produto, quem levou, valores, situacao no OMIE e a fatura em que ela caiu —, para achar e conferir uma carga sem abrir fatura por fatura. O Excel e o PDF saem com as mesmas faturas que estao na tela."
             placement="right"
           />
         </div>
@@ -619,13 +625,22 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
           <div style={styles.card}>
             <h3 style={styles.cardTitle}>Pesagem a pesagem ({formatCount(report.rows.length)})</h3>
             <p style={styles.hint}>
-              As mesmas cargas das faturas acima, numa lista so e na ordem em que foram feitas —
-              para achar uma carga sem precisar abrir fatura por fatura. Cada linha traz a operacao
-              inteira: vale, cliente, produto, quem levou, valores, situacao no OMIE e em qual
-              fatura ela caiu. O TOTAL do rodape e o mesmo total a faturar.
+              TODAS as cargas do periodo, na ordem em que foram feitas — inclusive as dos clientes
+              que ficaram fora do fechamento. Cada linha traz a operacao inteira: vale, cliente,
+              produto, quem levou, valores, situacao no OMIE e em qual fatura ela caiu.
             </p>
+            {outsideClosing > 0 ? (
+              <p style={styles.hint}>
+                <strong style={{ color: "var(--kr-warning)" }}>
+                  {formatCount(outsideClosing)} carga(s) fora do fechamento
+                </strong>{" "}
+                — aparecem na lista com &quot;Fora do fechamento&quot; no lugar da data, e nao
+                entram no total a faturar. Sao dos clientes listados acima, que ainda nao tem
+                credito e periodicidade no cadastro.
+              </p>
+            ) : null}
             {report.rows.length === 0 ? (
-              <p style={styles.hint}>Nenhuma pesagem nas faturas do periodo.</p>
+              <p style={styles.hint}>Nenhuma pesagem no periodo e nos filtros escolhidos.</p>
             ) : (
               <div style={styles.tableScrollTall}>
                 <table style={styles.table}>
@@ -661,13 +676,13 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
                   <tfoot>
                     <tr>
                       <td style={{ ...styles.tdTotal, textAlign: "left" }} colSpan={9}>
-                        TOTAL
+                        TOTAL DO PERIODO
                       </td>
-                      <td style={styles.tdTotal}>{formatKg(totals.netWeightKg)}</td>
+                      <td style={styles.tdTotal}>{formatKg(report.rowTotals.netWeightKg)}</td>
                       <td style={styles.tdTotal} />
-                      <td style={styles.tdTotal}>{formatBRL(totals.productCents)}</td>
-                      <td style={styles.tdTotal}>{formatBRL(totals.freightCents)}</td>
-                      <td style={styles.tdTotal}>{formatBRL(totals.totalCents)}</td>
+                      <td style={styles.tdTotal}>{formatBRL(report.rowTotals.productCents)}</td>
+                      <td style={styles.tdTotal}>{formatBRL(report.rowTotals.freightCents)}</td>
+                      <td style={styles.tdTotal}>{formatBRL(report.rowTotals.totalCents)}</td>
                       <td style={styles.tdTotal} colSpan={6} />
                     </tr>
                   </tfoot>
@@ -854,8 +869,25 @@ function DetailRow({ line }: { line: InvoiceClosingLine }) {
         {line.invoiceNumber ?? "Sem nota"}
       </td>
       <td style={{ ...styles.td, textAlign: "left" }}>{omieReference(line)}</td>
-      <td style={{ ...styles.td, textAlign: "left" }}>{formatDayLabel(line.closingDate)}</td>
-      <td style={{ ...styles.td, textAlign: "left" }}>{formatDayLabel(line.dueDate)}</td>
+      {line.closingDate === null ? (
+        <td
+          style={{ ...styles.td, textAlign: "left", color: "var(--kr-warning)", fontWeight: 700 }}
+          colSpan={2}
+          title={
+            "Esta carga nao entrou em fatura nenhuma: o cliente nao tem credito e " +
+            "periodicidade do fechamento no cadastro."
+          }
+        >
+          Fora do fechamento
+        </td>
+      ) : (
+        <>
+          <td style={{ ...styles.td, textAlign: "left" }}>{formatDayLabel(line.closingDate)}</td>
+          <td style={{ ...styles.td, textAlign: "left" }}>
+            {line.dueDate ? formatDayLabel(line.dueDate) : "-"}
+          </td>
+        </>
+      )}
     </tr>
   );
 }

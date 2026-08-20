@@ -677,7 +677,7 @@ export const documentationSections: DocumentationSection[] = [
       "A lista traz uma linha por fatura: cliente, ciclo, data de fechamento, vencimento, quantidade de cargas, peso e total.",
       "Para separar o fechamento por caminhao, use o filtro Placa: digite parte da placa para achar na lista e marque quantas quiser. A tela passa a mostrar uma fatura por placa dentro de cada cliente, com o total daquele caminhao. Desmarcando todas (ou clicando em Limpar), volta a fatura inteira do cliente, com todas as placas juntas.",
       'Clique em "Ver cargas" para abrir a fatura carga a carga, com data, vale, nota fiscal, pedido do OMIE, placa, transportador, motorista, produto, peso e valor.',
-      "No fim da tela, a lista Pesagem a pesagem traz as mesmas cargas das faturas numa tabela so, na ordem em que foram feitas, com a operacao inteira em cada linha: numero da operacao, vale, data, cliente, CNPJ/CPF, produto (com codigo), placa, transportador, motorista, peso, preco unitario, produto, frete, total, tipo, situacao no OMIE, nota fiscal, pedido/OS do OMIE, e o fechamento e o vencimento da fatura em que a carga caiu. E onde se acha uma carga sem abrir fatura por fatura.",
+      "No fim da tela, a lista Pesagem a pesagem traz TODAS as cargas do periodo numa tabela so, na ordem em que foram feitas, com a operacao inteira em cada linha: numero da operacao, vale, data, cliente, CNPJ/CPF, produto (com codigo), placa, transportador, motorista, peso, preco unitario, produto, frete, total, tipo, situacao no OMIE, nota fiscal, pedido/OS do OMIE, e o fechamento e o vencimento da fatura em que a carga caiu. E onde se acha uma carga sem abrir fatura por fatura.",
       "Marque Excel (ou PDF) e clique em Gerar fechamento. O arquivo sai com exatamente as faturas que estao na tela."
     ],
     details: [
@@ -689,7 +689,8 @@ export const documentationSections: DocumentationSection[] = [
       'Cliente com carga no periodo mas sem periodicidade definida aparece em "Clientes fora do fechamento", e nao some calado: e o aviso de que falta configurar o cadastro dele.',
       "A busca aceita cliente, placa, transportador, numero da nota e numero do vale, e o filtro vale tambem para o arquivo gerado.",
       "O filtro de Placa e o unico que troca o formato da lista: vazio, o fechamento e um por cliente, que e como a cobranca sai; com placas marcadas, o mesmo cliente rende uma fatura por caminhao, que e como o frete e acertado. A lista de placas so mostra as que rodaram no periodo, e o Excel e o PDF saem com a coluna Placa e com o mesmo corte da tela.",
-      "A lista Pesagem a pesagem e a mesma estrutura da tela de Conferencia de faturamento — as mesmas colunas, a mesma etiqueta colorida de situacao (passe o mouse nela para ver o motivo gravado pelo OMIE) e o mesmo Pedido/OS pelo qual a pesagem e procurada la —, mais o vale, a nota fiscal e as datas da fatura, que sao a pergunta desta tela. O TOTAL do rodape dela e o mesmo total a faturar dos indicadores: sao as cargas das faturas, so que numa tabela unica com a coluna do cliente. Ela obedece aos mesmos filtros da tela e sai tambem no Excel e no PDF, onde e a tabela que da para ordenar, filtrar e somar coluna por coluna atravessando todos os clientes.",
+      'A lista Pesagem a pesagem cobre o PERIODO, e nao so as faturas: a carga de um cliente que ficou fora do fechamento aparece nela com "Fora do fechamento" no lugar da data de fechamento, em amarelo. E de proposito — enquanto os clientes nao tiverem credito e periodicidade no cadastro, e nessa lista que se ve a carga que saiu da pedreira e nao esta sendo cobrada de ninguem. Por isso o rodape dela diz TOTAL DO PERIODO e pode ser maior que o Total a faturar dos indicadores: a diferenca entre os dois e exatamente o que esta em Clientes fora do fechamento.',
+      "A lista Pesagem a pesagem e a mesma estrutura da tela de Conferencia de faturamento — as mesmas colunas, a mesma etiqueta colorida de situacao (passe o mouse nela para ver o motivo gravado pelo OMIE) e o mesmo Pedido/OS pelo qual a pesagem e procurada la —, mais o vale, a nota fiscal e as datas da fatura, que sao a pergunta desta tela. Ela obedece aos mesmos filtros da tela e sai tambem no Excel e no PDF, onde e a tabela que da para ordenar, filtrar e somar coluna por coluna atravessando todos os clientes.",
       "As placas escolhidas nao mudam a conta de nenhuma carga: cada fatura por placa soma so as viagens daquele caminhao, com o mesmo fechamento e o mesmo vencimento do cliente."
     ],
     keywords: [
@@ -713,6 +714,9 @@ export const documentationSections: DocumentationSection[] = [
       "situacao da pesagem",
       "motorista",
       "cnpj do cliente",
+      "fora do fechamento",
+      "carga sem fatura",
+      "cliente sem periodicidade",
       "filtrar por placa",
       "fechamento por placa",
       "separar por placa",

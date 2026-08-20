@@ -64,14 +64,16 @@ export interface InvoiceClosingLine {
   /** Saida da balanca — quando a pesagem de fato fechou. Null nas operacoes antigas. */
   closedAt: string | null;
   /**
-   * O fechamento em que esta carga caiu, e o vencimento dele.
+   * O fechamento em que esta carga caiu, e o vencimento dele — ou NULL quando ela nao caiu
+   * em fatura nenhuma, por o cliente nao ter periodicidade de fechamento no cadastro.
    *
    * Repetidos na linha porque a lista "pesagem a pesagem" mistura as faturas todas: sem
    * eles, uma carga solta nao diria em qual fatura foi cobrada — que e justamente o que se
-   * quer saber quando o cliente contesta.
+   * quer saber quando o cliente contesta. E o null e a informacao mais importante da
+   * lista: e a carga que ninguem esta cobrando.
    */
-  closingDate: string;
-  dueDate: string;
+  closingDate: string | null;
+  dueDate: string | null;
   /** Numero da nota fiscal emitida no OMIE; null enquanto a nota nao saiu. */
   invoiceNumber: string | null;
   /** Numero VISIVEL do pedido/OS no OMIE — o equivalente ao "orcamento" do sistema antigo. */
@@ -193,14 +195,26 @@ export interface InvoiceClosingReport {
   /** Uma fatura por (cliente, fechamento), do fechamento mais antigo para o mais novo. */
   invoices: InvoiceClosingInvoice[];
   /**
-   * As MESMAS pesagens das faturas, numa lista so, na ordem em que foram feitas.
+   * TODAS as pesagens do periodo, na ordem em que foram feitas — inclusive as dos clientes
+   * que ficaram fora do fechamento.
    *
    * As faturas respondem "quanto cada cliente deve"; esta lista responde a pergunta de
-   * conferencia — "cade a carga tal?" —, que numa tela dividida em blocos por cliente
-   * obrigaria a abrir fatura por fatura ate achar. E tambem a forma que se filtra e soma
-   * na planilha: uma tabela unica com a coluna do cliente, e nao um bloco por cliente.
+   * conferencia — "cade a carga tal?" —, e para isso ela nao pode esconder carga nenhuma.
+   * Uma pedreira onde a maior parte dos clientes ainda nao tem periodicidade no cadastro
+   * teria aqui uma lista quase vazia, escondendo justamente as cargas que ninguem esta
+   * cobrando — que sao as que mais precisam ser vistas. Por isso o escopo desta lista e o
+   * PERIODO, e nao as faturas, igual ao da Conferencia de faturamento.
+   *
+   * Nas cargas de fora, `closingDate`/`dueDate` vem null: e o que separa "cobrada na fatura
+   * tal" de "nao esta em fatura nenhuma".
    */
   rows: InvoiceClosingLine[];
+  /**
+   * O total da lista acima — o periodo inteiro. Difere de `totals` (que e o das FATURAS)
+   * exatamente pelo que ficou fora do fechamento, e por isso os dois existem: o primeiro e
+   * o que a balanca fechou, o segundo e o que esta sendo cobrado.
+   */
+  rowTotals: InvoiceClosingTotals;
   totals: InvoiceClosingTotals;
   /** Quantos clientes distintos entraram no fechamento. */
   customers: number;
@@ -292,7 +306,11 @@ export class InvoiceClosingService {
 
     const invoices = new Map<string, InvoiceClosingInvoice>();
     const pending = new Map<string, InvoiceClosingPendingCustomer>();
+    // `lines` e o que entrou em fatura (a base dos totais do fechamento); `rows` e o
+    // periodo inteiro (a base da lista de conferencia). A diferenca entre os dois e
+    // exatamente o que aparece em "Clientes fora do fechamento".
     const lines: InvoiceClosingLine[] = [];
+    const rows: InvoiceClosingLine[] = [];
     const carrierRows: Array<{ line: InvoiceClosingLine; carrierName: string }> = [];
     const availablePlates = new Set<string>();
 
@@ -306,12 +324,19 @@ export class InvoiceClosingService {
       availablePlates.add(plate);
       if (splitByPlate && !selectedPlates.has(plate)) continue;
 
+      // Ciclo escolhido: a carga sem periodicidade no cadastro nao pertence a ciclo nenhum,
+      // entao ela sai junto com os ciclos que nao foram marcados.
       const config = closingConfigFor(row);
+      if (cycles.length > 0 && (!config || !cycles.includes(config.periodicity))) continue;
+
+      // A lista de conferencia vem ANTES da fatura: ela e do periodo, nao das faturas, e
+      // mostrar so o que entrou em fatura esconderia justamente a carga que ninguem cobra.
+      rows.push(line);
+
       if (!config) {
         addPending(pending, row, line);
         continue;
       }
-      if (cycles.length > 0 && !cycles.includes(config.periodicity)) continue;
 
       const schedule = computeCreditInvoiceSchedule(config, parseIsoDate(line.date));
       line.closingDate = schedule.closingDate;
@@ -355,7 +380,8 @@ export class InvoiceClosingService {
       periodLabel: options.periodLabel ?? null,
       filters: { cycles, customerId, plates, search: search || null },
       invoices: orderedInvoices,
-      rows: lines,
+      rows,
+      rowTotals: buildTotals(rows),
       totals: buildTotals(lines),
       customers: new Set(orderedInvoices.map((invoice) => invoice.customerId)).size,
       withoutInvoice: buildTotals(lines.filter((line) => !line.invoiceNumber)),
@@ -424,9 +450,9 @@ function mapLine(row: InvoiceClosingSourceRow): InvoiceClosingLine {
     couponNumber: row.operation_code,
     date: row.created_at.slice(0, 10),
     closedAt: row.exit_at,
-    // Preenchidos quando a linha entra numa fatura: e o fechamento que decide as duas datas.
-    closingDate: "",
-    dueDate: "",
+    // Preenchidas quando a linha entra numa fatura: e o fechamento que decide as duas datas.
+    closingDate: null,
+    dueDate: null,
     invoiceNumber: (row.omie_invoice_number ?? "").trim() || null,
     omieOrderNumber: (row.omie_order_number ?? "").trim() || null,
     omieSalesOrderId: row.omie_sales_order_id,

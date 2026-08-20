@@ -516,7 +516,7 @@ describe("InvoiceClosingService", () => {
     }
   });
 
-  it("a lista pesagem a pesagem traz as mesmas cargas das faturas, com cliente e preco em cada linha", () => {
+  it("a lista pesagem a pesagem cobre o periodo inteiro, com cliente e preco em cada linha", () => {
     const db = createDatabase();
     try {
       setupBaseData(db);
@@ -613,12 +613,49 @@ describe("InvoiceClosingService", () => {
     }
   });
 
+  it("a carga do cliente FORA do fechamento aparece na lista, sem data e fora do total a faturar", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, { id: "cust-1", name: "Alfa", closingDay: 31, boletoDays: 10 });
+      // O caso real da pedreira: a maior parte dos clientes ainda nao tem credito e
+      // periodicidade no cadastro, e por isso nao entra em fatura nenhuma.
+      insertCustomer(db, { id: "cust-2", name: "Beta", creditEnabled: false });
+      insertOperation(db, { id: "op-1", customer: "cust-1", createdAt: "2026-07-10" });
+      insertOperation(db, { id: "op-fora-1", customer: "cust-2", createdAt: "2026-07-12" });
+      insertOperation(db, { id: "op-fora-2", customer: "cust-2", createdAt: "2026-07-13" });
+
+      const result = report(db);
+      // A lista mostra TUDO: esconder a carga que ninguem cobra seria esconder o problema.
+      expect(result.rows.map((line) => line.operationId)).toEqual([
+        "op-1",
+        "op-fora-1",
+        "op-fora-2"
+      ]);
+      // Sem data de fechamento e o que marca a carga de fora, na tela e no arquivo.
+      expect(result.rows.map((line) => line.closingDate)).toEqual(["2026-07-31", null, null]);
+      expect(result.rows.map((line) => line.dueDate)).toEqual(["2026-08-10", null, null]);
+
+      // Os dois totais convivem: o da lista e o periodo, o das faturas e o que se cobra.
+      expect(result.rowTotals.operations).toBe(3);
+      expect(result.rowTotals.totalCents).toBe(300_000);
+      expect(result.totals.operations).toBe(1);
+      expect(result.totals.totalCents).toBe(100_000);
+
+      // E o cliente de fora continua avisado no bloco proprio, com as duas cargas.
+      expect(result.pendingSetup).toEqual([
+        { customerId: "cust-2", customerName: "Beta", operations: 2, totalCents: 200_000 }
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("a lista pesagem a pesagem obedece aos filtros da tela", () => {
     const db = createDatabase();
     try {
       setupBaseData(db);
       insertCustomer(db, { id: "cust-1", name: "Alfa", closingDay: 31, boletoDays: 10 });
-      // Cliente sem periodicidade: nao entra em fatura nenhuma, e por isso nao entra na lista.
       insertCustomer(db, { id: "cust-2", name: "Beta", creditEnabled: false });
       insertOperation(db, { id: "op-1", customer: "cust-1", createdAt: "2026-07-10" });
       insertOperation(db, {
@@ -629,12 +666,20 @@ describe("InvoiceClosingService", () => {
       });
       insertOperation(db, { id: "op-fora", customer: "cust-2", createdAt: "2026-07-12" });
 
-      expect(report(db).rows.map((line) => line.operationId)).toEqual(["op-1", "op-2"]);
-      expect(report(db).pendingSetup.map((row) => row.customerId)).toEqual(["cust-2"]);
       expect(report(db, { plates: ["XYZ4E56"] }).rows.map((line) => line.operationId)).toEqual([
         "op-2"
       ]);
-      expect(report(db, { customerId: "cust-2" }).rows).toEqual([]);
+      expect(report(db, { customerId: "cust-2" }).rows.map((line) => line.operationId)).toEqual([
+        "op-fora"
+      ]);
+      expect(report(db, { search: "beta" }).rows.map((line) => line.operationId)).toEqual([
+        "op-fora"
+      ]);
+      // Com CICLO escolhido, a carga sem periodicidade nao pertence a ciclo nenhum e sai.
+      expect(report(db, { cycles: ["monthly"] }).rows.map((line) => line.operationId)).toEqual([
+        "op-1",
+        "op-2"
+      ]);
     } finally {
       db.close();
     }
