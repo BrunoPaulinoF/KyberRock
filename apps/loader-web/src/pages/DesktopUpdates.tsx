@@ -19,8 +19,8 @@ import {
 // Distribuicao do desktop.
 //
 // Compilar deixou de ser distribuir: cada merge gera um build que fica PARADO
-// (release pre-release, metadado de nome neutro que canal nenhum segue). Desta
-// tela saem os dois unicos gestos que movem uma versao:
+// (rascunho de release, que updater nenhum enxerga). Desta tela saem os dois
+// unicos gestos que movem uma versao:
 //
 //   Enviar para teste  -> so as balancas marcadas como teste passam a receber
 //   Liberar para producao -> todas as balancas passam a receber
@@ -119,7 +119,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
             ? `Versao ${release.version} enviada para o anel de teste. As balancas marcadas como teste recebem na proxima verificacao.`
             : `Versao ${release.version} liberada para producao. As balancas recebem na proxima verificacao e instalam quando o operador fechar o app.`
       });
-      // O workflow leva alguns segundos para trocar os assets; a lista so
+      // O workflow leva alguns segundos para publicar a release; a lista so
       // reflete o novo estado no proximo carregamento.
       window.setTimeout(() => void load(), 4000);
     } catch (error) {
@@ -152,7 +152,9 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
             <p className="adm-cell-sub">E a versao que a frota esta recebendo.</p>
           )}
           {release.state === "incompleto" && (
-            <p className="adm-cell-sub">Sem instalador anexado — nao da para distribuir.</p>
+            <p className="adm-cell-sub">
+              Faltam arquivos na release (instalador ou metadado) — nao da para distribuir.
+            </p>
           )}
         </>
       )
@@ -213,8 +215,9 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
         <Note tone="warn">
           Falta o secret <strong className="adm-mono">GH_ACTIONS_TOKEN</strong> no Supabase para
           promover por aqui. Crie um PAT fine-grained deste repositorio com{" "}
-          <strong>Actions: write</strong> e cadastre-o. Enquanto isso, a promocao continua
-          disponivel na{" "}
+          <strong>Actions: write</strong> e <strong>Contents: read and write</strong> (a permissao
+          de conteudo e o que faz os builds parados aparecerem nesta lista) e cadastre-o. Enquanto
+          isso, a promocao continua disponivel na{" "}
           <a href={data.actionsUrl} target="_blank" rel="noreferrer">
             pagina do workflow no GitHub
           </a>
@@ -250,7 +253,11 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
           columns={columns}
           rows={data?.releases ?? []}
           rowKey={(release) => release.tag}
-          empty={isLoading ? "Carregando versoes…" : "Nenhuma versao publicada ainda."}
+          empty={
+            isLoading
+              ? "Carregando versoes…"
+              : "Nenhuma versao encontrada. Builds parados so aparecem aqui se o GH_ACTIONS_TOKEN tiver Contents: read and write."
+          }
         />
       </Panel>
     </>

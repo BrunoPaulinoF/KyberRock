@@ -304,14 +304,27 @@ Every OMIE call uses a key of the form `kyberrock:{unitId}:{operationId}:{action
 ## Desktop versioning
 
 **Compilar deixou de ser distribuir.** Um merge na `main` gera um build que fica **parado**: a
-release nasce como _pre-release_ com um metadado de nome neutro (`build.yml`) que **canal nenhum
-segue**. Distribuir e um ato explicito, feito pelo `desktop-promote.yml`, e em dois aneis:
+release nasce como **rascunho** (_draft_), que updater nenhum enxerga. Distribuir e um ato
+explicito, feito pelo `desktop-promote.yml`, e em dois aneis:
 
-| Anel       | Asset na release | Quem recebe                                       |
-| ---------- | ---------------- | ------------------------------------------------- |
-| _(nenhum)_ | `build.yml`      | ninguem — o build so existe                       |
-| teste      | `beta.yml`       | so as balancas marcadas como teste (canal `beta`) |
-| producao   | `latest.yml`     | todas as balancas (canal `latest`, o padrao)      |
+| Anel       | Estado da release           | Quem recebe                                       |
+| ---------- | --------------------------- | ------------------------------------------------- |
+| _(nenhum)_ | rascunho                    | ninguem — o build so existe                       |
+| teste      | publicada como _prerelease_ | so as balancas marcadas como teste (canal `beta`) |
+| producao   | publicada como estavel      | todas as balancas (canal `latest`, o padrao)      |
+
+> **O metadado se chama `latest.yml` nos tres estados** — nao ha um yml por anel. Em repositorio
+> **privado** o `electron-updater` usa o `PrivateGitHubProvider`, que resolve o nome do metadado por
+> `getDefaultChannelName()`, fixo em `"latest"`: ele **nunca le `updater.channel`**. A primeira
+> versao deste fluxo publicava `beta.yml` e por isso o anel de teste nasceu sem funcionar — a
+> balanca de teste nao recebia nada e so via a versao quando ela ia para producao. O unico ajuste
+> que aquele provider respeita e `allowPrerelease`, e e sobre ele que os aneis se apoiam. Detalhe
+> completo em `apps/desktop/src/services/update-channel.ts`.
+
+| `allowPrerelease` | O que o updater pede   | O que o GitHub responde                                 |
+| ----------------- | ---------------------- | ------------------------------------------------------- |
+| `false` (frota)   | `GET /releases/latest` | a estavel mais recente — pula rascunho **e** prerelease |
+| `true` (teste)    | `GET /releases`        | descarta rascunho e prefere a **prerelease** mais nova  |
 
 Antes, todo merge que tocasse o desktop virava atualizacao automatica em todas as pedreiras em
 minutos, sem release de teste e sem como desfazer. Consequencia boa do modelo novo: **tres merges
@@ -325,22 +338,22 @@ manifesto da raiz; tambem por **workflow_dispatch**):
    (sempre crescente, entao o `electron-updater` sempre ve uma versao nova — **sem bump manual**).
    O bump vale so no checkout do build; nao volta para o Git.
 2. Injeta o token de leitura (`GH_UPDATER_TOKEN`) em `src/main/updater-config.ts`.
-3. Cria a Release `vX.Y.Z` **sempre marcada como pre-release**.
+3. Cria a Release `vX.Y.Z` **sempre como rascunho**.
 4. Roda `npm run dist:win:ci -w @kyberrock/desktop` (`electron-builder --publish never`): so
    compila. Quem sobe os assets e o passo de upload, o que elimina a race conhecida do publisher do
    electron-builder e permite conferir o pacote antes de publicar.
 5. Confere que `better_sqlite3.node` entrou no pacote — **antes** de subir qualquer asset.
-6. Sobe `*.exe` + `*.blockmap` + o yml **renomeado para `build.yml`**, com o `GITHUB_TOKEN`
-   automatico.
+6. Sobe `*.exe` + `*.blockmap` + `latest.yml`, com o `GITHUB_TOKEN` automatico.
 
-> **O yml e renomeado no upload, nunca gerado com outro nome.** Passar o canal para o
-> `electron-builder` tambem grava `channel: ...` no `app-update.yml` embutido no app — o binario
-> promovido continuaria procurando aquele nome para sempre, e a primeira promocao quebraria o
-> auto-update da frota inteira. O build gera sempre `latest.yml`; so o **asset** muda de nome.
+> **`draft: true` e a flag critica.** Rascunho e o unico estado invisivel para os dois aneis. Uma
+> release publicada — em qualquer um dos dois — **sem `latest.yml` dentro** derruba o anel: a frota
+> procura o metadado, nao acha, e o auto-update fica cego **em silencio**; a balanca de teste e
+> pior, porque a prerelease incompleta vira a candidata mais nova e o updater erra com
+> `ERR_UPDATER_CHANNEL_FILE_NOT_FOUND` em vez de cair para a anterior.
 
-> **`prerelease: true` e a flag critica.** Uma release marcada como nao-prerelease vira "a ultima
-> release" para toda a frota; se ela nao tiver `latest.yml` dentro, as balancas procuram, nao acham,
-> e o auto-update fica cego **em silencio**.
+> **Rascunho nao tem tag no git** (o GitHub so cria a tag ao publicar). Por isso os dois workflows
+> procuram a release **na listagem**, comparando `tag_name`, e nunca por `GET /releases/tags/<tag>`
+> — que devolveria 404 justamente para o caso mais comum, um build parado.
 
 **Passo 2 — pela aba Atualizacoes do painel (ou pelo `desktop-promote.yml` direto).** A tela
 (`apps/loader-web/src/pages/DesktopUpdates.tsx`) lista as versoes com a situacao de cada uma —
@@ -356,25 +369,41 @@ testado); as travas de verdade continuam no workflow, e as regras repetidas na t
 nao oferecer um botao que seria recusado num run que ela nao acompanha.
 
 **O workflow `desktop-promote.yml`** (so **workflow_dispatch**; recebe `version`, `target` e
-`force`): copia `build.yml` para `beta.yml` (teste) ou `latest.yml` (producao); no caso de producao,
-tambem tira o `prerelease`. **Nao compila nada** — o `.exe` nao se move nem muda de URL, entao a
-balanca recebe exatamente o binario testado. Antes de agir ele confere que a release existe, que o
-metadado bate com a versao pedida e que o instalador citado nele esta anexado; para producao ainda
-recusa (a menos que `force`) uma versao que nunca passou pelo teste ou que seja anterior a producao
-atual. Depois da promocao a release guarda os dois ymls: `latest.yml` serve a frota e `beta.yml`
-mantem a maquina de teste na mesma versao, sem falso "ha atualizacao".
+`force`) so troca as flags da release — **nao compila e nao mexe em assets**:
+
+| `target` | O que faz                           | Efeito                          |
+| -------- | ----------------------------------- | ------------------------------- |
+| `beta`   | `draft: false`, `prerelease: true`  | so as balancas de teste recebem |
+| `latest` | `draft: false`, `prerelease: false` | a frota inteira recebe          |
+| `parar`  | `draft: true`                       | tira do ar: ninguem mais recebe |
+
+O `.exe` nao se move nem e regerado, entao a balanca recebe exatamente o binario testado. Antes de
+agir o workflow confere que a release existe, que ela tem `latest.yml`, que o metadado bate com a
+versao pedida e que o instalador citado nele esta anexado. Para producao ainda recusa (a menos que
+`force`) uma versao que nunca foi publicada no teste ou que seja anterior a producao atual; e
+`parar` recusa despublicar a producao **atual**, que deixaria a frota sem canal.
+
+`parar` e o unico jeito de tirar do ar uma prerelease que nao deveria estar publicada — e como uma
+prerelease incompleta derruba o anel de teste inteiro (ver acima), e ele o botao de emergencia
+desse anel. O painel nao o expoe: e acao rara, feita pela pagina do workflow no Actions.
 
 Tokens envolvidos — todos PAT fine-grained, **so este repositorio**:
 
-| Onde vive          | Nome                | Escopo           | Para que                                                         |
-| ------------------ | ------------------- | ---------------- | ---------------------------------------------------------------- |
-| Secret do Actions  | `GH_UPDATER_TOKEN`  | `Contents: read` | embutido no app instalado, para baixar a release do repo privado |
-| Secret do Supabase | `GH_RELEASES_TOKEN` | `Contents: read` | `desktop-download` e a listagem de versoes do painel             |
-| Secret do Supabase | `GH_ACTIONS_TOKEN`  | `Actions: write` | o painel disparar o `desktop-promote.yml`                        |
+| Onde vive          | Nome                | Escopo                                    | Para que                                                          |
+| ------------------ | ------------------- | ----------------------------------------- | ----------------------------------------------------------------- |
+| Secret do Actions  | `GH_UPDATER_TOKEN`  | `Contents: read`                          | embutido no app instalado, para baixar a release do repo privado  |
+| Secret do Supabase | `GH_RELEASES_TOKEN` | `Contents: read`                          | `desktop-download` (link publico `/download`)                     |
+| Secret do Supabase | `GH_ACTIONS_TOKEN`  | `Actions: write` + `Contents: read+write` | o painel listar builds parados e disparar o `desktop-promote.yml` |
+
+> **Por que a listagem do painel precisa de `Contents: read and write`:** `GET /releases` so devolve
+> **rascunho** para quem tem acesso de escrita no repositorio. Como rascunho e exatamente o estado
+> "parado" — a materia-prima da aba Atualizacoes —, um token so de leitura faz a tela carregar sem
+> nenhuma versao para promover. Por isso o `admin-api` lista preferindo o `GH_ACTIONS_TOKEN` e so
+> cai no `GH_RELEASES_TOKEN` se ele nao existir; o token do link publico continua so de leitura.
 
 Sem `GH_UPDATER_TOKEN` os builds ainda saem, mas o app instalado nao consegue autenticar para
-baixar a atualizacao. Sem `GH_ACTIONS_TOKEN` a aba Atualizacoes ainda lista tudo e explica como
-criar o token — a promocao so fica no GitHub ate ele existir.
+baixar a atualizacao. Sem `GH_ACTIONS_TOKEN` a aba Atualizacoes explica como criar o token — a
+promocao so fica no GitHub ate ele existir.
 
 - **Security note**: the read token ships inside the app (`.asar`), so treat it as low-trust —
   keep it read-only + single-repo, and rotate it by updating the secret and re-running the workflow.
@@ -383,10 +412,10 @@ criar o token — a promocao so fica no GitHub ate ele existir.
 - **Fixed public download link**: `supabase/functions/desktop-download` (public, `verify_jwt=false`,
   needs `GH_RELEASES_TOKEN`) redirects to the latest release's `.exe`; loader-web nginx exposes it as
   `GET /download`. Ele **descarta pre-release**, entao serve sempre a ultima versao liberada para
-  producao e instalacao nova nunca cai num build parado — que e o desejado, porque numa maquina
-  recem-instalada nao ha versao anterior para voltar. Esse filtro so passou a existir junto com o
-  fluxo de dois passos: antes ele pulava so `draft`, e como todo build agora nasce pre-release, sem
-  ele o link publico passaria a entregar exatamente o que ainda nao foi aprovado. A escolha vive em
+  producao e instalacao nova nunca cai num build parado nem numa versao em avaliacao — que e o
+  desejado, porque numa maquina recem-instalada nao ha versao anterior para voltar. O filtro de
+  `prerelease` so passou a existir junto com o fluxo de dois passos: antes ele pulava so `draft`, e
+  sem ele o link publico passaria a entregar o que esta em teste. A escolha vive em
   `desktop-download/release-pick.ts` (puro, coberto por `release-pick_test.ts`) justamente para nao
   regredir de novo.
 - Code signing for external pilots is still pending (see `docs/phase-3.1/README.md`).

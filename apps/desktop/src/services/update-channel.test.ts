@@ -63,11 +63,25 @@ describe("updaterChannelSettings", () => {
   it("so o canal de teste enxerga pre-release", () => {
     // O anel de teste vive dentro do pre-release; sem allowPrerelease a balanca
     // de teste ignoraria justamente as releases que deveria receber.
-    expect(updaterChannelSettings("beta")).toEqual({ channel: "beta", allowPrerelease: true });
-    expect(updaterChannelSettings("latest")).toEqual({
-      channel: "latest",
-      allowPrerelease: false
-    });
+    expect(updaterChannelSettings("beta")).toEqual({ allowPrerelease: true });
+    expect(updaterChannelSettings("latest")).toEqual({ allowPrerelease: false });
+  });
+
+  it("nao devolve `channel` — nem para producao", () => {
+    // Regressao real: a primeira versao deste codigo definia
+    // `autoUpdater.channel` e o anel de teste simplesmente nao funcionava.
+    //
+    // 1. Em repo privado o `PrivateGitHubProvider` resolve o metadado por
+    //    `getDefaultChannelName()`, que e fixo em "latest" — `updater.channel`
+    //    nunca e lido, entao o `beta.yml` que o painel publicava nao era lido
+    //    por maquina nenhuma.
+    // 2. O setter de `channel` liga `allowDowngrade = true`, o que autorizaria
+    //    a balanca a instalar uma versao mais VELHA que a instalada.
+    //
+    // Se alguem reintroduzir o campo, este teste cai antes de virar release.
+    for (const channel of ["beta", "latest"] as const) {
+      expect(updaterChannelSettings(channel)).not.toHaveProperty("channel");
+    }
   });
 });
 

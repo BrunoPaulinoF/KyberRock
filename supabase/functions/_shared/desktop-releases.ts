@@ -2,15 +2,22 @@
  * Leitura das versoes do desktop publicadas no GitHub Releases, do jeito que o
  * painel administrativo precisa ver.
  *
- * O `desktop-release.yml` deixa todo build PARADO: release marcada como
- * pre-release, com o instalador anexado e um metadado de nome neutro
- * (`build.yml`) que canal nenhum segue. O `desktop-promote.yml` copia esse
- * metadado para o anel escolhido. Entao o estado de uma versao esta inteiramente
- * nos NOMES DOS ASSETS:
+ * O estado de uma versao esta inteiramente em DOIS SINALIZADORES da release —
+ * `draft` e `prerelease` — porque sao os unicos dois que o `electron-updater`
+ * consegue enxergar num repositorio privado:
  *
- *   so `build.yml`            -> parado (ninguem recebe)
- *   + `beta.yml`              -> em teste (so as balancas de teste)
- *   + `latest.yml`, estavel   -> producao (toda a frota)
+ *   rascunho (draft)         -> parado: nao existe para updater nenhum
+ *   publicado como prerelease-> teste: so as balancas com allowPrerelease
+ *   publicado estavel        -> producao: `GET /releases/latest` responde ela
+ *
+ * ## Por que nao classificamos mais pelo nome do metadado
+ *
+ * A primeira versao usava tres nomes de arquivo (`build.yml` / `beta.yml` /
+ * `latest.yml`) e nao funcionava: o `PrivateGitHubProvider` do
+ * `electron-updater` resolve o metadado por `getDefaultChannelName()`, que e
+ * fixo em `"latest"`. Ele NUNCA le `updater.channel`, entao `beta.yml` era um
+ * arquivo que maquina nenhuma abria. O metadado agora se chama `latest.yml` nos
+ * tres estados, e quem separa os aneis e o par draft/prerelease.
  *
  * Modulo puro (sem globais do Deno, sem rede) para ter teste: e ele que decide
  * quais botoes a tela oferece, e oferecer "liberar para producao" na versao
@@ -71,30 +78,37 @@ function assetNames(assets: unknown): string[] {
  * Transforma a resposta do GitHub no que a tela mostra.
  *
  * Espera a lista na ordem do GitHub (mais nova primeiro) e devolve na mesma
- * ordem. `draft` fica de fora: e release que nem existe para o updater.
+ * ordem.
+ *
+ * ATENCAO: os rascunhos precisam estar nessa lista — sao eles os builds
+ * "parados", a materia-prima da tela. `GET /releases` so devolve rascunho para
+ * quem tem acesso de escrita no repositorio, entao o token usado para listar
+ * precisa de `Contents: read and write`. Com um token so de leitura a tela
+ * carrega, mas sem nenhuma versao para promover.
  */
 export function summarizeDesktopReleases(releases: unknown): DesktopReleaseSummary[] {
   if (!Array.isArray(releases)) return [];
 
   const rows = (releases as RawRelease[])
-    .filter((release) => release && typeof release === "object" && release.draft !== true)
+    .filter((release) => release && typeof release === "object")
     .map((release) => {
       const tag = typeof release.tag_name === "string" ? release.tag_name : "";
       const names = assetNames(release.assets);
       const installerName = names.find((name) => name.toLowerCase().endsWith(".exe")) ?? null;
-      const isPrerelease = release.prerelease === true;
 
       let state: DesktopReleaseState;
-      if (!installerName || names.length === 0) {
-        // Build que nao chegou a subir o instalador (upload interrompido, run
-        // reprovado no meio). Nao da para promover o que nao existe.
+      if (!installerName || !names.includes("latest.yml")) {
+        // Build que nao chegou a subir o trio completo (upload interrompido, run
+        // reprovado no meio). Sem instalador nao ha o que distribuir; sem
+        // `latest.yml` o updater acha a release e nao acha o metadado, que e a
+        // falha silenciosa classica do electron-updater.
         state = "incompleto";
-      } else if (!isPrerelease && names.includes("latest.yml")) {
-        state = "producao";
-      } else if (names.includes("beta.yml")) {
+      } else if (release.draft === true) {
+        state = "parado";
+      } else if (release.prerelease === true) {
         state = "teste";
       } else {
-        state = "parado";
+        state = "producao";
       }
 
       return {

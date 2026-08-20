@@ -2418,17 +2418,18 @@ function configureAutoUpdater(): void {
  * banco) existirem. E e reaplicado a cada verificacao: assim, trocar o canal da
  * balanca no painel passa a valer sem reiniciar o app.
  *
- * `channel` antes de `allowPrerelease`: o setter de `channel` do
- * `electron-updater` mexe em flags vizinhas, entao definir a permissao depois
- * garante que ela sobreviva.
+ * So mexe em `allowPrerelease`. `autoUpdater.channel` fica INTOCADO de
+ * proposito: num repositorio privado o provider do `electron-updater` ignora
+ * esse campo e sempre procura `latest.yml`, e o setter dele ainda liga
+ * `allowDowngrade` de brinde. O porque completo esta em
+ * `services/update-channel.ts`.
  */
 function applyUpdateChannel(): void {
   try {
     const settings = updaterChannelSettings(runtime?.getUpdateChannel() ?? DEFAULT_UPDATE_CHANNEL);
-    if (autoUpdater.channel !== settings.channel) {
+    if (autoUpdater.allowPrerelease !== settings.allowPrerelease) {
       writeStartupLog("updater:channel", settings);
     }
-    autoUpdater.channel = settings.channel;
     autoUpdater.allowPrerelease = settings.allowPrerelease;
   } catch (error) {
     // Nunca impedir a verificacao de atualizacao: sem canal aplicado o updater

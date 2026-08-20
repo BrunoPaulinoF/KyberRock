@@ -198,19 +198,27 @@ async function selectDevicesForList(supabase: SupabaseAdminClient) {
 // ---------------------------------------------------------------------------
 // Distribuicao do desktop.
 //
-// O `desktop-release.yml` deixa todo build parado numa release pre-release; o
-// `desktop-promote.yml` e quem move a versao para o anel de teste ou para
-// producao. O painel so LE as releases e DISPARA aquele workflow — nunca mexe
-// numa release diretamente. Por isso o token de escrita precisa apenas de
-// `Actions: write`, e nao de `Contents: write`: quem edita a release e o proprio
-// Actions, com o GITHUB_TOKEN do run.
+// O `desktop-release.yml` deixa todo build parado num RASCUNHO de release; o
+// `desktop-promote.yml` e quem publica a versao no anel de teste (pre-release)
+// ou em producao (estavel). O painel so LE as releases e DISPARA aquele
+// workflow — nunca mexe numa release diretamente. Por isso o token de escrita
+// precisa apenas de `Actions: write`, e nao de `Contents: write`: quem edita a
+// release e o proprio Actions, com o GITHUB_TOKEN do run.
+//
+// A listagem, porem, tem um requisito proprio: `GET /releases` so devolve
+// RASCUNHO para quem tem acesso de escrita no repositorio. Como rascunho e
+// exatamente o estado "parado" — a materia-prima da tela — um token so de
+// leitura carrega a aba sem nenhuma versao para promover. Por isso listamos
+// preferindo o token de administracao (`GH_ACTIONS_TOKEN`, que deve ter
+// tambem `Contents: read and write`) e so caimos no de leitura publica se ele
+// nao existir.
 // ---------------------------------------------------------------------------
 
 const GITHUB_OWNER = Deno.env.get("GH_RELEASES_OWNER") ?? "BrunoPaulinoF";
 const GITHUB_REPO = Deno.env.get("GH_RELEASES_REPO") ?? "KyberRock";
 /** PAT fine-grained, so este repo, `Contents: read`. Ja existe (desktop-download). */
 const GITHUB_READ_TOKEN_ENV = "GH_RELEASES_TOKEN";
-/** PAT fine-grained, so este repo, `Actions: write`. Necessario para promover. */
+/** PAT fine-grained, so este repo, `Actions: write` + `Contents: read and write`. */
 const GITHUB_ACTIONS_TOKEN_ENV = "GH_ACTIONS_TOKEN";
 const PROMOTE_WORKFLOW_FILE = "desktop-promote.yml";
 const PROMOTE_WORKFLOW_REF = "main";
@@ -719,11 +727,15 @@ Deno.serve(async (req) => {
      * `value: null` e o motivo — ver `_shared/admin-credentials.ts`.
      */
     if (body.action === "list_desktop_releases") {
-      const token = Deno.env.get(GITHUB_READ_TOKEN_ENV) ?? "";
+      // Preferencia deliberada pelo token de administracao: e o unico que
+      // enxerga rascunho, e rascunho e todo build ainda nao distribuido. Com o
+      // token de leitura a aba abre, mas so mostra o que ja foi publicado.
+      const token =
+        Deno.env.get(GITHUB_ACTIONS_TOKEN_ENV) ?? Deno.env.get(GITHUB_READ_TOKEN_ENV) ?? "";
       if (!token) {
         return jsonResponse(
           {
-            error: `Secret ${GITHUB_READ_TOKEN_ENV} ausente. Cadastre um PAT fine-grained deste repositorio com Contents: read.`
+            error: `Secret ${GITHUB_ACTIONS_TOKEN_ENV} ausente. Cadastre um PAT fine-grained deste repositorio com Actions: write e Contents: read and write.`
           },
           503
         );
