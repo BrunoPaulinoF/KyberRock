@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { localNow, parseScheduleHour, reportPeriod, shouldSendAt } from "./report-schedule.ts";
+import {
+  coversSameWindow,
+  localNow,
+  monthToDatePeriod,
+  parseScheduleHour,
+  reportPeriod,
+  shouldSendAt
+} from "./report-schedule.ts";
 
 describe("localNow", () => {
   it("converts UTC to Sao Paulo local date and hour", () => {
@@ -84,5 +91,42 @@ describe("reportPeriod", () => {
     expect(period.start).toBe("2025-12-01");
     expect(period.endExclusive).toBe("2026-01-01");
     expect(period.label).toBe("dezembro/2025");
+  });
+});
+
+describe("monthToDatePeriod", () => {
+  it("covers the current month up to the reference day (inclusive)", () => {
+    const period = monthToDatePeriod("2026-07-15");
+    expect(period.start).toBe("2026-07-01");
+    expect(period.endExclusive).toBe("2026-07-16");
+    expect(period.startUtc).toBe("2026-07-01T03:00:00.000Z");
+    expect(period.endUtc).toBe("2026-07-16T03:00:00.000Z");
+    expect(period.label).toBe("julho/2026 (ate 15/07/2026)");
+  });
+
+  it("covers only the 1st on the first day of the month", () => {
+    const period = monthToDatePeriod("2026-08-01");
+    expect(period.start).toBe("2026-08-01");
+    expect(period.endExclusive).toBe("2026-08-02");
+    expect(period.label).toBe("agosto/2026 (ate 01/08/2026)");
+  });
+
+  it("does not spill into the previous month", () => {
+    expect(monthToDatePeriod("2026-01-05").start).toBe("2026-01-01");
+  });
+});
+
+describe("coversSameWindow", () => {
+  it("detects the daily report that already is the month accumulation", () => {
+    // Dia 1: o diario cobre exatamente 01/08 — o mesmo que o acumulado do mes.
+    expect(
+      coversSameWindow(reportPeriod("daily", "2026-08-01"), monthToDatePeriod("2026-08-01"))
+    ).toBe(true);
+    expect(
+      coversSameWindow(reportPeriod("daily", "2026-08-12"), monthToDatePeriod("2026-08-12"))
+    ).toBe(false);
+    expect(
+      coversSameWindow(reportPeriod("monthly", "2026-08-01"), monthToDatePeriod("2026-08-01"))
+    ).toBe(false);
   });
 });

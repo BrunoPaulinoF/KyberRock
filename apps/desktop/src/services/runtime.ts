@@ -217,12 +217,15 @@ import {
 import {
   computeDueBundles,
   computeManualBundles,
+  coversMonthToDate,
+  monthToDateSales,
   readReportDispatchSettings,
   readReportDispatchState,
   writeReportDispatchSettings,
   writeReportDispatchState,
   type DispatchSendResult,
   type DueBundle,
+  type MonthToDateSales,
   type ReportAttachment,
   type ReportDispatchSettings,
   type ReportDispatchState
@@ -2450,7 +2453,7 @@ export class DesktopRuntime {
       if (sinceLastAttemptMs < 30 * 60_000) return null;
     }
 
-    const result = await this.dispatchBundles(due, renderPdf);
+    const result = await this.dispatchBundles(due, renderPdf, now);
     const anySuccess = result.emailsSent > 0 || result.whatsappSent > 0;
     const allErrors = [...result.emailErrors, ...result.whatsappErrors];
     const statePatch: Partial<ReportDispatchState> = {
@@ -2472,9 +2475,12 @@ export class DesktopRuntime {
 
   // Botao "Enviar agora": envia os pacotes marcados nas configuracoes com os
   // periodos de hoje, sem tocar no estado do agendador.
-  async sendReportsNow(renderPdf: (html: string) => Promise<Buffer>): Promise<DispatchSendResult> {
+  async sendReportsNow(
+    renderPdf: (html: string) => Promise<Buffer>,
+    now: Date = new Date()
+  ): Promise<DispatchSendResult> {
     const settings = readReportDispatchSettings(this.database);
-    return this.dispatchBundles(computeManualBundles(settings, new Date()), renderPdf);
+    return this.dispatchBundles(computeManualBundles(settings, now), renderPdf, now);
   }
 
   // Botao "Enviar agora" do relatorio financeiro do OMIE. Diferente dos demais
@@ -2487,7 +2493,8 @@ export class DesktopRuntime {
 
   private async buildBundleAttachments(
     bundles: DueBundle[],
-    renderPdf: (html: string) => Promise<Buffer>
+    renderPdf: (html: string) => Promise<Buffer>,
+    monthly: MonthToDateSales | null
   ): Promise<ReportAttachment[]> {
     const attachments: ReportAttachment[] = [];
     for (const bundle of bundles) {
@@ -2529,12 +2536,28 @@ export class DesktopRuntime {
         bundleLabel: bundle.label
       });
     }
+
+    // Vendas do mes corrente acompanham todo envio: quem recebe o diario ou o
+    // semanal ve no mesmo e-mail como o mes esta acumulando ate hoje.
+    if (monthly) {
+      const monthlySalesPdf = await renderPdf(
+        this.getReportHtml(monthly.startDate, monthly.endDate)
+      );
+      attachments.push({
+        filename: `vendas-mes-${monthly.month}.pdf`,
+        mimetype: "application/pdf",
+        content: monthlySalesPdf,
+        reportType: "sales",
+        bundleLabel: monthly.label
+      });
+    }
     return attachments;
   }
 
   private async dispatchBundles(
     bundles: DueBundle[],
-    renderPdf: (html: string) => Promise<Buffer>
+    renderPdf: (html: string) => Promise<Buffer>,
+    now: Date = new Date()
   ): Promise<DispatchSendResult> {
     const recipients = this.listReportRecipients().filter((recipient) => recipient.isActive);
     const result: DispatchSendResult = {
@@ -2547,11 +2570,15 @@ export class DesktopRuntime {
     };
     if (recipients.length === 0) return result;
 
-    const attachments = await this.buildBundleAttachments(bundles, renderPdf);
+    // No dia 1 o pacote diario ja cobre o acumulado do mes — nao repete o anexo.
+    const monthlySales = monthToDateSales(now);
+    const monthly = coversMonthToDate(bundles, monthlySales) ? null : monthlySales;
+    const attachments = await this.buildBundleAttachments(bundles, renderPdf, monthly);
     const channelSettings = readReportChannelSettings(this.database);
     const labels = bundles.map((bundle) => bundle.label).join(" · ");
+    const bodyLabels = monthly ? `${labels} · ${monthly.label}` : labels;
     const subject = `Relatorios KyberRock — ${labels}`;
-    const bodyHtml = `<!doctype html><html><head><meta charset="utf-8" /></head><body style="font-family:Arial,sans-serif;padding:16px"><p>Seguem em anexo os relatorios: <strong>${labels}</strong>.</p><p style="color:#64748b;font-size:12px">Enviado automaticamente pelo KyberRock Desktop.</p></body></html>`;
+    const bodyHtml = `<!doctype html><html><head><meta charset="utf-8" /></head><body style="font-family:Arial,sans-serif;padding:16px"><p>Seguem em anexo os relatorios: <strong>${bodyLabels}</strong>.</p><p style="color:#64748b;font-size:12px">Enviado automaticamente pelo KyberRock Desktop.</p></body></html>`;
 
     for (const recipient of recipients) {
       const recipientAttachments = attachments.filter(
@@ -2593,7 +2620,7 @@ export class DesktopRuntime {
                 fileBase64: `data:${attachment.mimetype};base64,${attachment.content.toString("base64")}`,
                 docName: attachment.filename,
                 mimetype: attachment.mimetype,
-                caption: index === 0 ? `Relatorios KyberRock — ${labels}` : undefined
+                caption: index === 0 ? `Relatorios KyberRock — ${bodyLabels}` : undefined
               });
               result.whatsappSent += 1;
             } catch (error) {

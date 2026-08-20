@@ -7,6 +7,8 @@ import {
   EMPTY_REPORT_DISPATCH_STATE,
   computeDueBundles,
   computeManualBundles,
+  coversMonthToDate,
+  monthToDateSales,
   normalizeSendHour,
   readReportDispatchSettings,
   readReportDispatchState,
@@ -204,5 +206,43 @@ describe("settings persistence", () => {
     expect(normalizeSendHour(-1)).toBe(18);
     expect(normalizeSendHour("20")).toBe(18);
     expect(normalizeSendHour(20)).toBe(20);
+  });
+});
+
+describe("monthToDateSales", () => {
+  it("covers the 1st of the current month up to today", () => {
+    expect(monthToDateSales(NOW)).toEqual({
+      startDate: "2026-07-01",
+      endDate: "2026-07-16",
+      month: "2026-07",
+      label: "Vendas do mes 07/2026 (ate 16/07/2026)"
+    });
+  });
+
+  it("goes along with every dispatch, including the weekly Friday one", () => {
+    const bundles = computeDueBundles(
+      settingsWith({ weekly: true }),
+      stateWith({ lastWeeklyDate: "2026-07-10" }),
+      FRIDAY
+    );
+    expect(coversMonthToDate(bundles, monthToDateSales(FRIDAY))).toBe(false);
+  });
+
+  it("is not attached twice when the daily bundle already is the month", () => {
+    // Dia 1: o diario cobre 01/08 a 01/08 — a mesma janela do acumulado do mes.
+    const firstOfMonth = new Date(2026, 7, 1, 19, 0, 0);
+    const bundles = computeDueBundles(settingsWith({}), stateWith({}), firstOfMonth);
+    expect(coversMonthToDate(bundles, monthToDateSales(firstOfMonth))).toBe(true);
+  });
+
+  it("still goes along when only the monthly (previous month) bundle is due", () => {
+    const firstOfMonth = new Date(2026, 7, 1, 19, 0, 0);
+    const bundles = computeDueBundles(
+      settingsWith({ daily: false, monthly: true }),
+      stateWith({ lastMonthlyMonth: "2026-06" }),
+      firstOfMonth
+    );
+    expect(bundles.map((bundle) => bundle.kind)).toEqual(["monthly"]);
+    expect(coversMonthToDate(bundles, monthToDateSales(firstOfMonth))).toBe(false);
   });
 });

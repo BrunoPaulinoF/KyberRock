@@ -348,8 +348,11 @@ describe("DesktopRuntime report dispatch attachments", () => {
         return { success: true };
       };
 
-      const result = await runtime.sendReportsNow(async (html) =>
-        Buffer.from(`pdf:${html.length}`, "utf8")
+      // 16/07/2026: dia qualquer no meio do mes, para o acumulado do mes nao
+      // coincidir com o pacote diario.
+      const result = await runtime.sendReportsNow(
+        async (html) => Buffer.from(`pdf:${html.length}`, "utf8"),
+        new Date(2026, 6, 16, 19, 0, 0)
       );
 
       expect(result.emailsSent).toBe(1);
@@ -358,12 +361,102 @@ describe("DesktopRuntime report dispatch attachments", () => {
       expect(attachments.map((attachment) => attachment.contentType)).toEqual([
         "application/pdf",
         "application/pdf",
+        "application/pdf",
         "application/pdf"
       ]);
       expect(attachments.every((attachment) => attachment.filename.endsWith(".pdf"))).toBe(true);
       expect(attachments.some((attachment) => attachment.filename.startsWith("vendas-"))).toBe(
         true
       );
+    } finally {
+      runtime.close();
+    }
+  });
+
+  // Pedido dos destinatarios: o fechamento do dia sozinho nao mostra como o mes
+  // esta indo. As vendas do mes corrente vao junto em todo envio.
+  it("attaches the current month sales alongside the daily bundle", async () => {
+    const baseDirectory = mkdtempSync(path.join(tmpdir(), "kyberrock-runtime-"));
+    tempDirectories.push(baseDirectory);
+    const runtime = DesktopRuntime.initialize(baseDirectory);
+
+    try {
+      const database = (runtime as unknown as { database: DesktopDatabase }).database;
+      ensureInitialDesktopIdentity(database, {
+        companyId: "company-1",
+        companyLegalName: "KyberRock Mineracao LTDA",
+        unitId: "unit-1",
+        unitName: "Pedreira Principal",
+        deviceId: "device-1",
+        deviceName: "PC Balanca"
+      });
+      createReportRecipient(database, {
+        companyId: "company-1",
+        email: "gestor@exemplo.com",
+        sendEmail: true,
+        sendWhatsapp: false,
+        reportTypes: "sales"
+      });
+
+      const sent: EmailSendInput[] = [];
+      runtime.sendReportEmail = async (input: EmailSendInput) => {
+        sent.push(input);
+        return { success: true };
+      };
+
+      await runtime.sendReportsNow(
+        async (html) => Buffer.from(`pdf:${html.length}`, "utf8"),
+        new Date(2026, 6, 16, 19, 0, 0)
+      );
+
+      const filenames = (sent[0]?.attachments ?? []).map((attachment) => attachment.filename);
+      expect(filenames).toContain("vendas-mes-2026-07.pdf");
+      expect(sent[0]?.html).toContain("Vendas do mes 07/2026 (ate 16/07/2026)");
+    } finally {
+      runtime.close();
+    }
+  });
+
+  // No dia 1 o pacote diario cobre exatamente a mesma janela do acumulado do
+  // mes — o mesmo relatorio nao vai duas vezes.
+  it("does not duplicate the sales report on the first day of the month", async () => {
+    const baseDirectory = mkdtempSync(path.join(tmpdir(), "kyberrock-runtime-"));
+    tempDirectories.push(baseDirectory);
+    const runtime = DesktopRuntime.initialize(baseDirectory);
+
+    try {
+      const database = (runtime as unknown as { database: DesktopDatabase }).database;
+      ensureInitialDesktopIdentity(database, {
+        companyId: "company-1",
+        companyLegalName: "KyberRock Mineracao LTDA",
+        unitId: "unit-1",
+        unitName: "Pedreira Principal",
+        deviceId: "device-1",
+        deviceName: "PC Balanca"
+      });
+      createReportRecipient(database, {
+        companyId: "company-1",
+        email: "gestor@exemplo.com",
+        sendEmail: true,
+        sendWhatsapp: false,
+        reportTypes: "sales"
+      });
+
+      const sent: EmailSendInput[] = [];
+      runtime.sendReportEmail = async (input: EmailSendInput) => {
+        sent.push(input);
+        return { success: true };
+      };
+
+      await runtime.sendReportsNow(
+        async (html) => Buffer.from(`pdf:${html.length}`, "utf8"),
+        new Date(2026, 7, 1, 19, 0, 0)
+      );
+
+      const filenames = (sent[0]?.attachments ?? []).map((attachment) => attachment.filename);
+      expect(filenames.filter((filename) => filename.startsWith("vendas-"))).toEqual([
+        "vendas-2026-08-01.pdf"
+      ]);
     } finally {
       runtime.close();
     }

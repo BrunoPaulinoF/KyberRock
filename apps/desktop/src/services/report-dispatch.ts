@@ -9,6 +9,9 @@
 // - monthly: mes anterior completo (na virada do mes)
 // Quando mais de um pacote vence no mesmo dia (ex.: dia de semanal tambem tem
 // o diario), os anexos sao combinados em um unico envio.
+//
+// Alem dos pacotes, TODO envio leva o PDF de vendas do mes corrente (dia 1 ate
+// hoje) — ver `monthToDateSales`.
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { readLocalSetting, writeLocalSetting } from "./local-settings.js";
@@ -176,6 +179,35 @@ export function computeManualBundles(settings: ReportDispatchSettings, now: Date
     });
   }
   return bundles;
+}
+
+// Vendas do mes corrente (dia 1 ate hoje). Nao e um pacote agendado: acompanha
+// TODO envio, para o destinatario ver como o mes esta acumulando sem esperar a
+// virada — o pacote "monthly" cobre o mes ANTERIOR.
+export interface MonthToDateSales {
+  startDate: string;
+  endDate: string;
+  month: string; // "YYYY-MM"
+  label: string;
+}
+
+export function monthToDateSales(now: Date): MonthToDateSales {
+  const today = localIsoDate(now);
+  const month = today.slice(0, 7);
+  return {
+    startDate: `${month}-01`,
+    endDate: today,
+    month,
+    label: `Vendas do mes ${month.slice(5)}/${month.slice(0, 4)} (ate ${formatBrDate(today)})`
+  };
+}
+
+// No dia 1 o pacote diario ja cobre exatamente o acumulado do mes; ai o anexo
+// de vendas do mes seria o mesmo arquivo duas vezes.
+export function coversMonthToDate(bundles: DueBundle[], monthly: MonthToDateSales): boolean {
+  return bundles.some(
+    (bundle) => bundle.startDate === monthly.startDate && bundle.endDate === monthly.endDate
+  );
 }
 
 export function readReportDispatchSettings(database: DesktopDatabase): ReportDispatchSettings {
