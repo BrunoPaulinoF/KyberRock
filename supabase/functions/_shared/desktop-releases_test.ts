@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   compareDesktopVersions,
+  REJECTED_MARKER_ASSET,
   summarizeDesktopReleases,
   type DesktopReleaseSummary
 } from "./desktop-releases.ts";
@@ -34,6 +35,9 @@ function release(
 const parado = (version: string) => release(version, { draft: true });
 /** Uma versao que o painel mandou para o anel de teste. */
 const emTeste = (version: string) => release(version, { prerelease: true });
+/** Uma versao que quebrou no teste e foi reprovada. */
+const reprovada = (version: string) =>
+  release(version, { draft: true, assets: ["latest.yml", exe(version), REJECTED_MARKER_ASSET] });
 
 function byVersion(rows: DesktopReleaseSummary[], version: string): DesktopReleaseSummary {
   const found = rows.find((row) => row.version === version);
@@ -139,6 +143,87 @@ describe("summarizeDesktopReleases", () => {
     expect(byVersion(rows, "0.8.150").isCurrentProduction).toBe(true);
     expect(byVersion(rows, "0.8.149").isCurrentProduction).toBe(false);
     expect(byVersion(rows, "0.8.149").state).toBe("producao");
+  });
+
+  it("separa build que esta compilando de release que quebrou no meio", () => {
+    // As duas chegam iguais do GitHub — release existe, assets ainda nao. A
+    // diferenca e se o run que a produziu continua rodando. Sem essa distincao
+    // todo merge pintava a tela de vermelho por alguns minutos.
+    const incompleta = { assets: ["latest.yml"], draft: true };
+    const rows = summarizeDesktopReleases(
+      [release("0.8.198", incompleta), release("0.8.153", incompleta)],
+      { buildingRunNumbers: ["198"] }
+    );
+
+    expect(byVersion(rows, "0.8.198").state).toBe("compilando");
+    expect(byVersion(rows, "0.8.153").state).toBe("incompleto");
+  });
+
+  it("nao deixa promover o que esta compilando", () => {
+    const rows = summarizeDesktopReleases(
+      [release("0.8.198", { assets: ["latest.yml"], draft: true })],
+      { buildingRunNumbers: ["198"] }
+    );
+
+    const linha = byVersion(rows, "0.8.198");
+    expect(linha.canSendToTest).toBe(false);
+    expect(linha.canReleaseToProduction).toBe(false);
+  });
+
+  it("sem a lista de runs, o compilando vira incompleto — nunca um erro", () => {
+    // A consulta ao Actions pode falhar (token, rede, rate limit). Degradar
+    // para a leitura anterior e aceitavel; derrubar a aba nao e.
+    const rows = summarizeDesktopReleases([
+      release("0.8.198", { assets: ["latest.yml"], draft: true })
+    ]);
+
+    expect(byVersion(rows, "0.8.198").state).toBe("incompleto");
+  });
+
+  it("versao reprovada nunca pode ser promovida", () => {
+    const rows = summarizeDesktopReleases([reprovada("0.8.198"), release("0.8.193")]);
+
+    const linha = byVersion(rows, "0.8.198");
+    expect(linha.state).toBe("reprovada");
+    expect(linha.canSendToTest).toBe(false);
+    expect(linha.canReleaseToProduction).toBe(false);
+    expect(linha.canReject).toBe(false);
+  });
+
+  it("o marcador de reprovada vence draft, prerelease e assets faltando", () => {
+    // Reprovar deixa a release em rascunho, entao ela tambem se encaixaria em
+    // "parado". O que o operador precisa ler ali e "essa quebrou", nao "essa
+    // esta parada" — senao ele a manda para teste de novo semanas depois.
+    const rows = summarizeDesktopReleases([
+      release("0.8.198", {
+        draft: true,
+        prerelease: true,
+        assets: [REJECTED_MARKER_ASSET]
+      })
+    ]);
+
+    expect(byVersion(rows, "0.8.198").state).toBe("reprovada");
+  });
+
+  it("oferece reprovar no que esta em teste e no que esta parado", () => {
+    const rows = summarizeDesktopReleases([
+      parado("0.8.198"),
+      emTeste("0.8.197"),
+      release("0.8.193")
+    ]);
+
+    expect(byVersion(rows, "0.8.198").canReject).toBe(true);
+    expect(byVersion(rows, "0.8.197").canReject).toBe(true);
+  });
+
+  it("nao oferece reprovar a producao atual", () => {
+    // Tirar do ar a versao que a frota recebe deixaria as balancas sem canal
+    // de atualizacao nenhum.
+    const rows = summarizeDesktopReleases([release("0.8.193")]);
+
+    const producao = byVersion(rows, "0.8.193");
+    expect(producao.isCurrentProduction).toBe(true);
+    expect(producao.canReject).toBe(false);
   });
 
   it("aguenta resposta inesperada da API sem estourar", () => {

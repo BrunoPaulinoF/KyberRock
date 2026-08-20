@@ -2419,10 +2419,12 @@ function configureAutoUpdater(): void {
  * banco) existirem. E e reaplicado a cada verificacao: assim, trocar o canal da
  * balanca no painel passa a valer sem reiniciar o app.
  *
- * So mexe em `allowPrerelease`. `autoUpdater.channel` fica INTOCADO de
- * proposito: num repositorio privado o provider do `electron-updater` ignora
- * esse campo e sempre procura `latest.yml`, e o setter dele ainda liga
- * `allowDowngrade` de brinde. O porque completo esta em
+ * Mexe em `allowPrerelease` (qual release o updater escolhe) e em
+ * `allowDowngrade` (se pode voltar para uma mais velha, o que so o anel de
+ * teste pode). `autoUpdater.channel` fica INTOCADO de proposito: num
+ * repositorio privado o provider do `electron-updater` ignora esse campo e
+ * sempre procura `latest.yml`, e o setter dele ligaria `allowDowngrade` para
+ * TODA a frota de brinde. O porque completo esta em
  * `services/update-channel.ts`.
  */
 function applyUpdateChannel(): void {
@@ -2432,6 +2434,7 @@ function applyUpdateChannel(): void {
       writeStartupLog("updater:channel", settings);
     }
     autoUpdater.allowPrerelease = settings.allowPrerelease;
+    autoUpdater.allowDowngrade = settings.allowDowngrade;
   } catch (error) {
     // Nunca impedir a verificacao de atualizacao: sem canal aplicado o updater
     // segue no padrao, que e producao.
