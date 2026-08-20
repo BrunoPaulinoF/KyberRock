@@ -3,7 +3,8 @@ import {
   WEIGHING_BILLING_SITUATION_LABEL,
   WEIGHING_BILLING_SITUATION_ORDER,
   isWeighingBillingSituation,
-  resolveSituation
+  resolveSituation,
+  resolveSituationDetail
 } from "./weighing-billing-situation.js";
 import type { WeighingBillingSituation } from "./weighing-billing-situation.js";
 import { CLOSED_OPERATION_STATUS_SQL_LIST } from "./weighing-operations.js";
@@ -243,24 +244,6 @@ function mapRow(row: WeighingBillingSourceRow): WeighingBillingRow {
     situationLabel: WEIGHING_BILLING_SITUATION_LABEL[situation],
     situationDetail: resolveSituationDetail(row, situation)
   };
-}
-
-/**
- * O texto que explica a linha. A recusa gravada pelo OMIE vale mais que qualquer frase
- * pronta — e exatamente o que o operador precisa para destravar a pesagem. Sem ela,
- * sobra o numero do pedido/OS, que e por onde se procura no OMIE.
- */
-function resolveSituationDetail(
-  row: WeighingBillingSourceRow,
-  situation: WeighingBillingSituation
-): string | null {
-  const message = row.omie_billing_message?.trim();
-  if (message) return message;
-  if (situation === "billed" || situation === "sent") {
-    if (row.omie_sales_order_id) return `Pedido OMIE ${row.omie_sales_order_id}`;
-    if (row.omie_service_order_id) return `Ordem de servico OMIE ${row.omie_service_order_id}`;
-  }
-  return null;
 }
 
 /** Busca livre por cliente, produto, placa, documento ou numero da operacao. */

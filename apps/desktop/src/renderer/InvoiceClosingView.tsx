@@ -14,7 +14,9 @@ import type {
   InvoiceClosingReport
 } from "../services/invoice-closing";
 import { IconActionButton } from "./IconActionButton";
+import { SituationPill } from "./SituationPill";
 import { HelpTooltip } from "./Tooltip";
+import { formatDbDateTime } from "./format-datetime";
 import {
   INSIGHTS_PERIOD_OPTIONS,
   formatDayLabel,
@@ -37,7 +39,7 @@ import type { InsightsPeriod } from "./insights-period";
  * faturas que estao na tela.
  *
  * No fim da tela vem a lista "pesagem a pesagem": as MESMAS cargas das faturas, numa tabela
- * unica com a coluna do cliente, na ordem em que foram feitas. As faturas respondem "quanto
+ * unica e na ordem em que foram feitas, com a operacao INTEIRA em cada linha. As faturas respondem "quanto
  * cada cliente deve"; esta lista responde a pergunta de conferencia — "cade a carga tal?" —,
  * que com a tela dividida em blocos por cliente obrigaria a abrir fatura por fatura ate
  * achar. E a mesma estrutura da Conferencia de faturamento, de proposito: quem confere passa
@@ -68,6 +70,18 @@ function formatKg(kg: number): string {
 
 function formatCount(value: number): string {
   return value.toLocaleString("pt-BR");
+}
+
+/**
+ * Numero pelo qual a pesagem e procurada no OMIE — o elo entre os dois sistemas. O numero
+ * VISIVEL do documento vem entre parenteses quando ja e conhecido: o codigo grande e o da
+ * integracao, e digitar ele na busca do OMIE nao acha nada.
+ */
+function omieReference(line: InvoiceClosingLine): string {
+  const visible = line.omieOrderNumber ? ` (nº ${line.omieOrderNumber})` : "";
+  if (line.omieSalesOrderId) return `Pedido ${line.omieSalesOrderId}${visible}`;
+  if (line.omieServiceOrderId) return `OS ${line.omieServiceOrderId}${visible}`;
+  return "-";
 }
 
 /**
@@ -224,7 +238,7 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Fechamento de faturas</h2>
           <HelpTooltip
-            content="Puxa de uma vez a fatura de todos os clientes de um ciclo: escolha Quinzenal ou Mensal e o periodo. Cada fatura sai com a data de fechamento, o vencimento e a lista carga a carga com nota fiscal, vale, placa e transportador. O ciclo, o dia do fechamento e o prazo do boleto vem do cadastro do cliente. Marcando placas no filtro de Placa, o fechamento sai separado por placa — uma fatura por caminhao dentro de cada cliente; com o filtro vazio, sai a fatura inteira do cliente. No fim da tela, a lista pesagem a pesagem traz as mesmas cargas das faturas numa tabela so, com o cliente em cada linha, para achar uma carga sem abrir fatura por fatura. O Excel e o PDF saem com as mesmas faturas que estao na tela."
+            content="Puxa de uma vez a fatura de todos os clientes de um ciclo: escolha Quinzenal ou Mensal e o periodo. Cada fatura sai com a data de fechamento, o vencimento e a lista carga a carga com nota fiscal, vale, placa e transportador. O ciclo, o dia do fechamento e o prazo do boleto vem do cadastro do cliente. Marcando placas no filtro de Placa, o fechamento sai separado por placa — uma fatura por caminhao dentro de cada cliente; com o filtro vazio, sai a fatura inteira do cliente. No fim da tela, a lista pesagem a pesagem traz as mesmas cargas das faturas numa tabela so, com a operacao inteira em cada linha — vale, cliente, produto, quem levou, valores, situacao no OMIE e a fatura em que ela caiu —, para achar e conferir uma carga sem abrir fatura por fatura. O Excel e o PDF saem com as mesmas faturas que estao na tela."
             placement="right"
           />
         </div>
@@ -606,8 +620,9 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
             <h3 style={styles.cardTitle}>Pesagem a pesagem ({formatCount(report.rows.length)})</h3>
             <p style={styles.hint}>
               As mesmas cargas das faturas acima, numa lista so e na ordem em que foram feitas —
-              para achar uma carga sem precisar abrir fatura por fatura. O TOTAL do rodape e o mesmo
-              total a faturar.
+              para achar uma carga sem precisar abrir fatura por fatura. Cada linha traz a operacao
+              inteira: vale, cliente, produto, quem levou, valores, situacao no OMIE e em qual
+              fatura ela caiu. O TOTAL do rodape e o mesmo total a faturar.
             </p>
             {report.rows.length === 0 ? (
               <p style={styles.hint}>Nenhuma pesagem nas faturas do periodo.</p>
@@ -617,17 +632,25 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
                   <thead>
                     <tr>
                       <th style={{ ...styles.th, textAlign: "left" }}>Op.</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Vale</th>
                       <th style={{ ...styles.th, textAlign: "left" }}>Data</th>
                       <th style={{ ...styles.th, textAlign: "left" }}>Cliente</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>CNPJ/CPF</th>
                       <th style={{ ...styles.th, textAlign: "left" }}>Produto</th>
                       <th style={{ ...styles.th, textAlign: "left" }}>Placa</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Transportador</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Motorista</th>
                       <th style={styles.th}>Peso</th>
                       <th style={styles.th}>Preco unit.</th>
                       <th style={styles.th}>Produto</th>
                       <th style={styles.th}>Frete</th>
                       <th style={styles.th}>Total</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Nota fiscal</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Tipo</th>
                       <th style={{ ...styles.th, textAlign: "left" }}>Situacao</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Nota fiscal</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Pedido/OS OMIE</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Fechamento</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Vencimento</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -637,7 +660,7 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
                   </tbody>
                   <tfoot>
                     <tr>
-                      <td style={{ ...styles.tdTotal, textAlign: "left" }} colSpan={5}>
+                      <td style={{ ...styles.tdTotal, textAlign: "left" }} colSpan={9}>
                         TOTAL
                       </td>
                       <td style={styles.tdTotal}>{formatKg(totals.netWeightKg)}</td>
@@ -645,7 +668,7 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
                       <td style={styles.tdTotal}>{formatBRL(totals.productCents)}</td>
                       <td style={styles.tdTotal}>{formatBRL(totals.freightCents)}</td>
                       <td style={styles.tdTotal}>{formatBRL(totals.totalCents)}</td>
-                      <td style={styles.tdTotal} colSpan={2} />
+                      <td style={styles.tdTotal} colSpan={6} />
                     </tr>
                   </tfoot>
                 </table>
@@ -787,19 +810,40 @@ function DetailRow({ line }: { line: InvoiceClosingLine }) {
   return (
     <tr>
       <td style={{ ...styles.td, textAlign: "left" }}>{line.couponNumber ?? "-"}</td>
-      <td style={{ ...styles.td, textAlign: "left" }}>{formatDayLabel(line.date)}</td>
+      <td style={{ ...styles.td, textAlign: "left" }}>{formatCouponNumber(line.couponNumber)}</td>
+      <td
+        style={{ ...styles.td, textAlign: "left" }}
+        title={line.closedAt ? `Saida: ${formatDbDateTime(line.closedAt)}` : ""}
+      >
+        {formatDayLabel(line.date)}
+      </td>
       <td style={{ ...styles.td, textAlign: "left" }} title={line.customerName}>
         {line.customerName}
       </td>
+      <td style={{ ...styles.td, textAlign: "left" }}>{line.customerDocument ?? "-"}</td>
       <td style={{ ...styles.td, textAlign: "left" }} title={line.productDescription}>
-        {line.productDescription}
+        {line.productCode
+          ? `${line.productCode} - ${line.productDescription}`
+          : line.productDescription}
       </td>
       <td style={{ ...styles.td, textAlign: "left" }}>{line.plate}</td>
+      <td style={{ ...styles.td, textAlign: "left" }} title={line.carrierName}>
+        {line.carrierName}
+      </td>
+      <td style={{ ...styles.td, textAlign: "left" }}>{line.driverName}</td>
       <td style={styles.td}>{formatKg(line.netWeightKg)}</td>
       <td style={styles.td}>{unitPriceLabel(line)}</td>
       <td style={styles.td}>{formatBRL(line.productTotalCents)}</td>
       <td style={styles.td}>{formatBRL(line.freightTotalCents)}</td>
       <td style={{ ...styles.td, fontWeight: 700 }}>{formatBRL(line.totalCents)}</td>
+      <td style={{ ...styles.td, textAlign: "left" }}>{line.operationTypeLabel}</td>
+      <td style={{ ...styles.td, textAlign: "left" }}>
+        <SituationPill
+          situation={line.situation}
+          label={line.situationLabel}
+          title={line.situationDetail ?? undefined}
+        />
+      </td>
       <td
         style={{
           ...styles.td,
@@ -809,7 +853,9 @@ function DetailRow({ line }: { line: InvoiceClosingLine }) {
       >
         {line.invoiceNumber ?? "Sem nota"}
       </td>
-      <td style={{ ...styles.td, textAlign: "left" }}>{line.situationLabel}</td>
+      <td style={{ ...styles.td, textAlign: "left" }}>{omieReference(line)}</td>
+      <td style={{ ...styles.td, textAlign: "left" }}>{formatDayLabel(line.closingDate)}</td>
+      <td style={{ ...styles.td, textAlign: "left" }}>{formatDayLabel(line.dueDate)}</td>
     </tr>
   );
 }

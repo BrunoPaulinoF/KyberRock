@@ -124,17 +124,25 @@ const PENDING_HEADERS = ["Cliente", "Cargas", "Total (R$)"];
  */
 const DETAIL_HEADERS = [
   "Op.",
+  "Vale",
   "Data",
   "Cliente",
+  "CNPJ/CPF",
   "Produto",
   "Placa",
+  "Transportador",
+  "Motorista",
   "Peso (kg)",
   "Preco unit.",
   "Produto (R$)",
   "Frete (R$)",
   "Total (R$)",
+  "Tipo",
+  "Situacao",
   "Nota fiscal",
-  "Situacao"
+  "Pedido/OS OMIE",
+  "Fechamento",
+  "Vencimento"
 ];
 
 export function invoiceClosingFileBaseName(report: InvoiceClosingReport): string {
@@ -340,18 +348,38 @@ ${blocks.join("\n")}
 function detailCells(line: InvoiceClosingLine): string[] {
   return [
     line.couponNumber === null ? "-" : String(line.couponNumber),
+    formatCouponNumber(line.couponNumber),
     formatDayLabel(line.date),
     line.customerName,
-    line.productDescription,
+    line.customerDocument ?? "-",
+    line.productCode ? `${line.productCode} - ${line.productDescription}` : line.productDescription,
     line.plate,
+    line.carrierName,
+    line.driverName,
     num(line.netWeightKg),
     unitPriceLabel(line),
     formatBRL(line.productTotalCents),
     formatBRL(line.freightTotalCents),
     formatBRL(line.totalCents),
+    line.operationTypeLabel,
+    line.situationLabel,
     line.invoiceNumber ?? "-",
-    line.situationLabel
+    omieReference(line),
+    formatDayLabel(line.closingDate),
+    formatDayLabel(line.dueDate)
   ];
+}
+
+/**
+ * Numero pelo qual a pesagem e procurada no OMIE — o elo entre os dois sistemas. O numero
+ * VISIVEL do documento acompanha o codigo da integracao quando ja e conhecido; e ele que
+ * serve na busca do OMIE.
+ */
+function omieReference(line: InvoiceClosingLine): string {
+  const visible = line.omieOrderNumber ? ` (nº ${line.omieOrderNumber})` : "";
+  if (line.omieSalesOrderId) return `Pedido ${line.omieSalesOrderId}${visible}`;
+  if (line.omieServiceOrderId) return `OS ${line.omieServiceOrderId}${visible}`;
+  return "-";
 }
 
 /** Rodape alinhado com `DETAIL_HEADERS`: so as colunas somaveis levam numero. */
@@ -364,11 +392,19 @@ function detailFooterCells(report: InvoiceClosingReport): string[] | null {
     "",
     "",
     "",
+    "",
+    "",
+    "",
+    "",
     num(totals.netWeightKg),
     "",
     formatBRL(totals.productCents),
     formatBRL(totals.freightCents),
     formatBRL(totals.totalCents),
+    "",
+    "",
+    "",
+    "",
     "",
     ""
   ];

@@ -111,6 +111,7 @@ interface OperationSeed {
   orderNumber?: string | null;
   salesOrderId?: number | null;
   billingStatus?: string | null;
+  billingMessage?: string | null;
   deletedAt?: string | null;
 }
 
@@ -121,9 +122,10 @@ function insertOperation(db: Database, seed: OperationSeed): void {
         customer_id, vehicle_id, carrier_id, driver_id, product_id,
         net_weight_kg, unit_price_cents, price_unit,
         product_total_cents, freight_total_cents, total_cents,
-        omie_sales_order_id, omie_order_number, omie_invoice_number, omie_billing_status,
+        omie_sales_order_id, omie_order_number, omie_invoice_number,
+        omie_billing_status, omie_billing_message,
         created_at, updated_at, deleted_at)
-     VALUES (?, 'comp-1', ?, 'dev-1', ?, ?, ?, ?, ?, ?, ?, 'prod-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, 'comp-1', ?, 'dev-1', ?, ?, ?, ?, ?, ?, ?, 'prod-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     seed.id,
     seed.unitId ?? "unit-1",
@@ -144,6 +146,7 @@ function insertOperation(db: Database, seed: OperationSeed): void {
     seed.orderNumber ?? null,
     seed.invoiceNumber ?? null,
     seed.billingStatus ?? null,
+    seed.billingMessage ?? null,
     seed.createdAt,
     seed.createdAt,
     seed.deletedAt ?? null
@@ -541,6 +544,70 @@ describe("InvoiceClosingService", () => {
         result.totals.totalCents
       );
       expect(result.rows).toHaveLength(result.totals.operations);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("cada linha traz a operacao inteira: cadastro, quem levou, OMIE e em qual fatura caiu", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, { id: "cust-1", name: "Alfa", closingDay: 31, boletoDays: 10 });
+      insertOperation(db, {
+        id: "op-1",
+        code: 22,
+        customer: "cust-1",
+        createdAt: "2026-07-10",
+        carrier: "carr-1",
+        salesOrderId: 4_017_998_231,
+        orderNumber: "50139",
+        invoiceNumber: "28727",
+        billingStatus: "billed"
+      });
+
+      const [line] = report(db).rows;
+      // Cadastro: o que identifica a carga na conferencia com o cliente.
+      expect(line.customerName).toBe("Alfa");
+      expect(line.customerDocument).toBe("11222333000155");
+      expect(line.productCode).toBe("B0");
+      expect(line.productDescription).toBe("Brita 0");
+      // Quem levou.
+      expect(line.plate).toBe("ABC1D23");
+      expect(line.carrierName).toBe("Transportes Silva");
+      expect(line.driverName).toBe("Joao");
+      // OMIE: a situacao e os numeros pelos quais a pesagem e procurada la.
+      expect(line.situation).toBe("billed");
+      expect(line.situationLabel).toBe("Faturada");
+      expect(line.omieSalesOrderId).toBe(4_017_998_231);
+      expect(line.omieServiceOrderId).toBeNull();
+      expect(line.omieOrderNumber).toBe("50139");
+      expect(line.invoiceNumber).toBe("28727");
+      expect(line.operationTypeLabel).toBe("Com nota");
+      // E em qual fatura ela caiu — a resposta para "onde essa carga foi cobrada?".
+      expect(line.closingDate).toBe("2026-07-31");
+      expect(line.dueDate).toBe("2026-08-10");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("a linha explica a pesagem parada com o motivo gravado pelo OMIE", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, { id: "cust-1", name: "Alfa", closingDay: 31, boletoDays: 10 });
+      insertOperation(db, {
+        id: "op-1",
+        customer: "cust-1",
+        createdAt: "2026-07-10",
+        billingStatus: "failed",
+        billingMessage: "CFOP invalido para a operacao."
+      });
+
+      const [line] = report(db).rows;
+      expect(line.situation).toBe("failed");
+      expect(line.situationDetail).toBe("CFOP invalido para a operacao.");
     } finally {
       db.close();
     }

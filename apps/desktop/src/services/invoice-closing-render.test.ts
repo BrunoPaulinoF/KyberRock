@@ -17,13 +17,20 @@ function line(overrides: Partial<InvoiceClosingLine> = {}): InvoiceClosingLine {
     operationId: "op-1",
     couponNumber: 4321,
     date: "2026-07-22",
+    closedAt: "2026-07-22 14:35:00",
+    closingDate: "2026-08-01",
+    dueDate: "2026-08-22",
     invoiceNumber: "000028727",
     omieOrderNumber: "50139",
+    omieSalesOrderId: 4_017_998_231,
+    omieServiceOrderId: null,
     customerId: "cust-1",
     customerName: "JOSE CORDEIRO",
+    customerDocument: "11222333000155",
     plate: "CVP7E80",
     carrierName: "Transportes Silva",
     driverName: "Joao",
+    productCode: "B1",
     productDescription: "Brita 1",
     netWeightKg: 31_000,
     unitPriceCents: 4_839,
@@ -35,6 +42,7 @@ function line(overrides: Partial<InvoiceClosingLine> = {}): InvoiceClosingLine {
     operationTypeLabel: "Com nota",
     situation: "billed",
     situationLabel: "Faturada",
+    situationDetail: "Faturado no OMIE — NF-e 28727.",
     ...overrides
   };
 }
@@ -151,7 +159,27 @@ describe("invoice-closing-render", () => {
       renderInvoiceClosingHtml(report())
     ]) {
       expect(document).toContain("Pesagem a pesagem (1)");
-      expect(document).toContain("Preco unit.");
+      // A lista completa da operacao, na mesma estrutura da Conferencia de faturamento.
+      for (const header of [
+        "Vale",
+        "CNPJ/CPF",
+        "Transportador",
+        "Motorista",
+        "Preco unit.",
+        "Tipo",
+        "Pedido/OS OMIE",
+        "Fechamento",
+        "Vencimento"
+      ]) {
+        expect(document).toContain(header);
+      }
+      expect(document).toContain("004321");
+      expect(document).toContain("B1 - Brita 1");
+      expect(document).toContain("11222333000155");
+      expect(document).toContain("Transportes Silva");
+      expect(document).toContain("Pedido 4017998231 (nº 50139)");
+      // A fatura em que a carga caiu: e o que se responde quando o cliente contesta.
+      expect(document).toContain("22/08/2026");
       // A unidade vai junto do preco: R$ 48,39 por tonelada e por quilo sao contas
       // mil vezes diferentes. (O "R$" sai com espaco fino, entao a busca e pelo numero.)
       expect(document).toContain("48,39/t");

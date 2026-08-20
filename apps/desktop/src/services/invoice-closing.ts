@@ -3,6 +3,7 @@ import { computeCreditInvoiceSchedule, creditClosingConfigFromCustomer } from ".
 import type { CreditClosingConfig } from "./credit-invoice.js";
 import {
   resolveSituation,
+  resolveSituationDetail,
   WEIGHING_BILLING_SITUATION_LABEL
 } from "./weighing-billing-situation.js";
 import type { WeighingBillingSituation } from "./weighing-billing-situation.js";
@@ -51,6 +52,7 @@ export interface InvoiceClosingLine {
    */
   customerId: string;
   customerName: string;
+  customerDocument: string | null;
   /**
    * Numero do VALE: o codigo do cupom que saiu com o motorista (`operation_code`, o "COD"
    * impresso). E por ele que o cliente contesta uma carga, entao e ele que tem de estar na
@@ -59,13 +61,33 @@ export interface InvoiceClosingLine {
   couponNumber: number | null;
   /** Data da operacao (`created_at`), a mesma base dos demais relatorios. */
   date: string;
+  /** Saida da balanca — quando a pesagem de fato fechou. Null nas operacoes antigas. */
+  closedAt: string | null;
+  /**
+   * O fechamento em que esta carga caiu, e o vencimento dele.
+   *
+   * Repetidos na linha porque a lista "pesagem a pesagem" mistura as faturas todas: sem
+   * eles, uma carga solta nao diria em qual fatura foi cobrada — que e justamente o que se
+   * quer saber quando o cliente contesta.
+   */
+  closingDate: string;
+  dueDate: string;
   /** Numero da nota fiscal emitida no OMIE; null enquanto a nota nao saiu. */
   invoiceNumber: string | null;
   /** Numero VISIVEL do pedido/OS no OMIE — o equivalente ao "orcamento" do sistema antigo. */
   omieOrderNumber: string | null;
+  /**
+   * Codigos INTERNOS do documento no OMIE. Nao sao o numero que se digita na busca de la
+   * (esse e o `omieOrderNumber`), mas sao o que diz se a pesagem chegou ao OMIE como pedido
+   * de venda ou como ordem de servico — a diferenca entre a venda com nota e a interna.
+   */
+  omieSalesOrderId: number | null;
+  omieServiceOrderId: number | null;
   plate: string;
   carrierName: string;
   driverName: string;
+  /** Codigo do produto no cadastro, quando ha — e por ele que o produto e conferido. */
+  productCode: string | null;
   productDescription: string;
   netWeightKg: number;
   /** Preco aplicado na pesagem, e a unidade dele ("ton" / "kg"), para conferir a conta. */
@@ -78,6 +100,8 @@ export interface InvoiceClosingLine {
   operationTypeLabel: string;
   situation: WeighingBillingSituation;
   situationLabel: string;
+  /** O motivo gravado pelo OMIE, quando ha — e o que explica uma pesagem parada. */
+  situationDetail: string | null;
 }
 
 export interface InvoiceClosingTotals {
@@ -212,6 +236,7 @@ interface InvoiceClosingSourceRow {
   id: string;
   operation_code: number | null;
   created_at: string;
+  exit_at: string | null;
   operation_type: "invoice" | "internal";
   customer_id: string;
   customer_trade_name: string | null;
@@ -224,6 +249,7 @@ interface InvoiceClosingSourceRow {
   credit_second_closing_day: number | null;
   credit_second_boleto_days: number | null;
   credit_closing_weekday: number | null;
+  product_code: string | null;
   product_description: string | null;
   plate: string | null;
   carrier_name: string | null;
@@ -239,6 +265,7 @@ interface InvoiceClosingSourceRow {
   omie_order_number: string | null;
   omie_invoice_number: string | null;
   omie_billing_status: string | null;
+  omie_billing_message: string | null;
 }
 
 export class InvoiceClosingService {
@@ -287,6 +314,8 @@ export class InvoiceClosingService {
       if (cycles.length > 0 && !cycles.includes(config.periodicity)) continue;
 
       const schedule = computeCreditInvoiceSchedule(config, parseIsoDate(line.date));
+      line.closingDate = schedule.closingDate;
+      line.dueDate = schedule.dueDate;
       const key = splitByPlate
         ? `${row.customer_id}|${schedule.closingDate}|${plate}`
         : `${row.customer_id}|${schedule.closingDate}`;
@@ -345,7 +374,9 @@ export class InvoiceClosingService {
     return this.db
       .prepare(
         `SELECT
-           o.id, o.operation_code, o.created_at, o.operation_type, o.customer_id,
+           o.id, o.operation_code, o.created_at,
+           o.exit_weight_captured_at as exit_at,
+           o.operation_type, o.customer_id,
            cust.trade_name as customer_trade_name,
            COALESCE(cust.legal_name, o.remote_customer_name) as customer_legal_name,
            cust.document as customer_document,
@@ -353,6 +384,7 @@ export class InvoiceClosingService {
            cust.credit_closing_day, cust.credit_boleto_days,
            cust.credit_second_closing_day, cust.credit_second_boleto_days,
            cust.credit_closing_weekday,
+           p.code as product_code,
            COALESCE(p.description, o.remote_product_description) as product_description,
            COALESCE(v.plate, o.remote_plate) as plate,
            -- A transportadora da operacao manda; sem ela, a do cadastro do veiculo, que e
@@ -362,7 +394,7 @@ export class InvoiceClosingService {
            o.net_weight_kg, o.unit_price_cents, o.price_unit,
            o.product_total_cents, o.freight_total_cents, o.total_cents,
            o.omie_sales_order_id, o.omie_service_order_id, o.omie_order_number,
-           o.omie_invoice_number, o.omie_billing_status
+           o.omie_invoice_number, o.omie_billing_status, o.omie_billing_message
          FROM weighing_operations o
          JOIN customers cust ON cust.id = o.customer_id
          LEFT JOIN products p ON p.id = o.product_id
@@ -388,13 +420,21 @@ function mapLine(row: InvoiceClosingSourceRow): InvoiceClosingLine {
     operationId: row.id,
     customerId: row.customer_id,
     customerName: customerName(row),
+    customerDocument: row.customer_document,
     couponNumber: row.operation_code,
     date: row.created_at.slice(0, 10),
+    closedAt: row.exit_at,
+    // Preenchidos quando a linha entra numa fatura: e o fechamento que decide as duas datas.
+    closingDate: "",
+    dueDate: "",
     invoiceNumber: (row.omie_invoice_number ?? "").trim() || null,
     omieOrderNumber: (row.omie_order_number ?? "").trim() || null,
+    omieSalesOrderId: row.omie_sales_order_id,
+    omieServiceOrderId: row.omie_service_order_id,
     plate: (row.plate ?? "").trim() || "SEM PLACA",
     carrierName: (row.carrier_name ?? "").trim() || "Sem transportadora",
     driverName: (row.driver_name ?? "").trim() || "-",
+    productCode: (row.product_code ?? "").trim() || null,
     productDescription: (row.product_description ?? "").trim() || "N/A",
     netWeightKg: row.net_weight_kg ?? 0,
     unitPriceCents: row.unit_price_cents,
@@ -405,7 +445,8 @@ function mapLine(row: InvoiceClosingSourceRow): InvoiceClosingLine {
     operationType: row.operation_type,
     operationTypeLabel: row.operation_type === "internal" ? "Interna" : "Com nota",
     situation,
-    situationLabel: WEIGHING_BILLING_SITUATION_LABEL[situation]
+    situationLabel: WEIGHING_BILLING_SITUATION_LABEL[situation],
+    situationDetail: resolveSituationDetail(row, situation)
   };
 }
 
