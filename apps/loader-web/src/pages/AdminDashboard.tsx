@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
 import { supabaseConfig } from "../config/supabase-config";
+import { DEVICE_NAME_MAX_LENGTH, parseDeviceName } from "../lib/device-name";
 import { AiAssistantSettings } from "./AiAssistantSettings";
 import { FinancialBackoffice } from "./FinancialBackoffice";
 import {
@@ -199,6 +200,7 @@ export function AdminDashboard() {
   );
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
   const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
+  const [renamingDevice, setRenamingDevice] = useState<Device | null>(null);
   const [resettingPasswordUser, setResettingPasswordUser] = useState<LoaderUser | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DeleteTarget | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -784,6 +786,9 @@ export function AdminDashboard() {
             title={`Ver credenciais de ${device.name}`}
             onClick={() => void handleRevealCredentials({ type: "device", id: device.id })}
           />
+          <Button size="sm" onClick={() => setRenamingDevice(device)}>
+            Renomear
+          </Button>
           <Button
             size="sm"
             onClick={() =>
@@ -1122,6 +1127,22 @@ export function AdminDashboard() {
         />
       )}
 
+      {renamingDevice && (
+        <DeviceNameModal
+          device={renamingDevice}
+          unitLabel={unitName(renamingDevice.unitId)}
+          onClose={() => setRenamingDevice(null)}
+          onSubmit={async (name) => {
+            const ok = await run(
+              "update_device_name",
+              { deviceId: renamingDevice.id, name },
+              `Balanca renomeada para "${name}". Os computadores da pedreira ja estao exibindo o novo nome.`
+            );
+            if (ok) setRenamingDevice(null);
+          }}
+        />
+      )}
+
       {(creating === "loader" || creating === "comercial") && (
         <UserFormModal
           role={creating}
@@ -1390,6 +1411,81 @@ function CompanyFormModal({
             <PasswordInput name="priceChangePassword" maxLength={4} />
           </Field>
         </Fieldset>
+      </form>
+    </Modal>
+  );
+}
+
+/**
+ * Renomeia uma balanca ja ativada.
+ *
+ * O nome nao vale so para esta lista: e o rotulo que TODAS as maquinas da
+ * pedreira exibem para aquele computador — a legenda de cores da tela de
+ * Operacoes e o campo "Computador" do detalhe da operacao saem do espelho local
+ * `devices`, que cada desktop reescreve com o que vem da nuvem. Dai o aviso no
+ * formulario: quem renomeia precisa saber que a troca aparece em todo mundo, e
+ * que nao e preciso reativar nada para isso.
+ *
+ * Validacao controlada (e nao `required` do HTML) porque o botao Salvar fica
+ * desabilitado ate o nome ficar valido: nome em branco na nuvem viraria o
+ * generico "Computador" em todas as maquinas, sem erro nenhum na tela.
+ */
+function DeviceNameModal({
+  device,
+  unitLabel,
+  onClose,
+  onSubmit
+}: {
+  device: Device;
+  unitLabel: string;
+  onClose: () => void;
+  onSubmit: (name: string) => void | Promise<void>;
+}) {
+  const formId = "device-name-form";
+  const [name, setName] = useState(device.name);
+  const parsed = parseDeviceName(name);
+
+  return (
+    <Modal
+      title={`Renomear ${device.name}`}
+      onClose={onClose}
+      size="sm"
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button type="submit" variant="primary" form={formId} disabled={!parsed.ok}>
+            Salvar
+          </Button>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className="adm-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!parsed.ok) return;
+          void onSubmit(parsed.name);
+        }}
+      >
+        <Field
+          label="Nome do computador"
+          hint={`Como esta balanca aparece para todos. Ate ${DEVICE_NAME_MAX_LENGTH} caracteres.`}
+          error={parsed.ok ? null : parsed.error}
+        >
+          <input
+            className="adm-input"
+            value={name}
+            maxLength={DEVICE_NAME_MAX_LENGTH}
+            onChange={(event) => setName(event.target.value)}
+            autoFocus
+          />
+        </Field>
+        <Note tone="info">
+          Ao salvar, os computadores da unidade {unitLabel} passam a exibir o novo nome em segundos
+          — na legenda de cores e no responsavel de cada operacao. Nenhuma balanca precisa ser
+          reativada, e as operacoes ja registradas continuam as mesmas.
+        </Note>
       </form>
     </Modal>
   );

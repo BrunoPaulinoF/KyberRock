@@ -216,6 +216,15 @@ offending link of the chain, not above the `return`.
   redefinir. O token do desktop (**SHA-256** em `device_registrations.token_hash`) **não tem
   cofre**: o valor em claro só existe na máquina ativada, e a saída é gerar novo código de
   ativação.
+- **Renomear balança (`update_device_name`)**: o nome de `device_registrations` não é rótulo só
+  da lista do painel — é o que **todas** as máquinas da pedreira exibem para aquele computador
+  (legenda de cores da tela de Operações e campo "Computador" no detalhe da operação). Cada
+  desktop reescreve o espelho local `devices` com o que o `desktop-status` devolve, e esse
+  heartbeat roda a cada 5 s: salvar no painel troca o nome nas outras máquinas em segundos, sem
+  reativar nada e sem mexer em token, unidade ou número de cupom. A regra do nome (obrigatório,
+  espaços colapsados, limite de 60 caracteres para a legenda caber em uma linha) é pura e testada
+  em `_shared/device-name.ts`; `apps/loader-web/src/lib/device-name.ts` repete a mesma regra de
+  propósito — o loader-web não importa módulo Deno —, então mudar uma exige mudar a outra.
 
 ## Backoffice financeiro
 
