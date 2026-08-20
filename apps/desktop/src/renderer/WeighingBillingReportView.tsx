@@ -12,6 +12,7 @@ import type {
   WeighingBillingRow
 } from "../services/weighing-billing-report";
 import { IconActionButton } from "./IconActionButton";
+import { SituationPill } from "./SituationPill";
 import { HelpTooltip } from "./Tooltip";
 import { formatDbDateTime } from "./format-datetime";
 import {
@@ -32,14 +33,6 @@ import type { InsightsPeriod } from "./insights-period";
  * comparando linha a linha com o relatorio do OMIE. O PDF e a planilha saem com
  * exatamente as pesagens que estao na tela.
  */
-const SITUATION_TONE: Record<WeighingBillingSituation, "success" | "warning" | "danger" | "info"> =
-  {
-    billed: "success",
-    sent: "info",
-    pending: "warning",
-    cadastro_incompleto: "warning",
-    failed: "danger"
-  };
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
@@ -490,31 +483,6 @@ export function WeighingBillingReportView({
   );
 }
 
-function SituationPill({
-  situation,
-  label,
-  title
-}: {
-  situation: WeighingBillingSituation;
-  label: string;
-  title?: string;
-}) {
-  const tone = SITUATION_TONE[situation];
-  const palette =
-    tone === "success"
-      ? { background: "var(--kr-success-soft)", color: "var(--kr-success)" }
-      : tone === "danger"
-        ? { background: "var(--kr-danger-soft)", color: "var(--kr-danger)" }
-        : tone === "warning"
-          ? { background: "var(--kr-warning-soft)", color: "var(--kr-warning)" }
-          : { background: "var(--kr-info-bg)", color: "var(--kr-info-text)" };
-  return (
-    <span style={{ ...styles.pill, ...palette }} title={title}>
-      {label}
-    </span>
-  );
-}
-
 function Kpi({
   label,
   value,
@@ -731,15 +699,6 @@ const styles: Record<string, React.CSSProperties> = {
     position: "sticky",
     bottom: 0,
     background: "var(--kr-card-bg)"
-  },
-  pill: {
-    display: "inline-flex",
-    alignItems: "center",
-    padding: "2px 8px",
-    borderRadius: "999px",
-    fontSize: "11px",
-    fontWeight: 700,
-    whiteSpace: "nowrap"
   },
   error: {
     color: "var(--kr-chart-4)",

@@ -94,3 +94,25 @@ export function resolveSituation(row: WeighingBillingSituationInput): WeighingBi
   if (row.omie_billing_status === "failed") return "failed";
   return "pending";
 }
+
+/**
+ * O texto que explica a linha. A recusa gravada pelo OMIE vale mais que qualquer frase
+ * pronta — e exatamente o que o operador precisa para destravar a pesagem. Sem ela, o que
+ * ajuda e o numero do documento la, para procurar por ele.
+ *
+ * Mora aqui, junto da regra que decide a situacao, porque a Conferencia de faturamento e o
+ * Fechamento de faturas mostram a MESMA pesagem: duas leituras da mesma coluna acabariam
+ * explicando a mesma linha de dois jeitos diferentes.
+ */
+export function resolveSituationDetail(
+  row: WeighingBillingSituationInput & { omie_billing_message: string | null },
+  situation: WeighingBillingSituation
+): string | null {
+  const message = row.omie_billing_message?.trim();
+  if (message) return message;
+  if (situation === "billed" || situation === "sent") {
+    if (row.omie_sales_order_id) return `Pedido OMIE ${row.omie_sales_order_id}`;
+    if (row.omie_service_order_id) return `Ordem de servico OMIE ${row.omie_service_order_id}`;
+  }
+  return null;
+}
