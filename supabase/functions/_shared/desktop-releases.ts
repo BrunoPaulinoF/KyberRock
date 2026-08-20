@@ -6,25 +6,46 @@
  * `draft` e `prerelease` — porque sao os unicos dois que o `electron-updater`
  * consegue enxergar num repositorio privado:
  *
- *   rascunho (draft)         -> parado: nao existe para updater nenhum
- *   publicado como prerelease-> teste: so as balancas com allowPrerelease
- *   publicado estavel        -> producao: `GET /releases/latest` responde ela
+ *   rascunho (draft)          -> parado: nao existe para updater nenhum
+ *   publicado como prerelease -> teste: so as balancas com allowPrerelease
+ *   publicado estavel         -> producao: `GET /releases/latest` responde ela
  *
- * ## Por que nao classificamos mais pelo nome do metadado
+ * Mais dois estados que nao vem das flags:
+ *
+ *   marcador `REPROVADA.txt`  -> reprovada: quebrou no teste, nunca vai subir
+ *   build ainda rodando       -> compilando: os arquivos estao subindo agora
+ *
+ * ## Por que nao classificamos pelo nome do metadado
  *
  * A primeira versao usava tres nomes de arquivo (`build.yml` / `beta.yml` /
  * `latest.yml`) e nao funcionava: o `PrivateGitHubProvider` do
  * `electron-updater` resolve o metadado por `getDefaultChannelName()`, que e
  * fixo em `"latest"`. Ele NUNCA le `updater.channel`, entao `beta.yml` era um
- * arquivo que maquina nenhuma abria. O metadado agora se chama `latest.yml` nos
- * tres estados, e quem separa os aneis e o par draft/prerelease.
+ * arquivo que maquina nenhuma abria. O metadado agora se chama `latest.yml` em
+ * todos os estados, e quem separa os aneis e o par draft/prerelease.
  *
  * Modulo puro (sem globais do Deno, sem rede) para ter teste: e ele que decide
  * quais botoes a tela oferece, e oferecer "liberar para producao" na versao
  * errada e o tipo de erro que chega em todas as pedreiras de uma vez.
  */
 
-export type DesktopReleaseState = "producao" | "teste" | "parado" | "incompleto";
+export type DesktopReleaseState =
+  | "producao"
+  | "teste"
+  | "parado"
+  | "compilando"
+  | "reprovada"
+  | "incompleto";
+
+/**
+ * Asset que marca uma versao como reprovada no teste.
+ *
+ * Mora na propria release, e nao numa tabela: assim a marca acompanha a versao
+ * para sempre, sem depender de o banco estar de pe nem de quem esta olhando. O
+ * `desktop-promote.yml` recusa publicar uma release marcada — inclusive com
+ * `force`, porque "reprovada" quer dizer reprovada.
+ */
+export const REJECTED_MARKER_ASSET = "REPROVADA.txt";
 
 export interface DesktopReleaseSummary {
   /** Versao sem o `v` inicial, como o workflow de promocao espera receber. */
@@ -39,6 +60,23 @@ export interface DesktopReleaseSummary {
   isOlderThanProduction: boolean;
   canSendToTest: boolean;
   canReleaseToProduction: boolean;
+  /** Da para reprovar: tirar do ar e travar a promocao para sempre. */
+  canReject: boolean;
+}
+
+export interface SummarizeOptions {
+  /**
+   * `run_number` dos runs de `desktop-release` que ainda nao terminaram.
+   *
+   * A versao de um build e `MAJOR.MINOR.<github.run_number>` (ver
+   * `desktop-release.yml`), entao o terceiro numero da versao E o numero do
+   * run. E o que permite dizer "esta compilando" em vez de "esta quebrada"
+   * enquanto os assets ainda estao subindo.
+   *
+   * Lista vazia (ou consulta que falhou) so faz a release incompleta aparecer
+   * como incompleta — degrada para a leitura anterior, nunca para um erro.
+   */
+  buildingRunNumbers?: readonly string[];
 }
 
 interface RawAsset {
@@ -74,6 +112,11 @@ function assetNames(assets: unknown): string[] {
     .filter((name) => name.length > 0);
 }
 
+/** Terceiro numero da versao — que e o `run_number` do build que a produziu. */
+function runNumberOf(version: string): string {
+  return version.split(".")[2] ?? "";
+}
+
 /**
  * Transforma a resposta do GitHub no que a tela mostra.
  *
@@ -86,23 +129,38 @@ function assetNames(assets: unknown): string[] {
  * precisa de `Contents: read and write`. Com um token so de leitura a tela
  * carrega, mas sem nenhuma versao para promover.
  */
-export function summarizeDesktopReleases(releases: unknown): DesktopReleaseSummary[] {
+export function summarizeDesktopReleases(
+  releases: unknown,
+  options: SummarizeOptions = {}
+): DesktopReleaseSummary[] {
   if (!Array.isArray(releases)) return [];
+
+  const building = new Set(options.buildingRunNumbers ?? []);
 
   const rows = (releases as RawRelease[])
     .filter((release) => release && typeof release === "object")
-    .map((release) => {
+    // O tipo de retorno e anotado (em vez de `satisfies` no literal) porque os
+    // campos booleanos abaixo nascem `false` e sao preenchidos no laco seguinte:
+    // com `satisfies` o TypeScript os fixa no literal `false` e toda atribuicao
+    // vira erro. O CI nao compila as Edge Functions, entao isso passava batido.
+    .map((release): DesktopReleaseSummary => {
       const tag = typeof release.tag_name === "string" ? release.tag_name : "";
+      const version = tag.replace(/^v/, "");
       const names = assetNames(release.assets);
       const installerName = names.find((name) => name.toLowerCase().endsWith(".exe")) ?? null;
+      const isComplete = Boolean(installerName) && names.includes("latest.yml");
 
       let state: DesktopReleaseState;
-      if (!installerName || !names.includes("latest.yml")) {
-        // Build que nao chegou a subir o trio completo (upload interrompido, run
-        // reprovado no meio). Sem instalador nao ha o que distribuir; sem
-        // `latest.yml` o updater acha a release e nao acha o metadado, que e a
-        // falha silenciosa classica do electron-updater.
-        state = "incompleto";
+      if (names.includes(REJECTED_MARKER_ASSET)) {
+        // Reprovada vem antes de tudo: e o fato que importa sobre esta versao,
+        // e ela costuma estar incompleta ou em rascunho tambem.
+        state = "reprovada";
+      } else if (!isComplete) {
+        // Sem instalador ou sem metadado. Pode ser um build ainda subindo os
+        // arquivos (normal, dura poucos minutos) ou um run que morreu no meio
+        // (a release fica assim para sempre). Sao coisas MUITO diferentes para
+        // quem olha a tela, entao separamos pelo run que ainda esta rodando.
+        state = building.has(runNumberOf(version)) ? "compilando" : "incompleto";
       } else if (release.draft === true) {
         state = "parado";
       } else if (release.prerelease === true) {
@@ -112,7 +170,7 @@ export function summarizeDesktopReleases(releases: unknown): DesktopReleaseSumma
       }
 
       return {
-        version: tag.replace(/^v/, ""),
+        version,
         tag,
         state,
         isCurrentProduction: false,
@@ -125,8 +183,9 @@ export function summarizeDesktopReleases(releases: unknown): DesktopReleaseSumma
         installerName,
         isOlderThanProduction: false,
         canSendToTest: false,
-        canReleaseToProduction: false
-      } satisfies DesktopReleaseSummary;
+        canReleaseToProduction: false,
+        canReject: false
+      };
     })
     .filter((row) => row.version.length > 0);
 
@@ -147,6 +206,10 @@ export function summarizeDesktopReleases(releases: unknown): DesktopReleaseSumma
     // autoridade — aqui elas so evitam oferecer um botao que o workflow vai
     // recusar depois, num run que a tela nao acompanha.
     row.canReleaseToProduction = row.state === "teste" && !row.isOlderThanProduction;
+
+    // Reprovar vale para o que ainda pode subir. Na producao atual nao: tirar
+    // do ar a versao que a frota recebe deixaria as balancas sem canal.
+    row.canReject = (row.state === "teste" || row.state === "parado") && !row.isCurrentProduction;
   }
 
   return rows;

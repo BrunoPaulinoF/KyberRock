@@ -19,14 +19,20 @@ import {
 // Distribuicao do desktop.
 //
 // Compilar deixou de ser distribuir: cada merge gera um build que fica PARADO
-// (rascunho de release, que updater nenhum enxerga). Desta tela saem os dois
-// unicos gestos que movem uma versao:
+// (rascunho de release, que updater nenhum enxerga). Desta tela saem os tres
+// gestos que mexem numa versao:
 //
-//   Enviar para teste  -> so as balancas marcadas como teste passam a receber
+//   Enviar para teste     -> so as balancas marcadas como teste passam a receber
 //   Liberar para producao -> todas as balancas passam a receber
+//   Reprovar              -> quebrou no teste: sai do ar e trava para sempre
 //
 // Consequencia pratica: tres merges seguidos ficam parados e, liberando so o
 // ultimo, a balanca da UM salto em vez de instalar tres vezes.
+//
+// "Compilando" e "Incompleto" chegam iguais do GitHub (release existe, assets
+// nao) e sao separados pelo run do Actions que ainda esta rodando. Sem isso
+// todo merge pintava a linha de vermelho por alguns minutos, e vermelho aqui
+// tem que querer dizer problema.
 //
 // As travas de verdade vivem no workflow `desktop-promote.yml` (versao nunca
 // testada, versao anterior a producao, release incompleta). Aqui elas so evitam
@@ -34,7 +40,7 @@ import {
 // o resultado so aparece no run do Actions.
 // ---------------------------------------------------------------------------
 
-type ReleaseState = "producao" | "teste" | "parado" | "incompleto";
+type ReleaseState = "producao" | "teste" | "parado" | "compilando" | "reprovada" | "incompleto";
 
 interface ReleaseRow {
   version: string;
@@ -46,6 +52,7 @@ interface ReleaseRow {
   isOlderThanProduction: boolean;
   canSendToTest: boolean;
   canReleaseToProduction: boolean;
+  canReject: boolean;
 }
 
 interface ReleasesResponse {
@@ -59,7 +66,18 @@ const STATE_LABEL: Record<ReleaseState, { text: string; tone: Tone }> = {
   producao: { text: "Producao", tone: "ok" },
   teste: { text: "Em teste", tone: "info" },
   parado: { text: "Parado", tone: "neutral" },
+  compilando: { text: "Compilando", tone: "info" },
+  reprovada: { text: "Reprovada", tone: "warn" },
   incompleto: { text: "Incompleto", tone: "danger" }
+};
+
+const PROMOTE_FEEDBACK: Record<"beta" | "latest" | "reprovar", (version: string) => string> = {
+  beta: (v) =>
+    `Versao ${v} enviada para o anel de teste. As balancas marcadas como teste recebem na proxima verificacao.`,
+  latest: (v) =>
+    `Versao ${v} liberada para producao. As balancas recebem na proxima verificacao e instalam quando o operador fechar o app.`,
+  reprovar: (v) =>
+    `Versao ${v} reprovada. Ela saiu do ar e nao pode mais ser distribuida; a balanca de teste volta para a ultima aprovada na proxima verificacao.`
 };
 
 function formatDateTime(value: string | null): string {
@@ -104,7 +122,15 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
     void load();
   }, [load]);
 
-  async function promote(release: ReleaseRow, target: "beta" | "latest") {
+  async function promote(release: ReleaseRow, target: "beta" | "latest" | "reprovar") {
+    if (target === "reprovar") {
+      const confirmed = window.confirm(
+        `Reprovar a versao ${release.version}?\n\n` +
+          "Ela sai do ar e NUNCA mais podera ir para teste ou producao. " +
+          "A balanca de teste volta sozinha para a ultima versao aprovada."
+      );
+      if (!confirmed) return;
+    }
     setFeedback(null);
     setBusyVersion(release.version);
     try {
@@ -114,10 +140,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
       });
       setFeedback({
         tone: "ok",
-        text:
-          target === "beta"
-            ? `Versao ${release.version} enviada para o anel de teste. As balancas marcadas como teste recebem na proxima verificacao.`
-            : `Versao ${release.version} liberada para producao. As balancas recebem na proxima verificacao e instalam quando o operador fechar o app.`
+        text: PROMOTE_FEEDBACK[target](release.version)
       });
       // O workflow leva alguns segundos para publicar a release; a lista so
       // reflete o novo estado no proximo carregamento.
@@ -151,6 +174,12 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
           {release.isCurrentProduction && (
             <p className="adm-cell-sub">E a versao que a frota esta recebendo.</p>
           )}
+          {release.state === "compilando" && (
+            <p className="adm-cell-sub">O build esta rodando; os arquivos ainda estao subindo.</p>
+          )}
+          {release.state === "reprovada" && (
+            <p className="adm-cell-sub">Quebrou no teste. Fora do ar e travada para promocao.</p>
+          )}
           {release.state === "incompleto" && (
             <p className="adm-cell-sub">
               Faltam arquivos na release (instalador ou metadado) — nao da para distribuir.
@@ -170,7 +199,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
       actions: true,
       render: (release) => {
         const busy = busyVersion === release.version;
-        if (!release.canSendToTest && !release.canReleaseToProduction) {
+        if (!release.canSendToTest && !release.canReleaseToProduction && !release.canReject) {
           return (
             <span className="adm-cell-sub">
               {release.isOlderThanProduction && release.state !== "producao"
@@ -194,6 +223,16 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
                 onClick={() => void promote(release, "latest")}
               >
                 {busy ? "Liberando…" : "Liberar para producao"}
+              </Button>
+            )}
+            {release.canReject && (
+              <Button
+                size="sm"
+                variant="danger"
+                disabled={busy}
+                onClick={() => void promote(release, "reprovar")}
+              >
+                {busy ? "Reprovando…" : "Reprovar"}
               </Button>
             )}
           </ButtonGroup>

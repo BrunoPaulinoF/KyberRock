@@ -221,7 +221,42 @@ const GITHUB_READ_TOKEN_ENV = "GH_RELEASES_TOKEN";
 /** PAT fine-grained, so este repo, `Actions: write` + `Contents: read and write`. */
 const GITHUB_ACTIONS_TOKEN_ENV = "GH_ACTIONS_TOKEN";
 const PROMOTE_WORKFLOW_FILE = "desktop-promote.yml";
+const RELEASE_WORKFLOW_FILE = "desktop-release.yml";
+/** Alvos que o painel pode disparar. `reabilitar` fica so na pagina do Actions: e raro e deliberado. */
+const PANEL_PROMOTE_TARGETS = ["beta", "latest", "reprovar"] as const;
 const PROMOTE_WORKFLOW_REF = "main";
+
+/**
+ * `run_number` dos builds de desktop que ainda estao rodando.
+ *
+ * Serve para a tela dizer "compilando" em vez de "incompleto" enquanto os
+ * assets sobem: a versao de um build e `MAJOR.MINOR.<run_number>`, entao o
+ * numero do run identifica a versao. Sem isso todo merge pintava a linha de
+ * vermelho por alguns minutos, e vermelho tem que querer dizer problema.
+ *
+ * Best-effort DE PROPOSITO: qualquer falha aqui devolve lista vazia e a tela
+ * volta a leitura anterior. Uma consulta cosmetica nao pode derrubar a aba.
+ */
+async function buildingRunNumbers(token: string): Promise<string[]> {
+  try {
+    const response = await fetch(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${RELEASE_WORKFLOW_FILE}/runs?per_page=10`,
+      { headers: githubHeaders(token) }
+    );
+    if (!response.ok) return [];
+    const payload = (await response.json()) as { workflow_runs?: unknown };
+    const runs = Array.isArray(payload.workflow_runs) ? payload.workflow_runs : [];
+    const numbers: string[] = [];
+    for (const run of runs as Array<Record<string, unknown>>) {
+      if (run?.status !== "completed" && typeof run?.run_number === "number") {
+        numbers.push(String(run.run_number));
+      }
+    }
+    return numbers;
+  } catch {
+    return [];
+  }
+}
 
 function githubHeaders(token: string): Record<string, string> {
   return {
@@ -764,7 +799,9 @@ Deno.serve(async (req) => {
       }
 
       return jsonResponse({
-        releases: summarizeDesktopReleases(await response.json()),
+        releases: summarizeDesktopReleases(await response.json(), {
+          buildingRunNumbers: await buildingRunNumbers(token)
+        }),
         channelCounts,
         canPromote: Boolean(Deno.env.get(GITHUB_ACTIONS_TOKEN_ENV)),
         actionsUrl: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${PROMOTE_WORKFLOW_FILE}`
@@ -785,7 +822,10 @@ Deno.serve(async (req) => {
       const version = String(payload.version ?? "")
         .replace(/^v/, "")
         .trim();
-      const target = payload.target === "latest" ? "latest" : "beta";
+      const requested = String(payload.target ?? "");
+      const target = (PANEL_PROMOTE_TARGETS as readonly string[]).includes(requested)
+        ? requested
+        : "beta";
       const force = payload.force === true;
       if (!/^\d+\.\d+\.\d+$/.test(version)) {
         return jsonResponse({ error: "Versao invalida." }, 400);

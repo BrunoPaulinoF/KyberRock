@@ -39,7 +39,7 @@ export function normalizeUpdateChannel(value: unknown): DesktopUpdateChannel {
 
 export interface UpdaterChannelSettings {
   /**
-   * Unica alavanca que separa os dois aneis.
+   * Alavanca que separa os dois aneis.
    *
    * `false` -> o updater pede `GET /releases/latest`, que o GitHub responde com
    *            a release estavel mais recente (pula rascunho E pre-release).
@@ -50,6 +50,24 @@ export interface UpdaterChannelSettings {
    * bloco abaixo.
    */
   allowPrerelease: boolean;
+  /**
+   * Deixa a balanca voltar para uma versao MAIS VELHA que a instalada.
+   *
+   * Ligado so no anel de teste, e e o que faz o "reprovar" do painel valer na
+   * pratica: quando a versao em avaliacao quebra, ela sai do ar e a balanca de
+   * teste precisa voltar sozinha para a ultima aprovada. Sem isto ela ficaria
+   * presa na versao quebrada — o `electron-updater` so oferece versao maior.
+   *
+   * Em producao fica SEMPRE desligado. Balanca de cliente andando para tras
+   * sozinha e regressao silenciosa de dado e de regra fiscal; o unico caminho
+   * de volta ali e alguem liberar uma versao nova, maior, com a correcao.
+   *
+   * Voltar o binario e seguro do lado do banco porque o runner de migracao
+   * ignora versao que ele nao conhece (nao explode com um banco mais novo) e
+   * toda coluna que as migracoes adicionam vem com `DEFAULT`. O que ele nao
+   * desfaz e migracao destrutiva — para isso existe o backup em `backups/`.
+   */
+  allowDowngrade: boolean;
 }
 
 /**
@@ -84,7 +102,8 @@ export interface UpdaterChannelSettings {
  * `allowPrerelease`, e o metadado se chama `latest.yml` nos dois aneis.
  */
 export function updaterChannelSettings(channel: DesktopUpdateChannel): UpdaterChannelSettings {
-  return { allowPrerelease: channel === "beta" };
+  const isTestRing = channel === "beta";
+  return { allowPrerelease: isTestRing, allowDowngrade: isTestRing };
 }
 
 export function readUpdateChannel(database: DesktopDatabase): DesktopUpdateChannel {

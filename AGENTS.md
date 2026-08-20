@@ -371,11 +371,13 @@ nao oferecer um botao que seria recusado num run que ela nao acompanha.
 **O workflow `desktop-promote.yml`** (so **workflow_dispatch**; recebe `version`, `target` e
 `force`) so troca as flags da release — **nao compila e nao mexe em assets**:
 
-| `target` | O que faz                           | Efeito                          |
-| -------- | ----------------------------------- | ------------------------------- |
-| `beta`   | `draft: false`, `prerelease: true`  | so as balancas de teste recebem |
-| `latest` | `draft: false`, `prerelease: false` | a frota inteira recebe          |
-| `parar`  | `draft: true`                       | tira do ar: ninguem mais recebe |
+| `target`     | O que faz                           | Efeito                          |
+| ------------ | ----------------------------------- | ------------------------------- |
+| `beta`       | `draft: false`, `prerelease: true`  | so as balancas de teste recebem |
+| `latest`     | `draft: false`, `prerelease: false` | a frota inteira recebe          |
+| `parar`      | `draft: true`                       | tira do ar: ninguem mais recebe |
+| `reprovar`   | `draft: true` + marcador            | tira do ar e trava a promocao   |
+| `reabilitar` | remove o marcador                   | desfaz o `reprovar`             |
 
 O `.exe` nao se move nem e regerado, entao a balanca recebe exatamente o binario testado. Antes de
 agir o workflow confere que a release existe, que ela tem `latest.yml`, que o metadado bate com a
@@ -385,9 +387,36 @@ versao pedida e que o instalador citado nele esta anexado. Para producao ainda r
 
 `parar` e o unico jeito de tirar do ar uma prerelease que nao deveria estar publicada — e como uma
 prerelease incompleta derruba o anel de teste inteiro (ver acima), e ele o botao de emergencia
-desse anel. Por isso ele **dispensa a conferencia de metadados**: tirar do ar nao pode depender de
-a release estar boa, senao a unica coisa que conserta o anel fica bloqueada exatamente na release
-que o quebrou. O painel nao o expoe: e acao rara, feita pela pagina do workflow no Actions.
+desse anel. Nenhum dos alvos que **nao publicam** (`parar`, `reprovar`, `reabilitar`) confere
+metadados: tirar do ar nao pode depender de a release estar boa, senao a unica coisa que conserta o
+anel fica bloqueada exatamente na release que o quebrou. `parar` e `reabilitar` vivem so na pagina
+do workflow no Actions: sao acoes raras e deliberadas.
+
+### Reprovar uma versao que quebrou no teste
+
+`reprovar` e o caminho para "instalei na balanca de teste e quebrou". Ele faz tres coisas:
+
+1. **Tira do ar** (`draft: true`), entao ninguem mais recebe.
+2. **Marca a release** com o asset `REPROVADA.txt`. A marca mora na propria release — acompanha a
+   versao para sempre, sem depender de o banco estar de pe. O nome esta em `REJECTED_MARKER_ASSET`
+   (`_shared/desktop-releases.ts`), que e quem a tela le.
+3. Com a marca presente, o workflow **recusa** `beta` e `latest`. Esta e a unica guarda que **nao
+   aceita `force`**: foi alguem que testou e viu quebrar, entao desfazer tem que ser um gesto
+   separado e explicito (`target: reabilitar`).
+
+A balanca de teste **volta sozinha** para a ultima versao aprovada, porque o anel de teste roda com
+`allowDowngrade` ligado (ver `updaterChannelSettings`). Producao nunca: la o unico caminho de volta
+e liberar uma versao nova, maior, com a correcao. Voltar o binario e seguro do lado do banco porque
+o runner de migracao ignora versao que nao conhece e toda coluna adicionada tem `DEFAULT` — o que
+ele nao desfaz e migracao destrutiva, e para isso existe o backup em `backups/`.
+
+### Compilando nao e quebrado
+
+Uma release recem-criada e uma release cujo build morreu no meio chegam **iguais** do GitHub: existe
+e nao tem os assets. A tela separa as duas consultando os runs de `desktop-release` que ainda nao
+terminaram — a versao e `MAJOR.MINOR.<run_number>`, entao o terceiro numero **e** o numero do run.
+Se a consulta falhar, tudo volta a aparecer como `incompleto`: degrada para a leitura anterior,
+nunca para um erro.
 
 Tokens envolvidos — todos PAT fine-grained, **so este repositorio**:
 

@@ -63,8 +63,23 @@ describe("updaterChannelSettings", () => {
   it("so o canal de teste enxerga pre-release", () => {
     // O anel de teste vive dentro do pre-release; sem allowPrerelease a balanca
     // de teste ignoraria justamente as releases que deveria receber.
-    expect(updaterChannelSettings("beta")).toEqual({ allowPrerelease: true });
-    expect(updaterChannelSettings("latest")).toEqual({ allowPrerelease: false });
+    expect(updaterChannelSettings("beta")).toEqual({
+      allowPrerelease: true,
+      allowDowngrade: true
+    });
+    expect(updaterChannelSettings("latest")).toEqual({
+      allowPrerelease: false,
+      allowDowngrade: false
+    });
+  });
+
+  it("so o canal de teste pode voltar para uma versao mais velha", () => {
+    // E o que faz o "reprovar" do painel valer: a versao quebrada sai do ar e a
+    // balanca de teste volta sozinha para a ultima aprovada. Em producao isso
+    // fica desligado — balanca de cliente andando para tras sozinha e regressao
+    // silenciosa de dado e de regra fiscal.
+    expect(updaterChannelSettings("beta").allowDowngrade).toBe(true);
+    expect(updaterChannelSettings("latest").allowDowngrade).toBe(false);
   });
 
   it("nao devolve `channel` — nem para producao", () => {
