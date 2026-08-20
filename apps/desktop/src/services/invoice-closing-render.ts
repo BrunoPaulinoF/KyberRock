@@ -78,6 +78,32 @@ const INVOICE_HEADERS = [
   "Sem nota"
 ];
 
+/**
+ * Os mesmos cabecalhos com a coluna PLACA no meio, usados quando o fechamento saiu separado
+ * por placa. A coluna so aparece nesse caso: no fechamento normal ela estaria vazia em todas
+ * as linhas e o arquivo deixaria de ser o que a pedreira ja conhece.
+ */
+const INVOICE_HEADERS_BY_PLATE = [
+  "Cliente",
+  "CNPJ/CPF",
+  "Placa",
+  "Ciclo",
+  "Fechamento",
+  "Vencimento",
+  "Cargas",
+  "Peso (kg)",
+  "Total (R$)",
+  "Sem nota"
+];
+
+function invoiceHeaders(report: InvoiceClosingReport): string[] {
+  return splitByPlate(report) ? INVOICE_HEADERS_BY_PLATE : INVOICE_HEADERS;
+}
+
+function splitByPlate(report: InvoiceClosingReport): boolean {
+  return report.filters.plates.length > 0;
+}
+
 const CARRIER_HEADERS = [
   "Transportador / placa",
   "Viagens",
@@ -94,7 +120,19 @@ export function invoiceClosingFileBaseName(report: InvoiceClosingReport): string
         .map((cycle) => slug(INVOICE_CLOSING_CYCLE_LABEL[cycle], "ciclo"))
         .join("-")
     : "todos";
-  return `fechamento-faturas-${cycles}-${report.startDate}-a-${report.endDate}`;
+  return `fechamento-faturas-${cycles}${platesSuffix(report)}-${report.startDate}-a-${report.endDate}`;
+}
+
+/**
+ * As placas no nome do arquivo — ate tres delas. Quem separa o fechamento por placa costuma
+ * gerar um arquivo por caminhao e precisa distinguir um do outro na pasta; acima de tres o
+ * nome so cresce, entao vira a contagem.
+ */
+function platesSuffix(report: InvoiceClosingReport): string {
+  const { plates } = report.filters;
+  if (plates.length === 0) return "";
+  if (plates.length > 3) return `-${plates.length}-placas`;
+  return `-${plates.map((plate) => slug(plate, "placa")).join("-")}`;
 }
 
 export function renderInvoiceClosingHtml(
@@ -116,10 +154,10 @@ export function renderInvoiceClosingHtml(
 
   const sections = [
     section(
-      "Faturas do periodo",
+      splitByPlate(report) ? "Faturas do periodo, por placa" : "Faturas do periodo",
       `${table(
-        INVOICE_HEADERS,
-        report.invoices.map((invoice) => invoiceCells(invoice)),
+        invoiceHeaders(report),
+        report.invoices.map((invoice) => invoiceCells(invoice, splitByPlate(report))),
         report.invoices.length > 0 ? invoiceFooterCells(report) : null,
         "Nenhum cliente com fechamento no periodo."
       )}<p class="note">${escapeHtml(INVOICE_CLOSING_NOTE)}</p>`
@@ -207,9 +245,9 @@ export function renderInvoiceClosingSpreadsheet(
 
   const blocks = [
     sheetTable(
-      "Faturas do periodo",
-      INVOICE_HEADERS,
-      report.invoices.map((invoice) => invoiceCells(invoice)),
+      splitByPlate(report) ? "Faturas do periodo, por placa" : "Faturas do periodo",
+      invoiceHeaders(report),
+      report.invoices.map((invoice) => invoiceCells(invoice, splitByPlate(report))),
       report.invoices.length > 0 ? invoiceFooterCells(report) : null
     ),
     ...report.invoices.map((invoice) =>
@@ -267,15 +305,17 @@ ${blocks.join("\n")}
  */
 function invoiceTitle(invoice: InvoiceClosingInvoice): string {
   return (
-    `${invoice.customerName} — ${invoice.cycleLabel} — fecha ${formatDayLabel(invoice.closingDate)}` +
+    `${invoice.customerName}${invoice.plate ? ` — ${invoice.plate}` : ""} — ${invoice.cycleLabel}` +
+    ` — fecha ${formatDayLabel(invoice.closingDate)}` +
     ` — vence ${formatDayLabel(invoice.dueDate)} — ${formatBRL(invoice.totals.totalCents)}`
   );
 }
 
-function invoiceCells(invoice: InvoiceClosingInvoice): string[] {
+function invoiceCells(invoice: InvoiceClosingInvoice, byPlate: boolean): string[] {
   return [
     invoice.customerName,
     invoice.customerDocument ?? "-",
+    ...(byPlate ? [invoice.plate ?? "-"] : []),
     invoice.cycleLabel,
     formatDayLabel(invoice.closingDate),
     formatDayLabel(invoice.dueDate),
@@ -294,6 +334,7 @@ function invoiceFooterCells(report: InvoiceClosingReport): string[] {
     "",
     "",
     "",
+    ...(splitByPlate(report) ? [""] : []),
     num(totals.operations),
     num(totals.netWeightKg),
     formatBRL(totals.totalCents),
@@ -375,6 +416,9 @@ function scopeText(report: InvoiceClosingReport): string {
   ];
   if (report.filters.customerId) {
     parts.push(report.invoices[0]?.customerName ?? "Cliente selecionado");
+  }
+  if (report.filters.plates.length > 0) {
+    parts.push(`placas ${report.filters.plates.join(", ")}`);
   }
   if (report.filters.search) parts.push(`busca "${report.filters.search}"`);
   return parts.join(" - ");

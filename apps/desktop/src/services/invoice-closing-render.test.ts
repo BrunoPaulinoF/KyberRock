@@ -41,6 +41,7 @@ function invoice(overrides: Partial<InvoiceClosingInvoice> = {}): InvoiceClosing
     customerId: "cust-1",
     customerName: "JOSE CORDEIRO",
     customerDocument: "11222333000155",
+    plate: null,
     cycle: "biweekly",
     cycleLabel: "Quinzenal",
     closingDate: "2026-08-01",
@@ -64,7 +65,7 @@ function report(overrides: Partial<InvoiceClosingReport> = {}): InvoiceClosingRe
     startDate: "2026-07-16",
     endDate: "2026-07-31",
     periodLabel: "Quinzena",
-    filters: { cycles: ["biweekly"], customerId: null, search: null },
+    filters: { cycles: ["biweekly"], customerId: null, plates: [], search: null },
     invoices,
     totals: {
       operations: 1,
@@ -100,6 +101,7 @@ function report(overrides: Partial<InvoiceClosingReport> = {}): InvoiceClosingRe
       }
     ],
     pendingSetup: [],
+    availablePlates: ["CVP7E80"],
     ...overrides
   };
 }
@@ -111,9 +113,55 @@ describe("invoice-closing-render", () => {
     );
     expect(
       invoiceClosingFileBaseName(
-        report({ filters: { cycles: [], customerId: null, search: null } })
+        report({ filters: { cycles: [], customerId: null, plates: [], search: null } })
       )
     ).toBe("fechamento-faturas-todos-2026-07-16-a-2026-07-31");
+  });
+
+  it("o nome do arquivo diz tambem as placas escolhidas, e vira contagem quando sao muitas", () => {
+    expect(
+      invoiceClosingFileBaseName(
+        report({
+          filters: { cycles: ["biweekly"], customerId: null, plates: ["CVP7E80"], search: null }
+        })
+      )
+    ).toBe("fechamento-faturas-quinzenal-cvp7e80-2026-07-16-a-2026-07-31");
+    expect(
+      invoiceClosingFileBaseName(
+        report({
+          filters: {
+            cycles: [],
+            customerId: null,
+            plates: ["AAA1A11", "BBB2B22", "CCC3C33", "DDD4D44"],
+            search: null
+          }
+        })
+      )
+    ).toBe("fechamento-faturas-todos-4-placas-2026-07-16-a-2026-07-31");
+  });
+
+  it("separado por placa, os documentos ganham a coluna Placa e dizem de qual caminhao e cada fatura", () => {
+    const byPlate = report({
+      filters: { cycles: ["biweekly"], customerId: null, plates: ["CVP7E80"], search: null },
+      invoices: [invoice({ plate: "CVP7E80" })]
+    });
+
+    for (const document of [
+      renderInvoiceClosingSpreadsheet(byPlate),
+      renderInvoiceClosingHtml(byPlate)
+    ]) {
+      expect(document).toContain("Faturas do periodo, por placa");
+      // O titulo do bloco da fatura diz cliente E placa: quem rola o arquivo ate o meio
+      // precisa saber de qual caminhao e a lista sem voltar ao topo.
+      expect(document).toContain("JOSE CORDEIRO — CVP7E80 — Quinzenal");
+      expect(document).toContain("placas CVP7E80");
+    }
+
+    // Sem placa escolhida, o arquivo continua o de sempre: nem coluna nem placa no titulo.
+    const plain = renderInvoiceClosingSpreadsheet(report());
+    expect(plain).toContain("Faturas do periodo");
+    expect(plain).not.toContain("Faturas do periodo, por placa");
+    expect(plain).toContain("JOSE CORDEIRO — Quinzenal");
   });
 
   it("a planilha traz nota, vale, placa e transportador de cada carga", () => {

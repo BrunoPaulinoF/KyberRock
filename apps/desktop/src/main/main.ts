@@ -62,6 +62,7 @@ import { isCustomerReportVariant } from "../services/customer-report.js";
 import { isWeighingBillingSituation } from "../services/weighing-billing-situation.js";
 import type { WeighingBillingReportOptions } from "../services/weighing-billing-report.js";
 import { isInvoiceClosingCycle } from "../services/invoice-closing-cycle.js";
+import { normalizePlateList } from "../services/invoice-closing.js";
 import type { InvoiceClosingOptions } from "../services/invoice-closing.js";
 import { GITHUB_UPDATER_TOKEN } from "./updater-config.js";
 import { DEFAULT_UPDATE_CHANNEL, updaterChannelSettings } from "../services/update-channel.js";
@@ -2548,9 +2549,11 @@ function sanitizeInvoiceClosingOptions(options: unknown): InvoiceClosingOptions 
   if (!options || typeof options !== "object") return {};
   const raw = options as Record<string, unknown>;
   const cycles = Array.isArray(raw.cycles) ? raw.cycles.filter(isInvoiceClosingCycle) : [];
+  const plates = Array.isArray(raw.plates) ? normalizePlateList(raw.plates as string[]) : [];
   return {
     cycles,
     customerId: typeof raw.customerId === "string" && raw.customerId ? raw.customerId : null,
+    plates,
     search: typeof raw.search === "string" ? raw.search : null,
     periodLabel: typeof raw.periodLabel === "string" ? raw.periodLabel : null
   };

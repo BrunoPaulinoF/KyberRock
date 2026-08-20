@@ -81,6 +81,14 @@ export interface InvoiceClosingInvoice {
   customerId: string;
   customerName: string;
   customerDocument: string | null;
+  /**
+   * A placa que separa esta fatura, ou null quando a fatura e a do cliente inteiro.
+   *
+   * So vem preenchida com o filtro de placas em uso: sem ele o fechamento continua sendo um
+   * por cliente, que e como a cobranca sai. Com placas escolhidas, o mesmo cliente rende uma
+   * fatura por caminhao — que e como o acerto de quem leva a carga e conferido.
+   */
+  plate: string | null;
   cycle: InvoiceClosingCycle;
   cycleLabel: string;
   /** Data em que a fatura fecha (YYYY-MM-DD). */
@@ -136,6 +144,8 @@ export interface InvoiceClosingPendingCustomer {
 export interface InvoiceClosingFilters {
   cycles: InvoiceClosingCycle[];
   customerId: string | null;
+  /** Placas escolhidas, ja normalizadas. Vazio e "todas", com a fatura inteira do cliente. */
+  plates: string[];
   search: string | null;
 }
 
@@ -153,12 +163,25 @@ export interface InvoiceClosingReport {
   withoutInvoice: InvoiceClosingTotals;
   byCarrier: InvoiceClosingCarrierRow[];
   pendingSetup: InvoiceClosingPendingCustomer[];
+  /**
+   * Todas as placas que rodaram no periodo, para o filtro da tela.
+   *
+   * Sai de proposito de ANTES do filtro de placa: se a lista viesse do resultado ja
+   * filtrado, escolher uma placa apagaria as outras da tela e nao haveria como marcar a
+   * segunda. O que a encolhe e o periodo, o cliente e a busca — nao a propria selecao.
+   */
+  availablePlates: string[];
 }
 
 export interface InvoiceClosingOptions {
   /** Vazio (ou ausente) traz todos os ciclos configurados. */
   cycles?: InvoiceClosingCycle[] | null;
   customerId?: string | null;
+  /**
+   * Placas escolhidas. Vazio (ou ausente) traz todas as placas, com uma fatura por cliente;
+   * com placas escolhidas, o fechamento sai separado por placa.
+   */
+  plates?: string[] | null;
   /** Busca livre por cliente, placa, transportador, nota, vale ou pedido. */
   search?: string | null;
   periodLabel?: string | null;
@@ -209,6 +232,11 @@ export class InvoiceClosingService {
     // pareceria uma quinzena sem movimento.
     const cycles = (options.cycles ?? []).filter(isInvoiceClosingCycle);
     const search = (options.search ?? "").trim();
+    // Placa vazia e "todas", pelo mesmo motivo do ciclo. E, so quando ha placa escolhida, o
+    // fechamento passa a sair separado por placa.
+    const plates = normalizePlateList(options.plates ?? []);
+    const selectedPlates = new Set(plates);
+    const splitByPlate = plates.length > 0;
 
     const sourceRows = this.loadRows(startDate, endDate, unitId, customerId);
 
@@ -216,10 +244,17 @@ export class InvoiceClosingService {
     const pending = new Map<string, InvoiceClosingPendingCustomer>();
     const lines: InvoiceClosingLine[] = [];
     const carrierRows: Array<{ line: InvoiceClosingLine; carrierName: string }> = [];
+    const availablePlates = new Set<string>();
 
     for (const row of sourceRows) {
       const line = mapLine(row);
       if (!matchesSearch(line, row, search)) continue;
+
+      // Antes do filtro de placa: a lista de opcoes da tela nao pode encolher a cada placa
+      // marcada, senao nao haveria como marcar a segunda.
+      const plate = normalizePlate(line.plate);
+      availablePlates.add(plate);
+      if (splitByPlate && !selectedPlates.has(plate)) continue;
 
       const config = closingConfigFor(row);
       if (!config) {
@@ -229,11 +264,14 @@ export class InvoiceClosingService {
       if (cycles.length > 0 && !cycles.includes(config.periodicity)) continue;
 
       const schedule = computeCreditInvoiceSchedule(config, parseIsoDate(line.date));
-      const key = `${row.customer_id}|${schedule.closingDate}`;
+      const key = splitByPlate
+        ? `${row.customer_id}|${schedule.closingDate}|${plate}`
+        : `${row.customer_id}|${schedule.closingDate}`;
       const invoice = invoices.get(key) ?? {
         customerId: row.customer_id,
         customerName: customerName(row),
         customerDocument: row.customer_document,
+        plate: splitByPlate ? plate : null,
         cycle: config.periodicity,
         cycleLabel: INVOICE_CLOSING_CYCLE_LABEL[config.periodicity],
         closingDate: schedule.closingDate,
@@ -255,20 +293,22 @@ export class InvoiceClosingService {
       .sort(
         (a, b) =>
           a.closingDate.localeCompare(b.closingDate) ||
-          a.customerName.localeCompare(b.customerName, "pt-BR")
+          a.customerName.localeCompare(b.customerName, "pt-BR") ||
+          (a.plate ?? "").localeCompare(b.plate ?? "", "pt-BR")
       );
 
     return {
       startDate,
       endDate,
       periodLabel: options.periodLabel ?? null,
-      filters: { cycles, customerId, search: search || null },
+      filters: { cycles, customerId, plates, search: search || null },
       invoices: orderedInvoices,
       totals: buildTotals(lines),
       customers: new Set(orderedInvoices.map((invoice) => invoice.customerId)).size,
       withoutInvoice: buildTotals(lines.filter((line) => !line.invoiceNumber)),
       byCarrier: groupByCarrier(carrierRows),
-      pendingSetup: [...pending.values()].sort((a, b) => b.totalCents - a.totalCents)
+      pendingSetup: [...pending.values()].sort((a, b) => b.totalCents - a.totalCents),
+      availablePlates: [...availablePlates].sort((a, b) => a.localeCompare(b, "pt-BR"))
     };
   }
 
@@ -338,6 +378,27 @@ function mapLine(row: InvoiceClosingSourceRow): InvoiceClosingLine {
     situation,
     situationLabel: WEIGHING_BILLING_SITUATION_LABEL[situation]
   };
+}
+
+/**
+ * A placa como o filtro compara e como a tela lista: sem espacos e em maiuscula.
+ *
+ * A mesma placa digitada com espaco ou em minuscula em cadastros diferentes viraria duas
+ * opcoes na lista — e escolher uma delas deixaria metade das viagens de fora do fechamento.
+ */
+export function normalizePlate(plate: string): string {
+  return plate.trim().toUpperCase();
+}
+
+/** As placas escolhidas, normalizadas, sem vazias e sem repetidas. */
+export function normalizePlateList(plates: readonly string[]): string[] {
+  const seen = new Set<string>();
+  for (const plate of plates) {
+    if (typeof plate !== "string") continue;
+    const normalized = normalizePlate(plate);
+    if (normalized) seen.add(normalized);
+  }
+  return [...seen].sort((a, b) => a.localeCompare(b, "pt-BR"));
 }
 
 function customerName(row: InvoiceClosingSourceRow): string {

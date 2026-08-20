@@ -675,6 +675,7 @@ export const documentationSections: DocumentationSection[] = [
       'Antes do primeiro fechamento, defina o ciclo de cada cliente: Cadastros > Clientes, aba do cliente, marque "Habilitar credito do cliente" e escolha a Periodicidade do fechamento (Mensal, Quinzenal ou Semanal), o dia (ou os dois dias, na quinzenal) em que a fatura fecha e quantos dias depois o boleto vence.',
       "Abra Fechamento de faturas, escolha o periodo e clique no ciclo desejado — Quinzenal ou Mensal. Sem escolher ciclo, vem todos.",
       "A lista traz uma linha por fatura: cliente, ciclo, data de fechamento, vencimento, quantidade de cargas, peso e total.",
+      "Para separar o fechamento por caminhao, use o filtro Placa: digite parte da placa para achar na lista e marque quantas quiser. A tela passa a mostrar uma fatura por placa dentro de cada cliente, com o total daquele caminhao. Desmarcando todas (ou clicando em Limpar), volta a fatura inteira do cliente, com todas as placas juntas.",
       'Clique em "Ver cargas" para abrir a fatura carga a carga, com data, vale, nota fiscal, pedido do OMIE, placa, transportador, motorista, produto, peso e valor.',
       "Marque Excel (ou PDF) e clique em Gerar fechamento. O arquivo sai com exatamente as faturas que estao na tela."
     ],
@@ -685,7 +686,9 @@ export const documentationSections: DocumentationSection[] = [
       "O numero da nota chega sozinho: a conferencia periodica pergunta ao OMIE quais pedidos ja foram faturados e traz o numero junto. Nao ha nada para digitar aqui.",
       "O bloco Transportadores e placas repete as mesmas viagens agrupadas por quem levou, com peso e frete por placa — o acerto do transportador sai da mesma lista que foi cobrada do cliente.",
       'Cliente com carga no periodo mas sem periodicidade definida aparece em "Clientes fora do fechamento", e nao some calado: e o aviso de que falta configurar o cadastro dele.',
-      "A busca aceita cliente, placa, transportador, numero da nota e numero do vale, e o filtro vale tambem para o arquivo gerado."
+      "A busca aceita cliente, placa, transportador, numero da nota e numero do vale, e o filtro vale tambem para o arquivo gerado.",
+      "O filtro de Placa e o unico que troca o formato da lista: vazio, o fechamento e um por cliente, que e como a cobranca sai; com placas marcadas, o mesmo cliente rende uma fatura por caminhao, que e como o frete e acertado. A lista de placas so mostra as que rodaram no periodo, e o Excel e o PDF saem com a coluna Placa e com o mesmo corte da tela.",
+      "As placas escolhidas nao mudam a conta de nenhuma carga: cada fatura por placa soma so as viagens daquele caminhao, com o mesmo fechamento e o mesmo vencimento do cliente."
     ],
     keywords: [
       "fechamento de faturas",
@@ -700,6 +703,11 @@ export const documentationSections: DocumentationSection[] = [
       "numero da nota",
       "nota fiscal",
       "placa",
+      "filtrar por placa",
+      "fechamento por placa",
+      "separar por placa",
+      "varias placas",
+      "caminhao",
       "transportador",
       "transportadora",
       "pagamento do transportador",
