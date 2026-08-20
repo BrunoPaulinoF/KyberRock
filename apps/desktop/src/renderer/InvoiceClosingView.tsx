@@ -8,7 +8,11 @@ import {
   formatCouponNumber
 } from "../services/invoice-closing-cycle";
 import type { InvoiceClosingCycle } from "../services/invoice-closing-cycle";
-import type { InvoiceClosingInvoice, InvoiceClosingReport } from "../services/invoice-closing";
+import type {
+  InvoiceClosingInvoice,
+  InvoiceClosingLine,
+  InvoiceClosingReport
+} from "../services/invoice-closing";
 import { IconActionButton } from "./IconActionButton";
 import { HelpTooltip } from "./Tooltip";
 import {
@@ -31,6 +35,13 @@ import type { InsightsPeriod } from "./insights-period";
  * que a cobranca precisa —, e o mesmo periodo ainda sai resumido por transportador e
  * placa, que e como o acerto do frete e feito. A planilha e o PDF saem com exatamente as
  * faturas que estao na tela.
+ *
+ * No fim da tela vem a lista "pesagem a pesagem": as MESMAS cargas das faturas, numa tabela
+ * unica com a coluna do cliente, na ordem em que foram feitas. As faturas respondem "quanto
+ * cada cliente deve"; esta lista responde a pergunta de conferencia — "cade a carga tal?" —,
+ * que com a tela dividida em blocos por cliente obrigaria a abrir fatura por fatura ate
+ * achar. E a mesma estrutura da Conferencia de faturamento, de proposito: quem confere passa
+ * de uma tela para a outra sem reaprender a ler a tabela.
  *
  * O filtro de PLACA e o unico que troca o formato da lista: enquanto esta vazio, o
  * fechamento e um por cliente; marcando placas, o mesmo cliente passa a render uma fatura
@@ -57,6 +68,16 @@ function formatKg(kg: number): string {
 
 function formatCount(value: number): string {
   return value.toLocaleString("pt-BR");
+}
+
+/**
+ * O preco unitario com a unidade em que ele foi aplicado. Sem o "/t" ou "/kg" o numero
+ * sozinho nao da para conferir: R$ 42,00 por tonelada e por quilo sao contas mil vezes
+ * diferentes.
+ */
+function unitPriceLabel(line: InvoiceClosingLine): string {
+  if (line.unitPriceCents === null) return "-";
+  return `${formatBRL(line.unitPriceCents)}/${line.priceUnit === "kg" ? "kg" : "t"}`;
 }
 
 export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDesktopApi | null }) {
@@ -203,7 +224,7 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Fechamento de faturas</h2>
           <HelpTooltip
-            content="Puxa de uma vez a fatura de todos os clientes de um ciclo: escolha Quinzenal ou Mensal e o periodo. Cada fatura sai com a data de fechamento, o vencimento e a lista carga a carga com nota fiscal, vale, placa e transportador. O ciclo, o dia do fechamento e o prazo do boleto vem do cadastro do cliente. Marcando placas no filtro de Placa, o fechamento sai separado por placa — uma fatura por caminhao dentro de cada cliente; com o filtro vazio, sai a fatura inteira do cliente. O Excel e o PDF saem com as mesmas faturas que estao na tela."
+            content="Puxa de uma vez a fatura de todos os clientes de um ciclo: escolha Quinzenal ou Mensal e o periodo. Cada fatura sai com a data de fechamento, o vencimento e a lista carga a carga com nota fiscal, vale, placa e transportador. O ciclo, o dia do fechamento e o prazo do boleto vem do cadastro do cliente. Marcando placas no filtro de Placa, o fechamento sai separado por placa — uma fatura por caminhao dentro de cada cliente; com o filtro vazio, sai a fatura inteira do cliente. No fim da tela, a lista pesagem a pesagem traz as mesmas cargas das faturas numa tabela so, com o cliente em cada linha, para achar uma carga sem abrir fatura por fatura. O Excel e o PDF saem com as mesmas faturas que estao na tela."
             placement="right"
           />
         </div>
@@ -580,6 +601,57 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
               </div>
             )}
           </div>
+
+          <div style={styles.card}>
+            <h3 style={styles.cardTitle}>Pesagem a pesagem ({formatCount(report.rows.length)})</h3>
+            <p style={styles.hint}>
+              As mesmas cargas das faturas acima, numa lista so e na ordem em que foram feitas —
+              para achar uma carga sem precisar abrir fatura por fatura. O TOTAL do rodape e o mesmo
+              total a faturar.
+            </p>
+            {report.rows.length === 0 ? (
+              <p style={styles.hint}>Nenhuma pesagem nas faturas do periodo.</p>
+            ) : (
+              <div style={styles.tableScrollTall}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Op.</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Data</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Cliente</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Produto</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Placa</th>
+                      <th style={styles.th}>Peso</th>
+                      <th style={styles.th}>Preco unit.</th>
+                      <th style={styles.th}>Produto</th>
+                      <th style={styles.th}>Frete</th>
+                      <th style={styles.th}>Total</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Nota fiscal</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Situacao</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.rows.map((line) => (
+                      <DetailRow key={line.operationId} line={line} />
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td style={{ ...styles.tdTotal, textAlign: "left" }} colSpan={5}>
+                        TOTAL
+                      </td>
+                      <td style={styles.tdTotal}>{formatKg(totals.netWeightKg)}</td>
+                      <td style={styles.tdTotal} />
+                      <td style={styles.tdTotal}>{formatBRL(totals.productCents)}</td>
+                      <td style={styles.tdTotal}>{formatBRL(totals.freightCents)}</td>
+                      <td style={styles.tdTotal}>{formatBRL(totals.totalCents)}</td>
+                      <td style={styles.tdTotal} colSpan={2} />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
         </>
       ) : null}
     </section>
@@ -702,6 +774,43 @@ function InvoiceRows({
         </tr>
       ) : null}
     </>
+  );
+}
+
+/**
+ * Uma pesagem na lista "pesagem a pesagem".
+ *
+ * Separada em componente pelo mesmo motivo de `InvoiceRows`: sao doze celulas, e deixa-las
+ * embutidas na tela esconderia o desenho da tabela no meio do JSX.
+ */
+function DetailRow({ line }: { line: InvoiceClosingLine }) {
+  return (
+    <tr>
+      <td style={{ ...styles.td, textAlign: "left" }}>{line.couponNumber ?? "-"}</td>
+      <td style={{ ...styles.td, textAlign: "left" }}>{formatDayLabel(line.date)}</td>
+      <td style={{ ...styles.td, textAlign: "left" }} title={line.customerName}>
+        {line.customerName}
+      </td>
+      <td style={{ ...styles.td, textAlign: "left" }} title={line.productDescription}>
+        {line.productDescription}
+      </td>
+      <td style={{ ...styles.td, textAlign: "left" }}>{line.plate}</td>
+      <td style={styles.td}>{formatKg(line.netWeightKg)}</td>
+      <td style={styles.td}>{unitPriceLabel(line)}</td>
+      <td style={styles.td}>{formatBRL(line.productTotalCents)}</td>
+      <td style={styles.td}>{formatBRL(line.freightTotalCents)}</td>
+      <td style={{ ...styles.td, fontWeight: 700 }}>{formatBRL(line.totalCents)}</td>
+      <td
+        style={{
+          ...styles.td,
+          textAlign: "left",
+          color: line.invoiceNumber ? undefined : "var(--kr-danger)"
+        }}
+      >
+        {line.invoiceNumber ?? "Sem nota"}
+      </td>
+      <td style={{ ...styles.td, textAlign: "left" }}>{line.situationLabel}</td>
+    </tr>
   );
 }
 
