@@ -1,12 +1,13 @@
 name: Desktop release
 
 # Gera o instalador Windows do KyberRock Desktop e o deixa PARADO no GitHub
-# Releases, como pre-release, com um metadado de nome NEUTRO (`build.yml`).
+# Releases, como RASCUNHO (draft).
 #
-# Nenhuma balanca segue `build.yml` — nem as de producao (canal `latest`), nem a
-# de teste (canal `beta`). Compilar deixou de ser sinonimo de distribuir: quem
-# move uma versao para teste ou para producao e o workflow `desktop-promote.yml`,
-# sempre por acao explicita.
+# Rascunho e o unico estado que o `electron-updater` nao enxerga de jeito
+# nenhum: nem a frota (`GET /releases/latest` pula rascunho) nem a balanca de
+# teste (a listagem descarta `draft` antes de escolher). Compilar deixou de ser
+# sinonimo de distribuir: quem publica uma versao — para teste ou para producao
+# — e o workflow `desktop-promote.yml`, sempre por acao explicita.
 #
 # Antes desta mudanca, todo merge na `main` que tocasse o desktop virava
 # atualizacao automatica em TODAS as pedreiras em questao de minutos, sem release
@@ -21,15 +22,16 @@ name: Desktop release
 #   4. build do instalador NSIS + latest.yml + .blockmap (sem publicar);
 #   5. confere que o binario nativo entrou no pacote — ANTES de subir qualquer
 #      asset, para nunca publicar um instalador que nao abriria;
-#   6. sobe .exe + .blockmap + o yml renomeado para `build.yml` na release
-#      `vX.Y.Z`, marcada como pre-release.
+#   6. sobe .exe + .blockmap + latest.yml no rascunho `vX.Y.Z`.
 #
-# Por que o yml e RENOMEADO no upload em vez de o electron-builder gera-lo com
-# outro nome: passar o canal para o electron-builder tambem grava `channel: ...`
-# no `app-update.yml` embutido no app. O binario promovido continuaria procurando
-# aquele nome pelo resto da vida — a primeira promocao quebraria o auto-update de
-# toda a frota. Gerando sempre `latest.yml` e renomeando so o ASSET, o app fica
-# com o canal padrao e quem escolhe o canal e o proprio desktop, em execucao.
+# Por que o metadado se chama `latest.yml` nos tres estados (parado, teste e
+# producao) em vez de um nome por anel: o KyberRock publica em repositorio
+# PRIVADO, e nesse caminho o `electron-updater` usa o `PrivateGitHubProvider`,
+# que resolve o nome do metadado por `getDefaultChannelName()` — fixo em
+# "latest". Ele nunca le `updater.channel`. Um `beta.yml` na release seria um
+# arquivo que maquina nenhuma abre; foi exatamente esse o bug que fez o anel de
+# teste nascer sem funcionar. O detalhe completo esta em
+# `apps/desktop/src/services/update-channel.ts`.
 
 on:
   # Push na main que toca o desktop (ou suas dependencias) gera uma versao nova
@@ -63,12 +65,6 @@ permissions:
 jobs:
   release:
     name: Build and publish Windows installer
-    env:
-      # Nome do asset de metadados que este workflow publica. NEUTRO de proposito:
-      # nenhum canal de atualizacao aponta para ele, entao um build recem-saido
-      # nao alcanca maquina nenhuma. O `desktop-promote.yml` e quem copia este
-      # arquivo para `beta.yml` (teste) ou `latest.yml` (producao).
-      BUILD_METADATA_ASSET: build.yml
     # windows-2022 traz o Visual Studio 2022, que o node-gyp reconhece. O
     # windows-latest passou a trazer um VS mais novo (v18) que o node-gyp
     # empacotado nao detecta, quebrando a compilacao nativa do better-sqlite3.
@@ -121,57 +117,54 @@ jobs:
         # "Cannot find module '@kyberrock/...'".
         run: npm run build
 
-      - name: Create the GitHub release (tag + release) up front
+      - name: Create the draft release up front
+        id: release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Criamos a release (e a tag) via API ANTES do build, para que o passo de
-        # upload so anexe assets a uma release que ja existe. Passo idempotente.
-        # Criar release ja cria a tag; push de tag/release nao dispara o workflow
-        # (o gatilho e so branches: [main]).
+        # Criamos a release via API ANTES do build, para que o passo de upload so
+        # anexe assets a uma release que ja existe. Passo idempotente.
         #
-        # SEMPRE pre-release. E a flag mais importante deste workflow: uma release
-        # marcada como nao-prerelease vira "a ultima release" para toda a frota, e
-        # esta so tem `build.yml` dentro — as balancas procurariam `latest.yml`,
-        # nao achariam, e o auto-update ficaria cego EM SILENCIO. Quem tira o
-        # pre-release e o `desktop-promote.yml`, no momento de liberar producao.
+        # SEMPRE rascunho. E a flag mais importante deste workflow: rascunho e o
+        # unico estado invisivel para os DOIS aneis do updater — a frota pede
+        # `GET /releases/latest`, que pula rascunho, e a balanca de teste lista
+        # as releases e descarta `draft` antes de escolher. Publicar e ato do
+        # `desktop-promote.yml`, nunca deste workflow.
         #
         # Efeito colateral bem-vindo: se o build falhar depois deste passo, o que
-        # fica para tras e uma release vazia marcada como pre-release, que a frota
-        # ignora. Antes ficava uma release estavel vazia, com o mesmo sintoma de
-        # updater cego descrito acima.
+        # fica para tras e um rascunho vazio, que nao alcanca maquina nenhuma.
+        #
+        # A busca e por LISTAGEM, e nao por `GET /releases/tags/$TAG`: rascunho
+        # nao tem tag no git (o GitHub so cria a tag ao publicar), entao a busca
+        # por tag devolveria 404 e este passo criaria uma release duplicada a
+        # cada re-run. O `id` sai daqui como output para o passo de upload nao
+        # precisar procurar de novo.
         run: |
           set -euo pipefail
           TAG="v${{ steps.version.outputs.version }}"
           REPO="${{ github.repository }}"
-          echo "Publicando build parado (pre-release, metadado $BUILD_METADATA_ASSET)."
+          API="https://api.github.com/repos/$REPO"
+          AUTH=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+          echo "Publicando build parado (rascunho) em $TAG."
 
-          existing=$(curl -s \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/$REPO/releases/tags/$TAG")
-          release_id=$(echo "$existing" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const r=JSON.parse(s);console.log(r.id||'')})")
+          # `?per_page=100` cobre com folga: releases sao criadas uma por run, e a
+          # que procuramos so pode ser a mais recente (mesmo run_number).
+          list=$(curl -s -f "${AUTH[@]}" "$API/releases?per_page=100")
+          release_id=$(echo "$list" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const r=JSON.parse(s).find(x=>x.tag_name===process.argv[1]);console.log(r?r.id:'')})" "$TAG")
 
           if [ -n "$release_id" ]; then
-            echo "Release $TAG ja existe (id=$release_id). Garantindo prerelease=true..."
-            curl -s -f -X PATCH \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/$REPO/releases/$release_id" \
-              -d '{"prerelease":true}' > /dev/null
+            echo "Release $TAG ja existe (id=$release_id). Garantindo draft=true..."
+            curl -s -f -X PATCH "${AUTH[@]}" "$API/releases/$release_id" \
+              -d '{"draft":true}' > /dev/null
           else
-            echo "Criando release $TAG..."
-            curl -s -f -X POST \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/$REPO/releases" \
-              -d "{\"tag_name\":\"$TAG\",\"target_commitish\":\"${{ github.sha }}\",\"name\":\"KyberRock Desktop ${{ steps.version.outputs.version }}\",\"draft\":false,\"prerelease\":true}" \
-              > /dev/null
-            echo "Release $TAG criada."
+            echo "Criando rascunho $TAG..."
+            release_id=$(curl -s -f -X POST "${AUTH[@]}" "$API/releases" \
+              -d "{\"tag_name\":\"$TAG\",\"target_commitish\":\"${{ github.sha }}\",\"name\":\"KyberRock Desktop ${{ steps.version.outputs.version }}\",\"draft\":true,\"prerelease\":false}" \
+              | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).id))")
+            echo "Rascunho $TAG criado (id=$release_id)."
           fi
+
+          echo "id=$release_id" >> "$GITHUB_OUTPUT"
 
       - name: Build the Windows installer (no publish)
         id: publish
@@ -208,7 +201,7 @@ jobs:
           fi
           echo "OK: binario nativo presente no pacote."
 
-      - name: Upload the release assets (exe + blockmap + build.yml)
+      - name: Upload the release assets (exe + blockmap + latest.yml)
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -216,17 +209,17 @@ jobs:
         # electron-updater silenciosamente. Este passo garante o trio completo e
         # e idempotente: asset que ja existe com o mesmo nome e mantido.
         #
-        # O yml sobe RENOMEADO para `build.yml`. O arquivo que o electron-builder
-        # gera se chama sempre `latest.yml` — e tem que continuar assim, porque o
-        # nome do canal no build tambem iria parar dentro do app (ver o cabecalho
-        # deste arquivo). Aqui so o ASSET muda de nome, e para um nome que canal
-        # nenhum segue.
+        # O yml sobe com o nome que o electron-builder gerou, `latest.yml`, e e
+        # esse nome nos tres estados. Nao ha renomeacao por anel: em repositorio
+        # privado o updater so procura por `latest.yml` (ver o cabecalho deste
+        # arquivo). Quem separa os aneis sao as flags draft/prerelease da
+        # release, nao o nome do arquivo.
         run: |
           set -euo pipefail
           TAG="v${{ steps.version.outputs.version }}"
           REPO="${{ github.repository }}"
           DIR="apps/desktop/release"
-          YML_ASSET="$BUILD_METADATA_ASSET"
+          release_id="${{ steps.release.outputs.id }}"
 
           exe=$(find "$DIR" -maxdepth 1 -name "*.exe" -not -name "*uninstaller*" | head -n1)
           blockmap=$(find "$DIR" -maxdepth 1 -name "*.exe.blockmap" | head -n1)
@@ -238,12 +231,12 @@ jobs:
             fi
           done
 
+          # Busca pelo id, e nao pela tag: o rascunho ainda nao tem tag no git.
           release=$(curl -s -f \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/$REPO/releases/tags/$TAG")
-          release_id=$(echo "$release" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).id))")
+            "https://api.github.com/repos/$REPO/releases/$release_id")
           existing=$(echo "$release" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>JSON.parse(s).assets.forEach(a=>console.log(a.name)))")
           echo "Assets ja presentes na release $TAG:"
           echo "${existing:-<nenhum>}"
@@ -268,9 +261,9 @@ jobs:
             base=$(basename "$f")
             upload "$f" "${base// /-}" # electron-builder troca espacos por '-' no nome do asset
           done
-          upload "$latest" "$YML_ASSET"
+          upload "$latest" "latest.yml"
 
-          echo "Release $TAG completa (exe + blockmap + $YML_ASSET)."
+          echo "Release $TAG completa (exe + blockmap + latest.yml)."
 
       - name: Summary
         shell: bash
@@ -279,11 +272,12 @@ jobs:
           {
             echo "## KyberRock Desktop $VERSION"
             echo ""
-            echo "Build **parado**: publicado como pre-release com \`$BUILD_METADATA_ASSET\`."
+            echo "Build **parado**: fica como **rascunho**, invisivel para o updater."
             echo "Nenhuma balanca — nem a de teste — recebe esta versao sozinha."
             echo ""
-            echo "Para distribuir, rode o workflow **Desktop promote** com a versao \`$VERSION\`:"
+            echo "Para distribuir, use a aba **Atualizacoes** do painel (ou rode o workflow"
+            echo "**Desktop promote** com a versao \`$VERSION\`):"
             echo ""
-            echo "- \`target: beta\` → vai para as balancas marcadas como teste;"
-            echo "- \`target: latest\` → libera para todas as balancas de producao."
+            echo "- \`target: beta\` → publica como pre-release: so as balancas marcadas como teste;"
+            echo "- \`target: latest\` → publica como estavel: todas as balancas de producao."
           } >> "$GITHUB_STEP_SUMMARY"
