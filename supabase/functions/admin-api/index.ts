@@ -20,6 +20,7 @@ import {
   encryptCredential,
   isCipherConfigured
 } from "../_shared/credential-cipher.ts";
+import { summarizeDesktopReleases } from "../_shared/desktop-releases.ts";
 
 /**
  * Cliente generico do Supabase. Nao usamos `ReturnType<typeof createClient>`
@@ -81,9 +82,12 @@ type AdminAction =
   | "delete_loader"
   | "toggle_device"
   | "update_device_unit"
+  | "update_device_channel"
   | "delete_device"
   | "get_ai_settings"
   | "update_ai_settings"
+  | "list_desktop_releases"
+  | "promote_desktop_release"
   | "reveal_credentials";
 
 /**
@@ -155,6 +159,69 @@ async function readPasswordFromVault(
   }
 }
 
+/**
+ * Aneis de atualizacao do desktop. `beta` recebe as versoes em avaliacao antes da
+ * frota; `latest` (padrao) so recebe o que ja foi liberado para producao.
+ */
+type DesktopUpdateChannel = "latest" | "beta";
+
+function normalizeUpdateChannel(value: unknown): DesktopUpdateChannel {
+  return typeof value === "string" && value.trim().toLowerCase() === "beta" ? "beta" : "latest";
+}
+
+const DEVICE_LIST_COLUMNS =
+  "id, company_id, unit_id, name, color, installation_id, is_active, last_seen_at, created_at, updated_at";
+
+/**
+ * Lista as balancas tolerando a coluna `update_channel` ainda nao existir.
+ *
+ * As Edge Functions sao implantadas pelo CI a cada push, mas as migracoes SQL sao
+ * aplicadas a parte. Sem a segunda tentativa, nessa janela o painel inteiro
+ * deixaria de carregar (a `list` faz um Promise.all e qualquer erro derruba tudo)
+ * por causa de uma coluna cosmetica.
+ */
+async function selectDevicesForList(supabase: SupabaseAdminClient) {
+  const withChannel = await supabase
+    .from("device_registrations")
+    .select(`${DEVICE_LIST_COLUMNS}, update_channel`)
+    .order("created_at", { ascending: false });
+  if (!withChannel.error) return withChannel;
+
+  return await supabase
+    .from("device_registrations")
+    .select(DEVICE_LIST_COLUMNS)
+    .order("created_at", { ascending: false });
+}
+
+// ---------------------------------------------------------------------------
+// Distribuicao do desktop.
+//
+// O `desktop-release.yml` deixa todo build parado numa release pre-release; o
+// `desktop-promote.yml` e quem move a versao para o anel de teste ou para
+// producao. O painel so LE as releases e DISPARA aquele workflow — nunca mexe
+// numa release diretamente. Por isso o token de escrita precisa apenas de
+// `Actions: write`, e nao de `Contents: write`: quem edita a release e o proprio
+// Actions, com o GITHUB_TOKEN do run.
+// ---------------------------------------------------------------------------
+
+const GITHUB_OWNER = Deno.env.get("GH_RELEASES_OWNER") ?? "BrunoPaulinoF";
+const GITHUB_REPO = Deno.env.get("GH_RELEASES_REPO") ?? "KyberRock";
+/** PAT fine-grained, so este repo, `Contents: read`. Ja existe (desktop-download). */
+const GITHUB_READ_TOKEN_ENV = "GH_RELEASES_TOKEN";
+/** PAT fine-grained, so este repo, `Actions: write`. Necessario para promover. */
+const GITHUB_ACTIONS_TOKEN_ENV = "GH_ACTIONS_TOKEN";
+const PROMOTE_WORKFLOW_FILE = "desktop-promote.yml";
+const PROMOTE_WORKFLOW_REF = "main";
+
+function githubHeaders(token: string): Record<string, string> {
+  return {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "kyberrock-admin"
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
@@ -190,12 +257,7 @@ Deno.serve(async (req) => {
           .select("id, company_id, name, timezone, is_active, created_at, updated_at")
           .order("created_at", { ascending: false }),
         supabase.from("user_profiles").select("*").order("created_at", { ascending: false }),
-        supabase
-          .from("device_registrations")
-          .select(
-            "id, company_id, unit_id, name, color, installation_id, is_active, last_seen_at, created_at, updated_at"
-          )
-          .order("created_at", { ascending: false })
+        selectDevicesForList(supabase)
       ]);
       if (companies.error) throw companies.error;
       if (units.error) throw units.error;
@@ -206,11 +268,20 @@ Deno.serve(async (req) => {
         omie_app_key: c.omie_app_key ? maskSecret(c.omie_app_key) : null,
         omie_app_secret: c.omie_app_secret ? "********" : null
       }));
+      // Normaliza aqui para a tela nunca precisar decidir o que fazer com uma
+      // balanca cujo canal a nuvem ainda nao conhece: ela aparece em producao,
+      // que e o padrao correto.
+      const normalizedDevices = (devices.data ?? []).map((device) => ({
+        ...device,
+        update_channel: normalizeUpdateChannel(
+          (device as { update_channel?: unknown }).update_channel
+        )
+      }));
       return jsonResponse({
         companies: maskedCompanies,
         units: units.data,
         users: users.data,
-        devices: devices.data
+        devices: normalizedDevices
       });
     }
 
@@ -504,6 +575,36 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (body.action === "update_device_channel") {
+      const deviceId = String(payload.deviceId ?? "");
+      if (!deviceId) {
+        return jsonResponse({ error: "Informe a balanca" }, 400);
+      }
+      // Entrar no anel de teste tem que ser explicito: qualquer valor que nao
+      // seja exatamente `beta` devolve a balanca para producao, em vez de
+      // gravar lixo numa coluna que decide o que a maquina do cliente instala.
+      const updateChannel = normalizeUpdateChannel(payload.updateChannel);
+      const { error } = await supabase
+        .from("device_registrations")
+        .update({ update_channel: updateChannel, updated_at: new Date().toISOString() })
+        .eq("id", deviceId);
+      if (error) {
+        // Migracao ainda nao aplicada: diz o que fazer em vez de estourar um
+        // erro de PostgREST cru na tela.
+        if (/update_channel/.test(error.message ?? "")) {
+          return jsonResponse(
+            {
+              error:
+                "A coluna update_channel ainda nao existe no banco. Aplique a migracao 202608190001_device_update_channel.sql e tente de novo."
+            },
+            409
+          );
+        }
+        throw error;
+      }
+      return jsonResponse({ ok: true, updateChannel });
+    }
+
     if (body.action === "update_company") {
       const updatePayload: Record<string, unknown> = {
         name: String(payload.name ?? ""),
@@ -592,6 +693,99 @@ Deno.serve(async (req) => {
      * O que nao da para mostrar (senha do usuario, token do desktop) volta com
      * `value: null` e o motivo — ver `_shared/admin-credentials.ts`.
      */
+    if (body.action === "list_desktop_releases") {
+      const token = Deno.env.get(GITHUB_READ_TOKEN_ENV) ?? "";
+      if (!token) {
+        return jsonResponse(
+          {
+            error: `Secret ${GITHUB_READ_TOKEN_ENV} ausente. Cadastre um PAT fine-grained deste repositorio com Contents: read.`
+          },
+          503
+        );
+      }
+
+      const response = await fetch(
+        `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=30`,
+        { headers: githubHeaders(token) }
+      );
+      if (!response.ok) {
+        return jsonResponse(
+          { error: `Falha ao consultar as versoes no GitHub (${response.status}).` },
+          502
+        );
+      }
+
+      // Quantas balancas recebem o que. Sem isso a tela diz "esta em teste" sem
+      // dizer em teste ONDE — e uma versao no anel de teste com zero balancas
+      // marcadas nunca sera avaliada por ninguem.
+      const { data: deviceRows } = await selectDevicesForList(supabase);
+      const channelCounts: Record<DesktopUpdateChannel, number> = { latest: 0, beta: 0 };
+      for (const row of (deviceRows ?? []) as Array<Record<string, unknown>>) {
+        // Balanca bloqueada nao recebe nada, entao nao conta como destinatario.
+        if (row.is_active === false) continue;
+        channelCounts[normalizeUpdateChannel(row.update_channel)] += 1;
+      }
+
+      return jsonResponse({
+        releases: summarizeDesktopReleases(await response.json()),
+        channelCounts,
+        canPromote: Boolean(Deno.env.get(GITHUB_ACTIONS_TOKEN_ENV)),
+        actionsUrl: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${PROMOTE_WORKFLOW_FILE}`
+      });
+    }
+
+    if (body.action === "promote_desktop_release") {
+      const token = Deno.env.get(GITHUB_ACTIONS_TOKEN_ENV) ?? "";
+      if (!token) {
+        return jsonResponse(
+          {
+            error: `Secret ${GITHUB_ACTIONS_TOKEN_ENV} ausente. Cadastre um PAT fine-grained deste repositorio com Actions: write para promover pelo painel.`
+          },
+          503
+        );
+      }
+
+      const version = String(payload.version ?? "")
+        .replace(/^v/, "")
+        .trim();
+      const target = payload.target === "latest" ? "latest" : "beta";
+      const force = payload.force === true;
+      if (!/^\d+\.\d+\.\d+$/.test(version)) {
+        return jsonResponse({ error: "Versao invalida." }, 400);
+      }
+
+      const response = await fetch(
+        `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${PROMOTE_WORKFLOW_FILE}/dispatches`,
+        {
+          method: "POST",
+          headers: { ...githubHeaders(token), "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ref: PROMOTE_WORKFLOW_REF,
+            inputs: { version, target, force }
+          })
+        }
+      );
+      // O dispatch responde 204 e o resultado so aparece no run. As travas de
+      // verdade (nunca testada, versao regressiva, release incompleta) vivem no
+      // workflow; a tela apenas evita oferecer o botao que seria recusado.
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        return jsonResponse(
+          {
+            error: `O GitHub recusou o disparo (${response.status}). ${detail.slice(0, 300)}`.trim()
+          },
+          502
+        );
+      }
+
+      return jsonResponse({
+        ok: true,
+        version,
+        target,
+        runsUrl: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${PROMOTE_WORKFLOW_FILE}`
+      });
+    }
+
     if (body.action === "reveal_credentials") {
       const type = String(payload.type ?? "");
       const id = String(payload.id ?? "");

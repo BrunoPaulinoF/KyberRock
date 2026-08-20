@@ -1,10 +1,13 @@
 import { corsHeaders } from "../_shared/cors.ts";
+import { pickPublicInstaller } from "./release-pick.ts";
 
 // Endpoint publico de download do instalador do KyberRock Desktop.
 //
-// Resolve o instalador (.exe) do Release mais recente no GitHub (repo privado) e
-// redireciona o navegador para a URL assinada do asset. Assim existe um link
-// FIXO que sempre baixa a versao mais nova, sem gerar nada manualmente.
+// Resolve o instalador (.exe) do Release ESTAVEL mais recente no GitHub (repo
+// privado) e redireciona o navegador para a URL assinada do asset. Assim existe
+// um link FIXO que sempre baixa a versao mais nova ja liberada para producao,
+// sem gerar nada manualmente. A escolha vive em `release-pick.ts`, que e puro e
+// testado — build ainda nao liberado nunca pode chegar numa instalacao nova.
 //
 // Requer o secret `GH_RELEASES_TOKEN` (PAT fine-grained, Contents: read neste
 // repo). Deve ser deployada como funcao PUBLICA (verify_jwt = false).
@@ -41,6 +44,13 @@ Deno.serve(async (req) => {
   // Lista os releases (mais novos primeiro) e escolhe o mais recente que
   // realmente tenha um instalador .exe. Assim, um release parcial/quebrado (ex.:
   // upload interrompido) nao derruba o link -- caimos no proximo valido.
+  //
+  // PRE-RELEASE E DESCARTADO. Desde que compilar deixou de ser distribuir (ver
+  // "Desktop versioning" no AGENTS.md), TODO build nasce como pre-release e so
+  // sai desse estado quando alguem o libera para producao. Sem este filtro, o
+  // link publico de download passaria a entregar justamente o build que ainda
+  // nao foi aprovado -- e instalacao nova e o pior lugar para isso, porque nao
+  // ha versao anterior para voltar.
   const releasesRes = await fetch(
     `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=30`,
     { headers: apiHeaders }
@@ -48,21 +58,7 @@ Deno.serve(async (req) => {
   if (!releasesRes.ok) {
     return textResponse(`Falha ao consultar os releases (${releasesRes.status}).`, 502);
   }
-  const releases = (await releasesRes.json()) as Array<{
-    draft?: boolean;
-    assets?: Array<{ id: number; name?: string }>;
-  }>;
-  let installer: { id: number; name?: string } | undefined;
-  for (const release of Array.isArray(releases) ? releases : []) {
-    if (release.draft) continue;
-    const found = (release.assets ?? []).find(
-      (asset) => typeof asset.name === "string" && asset.name.toLowerCase().endsWith(".exe")
-    );
-    if (found) {
-      installer = found;
-      break;
-    }
-  }
+  const installer = pickPublicInstaller(await releasesRes.json());
   if (!installer) {
     return textResponse("Nenhum instalador .exe encontrado nos releases.", 404);
   }

@@ -283,23 +283,78 @@ Every OMIE call uses a key of the form `kyberrock:{unitId}:{operationId}:{action
 
 ## Desktop versioning
 
-**Automated (default).** `.github/workflows/desktop-release.yml` builds and publishes the
-Windows installer to **GitHub Releases** on every push to `main` that touches `apps/desktop/**`,
-`packages/**` or the root manifest (also runnable via **workflow_dispatch**). The pipeline:
+**Compilar deixou de ser distribuir.** Um merge na `main` gera um build que fica **parado**: a
+release nasce como _pre-release_ com um metadado de nome neutro (`build.yml`) que **canal nenhum
+segue**. Distribuir e um ato explicito, feito pelo `desktop-promote.yml`, e em dois aneis:
 
-1. Derives the release version as `MAJOR.MINOR.<github.run_number>` from `apps/desktop/package.json`
-   (monotonically increasing, so `electron-updater` always sees a newer version — **no manual
-   bump needed**). The bump is done only in the build checkout; it is not committed back.
-2. Injects the read-only updater token (`GH_UPDATER_TOKEN` secret) into `src/main/updater-config.ts`.
-3. Runs `npm run dist:win:publish -w @kyberrock/desktop` on a Windows runner, which builds the
-   NSIS installer and `electron-builder --publish always` creates a **published** (non-draft)
-   Release `vX.Y.Z` with `latest.yml` + `*.exe` + `*.blockmap`. Publishing uses the automatic
-   `GITHUB_TOKEN` (write scope stays in CI). A copy is also uploaded as a run artifact.
+| Anel       | Asset na release | Quem recebe                                       |
+| ---------- | ---------------- | ------------------------------------------------- |
+| _(nenhum)_ | `build.yml`      | ninguem — o build so existe                       |
+| teste      | `beta.yml`       | so as balancas marcadas como teste (canal `beta`) |
+| producao   | `latest.yml`     | todas as balancas (canal `latest`, o padrao)      |
 
-Required repo secret (Settings → Secrets and variables → Actions):
-`GH_UPDATER_TOKEN` — a **fine-grained PAT scoped to this repo only, `Contents: read`**. This is the
-token embedded in the installed app so it can download releases from the private repo. Without it,
-builds still publish, but installed apps cannot authenticate to download the update.
+Antes, todo merge que tocasse o desktop virava atualizacao automatica em todas as pedreiras em
+minutos, sem release de teste e sem como desfazer. Consequencia boa do modelo novo: **tres merges
+seguidos geram tres builds parados**; ao liberar so o ultimo, a balanca da um salto unico em vez de
+instalar tres vezes.
+
+**Passo 1 — `desktop-release.yml`** (push na `main` tocando `apps/desktop/**`, `packages/**` ou o
+manifesto da raiz; tambem por **workflow_dispatch**):
+
+1. Deriva a versao como `MAJOR.MINOR.<github.run_number>` a partir de `apps/desktop/package.json`
+   (sempre crescente, entao o `electron-updater` sempre ve uma versao nova — **sem bump manual**).
+   O bump vale so no checkout do build; nao volta para o Git.
+2. Injeta o token de leitura (`GH_UPDATER_TOKEN`) em `src/main/updater-config.ts`.
+3. Cria a Release `vX.Y.Z` **sempre marcada como pre-release**.
+4. Roda `npm run dist:win:ci -w @kyberrock/desktop` (`electron-builder --publish never`): so
+   compila. Quem sobe os assets e o passo de upload, o que elimina a race conhecida do publisher do
+   electron-builder e permite conferir o pacote antes de publicar.
+5. Confere que `better_sqlite3.node` entrou no pacote — **antes** de subir qualquer asset.
+6. Sobe `*.exe` + `*.blockmap` + o yml **renomeado para `build.yml`**, com o `GITHUB_TOKEN`
+   automatico.
+
+> **O yml e renomeado no upload, nunca gerado com outro nome.** Passar o canal para o
+> `electron-builder` tambem grava `channel: ...` no `app-update.yml` embutido no app — o binario
+> promovido continuaria procurando aquele nome para sempre, e a primeira promocao quebraria o
+> auto-update da frota inteira. O build gera sempre `latest.yml`; so o **asset** muda de nome.
+
+> **`prerelease: true` e a flag critica.** Uma release marcada como nao-prerelease vira "a ultima
+> release" para toda a frota; se ela nao tiver `latest.yml` dentro, as balancas procuram, nao acham,
+> e o auto-update fica cego **em silencio**.
+
+**Passo 2 — pela aba Atualizacoes do painel (ou pelo `desktop-promote.yml` direto).** A tela
+(`apps/loader-web/src/pages/DesktopUpdates.tsx`) lista as versoes com a situacao de cada uma —
+**Parado**, **Em teste**, **Producao**, **Incompleto** — e oferece os dois unicos gestos que movem
+alguma coisa: _Enviar para teste_ e _Liberar para producao_. Ela tambem mostra quantas balancas
+estao em cada anel, porque uma versao em teste com zero balancas marcadas nunca sera avaliada.
+
+O painel **nao mexe em release**: ele so dispara o workflow (`admin-api` →
+`promote_desktop_release` → `POST /actions/workflows/desktop-promote.yml/dispatches`). Por isso o
+token de escrita precisa apenas de `Actions: write` — quem edita a release e o proprio Actions, com
+o `GITHUB_TOKEN` do run. A classificacao das versoes vive em `_shared/desktop-releases.ts` (puro e
+testado); as travas de verdade continuam no workflow, e as regras repetidas na tela servem so para
+nao oferecer um botao que seria recusado num run que ela nao acompanha.
+
+**O workflow `desktop-promote.yml`** (so **workflow_dispatch**; recebe `version`, `target` e
+`force`): copia `build.yml` para `beta.yml` (teste) ou `latest.yml` (producao); no caso de producao,
+tambem tira o `prerelease`. **Nao compila nada** — o `.exe` nao se move nem muda de URL, entao a
+balanca recebe exatamente o binario testado. Antes de agir ele confere que a release existe, que o
+metadado bate com a versao pedida e que o instalador citado nele esta anexado; para producao ainda
+recusa (a menos que `force`) uma versao que nunca passou pelo teste ou que seja anterior a producao
+atual. Depois da promocao a release guarda os dois ymls: `latest.yml` serve a frota e `beta.yml`
+mantem a maquina de teste na mesma versao, sem falso "ha atualizacao".
+
+Tokens envolvidos — todos PAT fine-grained, **so este repositorio**:
+
+| Onde vive          | Nome                | Escopo           | Para que                                                         |
+| ------------------ | ------------------- | ---------------- | ---------------------------------------------------------------- |
+| Secret do Actions  | `GH_UPDATER_TOKEN`  | `Contents: read` | embutido no app instalado, para baixar a release do repo privado |
+| Secret do Supabase | `GH_RELEASES_TOKEN` | `Contents: read` | `desktop-download` e a listagem de versoes do painel             |
+| Secret do Supabase | `GH_ACTIONS_TOKEN`  | `Actions: write` | o painel disparar o `desktop-promote.yml`                        |
+
+Sem `GH_UPDATER_TOKEN` os builds ainda saem, mas o app instalado nao consegue autenticar para
+baixar a atualizacao. Sem `GH_ACTIONS_TOKEN` a aba Atualizacoes ainda lista tudo e explica como
+criar o token — a promocao so fica no GitHub ate ele existir.
 
 - **Security note**: the read token ships inside the app (`.asar`), so treat it as low-trust —
   keep it read-only + single-repo, and rotate it by updating the secret and re-running the workflow.
@@ -307,8 +362,23 @@ builds still publish, but installed apps cannot authenticate to download the upd
   the patch keeps coming from `run_number`.
 - **Fixed public download link**: `supabase/functions/desktop-download` (public, `verify_jwt=false`,
   needs `GH_RELEASES_TOKEN`) redirects to the latest release's `.exe`; loader-web nginx exposes it as
-  `GET /download`. Always serves the newest installer for fresh installs.
+  `GET /download`. Ele **descarta pre-release**, entao serve sempre a ultima versao liberada para
+  producao e instalacao nova nunca cai num build parado — que e o desejado, porque numa maquina
+  recem-instalada nao ha versao anterior para voltar. Esse filtro so passou a existir junto com o
+  fluxo de dois passos: antes ele pulava so `draft`, e como todo build agora nasce pre-release, sem
+  ele o link publico passaria a entregar exatamente o que ainda nao foi aprovado. A escolha vive em
+  `desktop-download/release-pick.ts` (puro, coberto por `release-pick_test.ts`) justamente para nao
+  regredir de novo.
 - Code signing for external pilots is still pending (see `docs/phase-3.1/README.md`).
+- **Qual balanca e a de teste** sai da aba **Balancas** do painel, coluna Atualizacao: Producao
+  (padrao) ou Teste. O valor vive em `device_registrations.update_channel`, viaja no
+  `desktop-status` e e aplicado em `main.ts` (`applyUpdateChannel`) a cada verificacao — trocar o
+  canal vale sem reiniciar o app. Os DOIS lados normalizam para `latest` qualquer valor que nao
+  seja exatamente `beta`: balanca de cliente nunca entra no anel de teste por acidente.
+- **Leituras da coluna sao tolerantes a ela nao existir** (`selectDeviceRow` no `desktop-status`,
+  `selectDevicesForList` no `admin-api`). As Edge Functions sao implantadas pelo CI a cada push e
+  as migracoes SQL sao aplicadas a parte: sem isso, nessa janela o `desktop-status` falharia e
+  bloquearia a frota inteira, e o painel deixaria de carregar.
 
 **Manual build (local / offline fallback):**
 
@@ -316,10 +386,15 @@ builds still publish, but installed apps cannot authenticate to download the upd
    → `apps/desktop/release/KyberRock Desktop Setup X.Y.Z.exe`.
 2. Optionally tag `git tag -a desktop-vX.Y.Z -m "Desktop release X.Y.Z"` for a manual rollback point.
 3. **Never overwrite an existing tag** — bump the patch for a hotfix.
-4. **Rollback**: each release stays on GitHub Releases. To roll operators back, delete/mark as
-   pre-release the bad `vX.Y.Z` release (electron-updater then serves the previous published one),
-   or re-run the workflow from an older commit to publish a higher version built from good code.
-   `dist:win:publish` (used by CI) is the publishing variant of `dist:win`.
+4. **Rollback**: cada release fica no GitHub Releases. Para voltar a frota, **marque a release ruim
+   como pre-release** — o canal `latest` volta a enxergar a estavel anterior. Como o desktop nao faz
+   downgrade sozinho (`allowDowngrade` desligado), quem ja instalou a ruim so sai dela com uma versao
+   MAIOR: promova a proxima boa. Vale a regra que sustenta tudo isso: **migracao de SQLite so pode
+   adicionar**, nunca remover nem renomear coluna, senao a versao anterior nao roda no banco ja
+   migrado.
+5. As tres variantes do script: `dist:win` (local, com `npm rebuild` para Node no fim),
+   `dist:win:ci` (usado pelo CI, `--publish never`) e `dist:win:publish` (`--publish always`,
+   mantido para publicacao manual de emergencia).
 
 ## Edge Functions deploy
 

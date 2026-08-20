@@ -63,6 +63,7 @@ import type { WeighingBillingReportOptions } from "../services/weighing-billing-
 import { isInvoiceClosingCycle } from "../services/invoice-closing-cycle.js";
 import type { InvoiceClosingOptions } from "../services/invoice-closing.js";
 import { GITHUB_UPDATER_TOKEN } from "./updater-config.js";
+import { DEFAULT_UPDATE_CHANNEL, updaterChannelSettings } from "../services/update-channel.js";
 import type { OperationType } from "../services/weighing-operations.js";
 
 const require = createRequire(import.meta.url);
@@ -281,6 +282,9 @@ function registerIpcHandlers(): void {
 
     updateState = { status: "checking", availableVersion: null, errorMessage: null };
     try {
+      // Tambem aqui, e nao so no ciclo automatico: o operador pode clicar logo
+      // depois de o painel mover esta balanca de canal.
+      applyUpdateChannel();
       const result = await autoUpdater.checkForUpdates();
       updateState = result?.updateInfo
         ? { status: "available", availableVersion: result.updateInfo.version, errorMessage: null }
@@ -2405,14 +2409,43 @@ function configureAutoUpdater(): void {
   });
 }
 
+/**
+ * Aponta o `electron-updater` para o anel desta balanca.
+ *
+ * Roda aqui, e nao no `configureAutoUpdater`, porque o canal vem do SQLite e o
+ * `configureAutoUpdater` e chamado no topo do modulo, antes de o runtime (e o
+ * banco) existirem. E e reaplicado a cada verificacao: assim, trocar o canal da
+ * balanca no painel passa a valer sem reiniciar o app.
+ *
+ * `channel` antes de `allowPrerelease`: o setter de `channel` do
+ * `electron-updater` mexe em flags vizinhas, entao definir a permissao depois
+ * garante que ela sobreviva.
+ */
+function applyUpdateChannel(): void {
+  try {
+    const settings = updaterChannelSettings(runtime?.getUpdateChannel() ?? DEFAULT_UPDATE_CHANNEL);
+    if (autoUpdater.channel !== settings.channel) {
+      writeStartupLog("updater:channel", settings);
+    }
+    autoUpdater.channel = settings.channel;
+    autoUpdater.allowPrerelease = settings.allowPrerelease;
+  } catch (error) {
+    // Nunca impedir a verificacao de atualizacao: sem canal aplicado o updater
+    // segue no padrao, que e producao.
+    writeStartupLog("updater:channel:error", error);
+  }
+}
+
 function startAutomaticUpdateChecks(): void {
   if (!app.isPackaged) {
     return;
   }
 
+  applyUpdateChannel();
   void autoUpdater.checkForUpdates();
   setInterval(() => {
     if (updateState.status === "idle" || updateState.status === "error") {
+      applyUpdateChannel();
       void autoUpdater.checkForUpdates();
     }
   }, UPDATE_CHECK_INTERVAL_MS);

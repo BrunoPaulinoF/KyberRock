@@ -11,7 +11,57 @@ type DeviceRow = {
   device_number: number | null;
   token_hash: string;
   is_active: boolean;
+  // Ausente na leitura de emergencia (migracao ainda nao aplicada).
+  update_channel?: string | null;
 };
+
+/**
+ * Anel de atualizacao desta balanca. `beta` recebe as versoes em avaliacao antes
+ * da frota; qualquer outra coisa e producao.
+ *
+ * A normalizacao acontece nos DOIS lados (aqui e em `update-channel.ts` no
+ * desktop) de proposito: instalacao antiga tem que continuar em producao mesmo
+ * se um dia chegar valor estranho, e balanca de cliente jamais pode entrar no
+ * anel de teste por acidente.
+ */
+function normalizeUpdateChannel(value: unknown): "latest" | "beta" {
+  return typeof value === "string" && value.trim().toLowerCase() === "beta" ? "beta" : "latest";
+}
+
+/**
+ * Le o registro da balanca tolerando a coluna `update_channel` ainda nao existir.
+ *
+ * As Edge Functions sao implantadas pelo CI a cada push, mas as migracoes SQL
+ * sao aplicadas a parte. Entre uma coisa e outra existe uma janela em que esta
+ * funcao ja pede a coluna e a tabela ainda nao a tem — e um select com coluna
+ * desconhecida falha INTEIRO. Como o chamador trata erro de leitura como
+ * "Desktop nao registrado", isso bloquearia TODA a frota ate a migracao ser
+ * aplicada. Por isso a segunda tentativa sem a coluna: pior caso, a balanca fica
+ * em producao, que e o padrao correto.
+ */
+const DEVICE_BASE_COLUMNS =
+  "id, company_id, unit_id, name, color, device_number, token_hash, is_active";
+
+async function selectDeviceRow(
+  supabase: ReturnType<typeof createClient>,
+  deviceId: string
+): Promise<{ data: Record<string, unknown> | null; error: unknown }> {
+  const withChannel = await supabase
+    .from("device_registrations")
+    .select(`${DEVICE_BASE_COLUMNS}, update_channel`)
+    .eq("id", deviceId)
+    .single();
+  if (!withChannel.error) {
+    return { data: withChannel.data as Record<string, unknown> | null, error: null };
+  }
+
+  const fallback = await supabase
+    .from("device_registrations")
+    .select(DEVICE_BASE_COLUMNS)
+    .eq("id", deviceId)
+    .single();
+  return { data: fallback.data as Record<string, unknown> | null, error: fallback.error };
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -28,11 +78,7 @@ Deno.serve(async (req) => {
   const deviceId = String(body.deviceId ?? "");
   const deviceToken = String(body.deviceToken ?? "");
 
-  const { data: device, error: deviceError } = await supabase
-    .from("device_registrations")
-    .select("id, company_id, unit_id, name, color, device_number, token_hash, is_active")
-    .eq("id", deviceId)
-    .single();
+  const { data: device, error: deviceError } = await selectDeviceRow(supabase, deviceId);
 
   if (deviceError || !device) {
     return jsonResponse({
@@ -132,6 +178,10 @@ Deno.serve(async (req) => {
     deviceName: typedDevice.name,
     deviceColor: typedDevice.color,
     deviceNumber,
+    // O desktop so grava o canal quando o campo VEM na resposta: enviar sempre
+    // (mesmo que 'latest') e o que permite o painel devolver uma balanca de teste
+    // para producao. Omitir seria indistinguivel de "nuvem antiga".
+    updateChannel: normalizeUpdateChannel(typedDevice.update_channel),
     unitDevices: unitDevices ?? [],
     checkedAt
   });

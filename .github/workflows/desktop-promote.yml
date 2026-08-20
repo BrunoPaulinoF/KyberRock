@@ -1,0 +1,195 @@
+name: Desktop promote
+
+# Move uma versao ja compilada para um dos dois aneis de distribuicao:
+#
+#   target: beta    -> so as balancas marcadas como TESTE recebem
+#   target: latest  -> TODAS as balancas de producao recebem
+#
+# Este workflow NAO compila nada. O `desktop-release.yml` deixa o instalador
+# definitivo anexado a release `vX.Y.Z` junto de um metadado neutro
+# (`build.yml`) que canal nenhum segue. Promover e copiar esse metadado para
+# `beta.yml` ou `latest.yml` — e, no caso de producao, tirar o `prerelease`.
+#
+# O `.exe` nao se move, nao e regerado e nao muda de URL: a balanca recebe
+# exatamente o binario que rodou no teste. Recompilar produziria outro numero de
+# versao (a versao e `MAJOR.MINOR.<run_number>`) e um binario que ninguem testou,
+# que e justamente o que este fluxo existe para evitar.
+#
+# Tres builds seguidos sem promocao ficam parados. Ao liberar so o ultimo, a
+# balanca da UM salto — nao instala tres vezes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versao a promover, sem o 'v' (ex.: 0.8.150)"
+        required: true
+        type: string
+      target:
+        description: "Destino: beta (balancas de teste) ou latest (todas as de producao)"
+        required: true
+        type: choice
+        options:
+          - beta
+          - latest
+        default: beta
+      force:
+        description: "Promover mesmo com aviso (versao mais antiga que a atual, ou producao sem passar pelo teste)"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: desktop-promote
+  cancel-in-progress: false
+
+permissions:
+  contents: write # editar a release e subir o asset do canal
+
+jobs:
+  promote:
+    name: Promote a build to a distribution ring
+    runs-on: ubuntu-latest
+    steps:
+      - name: Promote
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          TARGET: ${{ inputs.target }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+
+          VERSION="${VERSION#v}"   # aceita tanto "0.8.150" quanto "v0.8.150"
+          TAG="v$VERSION"
+          TARGET_ASSET="${TARGET}.yml"
+          API="https://api.github.com/repos/$REPO"
+          AUTH=(-H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2022-11-28")
+          JSON=(-H "Accept: application/vnd.github+json")
+
+          echo "Promovendo $TAG para o anel '$TARGET' (asset $TARGET_ASSET)."
+
+          # ---------------------------------------------------------------
+          # 1. A release existe?
+          # ---------------------------------------------------------------
+          if ! release=$(curl -sS -f "${AUTH[@]}" "${JSON[@]}" "$API/releases/tags/$TAG"); then
+            echo "::error title=Release nao encontrada::Nao existe release com a tag $TAG. Confira a versao na aba Releases."
+            exit 1
+          fi
+
+          release_id=$(echo "$release" | jq -r '.id')
+          echo "Release $TAG encontrada (id=$release_id)."
+
+          asset_id() { echo "$release" | jq -r --arg n "$1" '.assets[] | select(.name == $n) | .id'; }
+
+          build_id=$(asset_id build.yml)
+          beta_id=$(asset_id beta.yml)
+          target_id=$(asset_id "$TARGET_ASSET")
+
+          # A fonte e sempre o metadado neutro do build. Se ele nao existir (release
+          # antiga, anterior a este fluxo), aceita o beta.yml como origem.
+          source_id="${build_id:-$beta_id}"
+          if [ -z "$source_id" ]; then
+            echo "::error title=Release sem metadados::A release $TAG nao tem build.yml nem beta.yml. Ela nao foi publicada por completo — nao da para promover."
+            echo "Assets presentes:"
+            echo "$release" | jq -r '.assets[].name'
+            exit 1
+          fi
+
+          # ---------------------------------------------------------------
+          # 2. O instalador que o metadado aponta esta mesmo na release?
+          #    Guarda contra promover uma release publicada pela metade.
+          # ---------------------------------------------------------------
+          curl -sS -f "${AUTH[@]}" -H "Accept: application/octet-stream" \
+            -L "$API/releases/assets/$source_id" -o metadata.yml
+
+          yml_version=$(grep -m1 '^version:' metadata.yml | sed 's/^version:[[:space:]]*//' | tr -d '\r')
+          yml_path=$(grep -m1 '^path:' metadata.yml | sed 's/^path:[[:space:]]*//' | tr -d '\r')
+          echo "Metadados: versao=$yml_version arquivo=$yml_path"
+
+          if [ "$yml_version" != "$VERSION" ]; then
+            echo "::error title=Versao divergente::O metadado da release $TAG diz versao '$yml_version'. Promocao abortada para nao publicar metadado errado."
+            exit 1
+          fi
+
+          exe_name="${yml_path// /-}"
+          if [ -z "$(asset_id "$exe_name")" ]; then
+            echo "::error title=Instalador ausente::O metadado aponta para '$exe_name', que nao esta anexado a release $TAG."
+            echo "Assets presentes:"
+            echo "$release" | jq -r '.assets[].name'
+            exit 1
+          fi
+          echo "OK: instalador '$exe_name' presente na release."
+
+          # ---------------------------------------------------------------
+          # 3. Guardas. Avisam alto e so passam com 'force'.
+          # ---------------------------------------------------------------
+          if [ "$TARGET" = "latest" ]; then
+            # 3a. Nao pular o anel de teste sem querer.
+            if [ -z "$beta_id" ]; then
+              if [ "$FORCE" != "true" ]; then
+                echo "::error title=Versao nao testada::$VERSION nunca foi para o anel de teste (a release nao tem beta.yml). Mande para 'beta' primeiro, ou marque 'force' se for um hotfix consciente."
+                exit 1
+              fi
+              echo "::warning title=Producao sem teste::$VERSION vai direto para producao sem passar pelo beta, porque 'force' foi marcado."
+            fi
+
+            # 3b. Nao regredir a frota sem querer.
+            current=$(curl -sS "${AUTH[@]}" "${JSON[@]}" "$API/releases/latest" | jq -r '.tag_name // empty')
+            current="${current#v}"
+            if [ -n "$current" ]; then
+              echo "Producao hoje: $current"
+              lowest=$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | head -n1)
+              if [ "$VERSION" != "$current" ] && [ "$lowest" = "$VERSION" ]; then
+                if [ "$FORCE" != "true" ]; then
+                  echo "::error title=Versao mais antiga::$VERSION e anterior a producao atual ($current). As balancas nao fazem downgrade sozinhas, entao isso deixaria a frota parada onde esta. Marque 'force' se for mesmo o que voce quer."
+                  exit 1
+                fi
+                echo "::warning title=Promocao regressiva::$VERSION e anterior a $current, seguindo porque 'force' foi marcado."
+              fi
+            else
+              echo "Nenhuma release de producao ainda — esta sera a primeira."
+            fi
+          fi
+
+          # ---------------------------------------------------------------
+          # 4. Publicar o asset do anel (idempotente: substitui se ja existir).
+          # ---------------------------------------------------------------
+          if [ -n "$target_id" ]; then
+            echo "$TARGET_ASSET ja existe nesta release; substituindo pelo conteudo atual."
+            curl -sS -f -X DELETE "${AUTH[@]}" "$API/releases/assets/$target_id" > /dev/null
+          fi
+
+          curl -sS -f -X POST "${AUTH[@]}" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @metadata.yml \
+            "https://uploads.github.com/repos/$REPO/releases/$release_id/assets?name=$TARGET_ASSET" > /dev/null
+          echo "$TARGET_ASSET publicado."
+
+          # ---------------------------------------------------------------
+          # 5. So producao sai do pre-release. O anel de teste vive dentro dele:
+          #    e o que mantem a frota cega para a versao em avaliacao.
+          # ---------------------------------------------------------------
+          if [ "$TARGET" = "latest" ]; then
+            curl -sS -f -X PATCH "${AUTH[@]}" "${JSON[@]}" \
+              "$API/releases/$release_id" \
+              -d '{"prerelease":false,"make_latest":"true"}' > /dev/null
+            echo "Release $TAG marcada como estavel."
+          fi
+
+          # ---------------------------------------------------------------
+          # 6. Resumo.
+          # ---------------------------------------------------------------
+          {
+            echo "## $VERSION promovida para \`$TARGET\`"
+            echo ""
+            echo "- Instalador: \`$exe_name\` (o mesmo do build, nao foi recompilado)"
+            if [ "$TARGET" = "latest" ]; then
+              echo "- Producao anterior: ${current:-<nenhuma>}"
+              echo "- Todas as balancas de producao passam a receber esta versao na proxima verificacao (a cada 30 min) e instalam quando o operador fechar o app."
+            else
+              echo "- A release segue como pre-release: so as balancas marcadas como teste enxergam."
+              echo "- Aprovado? Rode este workflow de novo com \`target: latest\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
