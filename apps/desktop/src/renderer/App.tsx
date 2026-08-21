@@ -63,8 +63,11 @@ import type { DesktopStatusSnapshot } from "../services/status";
 import {
   createInitialUpdateState,
   getManualUpdateButtonLabel,
+  hasUpdateRingChoice,
+  updateRingLabel,
   type UpdateState
 } from "../services/update-flow";
+import type { UpdateRing } from "../services/update-candidates";
 import { validatePaymentMethodCondition } from "../services/payment-method-condition-guard";
 import { tryParsePaymentCondition } from "../services/payment-condition-parser";
 import { extractConditionRaw, resolveConditionTermId } from "./payment-condition-helpers";
@@ -573,8 +576,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     lastSync: string | null;
   } | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [showUpdateChoiceModal, setShowUpdateChoiceModal] = useState(false);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   const updateReady = updateState.status === "available" || updateState.status === "downloaded";
+  // So na balanca marcada como teste, e so quando o anel de teste e o de
+  // producao tem versoes diferentes para instalar: ai quem decide e o operador.
+  const updateRingChoice = hasUpdateRingChoice(updateState) ? updateState.ringOptions : null;
   const [showLogsModal, setShowLogsModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readStoredThemeMode());
@@ -1064,6 +1071,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         case "Escape":
           if (
             showUpdateModal ||
+            showUpdateChoiceModal ||
             showLogsModal ||
             showSettings ||
             closingOperation ||
@@ -1073,6 +1081,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             changeCarrierOperation
           ) {
             setShowUpdateModal(false);
+            setShowUpdateChoiceModal(false);
             setShowLogsModal(false);
             setShowSettings(false);
             setClosingOperation(null);
@@ -1090,6 +1099,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     showUpdateModal,
+    showUpdateChoiceModal,
     showLogsModal,
     showSettings,
     closingOperation,
@@ -1691,11 +1701,38 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       return;
     }
 
+    // Balanca de teste com versao nova nos DOIS aneis nao baixa no clique: ela
+    // pergunta. Instalar a versao errada aqui custa uma reinstalacao.
+    if (updateRingChoice) {
+      setShowUpdateModal(false);
+      setShowUpdateChoiceModal(true);
+      return;
+    }
+
     const nextState =
       updateState.status === "available" || updateState.status === "downloaded"
         ? await desktopApi.downloadAndInstallUpdate()
         : await desktopApi.checkForUpdates();
 
+    setUpdateState(nextState);
+    setMessage(nextState.errorMessage ?? describeUpdateState(nextState));
+
+    // A verificacao pode ter descoberto agora que ha dois aneis para escolher.
+    if (hasUpdateRingChoice(nextState)) {
+      setShowUpdateModal(false);
+      setShowUpdateChoiceModal(true);
+    }
+  }
+
+  /** Instala a versao do anel escolhido pelo operador (so na balanca de teste). */
+  async function handleInstallUpdateRing(ring: UpdateRing): Promise<void> {
+    if (!desktopApi) {
+      return;
+    }
+
+    setShowUpdateChoiceModal(false);
+    setShowUpdateModal(false);
+    const nextState = await desktopApi.downloadAndInstallUpdate(ring);
     setUpdateState(nextState);
     setMessage(nextState.errorMessage ?? describeUpdateState(nextState));
   }
@@ -2688,7 +2725,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       title="Verificar / instalar atualizacao do KyberRock Desktop"
                     >
                       <RefreshCw size={14} />
-                      {getManualUpdateButtonLabel(updateState.status)}
+                      {getManualUpdateButtonLabel(updateState.status, updateRingChoice !== null)}
                       {updateReady ? (
                         <span
                           style={{
@@ -2767,7 +2804,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               />
             ) : null}
 
-            {showUpdateModal ? (
+            {/*
+              O aviso generico anuncia UMA versao, entao ele sai de cena
+              enquanto a balanca de teste esta escolhendo entre duas.
+            */}
+            {showUpdateModal && !showUpdateChoiceModal ? (
               <div style={styles.modalOverlay}>
                 <div style={styles.modal}>
                   <h2 style={styles.modalTitle}>Nova versão disponível</h2>
@@ -2792,6 +2833,64 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       style={styles.secondaryButton}
                     >
                       Mais tarde
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {showUpdateChoiceModal && updateRingChoice ? (
+              <div style={styles.modalOverlay}>
+                <div style={styles.modal}>
+                  <h2 style={styles.modalTitle}>Escolha a versão para instalar</h2>
+                  <p style={styles.modalText}>
+                    Esta balança está marcada como <strong>teste</strong>, e há versão nova nos dois
+                    lados. Escolha qual instalar — o KyberRock reinicia para aplicar.
+                  </p>
+                  <div style={{ display: "grid", gap: "8px", marginBottom: "12px" }}>
+                    {updateRingChoice.map((option) => (
+                      <button
+                        key={option.ring}
+                        type="button"
+                        onClick={() => {
+                          void handleInstallUpdateRing(option.ring);
+                        }}
+                        style={{
+                          ...styles.secondaryButton,
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "flex-start",
+                          gap: "2px",
+                          padding: "10px 12px",
+                          textAlign: "left" as const
+                        }}
+                      >
+                        <span style={{ fontWeight: 600, color: "var(--kr-text-strong)" }}>
+                          {option.ring === "beta"
+                            ? `Versão de teste ${option.version}`
+                            : `Versão de produção ${option.version}`}
+                        </span>
+                        <span style={{ fontSize: "12px", color: "var(--kr-muted)" }}>
+                          {option.ring === "beta"
+                            ? "Versão em avaliação, ainda não liberada para as outras balanças."
+                            : "A mesma versão que todas as outras balanças estão rodando."}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <div style={styles.modalActions}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowUpdateChoiceModal(false);
+                        setShowUpdateModal(false);
+                        // Dispensar devolve o botao ao "verificar atualizacao";
+                        // a proxima verificacao volta a oferecer os dois aneis.
+                        setUpdateState((state) => ({ ...state, ringOptions: [] }));
+                      }}
+                      style={styles.secondaryButton}
+                    >
+                      Agora não
                     </button>
                   </div>
                 </div>
@@ -5491,8 +5590,18 @@ function SidebarSection({ title, children }: { title: string; children: React.Re
 }
 
 function describeUpdateState(state: UpdateState): string {
+  if (hasUpdateRingChoice(state)) {
+    const versions = state.ringOptions
+      .map((option) => `${updateRingLabel(option.ring)} ${option.version}`)
+      .join(" ou ");
+    return `Escolha a versao para instalar: ${versions}.`;
+  }
+
   if (state.status === "available") {
-    return `Versao ${state.availableVersion ?? "nova"} disponivel.`;
+    // O anel so aparece na balanca de teste — na de producao ele e sempre o
+    // mesmo, e nomea-lo em cada aviso seria ruido.
+    const ring = state.availableRing ? ` (${updateRingLabel(state.availableRing)})` : "";
+    return `Versao ${state.availableVersion ?? "nova"}${ring} disponivel.`;
   }
 
   if (state.status === "downloaded") {
