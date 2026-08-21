@@ -999,6 +999,20 @@ function registerIpcHandlers(): void {
     return runtime.reconcileOmieInvoiceNumbers(sanitizeOperationIdList(operationIds));
   });
 
+  // "Cancelar as pesagens repetidas": cancela a carga registrada duas vezes. Mexe em
+  // operacao concluida, entao a tela confirma com o operador antes de chegar aqui.
+  ipcMain.handle(
+    "desktop:cancel-invoice-closing-duplicates",
+    (_event, startDate: string, endDate: string, options?: unknown) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.cancelInvoiceClosingDuplicates(
+        startDate,
+        endDate,
+        sanitizeInvoiceClosingOptions(options)
+      );
+    }
+  );
+
   // "Fazer fechamento": fatura no OMIE as pesagens do periodo. Emite nota fiscal — a tela
   // confirma com o operador antes de chegar aqui.
   ipcMain.handle(

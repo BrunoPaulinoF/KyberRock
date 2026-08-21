@@ -9,16 +9,19 @@ import type { InvoiceClosingLine } from "./invoice-closing.js";
  * pesagens que estao na tela (o periodo, o cliente e os filtros que a atendente escolheu) e
  * fatura cada uma no OMIE, que emite a nota do cliente daquela pesagem.
  *
- * Tres cuidados sao a razao do modulo existir separado da tela:
+ * Quatro cuidados sao a razao do modulo existir separado da tela:
  *
- *  1. **Nao refatura o que ja tem nota.** Uma pesagem ja faturada e PULADA, nunca reenviada:
+ *  1. **Nao fatura carga repetida.** A mesma carga registrada duas vezes (o relancamento
+ *     que corrigiu preco ou tipo, com a errada esquecida no lugar) sai da passada: faturar
+ *     as duas emitiria duas notas da mesma carga.
+ *  2. **Nao refatura o que ja tem nota.** Uma pesagem ja faturada e PULADA, nunca reenviada:
  *     refaturar duplicaria a NF-e do cliente, que e um problema fiscal, nao um retrabalho.
  *     A idempotencia do OMIE (`kyberrock:{unitId}:{operationId}:{action}`) e a segunda
  *     defesa; esta e a primeira.
- *  2. **Uma falha nao derruba a passada.** A pesagem com cadastro incompleto trava o
+ *  3. **Uma falha nao derruba a passada.** A pesagem com cadastro incompleto trava o
  *     faturamento dela e so dela — as outras vinte continuam. Fechar dezenove de vinte e
  *     ver a que faltou vale muito mais que abortar tudo na terceira.
- *  3. **A conta volta linha a linha.** Cada pesagem devolve o que aconteceu com ela, para a
+ *  4. **A conta volta linha a linha.** Cada pesagem devolve o que aconteceu com ela, para a
  *     tela dizer exatamente quais faltaram e por que — um "12 de 20" sem lista deixaria a
  *     atendente procurando as oito no OMIE.
  *
@@ -53,6 +56,12 @@ export interface InvoiceClosingRunCandidate {
   alreadyBilled: boolean;
   /** Falso na carga antiga que ficou sem cliente: nao ha para quem emitir nota. */
   hasCustomer: boolean;
+  /**
+   * A mesma carga ja esta no fechamento por outra pesagem (relancamento que ficou para
+   * tras). Faturar esta aqui emitiria uma SEGUNDA nota da mesma carga — o problema fiscal
+   * que este modulo existe para evitar.
+   */
+  isDuplicate: boolean;
   totalCents: number;
 }
 
@@ -115,6 +124,7 @@ export function selectInvoiceClosingCandidates(
     invoiceNumber: line.invoiceNumber,
     alreadyBilled: line.situation === "billed" || Boolean(line.invoiceNumber),
     hasCustomer: Boolean(line.customerId),
+    isDuplicate: line.isDuplicate,
     totalCents: line.totalCents
   }));
 }
@@ -123,7 +133,10 @@ export function selectInvoiceClosingCandidates(
 export function countBillableCandidates(candidates: readonly InvoiceClosingRunCandidate[]): number {
   return candidates.filter(
     (candidate) =>
-      candidate.operationType === "invoice" && !candidate.alreadyBilled && candidate.hasCustomer
+      candidate.operationType === "invoice" &&
+      !candidate.alreadyBilled &&
+      !candidate.isDuplicate &&
+      candidate.hasCustomer
   ).length;
 }
 
@@ -159,6 +172,20 @@ export async function runInvoiceClosing(
         ...base,
         status: "skipped",
         message: "Venda interna: nao gera nota fiscal, e sim ordem de servico no OMIE."
+      });
+      continue;
+    }
+
+    // Repetida: a carga ja esta sendo faturada na outra pesagem. Vem antes de tudo porque
+    // uma segunda nota da mesma carga e problema fiscal, e nao retrabalho — e porque a
+    // repetida costuma ser justamente a que ainda nao tem nota, e sem esta guarda seria a
+    // primeira da fila a ser enviada.
+    if (candidate.isDuplicate) {
+      items.push({
+        ...base,
+        status: "skipped",
+        message:
+          "Pesagem repetida: a mesma carga ja esta no fechamento em outro vale. Cancele esta para tirar a duplicidade."
       });
       continue;
     }

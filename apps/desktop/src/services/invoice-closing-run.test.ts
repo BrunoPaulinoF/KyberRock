@@ -19,6 +19,7 @@ function candidate(
     invoiceNumber: null,
     alreadyBilled: false,
     hasCustomer: true,
+    isDuplicate: false,
     totalCents: 100_000,
     ...overrides
   };
@@ -184,6 +185,32 @@ describe("runInvoiceClosing", () => {
     const result = await runInvoiceClosing([], async () => BILLED);
     expect(result).toMatchObject({ requested: 0, billed: 0, items: [] });
   });
+
+  it("NAO fatura a carga repetida — seriam duas notas da mesma carga", async () => {
+    const bill = vi.fn(async () => BILLED);
+
+    const result = await runInvoiceClosing(
+      [
+        candidate({ operationId: "repetida", couponNumber: 970, isDuplicate: true }),
+        candidate({ operationId: "op-certa", couponNumber: 1126 })
+      ],
+      bill
+    );
+
+    expect(bill).toHaveBeenCalledTimes(1);
+    expect(bill).toHaveBeenCalledWith("op-certa");
+    expect(result).toMatchObject({ billed: 1, skipped: 1 });
+    expect(result.items[0]?.message).toContain("repetida");
+  });
+
+  it("a repetida nao entra na contagem que a confirmacao mostra", () => {
+    expect(
+      countBillableCandidates([
+        candidate({ operationId: "repetida", isDuplicate: true }),
+        candidate({ operationId: "op-certa" })
+      ])
+    ).toBe(1);
+  });
 });
 
 function line(overrides: Partial<InvoiceClosingLine> = {}): InvoiceClosingLine {
@@ -217,6 +244,8 @@ function line(overrides: Partial<InvoiceClosingLine> = {}): InvoiceClosingLine {
     situation: "sent",
     situationLabel: "No OMIE, falta faturar",
     situationDetail: null,
+    isDuplicate: false,
+    duplicateOfCouponNumber: null,
     ...overrides
   };
 }

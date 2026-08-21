@@ -2409,6 +2409,58 @@ export class DesktopRuntime {
   }
 
   /**
+   * "Cancelar as pesagens repetidas": tira do sistema a carga que foi registrada duas vezes.
+   *
+   * O relancamento feito para corrigir preco ou tipo de venda deixa a pesagem errada para
+   * tras, concluida, somando no fechamento e, no OMIE, virando um pedido que alguem exclui
+   * la dentro — e e essa a diferenca entre os dois totais. O fechamento ja para de cobrar a
+   * repetida sozinho; este botao e o passo que faltava: cancela de vez, com motivo gravado,
+   * e leva o cancelamento para a nuvem e para o OMIE pelo caminho normal do
+   * `cancelWeighing` (que exclui o pedido/OS de la quando ele ainda nao virou nota).
+   *
+   * Cancela SO as repetidas que o relatorio marcou (`report.duplicates[].repeats`), e
+   * recalcula a lista aqui em vez de aceitar ids da tela: entre abrir a tela e clicar o
+   * botao a base pode ter mudado, e cancelar pesagem por id vindo de fora seria uma porta
+   * para cancelar qualquer carga.
+   *
+   * Repetida que JA TEM NOTA emitida nao e cancelada: a nota existe, o cliente vai receber a
+   * cobranca dela, e so o OMIE cancela nota fiscal. Ela volta na lista de `skipped`, com o
+   * numero da nota, para a atendente resolver do lado de la.
+   */
+  cancelInvoiceClosingDuplicates(
+    startDate: string,
+    endDate: string,
+    options?: InvoiceClosingOptions
+  ): { cancelled: number; skipped: Array<{ couponNumber: number | null; invoiceNumber: string }> } {
+    this.assertDesktopAccess();
+    const report = this.getInvoiceClosing(startDate, endDate, options);
+    const skipped: Array<{ couponNumber: number | null; invoiceNumber: string }> = [];
+    let cancelled = 0;
+
+    for (const group of report.duplicates) {
+      for (const repeat of group.repeats) {
+        if (repeat.invoiceNumber) {
+          skipped.push({
+            couponNumber: repeat.couponNumber,
+            invoiceNumber: repeat.invoiceNumber
+          });
+          continue;
+        }
+        const keptCoupon = group.kept[0]?.couponNumber ?? null;
+        this.cancelWeighing(
+          repeat.operationId,
+          keptCoupon === null
+            ? "Pesagem repetida: a mesma carga ja esta registrada em outro vale."
+            : `Pesagem repetida: a mesma carga ja esta registrada no vale ${keptCoupon}.`
+        );
+        cancelled += 1;
+      }
+    }
+
+    return { cancelled, skipped };
+  }
+
+  /**
    * Os documentos do fechamento prontos para gravar. Recebem os MESMOS filtros da tela: o
    * arquivo que vai para o cliente tem de trazer exatamente as faturas que a atendente
    * estava olhando quando clicou em gerar.

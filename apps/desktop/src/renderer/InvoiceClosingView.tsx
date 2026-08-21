@@ -134,6 +134,8 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
   const [runProgress, setRunProgress] = useState<InvoiceClosingRunProgress | null>(null);
   const [runResult, setRunResult] = useState<InvoiceClosingRunResult | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  const [cancellingDuplicates, setCancellingDuplicates] = useState(false);
+  const [confirmingDuplicates, setConfirmingDuplicates] = useState(false);
   const [plates, setPlates] = useState<string[]>([]);
   const [plateSearch, setPlateSearch] = useState("");
   const [search, setSearch] = useState("");
@@ -250,6 +252,46 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
       setConfirmingRun(true);
     } catch (err) {
       setRunError(err instanceof Error ? err.message : "Falha ao conferir o fechamento.");
+    }
+  }
+
+  /**
+   * Cancela as pesagens repetidas do periodo — a mesma carga registrada duas vezes.
+   *
+   * O fechamento ja para de cobrar a repetida sozinho; aqui ela sai de vez, com o motivo
+   * gravado, e o cancelamento segue para a nuvem e para o OMIE (onde o pedido e excluido
+   * enquanto nao virou nota). Quem escolhe quais sao as repetidas e o processo principal, a
+   * partir do MESMO relatorio da tela: a tela manda o periodo e os filtros, nunca ids.
+   */
+  async function handleCancelDuplicates(): Promise<void> {
+    if (!desktopApi) return;
+    setConfirmingDuplicates(false);
+    setCancellingDuplicates(true);
+    setRunError(null);
+    setExportMessage(null);
+    try {
+      const result = await desktopApi.cancelInvoiceClosingDuplicates(
+        range.start,
+        range.end,
+        options
+      );
+      await loadReport();
+      const skippedNote =
+        result.skipped.length === 0
+          ? ""
+          : ` ${formatCount(result.skipped.length)} repetida(s) com nota emitida continuam na fatura: so o OMIE cancela nota (${result.skipped
+              .map(
+                (item) =>
+                  `vale ${formatCouponNumber(item.couponNumber)} / nota ${item.invoiceNumber}`
+              )
+              .join("; ")}).`;
+      setExportMessage(
+        `${formatCount(result.cancelled)} pesagem(ns) repetida(s) cancelada(s).${skippedNote}`
+      );
+    } catch (err) {
+      setRunError(err instanceof Error ? err.message : "Falha ao cancelar as pesagens repetidas.");
+    } finally {
+      setCancellingDuplicates(false);
     }
   }
 
@@ -669,6 +711,17 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
             />
           </div>
 
+          {report.duplicates.length > 0 ? (
+            <DuplicatesCard
+              report={report}
+              busy={cancellingDuplicates}
+              confirming={confirmingDuplicates}
+              onAsk={() => setConfirmingDuplicates(true)}
+              onCancelAsk={() => setConfirmingDuplicates(false)}
+              onConfirm={() => void handleCancelDuplicates()}
+            />
+          ) : null}
+
           {report.pendingSetup.length > 0 ? (
             <div style={styles.card}>
               <h3 style={styles.cardTitle}>
@@ -958,6 +1011,139 @@ function RunConfirmation({
 }
 
 /**
+ * Pesagens repetidas: a MESMA carga registrada duas vezes.
+ *
+ * Uma pesagem fechada nao pode ser editada. Quando o preco sai errado, ou a venda foi
+ * lancada como interna em vez de com nota, a saida que a tela oferece e registrar a carga de
+ * novo — e a errada fica para tras, concluida, somando no fechamento. No OMIE alguem exclui
+ * o pedido errado, aqui a pesagem continua: e essa a diferenca de valor entre os dois
+ * fechamentos que os clientes reclamam.
+ *
+ * O card e o unico lugar em que essa conta aparece por extenso. As repetidas JA ficaram de
+ * fora das faturas (por isso o total das faturas e menor que o da lista pesagem a pesagem),
+ * e o botao e o passo seguinte: cancelar de vez, com o motivo gravado, para a repetida sumir
+ * tambem dos outros relatorios e da nuvem.
+ */
+function DuplicatesCard({
+  report,
+  busy,
+  confirming,
+  onAsk,
+  onCancelAsk,
+  onConfirm
+}: {
+  report: InvoiceClosingReport;
+  busy: boolean;
+  confirming: boolean;
+  onAsk: () => void;
+  onCancelAsk: () => void;
+  onConfirm: () => void;
+}) {
+  // So o que este botao consegue cancelar: a repetida que ainda nao tem nota. Com nota
+  // emitida, quem cancela e o OMIE — e prometer o contrario seria pior que nao oferecer.
+  const cancellable = report.duplicates.flatMap((group) =>
+    group.repeats.filter((repeat) => !repeat.invoiceNumber)
+  );
+  const billedTwice = report.duplicates.filter((group) => group.billedMoreThanOnce);
+
+  return (
+    <div style={styles.card}>
+      <h3 style={{ ...styles.cardTitle, color: "var(--kr-warning)" }}>
+        Pesagens repetidas ({formatCount(report.duplicates.length)})
+      </h3>
+      <p style={styles.hint}>
+        A mesma carga (mesmo cliente, mesma placa, mesmo produto e os dois pesos iguais) registrada
+        mais de uma vez — o relancamento feito para corrigir preco ou tipo de venda, com a errada
+        esquecida no lugar. Elas <strong>ja estao fora das faturas</strong> (
+        {formatBRL(report.duplicateTotals.totalCents)} em {""}
+        {formatCount(report.duplicateTotals.operations)} carga(s)): cobrar as duas seria cobrar a
+        mesma carga duas vezes, e e essa soma a mais que faz o total daqui nao bater com o do OMIE.
+      </p>
+      {billedTwice.length > 0 ? (
+        <p style={styles.error}>
+          {formatCount(billedTwice.length)} carga(s) tem DUAS notas fiscais emitidas no OMIE. Essas
+          continuam nas faturas — a nota existe e o cliente vai receber a cobranca dela —, e o
+          cancelamento da nota so pode ser feito no OMIE.
+        </p>
+      ) : null}
+      <div style={styles.tableScroll}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={{ ...styles.th, textAlign: "left" }}>Cliente</th>
+              <th style={{ ...styles.th, textAlign: "left" }}>Placa</th>
+              <th style={{ ...styles.th, textAlign: "left" }}>Produto</th>
+              <th style={styles.th}>Entrada / Saida</th>
+              <th style={styles.th}>Vale que vale</th>
+              <th style={styles.th}>Vale(s) repetido(s)</th>
+              <th style={styles.th}>Fora da fatura</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.duplicates.map((group) => (
+              <tr key={group.key}>
+                <td style={{ ...styles.td, textAlign: "left" }}>{group.customerName}</td>
+                <td style={{ ...styles.td, textAlign: "left" }}>{group.plate}</td>
+                <td style={{ ...styles.td, textAlign: "left" }}>{group.productDescription}</td>
+                <td style={styles.td}>
+                  {formatKg(group.entryWeightKg)} / {formatKg(group.exitWeightKg)}
+                </td>
+                <td style={styles.td}>
+                  {group.kept
+                    .map(
+                      (kept) =>
+                        `${formatCouponNumber(kept.couponNumber)}${kept.invoiceNumber ? ` (nota ${kept.invoiceNumber})` : ""}`
+                    )
+                    .join(", ")}
+                </td>
+                <td style={styles.td}>
+                  {group.repeats
+                    .map(
+                      (repeat) =>
+                        `${formatCouponNumber(repeat.couponNumber)} — ${formatDayLabel(repeat.date)}${repeat.invoiceNumber ? ` (nota ${repeat.invoiceNumber})` : ""}`
+                    )
+                    .join(", ")}
+                </td>
+                <td style={styles.td}>{formatBRL(group.removedTotalCents)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {cancellable.length === 0 ? (
+        <p style={styles.footNote}>
+          Nada a cancelar por aqui: as repetidas deste periodo ja tem nota emitida no OMIE.
+        </p>
+      ) : confirming ? (
+        <div style={styles.confirmCard}>
+          <p style={styles.hint}>
+            Vao ser canceladas <strong>{formatCount(cancellable.length)}</strong> pesagem(ns)
+            repetida(s). A carga que ficou valendo NAO e tocada. O cancelamento tambem exclui o
+            pedido (ou a ordem de servico) delas no OMIE, e nao se desfaz pelo aplicativo.
+          </p>
+          <div style={{ ...styles.chipRow, marginTop: "10px" }}>
+            <button type="button" onClick={onCancelAsk} style={styles.linkButton}>
+              Voltar
+            </button>
+            <button type="button" onClick={onConfirm} style={styles.dangerButton}>
+              Cancelar {formatCount(cancellable.length)} pesagem(ns) repetida(s)
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ ...styles.chipRow, marginTop: "10px" }}>
+          <button type="button" onClick={onAsk} disabled={busy} style={styles.dangerButton}>
+            {busy
+              ? "Cancelando..."
+              : `Cancelar ${formatCount(cancellable.length)} pesagem(ns) repetida(s)`}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * O que a passada do fechamento fez, pesagem a pesagem.
  *
  * A contagem sozinha nao resolve: "18 de 20" deixa a atendente procurando as duas que
@@ -1212,11 +1398,19 @@ function DetailRow({ line }: { line: InvoiceClosingLine }) {
           style={{ ...styles.td, textAlign: "left", color: "var(--kr-warning)", fontWeight: 700 }}
           colSpan={2}
           title={
-            "Esta carga nao entrou em fatura nenhuma: o cliente nao tem credito e " +
-            "periodicidade do fechamento no cadastro."
+            // Duas razoes muito diferentes para a mesma coluna vazia. Sem separar, a carga
+            // repetida vinha explicada como "falta cadastro do cliente" e a atendente ia
+            // mexer no cadastro certo por um problema que nao era dele.
+            line.isDuplicate
+              ? "Esta carga ja esta no fechamento em outro vale: a mesma pesagem foi " +
+                "registrada duas vezes. Cobrar as duas seria cobrar a carga duas vezes."
+              : "Esta carga nao entrou em fatura nenhuma: o cliente nao tem credito e " +
+                "periodicidade do fechamento no cadastro."
           }
         >
-          Fora do fechamento
+          {line.isDuplicate
+            ? `Repetida do vale ${formatCouponNumber(line.duplicateOfCouponNumber)}`
+            : "Fora do fechamento"}
         </td>
       ) : (
         <>

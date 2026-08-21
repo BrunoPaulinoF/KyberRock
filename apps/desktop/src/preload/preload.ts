@@ -173,6 +173,8 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:run-invoice-closing", startDate, endDate, options),
   reconcileOmieInvoiceNumbers: (operationIds: readonly string[]) =>
     ipcRenderer.invoke("desktop:reconcile-omie-invoice-numbers", operationIds),
+  cancelInvoiceClosingDuplicates: (startDate: string, endDate: string, options?: unknown) =>
+    ipcRenderer.invoke("desktop:cancel-invoice-closing-duplicates", startDate, endDate, options),
   onInvoiceClosingProgress: (callback: (progress: unknown) => void) => {
     const wrapper = (_event: unknown, progress: unknown): void => callback(progress);
     ipcRenderer.on("desktop:invoice-closing-progress", wrapper);

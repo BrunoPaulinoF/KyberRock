@@ -16,6 +16,8 @@ import type { WeighingBillingSituation } from "./weighing-billing-situation.js";
 import { CLOSED_OPERATION_STATUS_SQL_LIST } from "./weighing-operations.js";
 import { INVOICE_CLOSING_CYCLE_LABEL, isInvoiceClosingCycle } from "./invoice-closing-cycle.js";
 import type { InvoiceClosingCycle } from "./invoice-closing-cycle.js";
+import { findDuplicateWeighings } from "./weighing-duplicates.js";
+import type { DuplicateWeighingGroup } from "./weighing-duplicates.js";
 
 /**
  * Fechamento de faturas: a fatura de TODOS os clientes de um ciclo, de uma vez.
@@ -118,6 +120,18 @@ export interface InvoiceClosingLine {
   situationLabel: string;
   /** O motivo gravado pelo OMIE, quando ha — e o que explica uma pesagem parada. */
   situationDetail: string | null;
+  /**
+   * A MESMA carga ja esta no fechamento por outra pesagem: esta aqui e o relancamento que
+   * ficou para tras (ver `weighing-duplicates.ts`).
+   *
+   * A linha continua na lista de conferencia — sumir com ela deixaria a atendente sem
+   * entender por que o total da lista nao bate com o das faturas —, mas ela NAO entra em
+   * fatura nenhuma: cobrar as duas e cobrar a mesma carga duas vezes, e e essa soma a mais
+   * que fazia o fechamento do KyberRock nao bater com o do OMIE.
+   */
+  isDuplicate: boolean;
+  /** O vale da pesagem que ficou valendo, para a linha repetida se explicar sozinha. */
+  duplicateOfCouponNumber: number | null;
 }
 
 export interface InvoiceClosingTotals {
@@ -205,6 +219,43 @@ export interface InvoiceClosingPendingCustomer {
   totalCents: number;
 }
 
+/** Uma pesagem dentro de um grupo de repetidas. */
+export interface InvoiceClosingDuplicateEntry {
+  operationId: string;
+  couponNumber: number | null;
+  date: string;
+  totalCents: number;
+  operationTypeLabel: string;
+  /** Numero da nota emitida no OMIE, quando ha. */
+  invoiceNumber: string | null;
+  /** True quando esta pesagem esta no periodo e nos filtros da tela. */
+  inPeriod: boolean;
+}
+
+/**
+ * A mesma carga registrada mais de uma vez — o relancamento feito para corrigir preco ou
+ * tipo de venda, sem que a errada fosse cancelada. Veja `weighing-duplicates.ts`.
+ */
+export interface InvoiceClosingDuplicateGroup {
+  key: string;
+  customerName: string;
+  plate: string;
+  productDescription: string;
+  entryWeightKg: number;
+  exitWeightKg: number;
+  /** A(s) que continua(m) valendo no fechamento. */
+  kept: InvoiceClosingDuplicateEntry[];
+  /** As repetidas, que saem da fatura e podem ser canceladas. */
+  repeats: InvoiceClosingDuplicateEntry[];
+  /** Quanto este grupo tirou das faturas desta tela. */
+  removedTotalCents: number;
+  /**
+   * Duas notas fiscais para a mesma carga. O KyberRock nao tira nenhuma das duas da fatura
+   * — as duas existem no OMIE —, e o conserto e cancelar uma nota la dentro.
+   */
+  billedMoreThanOnce: boolean;
+}
+
 /**
  * De onde sai o fechamento de cada carga: do PERIODO escolhido na tela ou da periodicidade
  * cadastrada no cliente. Veja o cabecalho do modulo.
@@ -255,6 +306,16 @@ export interface InvoiceClosingReport {
    */
   rowTotals: InvoiceClosingTotals;
   totals: InvoiceClosingTotals;
+  /**
+   * As cargas registradas duas vezes que este fechamento encontrou.
+   *
+   * Sao a explicacao do total: sem esta lista, tirar as repetidas da fatura seria o
+   * fechamento "perdendo" dinheiro sem dizer por que. Com ela, a atendente ve a carga, o
+   * vale que ficou valendo e o que sobrou para cancelar.
+   */
+  duplicates: InvoiceClosingDuplicateGroup[];
+  /** O que as repetidas tirariam das faturas se ainda estivessem nelas. */
+  duplicateTotals: InvoiceClosingTotals;
   /** Quantos clientes distintos entraram no fechamento. */
   customers: number;
   /** Tudo que entrou na fatura mas ainda esta sem nota emitida no OMIE. */
@@ -366,6 +427,19 @@ export class InvoiceClosingService {
 
     const sourceRows = this.loadRows(startDate, endDate, unitId, customerIds);
 
+    // A mesma carga registrada duas vezes. Sai de uma busca PROPRIA, mais larga que o
+    // periodo da tela: o relancamento que corrige o preco de uma quinzena costuma ser feito
+    // dias depois, e olhando so o periodo a original ficaria na fatura e a correcao fora
+    // dela — a fatura cobraria justamente a errada.
+    const duplicateGroups = findDuplicateWeighings(this.db, unitId, startDate, endDate);
+    const duplicateKeeper = new Map<string, number | null>();
+    for (const group of duplicateGroups) {
+      const keeperCoupon = group.keepers[0]?.couponNumber ?? null;
+      for (const repeat of group.duplicates) {
+        duplicateKeeper.set(repeat.operationId, keeperCoupon);
+      }
+    }
+
     const invoices = new Map<string, InvoiceClosingInvoice>();
     const pending = new Map<string, InvoiceClosingPendingCustomer>();
     // `lines` e o que entrou em fatura (a base dos totais do fechamento); `rows` e o
@@ -375,6 +449,11 @@ export class InvoiceClosingService {
     const rows: InvoiceClosingLine[] = [];
     const carrierRows: Array<{ line: InvoiceClosingLine; carrierName: string }> = [];
     const availablePlates = new Set<string>();
+
+    // Os ids que aparecem na tela depois dos filtros: e o que decide quais grupos de
+    // repetidas viram aviso e quanto eles tiraram DESTE fechamento.
+    const visibleOperationIds = new Set<string>();
+    const duplicateLines: InvoiceClosingLine[] = [];
 
     for (const row of sourceRows) {
       const line = mapLine(row);
@@ -401,6 +480,17 @@ export class InvoiceClosingService {
       // A lista de conferencia vem ANTES da fatura: ela e do periodo, nao das faturas, e
       // mostrar so o que entrou em fatura esconderia justamente a carga que ninguem cobra.
       rows.push(line);
+      visibleOperationIds.add(line.operationId);
+
+      // Repetida: continua na lista de conferencia (com o vale da que ficou valendo), mas
+      // nao entra em fatura nenhuma nem em "clientes fora do fechamento" — ela nao e uma
+      // carga a cobrar, e uma carga que ja esta sendo cobrada na outra linha.
+      if (duplicateKeeper.has(line.operationId)) {
+        line.isDuplicate = true;
+        line.duplicateOfCouponNumber = duplicateKeeper.get(line.operationId) ?? null;
+        duplicateLines.push(line);
+        continue;
+      }
 
       // Base `customer` sem credito habilitado: a carga nao pertence a fechamento nenhum e
       // vai para "Clientes fora do fechamento". Na base `period` isso nao existe — todo
@@ -467,6 +557,8 @@ export class InvoiceClosingService {
       periodLabel: options.periodLabel ?? null,
       filters: { basis, periodCycle, cycles, customerId, plates, search: search || null },
       invoices: orderedInvoices,
+      duplicates: buildDuplicateGroups(duplicateGroups, visibleOperationIds),
+      duplicateTotals: buildTotals(duplicateLines),
       rows,
       rowTotals: buildTotals(rows),
       totals: buildTotals(lines),
@@ -580,7 +672,10 @@ function mapLine(row: InvoiceClosingSourceRow): InvoiceClosingLine {
     operationTypeLabel: row.operation_type === "internal" ? "Interna" : "Com nota",
     situation,
     situationLabel: WEIGHING_BILLING_SITUATION_LABEL[situation],
-    situationDetail: resolveSituationDetail(row, situation)
+    situationDetail: resolveSituationDetail(row, situation),
+    // Preenchidos quando a deteccao de repetidas reconhece a linha.
+    isDuplicate: false,
+    duplicateOfCouponNumber: null
   };
 }
 
@@ -724,6 +819,52 @@ function matchesSearch(
     line.omieOrderNumber ?? "",
     line.couponNumber === null ? "" : String(line.couponNumber)
   ].some((field) => field.toLowerCase().includes(term));
+}
+
+/**
+ * Os grupos de repetidas que interessam a ESTA tela: os que tem alguma pesagem entre as
+ * linhas que sobraram dos filtros.
+ *
+ * Um grupo inteiro de outro cliente, ou de uma placa que a atendente nem escolheu, so
+ * atrapalharia a conferencia do que esta na tela. E o valor "tirado da fatura" e contado
+ * pelas repetidas VISIVEIS pelo mesmo motivo: e o que explica o total mostrado aqui.
+ */
+function buildDuplicateGroups(
+  groups: readonly DuplicateWeighingGroup[],
+  visibleOperationIds: ReadonlySet<string>
+): InvoiceClosingDuplicateGroup[] {
+  const entry = (
+    candidate: DuplicateWeighingGroup["duplicates"][number]
+  ): InvoiceClosingDuplicateEntry => ({
+    operationId: candidate.operationId,
+    couponNumber: candidate.couponNumber,
+    date: candidate.date,
+    totalCents: candidate.totalCents,
+    operationTypeLabel: candidate.operationType === "internal" ? "Interna" : "Com nota",
+    invoiceNumber: candidate.invoiceNumber,
+    inPeriod: visibleOperationIds.has(candidate.operationId)
+  });
+
+  return groups
+    .filter((group) =>
+      [...group.keepers, ...group.duplicates].some((candidate) =>
+        visibleOperationIds.has(candidate.operationId)
+      )
+    )
+    .map((group) => ({
+      key: group.key,
+      customerName: group.customerName,
+      plate: group.plate,
+      productDescription: group.productDescription,
+      entryWeightKg: group.entryWeightKg,
+      exitWeightKg: group.exitWeightKg,
+      kept: group.keepers.map(entry),
+      repeats: group.duplicates.map(entry),
+      removedTotalCents: group.duplicates
+        .filter((candidate) => visibleOperationIds.has(candidate.operationId))
+        .reduce((total, candidate) => total + candidate.totalCents, 0),
+      billedMoreThanOnce: group.billedMoreThanOnce
+    }));
 }
 
 function emptyTotals(): InvoiceClosingTotals {
