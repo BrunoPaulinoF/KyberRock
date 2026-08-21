@@ -340,6 +340,19 @@ export interface KyberRockDesktopApi {
     endDate: string,
     options?: InvoiceClosingOptions
   ) => Promise<{ checked: number; billed: number; errors: string[] }>;
+  /**
+   * "Cancelar as pesagens repetidas": cancela as cargas que o fechamento identificou como a
+   * MESMA carga registrada duas vezes. Nao toca na que ficou valendo, e pula a repetida que
+   * ja tem nota emitida (essa so o OMIE cancela) — devolvida em `skipped`.
+   */
+  cancelInvoiceClosingDuplicates: (
+    startDate: string,
+    endDate: string,
+    options?: InvoiceClosingOptions
+  ) => Promise<{
+    cancelled: number;
+    skipped: Array<{ couponNumber: number | null; invoiceNumber: string }>;
+  }>;
   /** Andamento do fechamento em curso. Devolve a funcao que cancela a escuta. */
   onInvoiceClosingProgress: (callback: (progress: InvoiceClosingRunProgress) => void) => () => void;
   /** `search` recorta o relatorio por placa ou motorista, como a busca da tela. */

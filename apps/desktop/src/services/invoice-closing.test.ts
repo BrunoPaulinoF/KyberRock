@@ -130,6 +130,9 @@ interface OperationSeed {
   billingStatus?: string | null;
   billingMessage?: string | null;
   deletedAt?: string | null;
+  /** Pesos da balanca. So os testes de pesagem repetida precisam deles. */
+  entryKg?: number | null;
+  exitKg?: number | null;
 }
 
 function insertOperation(db: Database, seed: OperationSeed): void {
@@ -137,12 +140,13 @@ function insertOperation(db: Database, seed: OperationSeed): void {
     `INSERT INTO weighing_operations
        (id, company_id, unit_id, device_id, operation_code, status, operation_type,
         customer_id, vehicle_id, carrier_id, driver_id, product_id,
+        entry_weight_kg, exit_weight_kg,
         net_weight_kg, unit_price_cents, price_unit,
         product_total_cents, freight_total_cents, total_cents,
         omie_sales_order_id, omie_order_number, omie_invoice_number,
         omie_billing_status, omie_billing_message,
         created_at, updated_at, deleted_at)
-     VALUES (?, 'comp-1', ?, 'dev-1', ?, ?, ?, ?, ?, ?, ?, 'prod-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, 'comp-1', ?, 'dev-1', ?, ?, ?, ?, ?, ?, ?, 'prod-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     seed.id,
     seed.unitId ?? "unit-1",
@@ -153,6 +157,8 @@ function insertOperation(db: Database, seed: OperationSeed): void {
     seed.vehicle ?? "veh-1",
     seed.carrier ?? null,
     seed.driver ?? "drv-1",
+    seed.entryKg ?? null,
+    seed.exitKg ?? null,
     seed.net ?? 10_000,
     seed.unitPriceCents === undefined ? 4_200 : seed.unitPriceCents,
     seed.priceUnit === undefined ? "ton" : seed.priceUnit,
@@ -912,6 +918,92 @@ describe("InvoiceClosingService", () => {
       expect(
         periodReport(db, { customerId: "outro" }).rows.map((line) => line.operationId)
       ).toEqual(["op-outro"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("tira da fatura a carga registrada duas vezes e explica o que saiu", () => {
+    // O caso das reclamacoes: o preco saiu errado, a atendente relancou a carga inteira e a
+    // errada ficou para tras, concluida. O OMIE cobra uma; o fechamento cobrava duas.
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, { id: "cust-1", name: "Alfa" });
+      insertOperation(db, {
+        id: "op-errada",
+        code: 970,
+        customer: "cust-1",
+        createdAt: "2026-07-19",
+        entryKg: 7_640,
+        exitKg: 16_970,
+        totalCents: 42_526
+      });
+      insertOperation(db, {
+        id: "op-certa",
+        code: 1126,
+        customer: "cust-1",
+        createdAt: "2026-07-21",
+        entryKg: 7_640,
+        exitKg: 16_970,
+        totalCents: 36_042
+      });
+
+      const result = periodReport(db);
+
+      // A lista de conferencia continua com as duas — some-las esconderia a repeticao.
+      expect(result.rows.map((line) => line.operationId)).toEqual(["op-errada", "op-certa"]);
+      expect(result.rows[0]?.isDuplicate).toBe(true);
+      expect(result.rows[0]?.duplicateOfCouponNumber).toBe(1126);
+      expect(result.rows[1]?.isDuplicate).toBe(false);
+
+      // A fatura cobra so a que vale.
+      expect(result.totals.operations).toBe(1);
+      expect(result.totals.totalCents).toBe(36_042);
+      expect(result.invoices).toHaveLength(1);
+      expect(result.invoices[0]?.lines.map((line) => line.operationId)).toEqual(["op-certa"]);
+
+      expect(result.duplicates).toHaveLength(1);
+      expect(result.duplicates[0]?.removedTotalCents).toBe(42_526);
+      expect(result.duplicates[0]?.repeats.map((item) => item.couponNumber)).toEqual([970]);
+      expect(result.duplicates[0]?.kept.map((item) => item.couponNumber)).toEqual([1126]);
+      expect(result.duplicateTotals.totalCents).toBe(42_526);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("mantem na fatura a repetida que ja tem nota emitida no OMIE", () => {
+    // A nota existe e o cliente vai receber a cobranca dela: tirar da fatura faria o
+    // fechamento nao bater com o OMIE de novo, agora para menos. So o OMIE cancela nota.
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, { id: "cust-1", name: "Alfa" });
+      insertOperation(db, {
+        id: "op-com-nota",
+        code: 970,
+        customer: "cust-1",
+        createdAt: "2026-07-19",
+        entryKg: 7_640,
+        exitKg: 16_970,
+        totalCents: 42_526,
+        invoiceNumber: "4321"
+      });
+      insertOperation(db, {
+        id: "op-refeita",
+        code: 1126,
+        customer: "cust-1",
+        createdAt: "2026-07-21",
+        entryKg: 7_640,
+        exitKg: 16_970,
+        totalCents: 36_042
+      });
+
+      const result = periodReport(db);
+      expect(result.invoices[0]?.lines.map((line) => line.operationId)).toEqual(["op-com-nota"]);
+      expect(result.totals.totalCents).toBe(42_526);
+      expect(result.duplicates[0]?.repeats.map((item) => item.couponNumber)).toEqual([1126]);
     } finally {
       db.close();
     }
