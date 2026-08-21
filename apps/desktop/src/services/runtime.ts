@@ -191,9 +191,12 @@ import type { InvoiceClosingOptions } from "./invoice-closing.js";
 import {
   countBillableCandidates,
   runInvoiceClosing,
-  selectInvoiceClosingCandidates,
-  selectOperationsMissingInvoiceNumber
+  selectInvoiceClosingCandidates
 } from "./invoice-closing-run.js";
+import {
+  OMIE_INVOICE_NUMBER_ASK_LIMIT,
+  selectOperationsMissingInvoiceNumber
+} from "./omie-invoice-numbers.js";
 import type { InvoiceClosingRunProgress, InvoiceClosingRunResult } from "./invoice-closing-run.js";
 import {
   invoiceClosingFileBaseName,
@@ -2527,25 +2530,26 @@ export class DesktopRuntime {
    * uma no faturamento.
    */
   /**
-   * "Conferir notas no OMIE": pergunta AGORA quais cargas do periodo ja foram faturadas la
-   * e traz o numero da nota de cada uma.
+   * Pergunta ao OMIE o numero da nota DESTAS cargas — as que estao na tela agora.
    *
-   * A reconciliacao automatica roda por rodizio (o movimento recente a cada poucos minutos,
-   * o acervo de hora em hora) e depende da sincronizacao estar em dia. Quem vai enviar o
-   * relatorio ao cliente AGORA nao pode esperar a vez do rodizio: sem isto a coluna "Nota
-   * fiscal" saia com "-" numa carga cuja nota ja existia no OMIE, e o cliente recebia um
-   * documento que nao fecha com a nota que chegou para ele.
+   * Chamada pela propria tela ao abrir: a reconciliacao de fundo pergunta por rodizio, e o
+   * rodizio poe o movimento dos ultimos dois dias na frente do acervo. Fechar a quinzena
+   * do dia 1 ao 15 e olhar justamente para o acervo — as cargas que a atendente precisa
+   * agora sao as que o rodizio deixa para depois —, e por isso a coluna "Nota fiscal" saia
+   * com "-" numa carga cuja nota ja existia no OMIE.
+   *
+   * Somente LEITURA: nao fatura, nao emite e nao muda documento nenhum no OMIE. As cargas
+   * sem documento la, ou ja canceladas, sao descartadas na propria consulta da
+   * reconciliacao — mandar o id delas nao custa chamada.
    */
-  async reconcileInvoiceClosingNotes(
-    startDate: string,
-    endDate: string,
-    options?: InvoiceClosingOptions
+  async reconcileOmieInvoiceNumbers(
+    operationIds: readonly string[]
   ): Promise<{ checked: number; billed: number; errors: string[] }> {
     this.assertDesktopAccess();
-    const operationIds = this.closingPeriodOperationsWithoutInvoice(startDate, endDate, options);
-    if (operationIds.length === 0) return { checked: 0, billed: 0, errors: [] };
+    const wanted = operationIds.slice(0, OMIE_INVOICE_NUMBER_ASK_LIMIT);
+    if (wanted.length === 0) return { checked: 0, billed: 0, errors: [] };
     const result = await reconcileOmieBillingFromOmie(this.database, this.ensureIdentity(), {
-      operationIds
+      operationIds: wanted
     });
     return { checked: result.checked, billed: result.billed, errors: result.errors };
   }

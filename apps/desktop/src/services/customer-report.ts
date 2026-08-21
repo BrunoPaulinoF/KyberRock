@@ -97,6 +97,12 @@ export interface CustomerReportOperation {
   downPaymentCents: number | null;
   omieSalesOrderId: number | null;
   /**
+   * Codigo interno da ORDEM DE SERVICO no OMIE — o documento da venda interna, que emite
+   * NFS-e em vez de NF-e. Vem junto do pedido para a tela saber por quais cargas ainda
+   * falta perguntar o numero da nota, sem tratar a interna como se nao tivesse documento.
+   */
+  omieServiceOrderId: number | null;
+  /**
    * Numero da NOTA FISCAL emitida no OMIE — o que o cliente pede quando confere a fatura,
    * e o unico numero desta lista que existe fora do KyberRock e fora do OMIE.
    *
@@ -421,6 +427,7 @@ interface OperationRow extends CustomerColumns {
   manual_installments: number | null;
   manual_down_payment_cents: number | null;
   omie_sales_order_id: number | null;
+  omie_service_order_id: number | null;
   omie_invoice_number: string | null;
   omie_billing_status: string | null;
   omie_billed_at: string | null;
@@ -689,7 +696,7 @@ export class CustomerReportService {
            o.price_savings_percent, o.product_total_cents, o.total_cents,
            pm.name as payment_method_name, pt.name as payment_term_name,
            o.manual_installments, o.manual_down_payment_cents,
-           o.omie_sales_order_id, o.omie_invoice_number,
+           o.omie_sales_order_id, o.omie_service_order_id, o.omie_invoice_number,
            o.omie_billing_status, o.omie_billed_at, o.omie_document_url,
            o.cloud_synced_at, o.omie_synced_at
          FROM weighing_operations o
@@ -999,6 +1006,7 @@ function mapOperation(row: OperationRow): CustomerReportOperation {
     installments: row.manual_installments,
     downPaymentCents: row.manual_down_payment_cents,
     omieSalesOrderId: row.omie_sales_order_id,
+    omieServiceOrderId: row.omie_service_order_id,
     omieInvoiceNumber: (row.omie_invoice_number ?? "").trim() || null,
     omieBillingStatus: row.omie_billing_status,
     omieBilledAt: row.omie_billed_at,

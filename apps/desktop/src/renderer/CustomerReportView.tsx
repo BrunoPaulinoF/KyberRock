@@ -14,6 +14,7 @@ import {
 } from "../services/customer-report-render";
 import { IconActionButton } from "./IconActionButton";
 import { HelpTooltip } from "./Tooltip";
+import { useOmieInvoiceNumbers } from "./useOmieInvoiceNumbers";
 
 /**
  * Relatorio por cliente: o usuario escolhe o cliente, o periodo (atalhos ou datas
@@ -272,6 +273,21 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
   useEffect(() => {
     void loadReport();
   }, [loadReport]);
+
+  // O relatorio que vai para o cliente e o que mais precisa do numero da nota: e por ele
+  // que o cliente confere a fatura. As cargas ainda sem numero sao perguntadas ao OMIE
+  // assim que o relatorio aparece, e a tela recarrega quando alguma volta com nota.
+  const invoiceNumberRows = useMemo(
+    () =>
+      report?.operations.map((operation) => ({
+        operationId: operation.id,
+        invoiceNumber: operation.omieInvoiceNumber,
+        omieSalesOrderId: operation.omieSalesOrderId,
+        omieServiceOrderId: operation.omieServiceOrderId
+      })),
+    [report]
+  );
+  useOmieInvoiceNumbers(desktopApi, invoiceNumberRows, loadReport);
 
   async function handleExport(): Promise<void> {
     if (!desktopApi || !customerId) return;

@@ -3348,8 +3348,9 @@ describe("supabase sync", () => {
       });
       expect(invokeMock).toHaveBeenCalledTimes(1);
 
-      // O operador apertando "Conferir notas" e uma pergunta dele, nao a rotina de fundo:
-      // esperar o intervalo aqui e mandar o relatorio ao cliente sem o numero da nota.
+      // A tela do fechamento perguntando pelas cargas que estao nela e uma pergunta do
+      // operador, nao a rotina de fundo: esperar o intervalo aqui e deixar a coluna "Nota
+      // fiscal" com "-" e mandar o relatorio ao cliente sem o numero da nota.
       const targeted = await reconcileOmieBillingFromOmie(database, identity, {
         operationIds: ["op-1"]
       });
