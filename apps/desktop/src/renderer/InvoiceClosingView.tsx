@@ -133,6 +133,7 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
   const [runProgress, setRunProgress] = useState<InvoiceClosingRunProgress | null>(null);
   const [runResult, setRunResult] = useState<InvoiceClosingRunResult | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  const [checkingNotes, setCheckingNotes] = useState(false);
   const [plates, setPlates] = useState<string[]>([]);
   const [plateSearch, setPlateSearch] = useState("");
   const [search, setSearch] = useState("");
@@ -246,6 +247,39 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
     }
   }
 
+  /**
+   * Puxa do OMIE o numero da nota das cargas do periodo que ainda estao sem ele.
+   *
+   * So LE — nao fatura nada. Existe porque a conferencia automatica roda por rodizio, e
+   * quem vai mandar o relatorio ao cliente agora nao pode esperar a vez dela: sem isto a
+   * coluna "Nota fiscal" sai com "-" numa carga cuja nota ja existe no OMIE.
+   */
+  async function handleCheckNotes(): Promise<void> {
+    if (!desktopApi) return;
+    setRunError(null);
+    setExportMessage(null);
+    if (!navigator.onLine) {
+      setRunError("Conferir as notas exige internet conectada para falar com o OMIE.");
+      return;
+    }
+    setCheckingNotes(true);
+    try {
+      const result = await desktopApi.reconcileInvoiceClosingNotes(range.start, range.end, options);
+      await loadReport();
+      setExportMessage(
+        result.checked === 0
+          ? "Todas as cargas do periodo ja estavam com a nota conferida."
+          : result.billed > 0
+            ? `${formatCount(result.billed)} carga(s) ganharam o numero da nota. ${formatCount(result.checked)} conferida(s) no OMIE.`
+            : `${formatCount(result.checked)} carga(s) conferida(s): nenhuma delas foi faturada no OMIE ainda.`
+      );
+    } catch (err) {
+      setRunError(err instanceof Error ? err.message : "Falha ao conferir as notas no OMIE.");
+    } finally {
+      setCheckingNotes(false);
+    }
+  }
+
   async function handleRunClosing(): Promise<void> {
     if (!desktopApi) return;
     setConfirmingRun(false);
@@ -353,6 +387,15 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
             placement="bottom"
             disabled={exporting || loading || running}
             onClick={() => void handleExport()}
+          />
+          <IconActionButton
+            icon="retry"
+            label={checkingNotes ? "Conferindo..." : "Conferir notas no OMIE"}
+            tip="Pergunta ao OMIE quais cargas do periodo ja foram faturadas e traz o numero da nota de cada uma, para o relatorio sair com a NF-e/NFS-e preenchida. So consulta: nao fatura e nao emite nada."
+            tone="neutral"
+            placement="bottom"
+            disabled={checkingNotes || running || loading || (report?.rows.length ?? 0) === 0}
+            onClick={() => void handleCheckNotes()}
           />
           <IconActionButton
             icon="send"

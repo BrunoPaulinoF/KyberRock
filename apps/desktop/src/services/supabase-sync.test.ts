@@ -3287,6 +3287,97 @@ describe("supabase sync", () => {
       database.close();
     }
   });
+
+  it("conferencia dirigida pergunta pelas cargas pedidas, ordem de servico inclusive", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      // A quinzena que a atendente esta fechando tem venda interna (OS/NFS-e) e pesagem
+      // com nota (pedido/NF-e), e parte dela e mais velha que a janela quente do rodizio.
+      insertSentOperation(database, {
+        id: "op-os",
+        operationType: "internal",
+        serviceOrderId: 11493172000,
+        createdAt: daysAgoIso(20)
+      });
+      insertSentOperation(database, { id: "op-pedido", salesOrderId: 11493187126 });
+      insertSentOperation(database, { id: "op-fora-da-tela", salesOrderId: 7777 });
+      invokeMock.mockResolvedValue({ error: null, data: { ok: true, results: [] } });
+
+      await reconcileOmieBillingFromOmie(database, identity, {
+        operationIds: ["op-os", "op-pedido"]
+      });
+
+      const [, options] = invokeMock.mock.calls[0] as [
+        string,
+        {
+          body: {
+            payload: {
+              orders: Array<{ operationId: string; orderType: string; omieOrderId: number }>;
+            };
+          };
+        }
+      ];
+      // A OS entra junto do pedido: a nota da venda interna tambem nasce no OMIE, e sem
+      // perguntar por ela a coluna "Nota fiscal" do relatorio sai vazia. E so as da tela.
+      expect(options.body.payload.orders).toEqual([
+        { operationId: "op-os", orderType: "service", omieOrderId: 11493172000 },
+        { operationId: "op-pedido", orderType: "sales", omieOrderId: 11493187126 }
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("conferencia dirigida nao espera a vez do rodizio", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-1", salesOrderId: 4001 });
+      invokeMock.mockResolvedValue({ error: null, data: { ok: true, results: [] } });
+
+      // A passada de fundo acabou de rodar e fechou a janela.
+      await reconcileOmieBillingFromOmie(database, identity);
+      expect(invokeMock).toHaveBeenCalledTimes(1);
+      expect(await reconcileOmieBillingFromOmie(database, identity)).toMatchObject({
+        skipped: true
+      });
+      expect(invokeMock).toHaveBeenCalledTimes(1);
+
+      // O operador apertando "Conferir notas" e uma pergunta dele, nao a rotina de fundo:
+      // esperar o intervalo aqui e mandar o relatorio ao cliente sem o numero da nota.
+      const targeted = await reconcileOmieBillingFromOmie(database, identity, {
+        operationIds: ["op-1"]
+      });
+
+      expect(targeted.skipped).toBeUndefined();
+      expect(invokeMock).toHaveBeenCalledTimes(2);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("conferencia dirigida sem carga alguma nao chama o OMIE", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+
+      expect(await reconcileOmieBillingFromOmie(database, identity, { operationIds: [] })).toEqual({
+        checked: 0,
+        billed: 0,
+        errors: []
+      });
+      expect(invokeMock).not.toHaveBeenCalled();
+    } finally {
+      database.close();
+    }
+  });
 });
 
 /** Data recente fixa: a reconciliacao so olha os ultimos 120 dias. */

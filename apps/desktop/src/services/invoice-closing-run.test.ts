@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   countBillableCandidates,
   runInvoiceClosing,
-  selectInvoiceClosingCandidates
+  selectInvoiceClosingCandidates,
+  selectOperationsMissingInvoiceNumber
 } from "./invoice-closing-run";
 import type { InvoiceClosingBillOutcome, InvoiceClosingRunCandidate } from "./invoice-closing-run";
 import type { InvoiceClosingLine } from "./invoice-closing";
@@ -186,42 +187,42 @@ describe("runInvoiceClosing", () => {
   });
 });
 
-describe("selectInvoiceClosingCandidates", () => {
-  function line(overrides: Partial<InvoiceClosingLine> = {}): InvoiceClosingLine {
-    return {
-      operationId: "op-1",
-      customerId: "cust-1",
-      customerName: "Alfa",
-      customerDocument: null,
-      couponNumber: 7,
-      date: "2026-08-17",
-      closedAt: null,
-      closingDate: "2026-08-31",
-      dueDate: "2026-08-31",
-      invoiceNumber: null,
-      omieOrderNumber: null,
-      omieSalesOrderId: null,
-      omieServiceOrderId: null,
-      plate: "ABC1D23",
-      carrierName: "Silva",
-      driverName: "Joao",
-      productCode: "B0",
-      productDescription: "Brita 0",
-      netWeightKg: 10_000,
-      unitPriceCents: 4_200,
-      priceUnit: "ton",
-      productTotalCents: 90_000,
-      freightTotalCents: 10_000,
-      totalCents: 100_000,
-      operationType: "invoice",
-      operationTypeLabel: "Com nota",
-      situation: "sent",
-      situationLabel: "No OMIE, falta faturar",
-      situationDetail: null,
-      ...overrides
-    };
-  }
+function line(overrides: Partial<InvoiceClosingLine> = {}): InvoiceClosingLine {
+  return {
+    operationId: "op-1",
+    customerId: "cust-1",
+    customerName: "Alfa",
+    customerDocument: null,
+    couponNumber: 7,
+    date: "2026-08-17",
+    closedAt: null,
+    closingDate: "2026-08-31",
+    dueDate: "2026-08-31",
+    invoiceNumber: null,
+    omieOrderNumber: null,
+    omieSalesOrderId: null,
+    omieServiceOrderId: null,
+    plate: "ABC1D23",
+    carrierName: "Silva",
+    driverName: "Joao",
+    productCode: "B0",
+    productDescription: "Brita 0",
+    netWeightKg: 10_000,
+    unitPriceCents: 4_200,
+    priceUnit: "ton",
+    productTotalCents: 90_000,
+    freightTotalCents: 10_000,
+    totalCents: 100_000,
+    operationType: "invoice",
+    operationTypeLabel: "Com nota",
+    situation: "sent",
+    situationLabel: "No OMIE, falta faturar",
+    situationDetail: null,
+    ...overrides
+  };
+}
 
+describe("selectInvoiceClosingCandidates", () => {
   it("marca como ja faturada tanto pela situacao quanto pelo numero da nota", () => {
     const candidates = selectInvoiceClosingCandidates([
       line({ operationId: "a", situation: "billed" }),
@@ -251,5 +252,43 @@ describe("selectInvoiceClosingCandidates", () => {
     ]);
 
     expect(countBillableCandidates(candidates)).toBe(1);
+  });
+});
+
+describe("selectOperationsMissingInvoiceNumber", () => {
+  it("pergunta pela ordem de servico tambem, e nao so pelo pedido de venda", () => {
+    // A venda interna vira OS no OMIE e a nota dela e uma NFS-e, emitida la do mesmo jeito.
+    // Perguntar so pelos pedidos deixava a coluna "Nota fiscal" vazia justamente nas
+    // internas — que em alguns dias sao a maioria do movimento.
+    const ids = selectOperationsMissingInvoiceNumber([
+      line({ operationId: "pedido", omieSalesOrderId: 11493187126 }),
+      line({
+        operationId: "os",
+        operationType: "internal",
+        operationTypeLabel: "Interna",
+        omieServiceOrderId: 11493172000
+      })
+    ]);
+
+    expect(ids).toEqual(["pedido", "os"]);
+  });
+
+  it("nao pergunta pela carga que ja tem o numero da nota aqui", () => {
+    const ids = selectOperationsMissingInvoiceNumber([
+      line({ operationId: "com-nota", omieSalesOrderId: 900, invoiceNumber: "28727" }),
+      line({ operationId: "sem-nota", omieSalesOrderId: 901 })
+    ]);
+
+    expect(ids).toEqual(["sem-nota"]);
+  });
+
+  it("nao pergunta pela carga que ainda nao chegou ao OMIE", () => {
+    // Sem documento la nao ha o que conferir: perguntar por ela so gastaria a chamada.
+    const ids = selectOperationsMissingInvoiceNumber([
+      line({ operationId: "so-local" }),
+      line({ operationId: "no-omie", omieSalesOrderId: 902 })
+    ]);
+
+    expect(ids).toEqual(["no-omie"]);
   });
 });
