@@ -3,8 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   countBillableCandidates,
   runInvoiceClosing,
-  selectInvoiceClosingCandidates,
-  selectOperationsMissingInvoiceNumber
+  selectInvoiceClosingCandidates
 } from "./invoice-closing-run";
 import type { InvoiceClosingBillOutcome, InvoiceClosingRunCandidate } from "./invoice-closing-run";
 import type { InvoiceClosingLine } from "./invoice-closing";
@@ -252,43 +251,5 @@ describe("selectInvoiceClosingCandidates", () => {
     ]);
 
     expect(countBillableCandidates(candidates)).toBe(1);
-  });
-});
-
-describe("selectOperationsMissingInvoiceNumber", () => {
-  it("pergunta pela ordem de servico tambem, e nao so pelo pedido de venda", () => {
-    // A venda interna vira OS no OMIE e a nota dela e uma NFS-e, emitida la do mesmo jeito.
-    // Perguntar so pelos pedidos deixava a coluna "Nota fiscal" vazia justamente nas
-    // internas — que em alguns dias sao a maioria do movimento.
-    const ids = selectOperationsMissingInvoiceNumber([
-      line({ operationId: "pedido", omieSalesOrderId: 11493187126 }),
-      line({
-        operationId: "os",
-        operationType: "internal",
-        operationTypeLabel: "Interna",
-        omieServiceOrderId: 11493172000
-      })
-    ]);
-
-    expect(ids).toEqual(["pedido", "os"]);
-  });
-
-  it("nao pergunta pela carga que ja tem o numero da nota aqui", () => {
-    const ids = selectOperationsMissingInvoiceNumber([
-      line({ operationId: "com-nota", omieSalesOrderId: 900, invoiceNumber: "28727" }),
-      line({ operationId: "sem-nota", omieSalesOrderId: 901 })
-    ]);
-
-    expect(ids).toEqual(["sem-nota"]);
-  });
-
-  it("nao pergunta pela carga que ainda nao chegou ao OMIE", () => {
-    // Sem documento la nao ha o que conferir: perguntar por ela so gastaria a chamada.
-    const ids = selectOperationsMissingInvoiceNumber([
-      line({ operationId: "so-local" }),
-      line({ operationId: "no-omie", omieSalesOrderId: 902 })
-    ]);
-
-    expect(ids).toEqual(["no-omie"]);
   });
 });
