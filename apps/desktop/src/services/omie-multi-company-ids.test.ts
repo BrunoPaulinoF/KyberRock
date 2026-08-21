@@ -194,10 +194,7 @@ describe("cliente ja cadastrado aqui, com o documento em outro formato", () => {
 
       expect(countCustomers(database, "company-a")).toBe(1);
       expect(
-        database
-          .prepare("SELECT id FROM customers WHERE company_id = 'company-a'")
-          .pluck()
-          .get()
+        database.prepare("SELECT id FROM customers WHERE company_id = 'company-a'").pluck().get()
       ).toBe("local-uuid");
     } finally {
       database.close();
