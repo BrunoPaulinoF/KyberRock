@@ -226,6 +226,60 @@ describe("summarizeDesktopReleases", () => {
     expect(producao.canReject).toBe(false);
   });
 
+  it("a producao atual e a que o /releases/latest aponta, nao a estavel mais nova", () => {
+    // O caso da volta atras: 0.8.200 continua publicada como estavel, mas a
+    // frota foi regredida para 0.8.193. Adivinhar pela ordem da lista apontaria
+    // como producao exatamente a versao que ninguem mais recebe.
+    const rows = summarizeDesktopReleases([release("0.8.200"), release("0.8.193")], {
+      currentProductionTag: "v0.8.193"
+    });
+
+    expect(byVersion(rows, "0.8.193").isCurrentProduction).toBe(true);
+    expect(byVersion(rows, "0.8.200").isCurrentProduction).toBe(false);
+    expect(byVersion(rows, "0.8.200").isNewerThanProduction).toBe(true);
+    expect(byVersion(rows, "0.8.200").isOlderThanProduction).toBe(false);
+    expect(byVersion(rows, "0.8.193").isNewerThanProduction).toBe(false);
+  });
+
+  it("aceita a tag com ou sem o v inicial", () => {
+    const rows = summarizeDesktopReleases([release("0.8.200"), release("0.8.193")], {
+      currentProductionTag: "0.8.193"
+    });
+
+    expect(byVersion(rows, "0.8.193").isCurrentProduction).toBe(true);
+  });
+
+  it("sem a tag (consulta falhou ou funcao antiga) volta a heuristica da estavel mais nova", () => {
+    const rows = summarizeDesktopReleases([release("0.8.200"), release("0.8.193")]);
+
+    expect(byVersion(rows, "0.8.200").isCurrentProduction).toBe(true);
+    expect(byVersion(rows, "0.8.193").isOlderThanProduction).toBe(true);
+  });
+
+  it("tag que nao esta na lista tambem cai na heuristica", () => {
+    // Producao antiga demais para aparecer nas 30 ultimas releases: melhor a
+    // leitura aproximada do que uma tela sem versao atual nenhuma.
+    const rows = summarizeDesktopReleases([release("0.8.200"), release("0.8.193")], {
+      currentProductionTag: "v0.7.10"
+    });
+
+    expect(byVersion(rows, "0.8.200").isCurrentProduction).toBe(true);
+  });
+
+  it("marca como mais nova que a producao so a que de fato esta a frente", () => {
+    const rows = summarizeDesktopReleases(
+      [parado("0.8.201"), release("0.8.200"), release("0.8.193")],
+      {
+        currentProductionTag: "v0.8.200"
+      }
+    );
+
+    expect(byVersion(rows, "0.8.201").isNewerThanProduction).toBe(true);
+    expect(byVersion(rows, "0.8.200").isNewerThanProduction).toBe(false);
+    expect(byVersion(rows, "0.8.193").isNewerThanProduction).toBe(false);
+    expect(byVersion(rows, "0.8.193").isOlderThanProduction).toBe(true);
+  });
+
   it("aguenta resposta inesperada da API sem estourar", () => {
     expect(summarizeDesktopReleases(null)).toEqual([]);
     expect(summarizeDesktopReleases({ message: "Bad credentials" })).toEqual([]);

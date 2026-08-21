@@ -457,6 +457,17 @@
   border-color: var(--adm-accent-hover);
 }
 
+.adm-btn-warn {
+  border-color: #fdba74;
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.adm-btn-warn:hover:not(:disabled) {
+  background: #ffedd5;
+  border-color: #fb923c;
+}
+
 .adm-btn-danger {
   border-color: #fecaca;
   background: #fef2f2;

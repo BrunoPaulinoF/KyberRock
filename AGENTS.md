@@ -357,9 +357,34 @@ manifesto da raiz; tambem por **workflow_dispatch**):
 
 **Passo 2 — pela aba Atualizacoes do painel (ou pelo `desktop-promote.yml` direto).** A tela
 (`apps/loader-web/src/pages/DesktopUpdates.tsx`) lista as versoes com a situacao de cada uma —
-**Parado**, **Em teste**, **Producao**, **Incompleto** — e oferece os dois unicos gestos que movem
-alguma coisa: _Enviar para teste_ e _Liberar para producao_. Ela tambem mostra quantas balancas
-estao em cada anel, porque uma versao em teste com zero balancas marcadas nunca sera avaliada.
+**Parado**, **Em teste**, **Producao**, **Incompleto** — e oferece os gestos que movem alguma
+coisa: _Enviar para teste_, _Liberar para producao_, _Reprovar_ e a volta atras. Ela tambem mostra
+quantas balancas estao em cada anel, porque uma versao em teste com zero balancas marcadas nunca
+sera avaliada.
+
+Tres coisas na tela merecem atencao de quem for mexer nela:
+
+- **Ela se recarrega sozinha** e nao espera clique: promover so dispara um run, e o estado da
+  versao muda no GitHub segundos depois. O ritmo esta em `apps/loader-web/src/lib/desktop-updates.ts`
+  (3s com promocao a caminho, 8s com build compilando, 30s parada, nada com a aba escondida). Um
+  gesto so e dado por concluido quando a versao aparece no estado pedido — producao se confere por
+  `isCurrentProduction`, nunca pelo estado `producao`, que uma estavel antiga ja tem.
+- **Tres linhas sobem para o topo com selo**: a versao atual, o ultimo build gerado pelo Actions e
+  ainda nao distribuido, e a versao anterior a atual (`arrangeReleases`).
+- **A volta atras tem duas etapas e botao laranja.** _Voltar para esta versao_ manda a antiga para o
+  anel de **teste** (onde a balanca de teste roda com `allowDowngrade` e desce de verdade) e so
+  entao a linha oferece _Regredir producao para esta versao_ (`target: latest` + `force`, que as
+  guardas 3a/3b do workflow exigem). Producao **nao** desce sozinha — `allowDowngrade` fica
+  desligado la (`apps/desktop/src/services/update-channel.ts`), entao regredir faz quem ainda nao
+  atualizou receber a versao antiga e quem ja atualizou parar onde esta; a confirmacao da tela diz
+  isso com todas as letras. Com uma regressao em vigor, a versao de onde se voltou ganha _Retomar
+  producao nesta versao_ — sem isso a volta atras seria porta de uma via so.
+
+> **Qual e a producao atual so o `GET /releases/latest` sabe.** `make_latest` nao aparece em campo
+> nenhum da listagem, entao depois de uma regressao a estavel mais nova da lista NAO e a versao que
+> a frota recebe. O `admin-api` consulta `/releases/latest` (best-effort) e passa a tag para
+> `summarizeDesktopReleases`; sem ela a classificacao cai na heuristica antiga, que so erra com
+> regressao em vigor.
 
 O painel **nao mexe em release**: ele so dispara o workflow (`admin-api` →
 `promote_desktop_release` → `POST /actions/workflows/desktop-promote.yml/dispatches`). Por isso o

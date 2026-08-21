@@ -2,12 +2,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
 import {
+  arrangeReleases,
   hasBuildInProgress,
   isPromotionApplied,
   isPromotionStale,
   nextRefreshDelayMs,
+  rollbackActionFor,
   type PendingPromotion,
   type PromotionTarget,
+  type ReleaseHighlight,
   type ReleaseState
 } from "../lib/desktop-updates";
 import {
@@ -28,12 +31,13 @@ import {
 // Distribuicao do desktop.
 //
 // Compilar deixou de ser distribuir: cada merge gera um build que fica PARADO
-// (rascunho de release, que updater nenhum enxerga). Desta tela saem os tres
-// gestos que mexem numa versao:
+// (rascunho de release, que updater nenhum enxerga). Desta tela saem os gestos
+// que mexem numa versao:
 //
 //   Enviar para teste     -> so as balancas marcadas como teste passam a receber
 //   Liberar para producao -> todas as balancas passam a receber
 //   Reprovar              -> quebrou no teste: sai do ar e trava para sempre
+//   Voltar para esta      -> volta atras, em duas etapas (ver abaixo)
 //
 // Consequencia pratica: tres merges seguidos ficam parados e, liberando so o
 // ultimo, a balanca da UM salto em vez de instalar tres vezes.
@@ -48,18 +52,38 @@ import {
 // oferecer um botao que seria recusado depois — o disparo responde na hora, mas
 // o resultado so aparece no run do Actions.
 //
+// ## As tres linhas do topo
+//
+// A lista pode ter trinta versoes quase iguais. As tres que respondem as
+// perguntas do dia a dia sobem e ganham selo (ver `lib/desktop-updates.ts`): a
+// que a frota esta recebendo, o ultimo build que o Actions gerou e ninguem
+// distribuiu, e a anterior a atual — que e para onde se volta se der problema.
+//
+// ## Volta atras em duas etapas, e o que ela NAO faz
+//
+// Voltar uma versao nunca mexe na frota de primeira: a versao antiga vai para o
+// anel de TESTE (onde a balanca de teste roda com `allowDowngrade` e realmente
+// desce para ela), e so depois a tela oferece regredir a producao. O botao e
+// laranja porque e o unico gesto da tela que anda para tras.
+//
+// E producao NAO desce sozinha: `allowDowngrade` fica desligado ali de
+// proposito (`apps/desktop/src/services/update-channel.ts`) — balanca de
+// cliente voltando sozinha e regressao silenciosa de dado e de regra fiscal.
+// Regredir a producao faz quem ainda nao atualizou receber a versao antiga e
+// quem ja atualizou parar onde esta. A tela diz isso na confirmacao; prometer
+// outra coisa seria pior do que nao ter o botao.
+//
 // ## Por que a tela se atualiza sozinha
 //
-// Nenhum dos tres gestos muda alguma coisa na hora: o painel dispara um run e
-// quem publica a release e o Actions, segundos depois. A tela por isso NAO
-// espera clique nenhum para reler — ela se recarrega em segundo plano, rapido
-// enquanto uma promocao esta a caminho e devagar quando nao ha nada em
-// movimento (ver `lib/desktop-updates.ts`). Antes disso a unica saida era
-// recarregar a pagina, o que jogava o administrador de volta na primeira aba do
-// console a cada promocao.
+// Nenhum gesto muda alguma coisa na hora: o painel dispara um run e quem
+// publica a release e o Actions, segundos depois. A tela por isso NAO espera
+// clique nenhum para reler — ela se recarrega em segundo plano, rapido enquanto
+// uma promocao esta a caminho e devagar quando nao ha nada em movimento. Antes
+// disso a unica saida era recarregar a pagina, o que jogava o administrador de
+// volta na primeira aba do console.
 // ---------------------------------------------------------------------------
 
-interface ReleaseRow {
+export interface ReleaseRow {
   version: string;
   tag: string;
   state: ReleaseState;
@@ -67,6 +91,8 @@ interface ReleaseRow {
   publishedAt: string | null;
   installerName: string | null;
   isOlderThanProduction: boolean;
+  /** Ausente na funcao antiga; `arrangeReleases` e `rollbackActionFor` tratam como false. */
+  isNewerThanProduction?: boolean;
   canSendToTest: boolean;
   canReleaseToProduction: boolean;
   canReject: boolean;
@@ -79,6 +105,116 @@ interface ReleasesResponse {
   actionsUrl: string;
 }
 
+/**
+ * Um gesto da tela: o que ele dispara, como ele se chama e o que ele avisa.
+ *
+ * Fica tudo junto de proposito. Alvo, `force` e texto de confirmacao mudam
+ * juntos — "liberar para producao" e "regredir producao" disparam o MESMO alvo
+ * e sao coisas opostas para quem clica, e a unica diferenca segura entre elas e
+ * o que o botao diz antes de agir.
+ */
+export type PromotionIntent =
+  | "beta"
+  | "latest"
+  | "reprovar"
+  | "rollback-test"
+  | "rollback-production"
+  | "resume";
+
+interface ActionCopy {
+  target: PromotionTarget;
+  /** O workflow recusa promocao regressiva e producao sem teste sem isto. */
+  force: boolean;
+  label: string;
+  busyLabel: string;
+  variant: "default" | "primary" | "warn" | "danger";
+  /** `null` = gesto direto, sem confirmacao. */
+  confirm: ((version: string, currentVersion: string | null) => string) | null;
+  /** Mensagem do clique: o pedido saiu, o resultado ainda vai aparecer sozinho. */
+  dispatched: (version: string) => string;
+  /** Mensagem de quando o run terminou e a lista JA mostra o novo estado. */
+  done: (version: string) => string;
+}
+
+export const PROMOTION_ACTIONS: Record<PromotionIntent, ActionCopy> = {
+  beta: {
+    target: "beta",
+    force: false,
+    label: "Enviar para teste",
+    busyLabel: "Enviando…",
+    variant: "default",
+    confirm: null,
+    dispatched: (v) => `Enviando a versao ${v} para o anel de teste…`,
+    done: (v) =>
+      `Versao ${v} enviada para o anel de teste. As balancas marcadas como teste recebem na proxima verificacao.`
+  },
+  latest: {
+    target: "latest",
+    force: false,
+    label: "Liberar para producao",
+    busyLabel: "Liberando…",
+    variant: "primary",
+    confirm: null,
+    dispatched: (v) => `Liberando a versao ${v} para producao…`,
+    done: (v) =>
+      `Versao ${v} liberada para producao. As balancas recebem na proxima verificacao e instalam quando o operador fechar o app.`
+  },
+  reprovar: {
+    target: "reprovar",
+    force: false,
+    label: "Reprovar",
+    busyLabel: "Reprovando…",
+    variant: "danger",
+    confirm: (version) =>
+      `Reprovar a versao ${version}?\n\n` +
+      "Ela sai do ar e NUNCA mais podera ir para teste ou producao. " +
+      "A balanca de teste volta sozinha para a ultima versao aprovada.",
+    dispatched: (v) => `Reprovando a versao ${v}…`,
+    done: (v) =>
+      `Versao ${v} reprovada. Ela saiu do ar e nao pode mais ser distribuida; a balanca de teste volta para a ultima aprovada na proxima verificacao.`
+  },
+  "rollback-test": {
+    target: "beta",
+    force: false,
+    label: "Voltar para esta versao",
+    busyLabel: "Voltando…",
+    variant: "warn",
+    confirm: (version, current) =>
+      `Voltar para a versao ${version}?\n\n` +
+      "Ela vai primeiro para o anel de TESTE: a balanca de teste desce para esta versao sozinha na proxima verificacao, e voce confere antes de mexer na frota.\n\n" +
+      `A producao continua ${current ? `na ${current}` : "onde esta"}. Depois de conferir, esta mesma linha oferece regredir a producao.`,
+    dispatched: (v) => `Voltando para a versao ${v} no anel de teste…`,
+    done: (v) =>
+      `Versao ${v} publicada no anel de teste. A balanca de teste desce para ela na proxima verificacao; a producao continua onde estava.`
+  },
+  "rollback-production": {
+    target: "latest",
+    force: true,
+    label: "Regredir producao para esta versao",
+    busyLabel: "Regredindo…",
+    variant: "warn",
+    confirm: (version, current) =>
+      `Regredir a producao para a versao ${version}?\n\n` +
+      `A frota passa a receber a ${version} no lugar da ${current ?? "versao atual"}.\n\n` +
+      "ATENCAO: quem JA instalou a versao mais nova continua nela — a balanca de producao nao volta sozinha. Na pratica essas maquinas param onde estao ate sair uma versao mais nova com a correcao.",
+    dispatched: (v) => `Regredindo a producao para a versao ${v}…`,
+    done: (v) =>
+      `Producao regredida para a versao ${v}. Quem ainda nao atualizou passa a receber esta versao; quem ja instalou a mais nova permanece nela ate sair uma versao maior.`
+  },
+  resume: {
+    target: "latest",
+    force: true,
+    label: "Retomar producao nesta versao",
+    busyLabel: "Retomando…",
+    variant: "primary",
+    confirm: (version, current) =>
+      `Retomar a producao na versao ${version}?\n\n` +
+      `Desfaz a regressao: a frota volta a receber a ${version} no lugar da ${current ?? "versao atual"}.`,
+    dispatched: (v) => `Retomando a producao na versao ${v}…`,
+    done: (v) => `Producao de volta na versao ${v}. As balancas recebem na proxima verificacao.`
+  }
+};
+
 const STATE_LABEL: Record<string, { text: string; tone: Tone }> = {
   producao: { text: "Producao", tone: "ok" },
   teste: { text: "Em teste", tone: "info" },
@@ -88,21 +224,11 @@ const STATE_LABEL: Record<string, { text: string; tone: Tone }> = {
   incompleto: { text: "Incompleto", tone: "danger" }
 };
 
-/** Mensagem do clique: o pedido saiu, o resultado ainda vai aparecer sozinho. */
-const PROMOTE_DISPATCHED: Record<PromotionTarget, (version: string) => string> = {
-  beta: (v) => `Enviando a versao ${v} para o anel de teste…`,
-  latest: (v) => `Liberando a versao ${v} para producao…`,
-  reprovar: (v) => `Reprovando a versao ${v}…`
-};
-
-/** Mensagem de quando o run terminou e a lista JA mostra o novo estado. */
-const PROMOTE_FEEDBACK: Record<PromotionTarget, (version: string) => string> = {
-  beta: (v) =>
-    `Versao ${v} enviada para o anel de teste. As balancas marcadas como teste recebem na proxima verificacao.`,
-  latest: (v) =>
-    `Versao ${v} liberada para producao. As balancas recebem na proxima verificacao e instalam quando o operador fechar o app.`,
-  reprovar: (v) =>
-    `Versao ${v} reprovada. Ela saiu do ar e nao pode mais ser distribuida; a balanca de teste volta para a ultima aprovada na proxima verificacao.`
+/** Selo das tres linhas que sobem para o topo. */
+const HIGHLIGHT_LABEL: Record<ReleaseHighlight, { text: string; tone: Tone }> = {
+  atual: { text: "Versao atual", tone: "ok" },
+  ultima: { text: "Ultima gerada", tone: "info" },
+  anterior: { text: "Versao anterior", tone: "warn" }
 };
 
 /**
@@ -129,6 +255,31 @@ function formatClock(value: number | null): string {
   return new Date(value).toLocaleTimeString("pt-BR");
 }
 
+/**
+ * Gestos que a linha oferece, na ordem em que aparecem.
+ *
+ * Quando ha volta atras, ela e o UNICO botao da linha. Uma versao antiga em
+ * teste tambem satisfaz o `canReject` da funcao, e "Reprovar" ali seria uma
+ * armadilha: trava para sempre a versao boa que existe justamente para servir
+ * de porto seguro.
+ */
+export function intentsFor(release: ReleaseRow): PromotionIntent[] {
+  const rollback = rollbackActionFor(release);
+  if (rollback === "test") return ["rollback-test"];
+  if (rollback === "production") return ["rollback-production"];
+  if (rollback === "resume") return ["resume"];
+
+  const intents: PromotionIntent[] = [];
+  if (release.canSendToTest) intents.push("beta");
+  if (release.canReleaseToProduction) intents.push("latest");
+  if (release.canReject) intents.push("reprovar");
+  return intents;
+}
+
+interface PendingAction extends PendingPromotion {
+  intent: PromotionIntent;
+}
+
 export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => void }) {
   const [data, setData] = useState<ReleasesResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -137,8 +288,8 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
   const [lastRefreshAt, setLastRefreshAt] = useState<number | null>(null);
   /** Sobe a cada verificacao concluida (inclusive as que falharam) e reagenda a proxima. */
   const [refreshTick, setRefreshTick] = useState(0);
-  /** Promocao disparada cujo resultado ainda nao apareceu na lista. */
-  const [pending, setPending] = useState<PendingPromotion | null>(null);
+  /** Gesto disparado cujo resultado ainda nao apareceu na lista. */
+  const [pending, setPending] = useState<PendingAction | null>(null);
   /** Versao entre o clique e a resposta do disparo. */
   const [dispatching, setDispatching] = useState<string | null>(null);
   const [isVisible, setIsVisible] = useState(
@@ -167,11 +318,14 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
         });
         setData(next);
         setLastRefreshAt(Date.now());
-        // A promocao so termina quando a versao aparece no estado pedido: e
-        // isso que devolve os botoes da linha e fecha a mensagem do clique.
+        // O gesto so termina quando a versao aparece no estado pedido: e isso
+        // que devolve os botoes da linha e fecha a mensagem do clique.
         setPending((current) => {
           if (!current || !isPromotionApplied(next.releases, current)) return current;
-          setFeedback({ tone: "ok", text: PROMOTE_FEEDBACK[current.target](current.version) });
+          setFeedback({
+            tone: "ok",
+            text: PROMOTION_ACTIONS[current.intent].done(current.version)
+          });
           return null;
         });
       } catch (error) {
@@ -242,25 +396,28 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
     // `refreshTick` reagenda a proxima verificacao assim que a anterior termina.
   }, [refreshDelay, refreshTick, load]);
 
-  async function promote(release: ReleaseRow, target: PromotionTarget) {
-    if (target === "reprovar") {
-      const confirmed = window.confirm(
-        `Reprovar a versao ${release.version}?\n\n` +
-          "Ela sai do ar e NUNCA mais podera ir para teste ou producao. " +
-          "A balanca de teste volta sozinha para a ultima versao aprovada."
-      );
-      if (!confirmed) return;
-    }
+  const { ordered, highlights } = useMemo(() => arrangeReleases(data?.releases ?? []), [data]);
+  const currentVersion = ordered.find((release) => release.isCurrentProduction)?.version ?? null;
+
+  async function promote(release: ReleaseRow, intent: PromotionIntent) {
+    const action = PROMOTION_ACTIONS[intent];
+    if (action.confirm && !window.confirm(action.confirm(release.version, currentVersion))) return;
+
     setDispatching(release.version);
-    setFeedback({ tone: "info", text: PROMOTE_DISPATCHED[target](release.version) });
+    setFeedback({ tone: "info", text: action.dispatched(release.version) });
     try {
       await callAdminFunction("admin-api", {
         action: "promote_desktop_release",
-        payload: { version: release.version, target, force: false }
+        payload: { version: release.version, target: action.target, force: action.force }
       });
       // O disparo respondeu; o resultado sai do run. A linha fica em espera e a
       // tela passa a reler de poucos em poucos segundos ate o estado mudar.
-      setPending({ version: release.version, target, startedAt: Date.now() });
+      setPending({
+        version: release.version,
+        target: action.target,
+        intent,
+        startedAt: Date.now()
+      });
       void load({ silent: true });
     } catch (error) {
       setFeedback(null);
@@ -274,12 +431,22 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
     {
       key: "version",
       header: "Versao",
-      render: (release) => (
-        <>
-          <span className="adm-cell-primary adm-mono">{release.version}</span>
-          {release.installerName && <p className="adm-cell-sub">{release.installerName}</p>}
-        </>
-      )
+      render: (release) => {
+        const highlight = highlights[release.version];
+        return (
+          <>
+            <span className="adm-cell-primary adm-mono">{release.version}</span>
+            {highlight && (
+              <p className="adm-cell-sub">
+                <Badge tone={HIGHLIGHT_LABEL[highlight].tone}>
+                  {HIGHLIGHT_LABEL[highlight].text}
+                </Badge>
+              </p>
+            )}
+            {release.installerName && <p className="adm-cell-sub">{release.installerName}</p>}
+          </>
+        );
+      }
     },
     {
       key: "state",
@@ -296,6 +463,19 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
           )}
           {release.isCurrentProduction && (
             <p className="adm-cell-sub">E a versao que a frota esta recebendo.</p>
+          )}
+          {highlights[release.version] === "ultima" && release.state === "parado" && (
+            <p className="adm-cell-sub">
+              Saiu do GitHub Actions e ainda nao foi distribuida para anel nenhum.
+            </p>
+          )}
+          {release.state === "producao" && release.isNewerThanProduction && (
+            <p className="adm-cell-sub">
+              Publicada, mas a frota esta numa versao anterior — regressao em vigor.
+            </p>
+          )}
+          {release.state === "producao" && release.isOlderThanProduction && (
+            <p className="adm-cell-sub">Estavel anterior: da para voltar a frota para ela.</p>
           )}
           {release.state === "compilando" && (
             <p className="adm-cell-sub">O build esta rodando; os arquivos ainda estao subindo.</p>
@@ -325,42 +505,27 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
         // Enquanto um run esta a caminho a tela nao oferece outro: o workflow
         // trata um pedido por vez e o segundo clique so viraria confusao.
         const blocked = busy || dispatching !== null || pending !== null;
-        if (!release.canSendToTest && !release.canReleaseToProduction && !release.canReject) {
+        const intents = intentsFor(release);
+        if (intents.length === 0) {
           return (
             <span className="adm-cell-sub">
-              {release.isOlderThanProduction && release.state !== "producao"
-                ? "Anterior a producao atual."
-                : "—"}
+              {release.isOlderThanProduction ? "Anterior a producao atual." : "—"}
             </span>
           );
         }
         return (
           <ButtonGroup>
-            {release.canSendToTest && (
-              <Button size="sm" disabled={blocked} onClick={() => void promote(release, "beta")}>
-                {busy ? "Enviando…" : "Enviar para teste"}
-              </Button>
-            )}
-            {release.canReleaseToProduction && (
+            {intents.map((intent) => (
               <Button
+                key={intent}
                 size="sm"
-                variant="primary"
+                variant={PROMOTION_ACTIONS[intent].variant}
                 disabled={blocked}
-                onClick={() => void promote(release, "latest")}
+                onClick={() => void promote(release, intent)}
               >
-                {busy ? "Liberando…" : "Liberar para producao"}
+                {busy ? PROMOTION_ACTIONS[intent].busyLabel : PROMOTION_ACTIONS[intent].label}
               </Button>
-            )}
-            {release.canReject && (
-              <Button
-                size="sm"
-                variant="danger"
-                disabled={blocked}
-                onClick={() => void promote(release, "reprovar")}
-              >
-                {busy ? "Reprovando…" : "Reprovar"}
-              </Button>
-            )}
+            ))}
           </ButtonGroup>
         );
       }
@@ -407,6 +572,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
 
       <Panel
         title="Versoes publicadas"
+        description="No topo: a versao que a frota recebe, o ultimo build gerado pelo GitHub e a versao anterior — que e para onde a volta atras leva."
         flush
         actions={
           <>
@@ -425,7 +591,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
       >
         <DataTable
           columns={columns}
-          rows={data?.releases ?? []}
+          rows={ordered}
           rowKey={(release) => release.tag}
           empty={
             isLoading
