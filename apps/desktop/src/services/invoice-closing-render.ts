@@ -116,6 +116,52 @@ const CARRIER_HEADERS = [
 
 const PENDING_HEADERS = ["Cliente", "Cargas", "Total (R$)"];
 
+const DUPLICATE_HEADERS = [
+  "Cliente",
+  "Placa",
+  "Produto",
+  "Entrada (kg)",
+  "Saida (kg)",
+  "Vale que vale",
+  "Vale(s) repetido(s)",
+  "Fora da fatura (R$)"
+];
+
+/**
+ * A nota que acompanha a lista de repetidas. Sai no PDF e na planilha porque o documento do
+ * fechamento e o que vai para a conferencia: um total menor que a soma das pesagens, sem
+ * explicacao no papel, vira um telefonema.
+ */
+const DUPLICATE_NOTE =
+  "A mesma carga (mesmo cliente, mesma placa, mesmo produto e os dois pesos iguais) " +
+  "registrada mais de uma vez. As repetidas ficaram FORA das faturas: cobrar as duas seria " +
+  "cobrar a mesma carga duas vezes. Quando a repetida ja tem nota emitida no OMIE ela " +
+  "continua na fatura — so o OMIE cancela nota fiscal.";
+
+/** As linhas da tabela de repetidas, iguais no PDF e na planilha. */
+function duplicateCells(report: InvoiceClosingReport): string[][] {
+  return report.duplicates.map((group) => [
+    group.customerName,
+    group.plate,
+    group.productDescription,
+    num(group.entryWeightKg),
+    num(group.exitWeightKg),
+    group.kept
+      .map(
+        (kept) =>
+          `${formatCouponNumber(kept.couponNumber)}${kept.invoiceNumber ? ` (nota ${kept.invoiceNumber})` : ""}`
+      )
+      .join(", "),
+    group.repeats
+      .map(
+        (repeat) =>
+          `${formatCouponNumber(repeat.couponNumber)} (${formatDayLabel(repeat.date)})${repeat.invoiceNumber ? ` - nota ${repeat.invoiceNumber}` : ""}`
+      )
+      .join(", "),
+    formatBRL(group.removedTotalCents)
+  ]);
+}
+
 /**
  * A lista "pesagem a pesagem": TODAS as cargas do periodo, numa tabela unica com a coluna do
  * CLIENTE — inclusive as dos clientes que ficaram fora do fechamento.
@@ -244,6 +290,19 @@ export function renderInvoiceClosingHtml(
         "Sem viagens no periodo."
       )
     ),
+    ...(report.duplicates.length > 0
+      ? [
+          section(
+            `Pesagens repetidas (${num(report.duplicates.length)})`,
+            `${table(
+              DUPLICATE_HEADERS,
+              duplicateCells(report),
+              null,
+              "Nenhuma."
+            )}<p class="note">${escapeHtml(DUPLICATE_NOTE)}</p>`
+          )
+        ]
+      : []),
     ...(report.pendingSetup.length > 0
       ? [
           section(
@@ -331,6 +390,16 @@ export function renderInvoiceClosingSpreadsheet(
           ]
         : null
     ),
+    ...(report.duplicates.length > 0
+      ? [
+          sheetTable(
+            `Pesagens repetidas (${num(report.duplicates.length)})`,
+            DUPLICATE_HEADERS,
+            duplicateCells(report),
+            null
+          )
+        ]
+      : []),
     ...(report.pendingSetup.length > 0
       ? [
           sheetTable(

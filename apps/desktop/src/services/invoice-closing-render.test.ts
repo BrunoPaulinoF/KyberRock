@@ -113,6 +113,14 @@ function report(overrides: Partial<InvoiceClosingReport> = {}): InvoiceClosingRe
       }
     ],
     pendingSetup: [],
+    duplicates: [],
+    duplicateTotals: {
+      operations: 0,
+      netWeightKg: 0,
+      productCents: 0,
+      freightCents: 0,
+      totalCents: 0
+    },
     availablePlates: ["CVP7E80"],
     rows: invoices.flatMap((entry) => entry.lines),
     rowTotals: {
@@ -318,6 +326,57 @@ describe("invoice-closing-render", () => {
     expect(renderInvoiceClosingHtml(source)).toContain("falta habilitar o credito");
     // Sem pendencia, o bloco nem aparece: uma secao vazia so gasta a atencao de quem le.
     expect(renderInvoiceClosingSpreadsheet(report())).not.toContain("Clientes fora do fechamento");
+  });
+
+  it("lista as pesagens repetidas e diz que elas ficaram fora da fatura", () => {
+    const source = report({
+      duplicates: [
+        {
+          key: "grupo-1",
+          customerName: "BEDROX MATERIAIS",
+          plate: "BKU4E47",
+          productDescription: "Brita 2",
+          entryWeightKg: 7_640,
+          exitWeightKg: 16_970,
+          kept: [
+            {
+              operationId: "op-certa",
+              couponNumber: 1126,
+              date: "2026-08-21",
+              totalCents: 36_042,
+              operationTypeLabel: "Com nota",
+              invoiceNumber: null,
+              inPeriod: true
+            }
+          ],
+          repeats: [
+            {
+              operationId: "op-errada",
+              couponNumber: 970,
+              date: "2026-08-19",
+              totalCents: 42_526,
+              operationTypeLabel: "Com nota",
+              invoiceNumber: null,
+              inPeriod: true
+            }
+          ],
+          removedTotalCents: 42_526,
+          billedMoreThanOnce: false
+        }
+      ]
+    });
+
+    for (const document of [
+      renderInvoiceClosingSpreadsheet(source),
+      renderInvoiceClosingHtml(source)
+    ]) {
+      expect(document).toContain("Pesagens repetidas (1)");
+      expect(document).toContain("BKU4E47");
+      expect(document).toContain("425,26");
+    }
+    expect(renderInvoiceClosingHtml(source)).toContain("cobrar a mesma carga duas vezes");
+    // Sem repetidas, o bloco nem aparece.
+    expect(renderInvoiceClosingSpreadsheet(report())).not.toContain("Pesagens repetidas");
   });
 
   it("o periodo sem fechamento nenhum ainda gera documento, e ele diz que esta vazio", () => {
