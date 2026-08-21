@@ -128,6 +128,31 @@ export function countBillableCandidates(candidates: readonly InvoiceClosingRunCa
 }
 
 /**
+ * As pesagens do periodo cuja nota precisa ser perguntada ao OMIE.
+ *
+ * Sao as que ja tem documento la (pedido de venda OU ordem de servico) e ainda estao sem o
+ * numero da nota aqui. A nota nasce DENTRO do OMIE — quem faturou pela tela de la, ou o
+ * proprio app faturando por outra balanca, nao avisa esta instalacao —, entao o numero so
+ * aparece quando alguem pergunta.
+ *
+ * A ordem de servico entra junto do pedido de venda de proposito: a venda interna vira OS
+ * no OMIE e a nota dela e uma NFS-e, emitida la do mesmo jeito. Perguntar so pelos pedidos
+ * deixava a coluna "Nota fiscal" do relatorio vazia justamente nas internas — que sao a
+ * maioria do movimento em alguns dias, e o cliente recebia um relatorio sem o numero que
+ * ele usa para conferir.
+ */
+export function selectOperationsMissingInvoiceNumber(
+  lines: readonly InvoiceClosingLine[]
+): string[] {
+  return lines
+    .filter(
+      (line) =>
+        !line.invoiceNumber && (line.omieSalesOrderId !== null || line.omieServiceOrderId !== null)
+    )
+    .map((line) => line.operationId);
+}
+
+/**
  * Fatura no OMIE, uma a uma, as pesagens do fechamento.
  *
  * SEQUENCIAL de proposito: cada faturamento e uma chamada ao OMIE que cria documento

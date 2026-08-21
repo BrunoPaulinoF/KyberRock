@@ -171,6 +171,8 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:preview-invoice-closing-run", startDate, endDate, options),
   runInvoiceClosing: (startDate: string, endDate: string, options?: unknown) =>
     ipcRenderer.invoke("desktop:run-invoice-closing", startDate, endDate, options),
+  reconcileInvoiceClosingNotes: (startDate: string, endDate: string, options?: unknown) =>
+    ipcRenderer.invoke("desktop:reconcile-invoice-closing-notes", startDate, endDate, options),
   onInvoiceClosingProgress: (callback: (progress: unknown) => void) => {
     const wrapper = (_event: unknown, progress: unknown): void => callback(progress);
     ipcRenderer.on("desktop:invoice-closing-progress", wrapper);

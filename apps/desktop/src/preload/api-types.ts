@@ -331,6 +331,15 @@ export interface KyberRockDesktopApi {
     endDate: string,
     options?: InvoiceClosingOptions
   ) => Promise<InvoiceClosingRunResult>;
+  /**
+   * "Conferir notas no OMIE": pergunta AGORA quais cargas do periodo ja foram faturadas la
+   * e grava o numero da nota de cada uma. So LE o OMIE — nao emite nada.
+   */
+  reconcileInvoiceClosingNotes: (
+    startDate: string,
+    endDate: string,
+    options?: InvoiceClosingOptions
+  ) => Promise<{ checked: number; billed: number; errors: string[] }>;
   /** Andamento do fechamento em curso. Devolve a funcao que cancela a escuta. */
   onInvoiceClosingProgress: (callback: (progress: InvoiceClosingRunProgress) => void) => () => void;
   /** `search` recorta o relatorio por placa ou motorista, como a busca da tela. */

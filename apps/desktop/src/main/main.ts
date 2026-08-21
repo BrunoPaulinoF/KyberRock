@@ -992,6 +992,20 @@ function registerIpcHandlers(): void {
     }
   );
 
+  // "Conferir notas no OMIE": so LE o estado la e traz o numero da nota das cargas do
+  // periodo. Nao emite nada, entao nao precisa de confirmacao.
+  ipcMain.handle(
+    "desktop:reconcile-invoice-closing-notes",
+    (_event, startDate: string, endDate: string, options?: unknown) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.reconcileInvoiceClosingNotes(
+        startDate,
+        endDate,
+        sanitizeInvoiceClosingOptions(options)
+      );
+    }
+  );
+
   // "Fazer fechamento": fatura no OMIE as pesagens do periodo. Emite nota fiscal — a tela
   // confirma com o operador antes de chegar aqui.
   ipcMain.handle(

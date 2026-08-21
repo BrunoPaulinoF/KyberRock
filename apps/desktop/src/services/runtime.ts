@@ -191,7 +191,8 @@ import type { InvoiceClosingOptions } from "./invoice-closing.js";
 import {
   countBillableCandidates,
   runInvoiceClosing,
-  selectInvoiceClosingCandidates
+  selectInvoiceClosingCandidates,
+  selectOperationsMissingInvoiceNumber
 } from "./invoice-closing-run.js";
 import type { InvoiceClosingRunProgress, InvoiceClosingRunResult } from "./invoice-closing-run.js";
 import {
@@ -2473,18 +2474,47 @@ export class DesktopRuntime {
    * com o que se sabe localmente, e a recusa por "ja autorizado" ainda e reconhecida uma a
    * uma no faturamento.
    */
+  /**
+   * "Conferir notas no OMIE": pergunta AGORA quais cargas do periodo ja foram faturadas la
+   * e traz o numero da nota de cada uma.
+   *
+   * A reconciliacao automatica roda por rodizio (o movimento recente a cada poucos minutos,
+   * o acervo de hora em hora) e depende da sincronizacao estar em dia. Quem vai enviar o
+   * relatorio ao cliente AGORA nao pode esperar a vez do rodizio: sem isto a coluna "Nota
+   * fiscal" saia com "-" numa carga cuja nota ja existia no OMIE, e o cliente recebia um
+   * documento que nao fecha com a nota que chegou para ele.
+   */
+  async reconcileInvoiceClosingNotes(
+    startDate: string,
+    endDate: string,
+    options?: InvoiceClosingOptions
+  ): Promise<{ checked: number; billed: number; errors: string[] }> {
+    this.assertDesktopAccess();
+    const operationIds = this.closingPeriodOperationsWithoutInvoice(startDate, endDate, options);
+    if (operationIds.length === 0) return { checked: 0, billed: 0, errors: [] };
+    const result = await reconcileOmieBillingFromOmie(this.database, this.ensureIdentity(), {
+      operationIds
+    });
+    return { checked: result.checked, billed: result.billed, errors: result.errors };
+  }
+
+  /** As cargas do periodo que ja tem documento no OMIE e ainda estao sem numero de nota. */
+  private closingPeriodOperationsWithoutInvoice(
+    startDate: string,
+    endDate: string,
+    options?: InvoiceClosingOptions
+  ): string[] {
+    return selectOperationsMissingInvoiceNumber(
+      this.getInvoiceClosing(startDate, endDate, options).rows
+    );
+  }
+
   private async reconcileClosingPeriodWithOmie(
     startDate: string,
     endDate: string,
     options?: InvoiceClosingOptions
   ): Promise<void> {
-    const report = this.getInvoiceClosing(startDate, endDate, options);
-    const operationIds = report.rows
-      .filter(
-        (line) =>
-          line.operationType === "invoice" && !line.invoiceNumber && line.omieSalesOrderId !== null
-      )
-      .map((line) => line.operationId);
+    const operationIds = this.closingPeriodOperationsWithoutInvoice(startDate, endDate, options);
     if (operationIds.length === 0) return;
 
     try {
