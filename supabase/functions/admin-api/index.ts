@@ -258,6 +258,33 @@ async function buildingRunNumbers(token: string): Promise<string[]> {
   }
 }
 
+/**
+ * Tag da release que o GitHub responde HOJE em `GET /releases/latest`.
+ *
+ * E a unica fonte de verdade sobre qual versao a frota esta recebendo: o
+ * `make_latest` de uma promocao nao aparece em campo nenhum da listagem, entao
+ * depois de uma volta atras a estavel mais nova da lista NAO e mais a producao.
+ * Sem esta consulta a tela apontaria como atual justamente a versao de onde se
+ * voltou — e ofereceria os botoes errados em cima disso.
+ *
+ * Best-effort DE PROPOSITO: falha aqui devolve `null` e a classificacao cai na
+ * heuristica antiga (a estavel mais nova), que e certa enquanto nao ha
+ * regressao em vigor. Uma consulta a mais nao pode derrubar a aba.
+ */
+async function currentProductionTag(token: string): Promise<string | null> {
+  try {
+    const response = await fetch(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`,
+      { headers: githubHeaders(token) }
+    );
+    if (!response.ok) return null;
+    const payload = (await response.json()) as { tag_name?: unknown };
+    return typeof payload.tag_name === "string" ? payload.tag_name : null;
+  } catch {
+    return null;
+  }
+}
+
 function githubHeaders(token: string): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`,
@@ -800,7 +827,8 @@ Deno.serve(async (req) => {
 
       return jsonResponse({
         releases: summarizeDesktopReleases(await response.json(), {
-          buildingRunNumbers: await buildingRunNumbers(token)
+          buildingRunNumbers: await buildingRunNumbers(token),
+          currentProductionTag: await currentProductionTag(token)
         }),
         channelCounts,
         canPromote: Boolean(Deno.env.get(GITHUB_ACTIONS_TOKEN_ENV)),

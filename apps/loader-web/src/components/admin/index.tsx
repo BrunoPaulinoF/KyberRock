@@ -46,7 +46,7 @@ export function Button({
   children: ReactNode;
   onClick?: () => void;
   type?: "button" | "submit";
-  variant?: "default" | "primary" | "danger";
+  variant?: "default" | "primary" | "warn" | "danger";
   size?: "sm" | "md";
   disabled?: boolean;
   title?: string;
@@ -55,6 +55,10 @@ export function Button({
   const classes = [
     "adm-btn",
     variant === "primary" ? "adm-btn-primary" : "",
+    // Laranja: gesto que anda para tras (voltar a frota para uma versao
+    // anterior). Nao e destrutivo como o vermelho, mas tambem nao pode sair
+    // por engano no meio dos botoes de sempre.
+    variant === "warn" ? "adm-btn-warn" : "",
     variant === "danger" ? "adm-btn-danger" : "",
     size === "sm" ? "adm-btn-sm" : ""
   ]

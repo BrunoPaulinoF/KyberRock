@@ -58,6 +58,15 @@ export interface DesktopReleaseSummary {
   installerName: string | null;
   /** Anterior a que esta em producao: liberar isso deixaria a frota parada onde esta. */
   isOlderThanProduction: boolean;
+  /**
+   * Posterior a que esta em producao.
+   *
+   * Fora de uma regressao isso nao acontece com release estavel — producao E a
+   * estavel mais nova. Depois de uma volta atras, porem, a versao de onde se
+   * voltou continua publicada e mais nova que a producao: e ela que o painel
+   * precisa oferecer para retomar, senao a regressao vira porta de uma via so.
+   */
+  isNewerThanProduction: boolean;
   canSendToTest: boolean;
   canReleaseToProduction: boolean;
   /** Da para reprovar: tirar do ar e travar a promocao para sempre. */
@@ -77,6 +86,19 @@ export interface SummarizeOptions {
    * como incompleta — degrada para a leitura anterior, nunca para um erro.
    */
   buildingRunNumbers?: readonly string[];
+  /**
+   * `tag_name` do que o `GET /releases/latest` responde AGORA.
+   *
+   * Sem isto a producao atual seria adivinhada como "a estavel mais nova da
+   * lista", que e verdade ate a primeira volta atras: ao regredir, a release de
+   * onde se voltou continua estavel e continua no topo da listagem, e a tela
+   * apontaria como producao justamente a versao que a frota deixou de receber.
+   * `make_latest` nao aparece em campo nenhum da listagem — so `/releases/latest`
+   * sabe, entao e de la que a verdade tem que vir.
+   *
+   * Ausente (consulta que falhou, funcao antiga) volta a heuristica anterior.
+   */
+  currentProductionTag?: string | null;
 }
 
 interface RawAsset {
@@ -182,6 +204,7 @@ export function summarizeDesktopReleases(
               : null,
         installerName,
         isOlderThanProduction: false,
+        isNewerThanProduction: false,
         canSendToTest: false,
         canReleaseToProduction: false,
         canReject: false
@@ -189,13 +212,18 @@ export function summarizeDesktopReleases(
     })
     .filter((row) => row.version.length > 0);
 
-  const currentProduction = rows.find((row) => row.state === "producao");
+  const currentTag = (options.currentProductionTag ?? "").replace(/^v/, "").trim();
+  const currentProduction =
+    (currentTag ? rows.find((row) => row.version === currentTag) : undefined) ??
+    rows.find((row) => row.state === "producao");
   if (currentProduction) currentProduction.isCurrentProduction = true;
 
   for (const row of rows) {
-    row.isOlderThanProduction = currentProduction
-      ? compareDesktopVersions(row.version, currentProduction.version) < 0
-      : false;
+    const distance = currentProduction
+      ? compareDesktopVersions(row.version, currentProduction.version)
+      : 0;
+    row.isOlderThanProduction = distance < 0;
+    row.isNewerThanProduction = distance > 0;
 
     // Mandar para teste so faz sentido no que esta parado: o que ja esta em
     // teste nao mudaria de estado, e o que ja e producao a frota inteira tem.
