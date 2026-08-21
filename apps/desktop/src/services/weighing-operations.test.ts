@@ -486,6 +486,55 @@ describe("weighing operations", () => {
     }
   });
 
+  it("ordena as Concluidas pela conclusao da pesagem, nao pela ultima alteracao", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      const ids: string[] = [];
+      for (const exitAt of ["2026-08-06T10:00:00.000Z", "2026-08-07T10:00:00.000Z"]) {
+        const operation = createWeighingOperation(database, {
+          identity,
+          customerId: "customer-1",
+          vehicleId: "vehicle-1",
+          driverId: "driver-1",
+          productId: "product-1",
+          entryWeightKg: 12_000
+        });
+        closeWeighingOperation(database, {
+          operationId: operation.id,
+          exitWeightKg: 18_500,
+          operationType: "invoice"
+        });
+        database
+          .prepare("UPDATE weighing_operations SET exit_weight_captured_at = ? WHERE id = ?")
+          .run(exitAt, operation.id);
+        ids.push(operation.id);
+      }
+      const [antiga, recente] = ids;
+
+      expect(listClosedWeighingOperations(database).map((op) => op.id)).toEqual([recente, antiga]);
+
+      // O faturamento da quinzena toca a operacao ANTIGA. Com a ordem por updated_at ela
+      // pulava para o topo, a lista inteira se reembaralhava e quem procurava a carga na
+      // ordem do dia nao achava mais.
+      database
+        .prepare(
+          "UPDATE weighing_operations SET omie_billing_status = 'billed', updated_at = ? WHERE id = ?"
+        )
+        .run("2026-08-21T19:00:00.000Z", antiga);
+
+      const closed = listClosedWeighingOperations(database);
+      expect(closed.map((op) => op.id)).toEqual([recente, antiga]);
+      // E a coluna "Concluida em" continua sendo a saida da balanca, e nao a hora em que
+      // o fechamento passou por ela.
+      expect(closed.find((op) => op.id === antiga)?.closedAt).toBe("2026-08-06T10:00:00.000Z");
+    } finally {
+      database.close();
+    }
+  });
+
   it("blocks duplicate open operations for the same plate", () => {
     const database = createDatabase();
 

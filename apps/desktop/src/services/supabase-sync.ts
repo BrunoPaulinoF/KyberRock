@@ -2279,9 +2279,17 @@ function upsertCloudOperations(
       driver_id = COALESCE(excluded.driver_id, weighing_operations.driver_id),
       -- carrier_id chega resolvido de resolveMirroredId: quando a nuvem manda um
       -- id que esta maquina ainda nao espelhou, o valor local e mantido; quando a
-      -- nuvem manda vazio (transporte proprio do cliente), o vinculo e limpo.
+      -- nuvem manda vazio (transporte proprio do cliente), o vinculo e limpo — ali o
+      -- vazio E informacao.
       carrier_id = excluded.carrier_id,
-      product_id = excluded.product_id,
+      -- Cliente e produto NAO seguem essa regra: nao existe pesagem sem cliente nem sem
+      -- produto, entao um vazio vindo da projecao nunca e "o operador tirou" — e a nuvem
+      -- que ainda nao sabe. Sem o COALESCE, um eco vazio APAGAVA o cliente de uma carga ja
+      -- concluida: ela virava "Cliente nao informado", sumia de qualquer busca pelo nome e
+      -- o fechamento passava a recusa-la com "operacao fiscal sem cliente vinculado" — ou
+      -- seja, carga pesada, entregue, e sem ninguem para cobrar.
+      customer_id = COALESCE(excluded.customer_id, weighing_operations.customer_id),
+      product_id = COALESCE(excluded.product_id, weighing_operations.product_id),
       payment_term_id = excluded.payment_term_id,
       entry_weight_kg = excluded.entry_weight_kg,
       entry_weight_captured_at = excluded.entry_weight_captured_at,

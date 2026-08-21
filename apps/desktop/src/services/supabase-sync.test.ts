@@ -12,13 +12,17 @@ import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./boots
 import { listOmieCategories } from "./omie-categories";
 import { readOmieAdvanceConfig } from "./omie-advance-config";
 import { BLOCKED_NEXT_ATTEMPT_AT, enqueueSyncJob } from "./sync-queue";
-import { createSimulatedWeighingOperation } from "./weighing-operations";
+import {
+  createSimulatedWeighingOperation,
+  listClosedWeighingOperations
+} from "./weighing-operations";
 import {
   applyOmieReferenceData,
   initializeSupabase,
   initializeSupabaseFromSettings,
   isSupabaseInitialized,
   processCloudSyncQueue,
+  pullDesktopDataFromCloud,
   processFiscalBillingNow,
   processOmieSyncQueue,
   pushOmieCarriersToCloud,
@@ -1939,6 +1943,185 @@ describe("supabase sync", () => {
           .pluck()
           .get()
       ).toBe("synced");
+    } finally {
+      database.close();
+    }
+  });
+
+  /**
+   * Relato da pedreira: depois de rodar o "Fazer fechamento" da quinzena, as pesagens
+   * SUMIRAM da aba Concluidas. Operacao concluida nao pode sair dessa lista por causa do
+   * faturamento — ela e o historico da balanca, e some so quando o operador exclui.
+   */
+  it("mantem a operacao na lista de Concluidas depois de faturar", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      enqueueSyncJob(database, {
+        id: "omie-billing-job-keep",
+        target: "omie",
+        action: "create_and_bill_order",
+        entityType: "weighing_operation",
+        entityId: "operation-1",
+        idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order",
+        payload: {
+          operationId: "operation-1",
+          operationType: "invoice",
+          customerOmieId: 123,
+          productOmieId: 456,
+          quantity: 10,
+          unitPrice: 25,
+          issueDate: "2026-06-12"
+        }
+      });
+      expect(listClosedWeighingOperations(database).map((row) => row.id)).toContain("operation-1");
+
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: { orderId: 987, billed: true, billingStatusCode: "0", invoiceNumber: "28727" }
+      });
+      await processFiscalBillingNow(database, identity, "operation-1");
+
+      const closed = listClosedWeighingOperations(database);
+      expect(closed.map((row) => row.id)).toContain("operation-1");
+      expect(
+        database
+          .prepare("SELECT status FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBe("pending_omie");
+    } finally {
+      database.close();
+    }
+  });
+
+  /**
+   * O mesmo, pelo caminho da recusa que a pedreira viu: "ja foi autorizado". Ele reconcilia
+   * a situacao para faturada — e reconciliar nao pode custar a operacao na lista.
+   */
+  it("mantem a operacao nas Concluidas quando o OMIE diz que ja estava faturado", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      enqueueSyncJob(database, {
+        id: "omie-billing-job-already",
+        target: "omie",
+        action: "create_and_bill_order",
+        entityType: "weighing_operation",
+        entityId: "operation-1",
+        idempotencyKey: "kyberrock:unit-1:operation-1:create_sales_order",
+        payload: {
+          operationId: "operation-1",
+          operationType: "invoice",
+          customerOmieId: 123,
+          productOmieId: 456,
+          quantity: 10,
+          unitPrice: 25,
+          issueDate: "2026-06-12"
+        }
+      });
+
+      invokeMock.mockResolvedValueOnce({
+        error: {
+          message:
+            "Nao foi possivel realizar o faturamento desse Pedido de Venda de Produto! " +
+            "Nao e possivel faturar, pois o Pedido de Venda de Produto ja foi autorizado."
+        },
+        data: null
+      });
+      const result = await processFiscalBillingNow(database, identity, "operation-1");
+
+      expect(result).toMatchObject({ billed: true, alreadyBilledInOmie: true });
+      expect(listClosedWeighingOperations(database).map((row) => row.id)).toContain("operation-1");
+    } finally {
+      database.close();
+    }
+  });
+
+  /**
+   * A carga do vale 321 da pedreira apareceu no fechamento como "operacao fiscal sem
+   * cliente vinculado" e sumiu de qualquer busca pelo nome do cliente na aba Concluidas:
+   * o pull tinha APAGADO o `customer_id` dela, porque a projecao veio sem cliente e o
+   * upsert gravava o vazio por cima.
+   *
+   * Nao existe pesagem sem cliente: um vazio vindo da nuvem nunca e "o operador tirou", e
+   * sim a projecao que ainda nao sabe. Apagar ali custa a cobranca da carga.
+   */
+  it("nao apaga o cliente da operacao quando a projecao vem sem cliente", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          operations: [
+            {
+              id: "operation-1",
+              status: "synced",
+              operation_type: "invoice",
+              customer_id: null,
+              product_id: null,
+              updated_at: "2026-06-13T12:00:00.000Z"
+            }
+          ]
+        }
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(
+        database
+          .prepare("SELECT customer_id FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBe("sync-customer-1");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("aceita o cliente que a projecao manda quando ela tem um", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      insertLocalCustomer(database, "outro-cliente");
+
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          operations: [
+            {
+              id: "operation-1",
+              status: "synced",
+              operation_type: "invoice",
+              customer_id: "outro-cliente",
+              updated_at: "2026-06-13T12:00:00.000Z"
+            }
+          ]
+        }
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      // Preservar o vazio nao pode virar "ignora o cliente da nuvem": a outra balanca
+      // trocando o cliente da carga continua valendo aqui.
+      expect(
+        database
+          .prepare("SELECT customer_id FROM weighing_operations WHERE id = 'operation-1'")
+          .pluck()
+          .get()
+      ).toBe("outro-cliente");
     } finally {
       database.close();
     }

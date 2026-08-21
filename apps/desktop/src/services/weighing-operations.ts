@@ -265,6 +265,15 @@ export interface WeighingOperationSummary {
   createdAt: string;
   updatedAt: string;
   /**
+   * Quando a pesagem de fato FECHOU (saida da balanca). Null nas abertas e nas antigas.
+   *
+   * A tela mostrava `updatedAt` na coluna "Concluida em", que e a ultima ALTERACAO: bastava
+   * o faturamento da quinzena tocar a operacao para a data mudar e a lista se reordenar
+   * inteira. A carga aparecia como se tivesse sido concluida na hora do fechamento, e quem
+   * procurava por ela na ordem do dia nao achava mais.
+   */
+  closedAt: string | null;
+  /**
    * Computador da pedreira que criou a operacao (multi-desktop). Alimenta o
    * contorno colorido e a legenda da tela de Operacoes.
    */
@@ -286,6 +295,7 @@ interface OperationRow {
   operation_type: OperationType;
   entry_weight_kg: number | null;
   exit_weight_kg: number | null;
+  exit_weight_captured_at?: string | null;
   net_weight_kg: number | null;
   unit_price_cents: number | null;
   base_unit_price_cents: number | null;
@@ -2271,7 +2281,7 @@ export function listOpenWeighingOperations(database: DesktopDatabase): WeighingO
         o.omie_sales_order_id, o.omie_service_order_id, o.omie_order_number,
         o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
-        o.cancel_reason, o.created_at, o.updated_at,
+        o.cancel_reason, o.created_at, o.updated_at, o.exit_weight_captured_at,
         c.id AS customer_id,
         COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
         c.document AS customer_document,
@@ -2321,7 +2331,7 @@ export function listCanceledWeighingOperations(
         o.omie_sales_order_id, o.omie_service_order_id, o.omie_order_number,
         o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
-        o.cancel_reason, o.created_at, o.updated_at,
+        o.cancel_reason, o.created_at, o.updated_at, o.exit_weight_captured_at,
         c.id AS customer_id,
         COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
         c.document AS customer_document,
@@ -2369,7 +2379,7 @@ export function listClosedWeighingOperations(
         o.omie_sales_order_id, o.omie_service_order_id, o.omie_order_number,
         o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
-        o.cancel_reason, o.created_at, o.updated_at,
+        o.cancel_reason, o.created_at, o.updated_at, o.exit_weight_captured_at,
         c.id AS customer_id,
         COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
         c.document AS customer_document,
@@ -2396,7 +2406,10 @@ export function listClosedWeighingOperations(
        LEFT JOIN devices dv ON dv.id = o.device_id
        WHERE o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
          AND o.deleted_at IS NULL
-       ORDER BY o.updated_at DESC`
+       -- Pela data em que a pesagem FECHOU, e nao pela ultima alteracao: ordenar por
+       -- updated_at fazia a lista inteira se reembaralhar a cada faturamento em massa ou
+       -- sincronizacao, e a carga de ontem aparecia como se fosse a mais recente.
+       ORDER BY COALESCE(o.exit_weight_captured_at, o.created_at) DESC, o.created_at DESC`
     )
     .all()
     .map((row) => mapOperationRow(row as OperationRow));
@@ -2512,7 +2525,7 @@ export function getWeighingOperation(
         o.omie_sales_order_id, o.omie_service_order_id, o.omie_order_number,
         o.omie_billing_status, o.omie_billing_message,
         o.omie_billed_at, o.omie_document_url,
-        o.cancel_reason, o.created_at, o.updated_at,
+        o.cancel_reason, o.created_at, o.updated_at, o.exit_weight_captured_at,
         c.id AS customer_id,
         COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
         c.document AS customer_document,
@@ -3448,6 +3461,7 @@ function mapOperationRow(row: OperationRow): WeighingOperationSummary {
     cancelReason: row.cancel_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    closedAt: row.exit_weight_captured_at ?? null,
     deviceId: row.device_id ?? null,
     deviceName: row.device_name ?? null,
     deviceColor: row.device_color ?? null,

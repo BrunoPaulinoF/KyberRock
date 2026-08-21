@@ -3580,7 +3580,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <strong>{formatWeightKg(operation.netWeightKg ?? 0)}</strong>
                           <span>{formatMoney(operation.totalCents)}</span>
                         </span>
-                        <span>{formatDbDateTime(operation.updatedAt)}</span>
+                        <span>{formatDbDateTime(operation.closedAt ?? operation.createdAt)}</span>
                         <FiscalBillingStatus
                           operation={operation}
                           retrying={retryingFiscalOperationId === operation.id}
