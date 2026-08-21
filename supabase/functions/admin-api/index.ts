@@ -22,6 +22,14 @@ import {
   isCipherConfigured
 } from "../_shared/credential-cipher.ts";
 import { summarizeDesktopReleases } from "../_shared/desktop-releases.ts";
+import {
+  applyPullRequests,
+  bodiesUnavailable,
+  entriesFromCommits,
+  pickReleaseNoteRefs,
+  pullNumbersToFetch,
+  type ReleaseNoteRefs
+} from "../_shared/desktop-release-notes.ts";
 
 /**
  * Cliente generico do Supabase. Nao usamos `ReturnType<typeof createClient>`
@@ -89,6 +97,7 @@ type AdminAction =
   | "get_ai_settings"
   | "update_ai_settings"
   | "list_desktop_releases"
+  | "get_desktop_release_notes"
   | "promote_desktop_release"
   | "reveal_credentials";
 
@@ -283,6 +292,69 @@ async function currentProductionTag(token: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Commits que entraram numa versao: o intervalo entre a versao anterior e ela.
+ *
+ * Duas chamadas no pior caso, e so quando alguem abre "O que mudou" numa linha
+ * — a aba em si nao gasta nada com isto. O `compare` e a leitura boa (todo
+ * merge do intervalo, inclusive os que nao geraram build proprio por causa do
+ * filtro de paths do `desktop-release.yml`); o commit avulso e a rede de
+ * seguranca da versao mais antiga da janela, que nao tem anterior com que
+ * comparar, e ainda assim responde "qual PR gerou este build".
+ *
+ * Best-effort DE PROPOSITO: qualquer falha degrada para a leitura menor e, no
+ * limite, para lista vazia — a tela diz que nao achou, nunca quebra.
+ */
+async function releaseNoteCommits(token: string, refs: ReleaseNoteRefs): Promise<unknown[]> {
+  const api = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}`;
+  if (refs.base) {
+    try {
+      const response = await fetch(`${api}/compare/${refs.base}...${refs.head}?per_page=100`, {
+        headers: githubHeaders(token)
+      });
+      if (response.ok) {
+        const payload = (await response.json()) as { commits?: unknown };
+        if (Array.isArray(payload.commits) && payload.commits.length > 0) return payload.commits;
+      }
+    } catch {
+      // Cai no commit avulso abaixo.
+    }
+  }
+
+  try {
+    const response = await fetch(`${api}/commits/${refs.head}`, { headers: githubHeaders(token) });
+    if (!response.ok) return [];
+    return [await response.json()];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * O texto de cada PR.
+ *
+ * Exige `Pull requests: read` no PAT, que e uma permissao A MAIS do que a aba
+ * precisava ate agora — por isso a falha aqui e silenciosa e nao derruba nada:
+ * sem ela a tela continua mostrando QUAIS PRs entraram na versao (isso vem da
+ * mensagem do merge commit, que sai com `Contents: read`) e explica o que falta
+ * para mostrar o texto.
+ */
+async function pullRequestDetails(token: string, numbers: readonly number[]): Promise<unknown[]> {
+  const api = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}`;
+  const results = await Promise.all(
+    numbers.map(async (number) => {
+      try {
+        const response = await fetch(`${api}/pulls/${number}`, { headers: githubHeaders(token) });
+        if (!response.ok) return null;
+        return await response.json();
+      } catch {
+        return null;
+      }
+    })
+  );
+  return results.filter((result) => result !== null);
 }
 
 function githubHeaders(token: string): Record<string, string> {
@@ -833,6 +905,80 @@ Deno.serve(async (req) => {
         channelCounts,
         canPromote: Boolean(Deno.env.get(GITHUB_ACTIONS_TOKEN_ENV)),
         actionsUrl: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${PROMOTE_WORKFLOW_FILE}`
+      });
+    }
+
+    /**
+     * O que entrou numa versao — o texto dos PRs, sob demanda.
+     *
+     * Fica FORA do `list_desktop_releases` de proposito: a aba se recarrega
+     * sozinha de poucos em poucos segundos enquanto uma promocao esta a
+     * caminho, e a API do GitHub tem limite por hora. Cruzar release com PR
+     * custa duas a doze chamadas; pagar isso a cada verificacao de fundo, para
+     * trinta versoes que ninguem esta lendo, secaria o limite que as promocoes
+     * de verdade precisam. Aqui a conta so acontece quando alguem abre uma
+     * linha.
+     *
+     * A regra de leitura vive em `_shared/desktop-release-notes.ts` (puro e
+     * testado); este bloco so busca o que ela pede.
+     */
+    if (body.action === "get_desktop_release_notes") {
+      const token =
+        Deno.env.get(GITHUB_ACTIONS_TOKEN_ENV) ?? Deno.env.get(GITHUB_READ_TOKEN_ENV) ?? "";
+      if (!token) {
+        return jsonResponse(
+          {
+            error: `Secret ${GITHUB_ACTIONS_TOKEN_ENV} ausente. Cadastre um PAT fine-grained deste repositorio com Actions: write e Contents: read and write.`
+          },
+          503
+        );
+      }
+
+      const version = String(payload.version ?? "")
+        .replace(/^v/, "")
+        .trim();
+      if (!/^\d+\.\d+\.\d+$/.test(version)) {
+        return jsonResponse({ error: "Versao invalida." }, 400);
+      }
+
+      const listing = await fetch(
+        `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=30`,
+        { headers: githubHeaders(token) }
+      );
+      if (!listing.ok) {
+        return jsonResponse(
+          { error: `Falha ao consultar as versoes no GitHub (${listing.status}).` },
+          502
+        );
+      }
+
+      const refs = pickReleaseNoteRefs(await listing.json(), version);
+      if (!refs) {
+        return jsonResponse(
+          {
+            error: `Nao foi possivel localizar o commit da versao ${version} no GitHub.`
+          },
+          404
+        );
+      }
+
+      const { entries, omitted } = entriesFromCommits(await releaseNoteCommits(token, refs));
+      const detailed = applyPullRequests(
+        entries,
+        await pullRequestDetails(token, pullNumbersToFetch(entries))
+      );
+
+      return jsonResponse({
+        version,
+        tag: refs.tag,
+        baseVersion: refs.baseVersion,
+        entries: detailed,
+        omitted,
+        releaseUrl: refs.releaseUrl,
+        compareUrl: refs.base
+          ? `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/compare/${refs.base}...${refs.head}`
+          : null,
+        bodiesUnavailable: bodiesUnavailable(detailed)
       });
     }
 

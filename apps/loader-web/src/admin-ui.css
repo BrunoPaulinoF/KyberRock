@@ -1113,3 +1113,152 @@
   font-size: 12px;
   color: var(--adm-ink-2);
 }
+
+/* ---------------------------------------------------------------------------
+   O que mudou numa versao: o texto do PR dentro do modal
+
+   A tipografia aqui e menor e mais apertada que a do resto do painel de
+   proposito: o corpo de um PR e texto longo, e um modal com o espacamento das
+   telas de cadastro caberia dois paragrafos por rolagem. O texto vem de fora
+   (GitHub), entao tudo o que pode estourar a largura — tabela, bloco de codigo,
+   link comprido — rola ou quebra dentro do proprio bloco.
+   --------------------------------------------------------------------------- */
+
+/* Gesto de leitura dentro de uma celula: nao disputa com os botoes de
+   distribuicao da linha, que sao os que mexem em alguma coisa. */
+.adm-linkish {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--adm-accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.adm-linkish:hover {
+  color: var(--adm-accent-hover);
+}
+
+.adm-note-entry {
+  padding: 12px 0 0;
+  border-top: 1px solid var(--adm-line);
+}
+
+.adm-note-entry:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.adm-note-entry-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--adm-gap-sm);
+}
+
+.adm-note-entry-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--adm-ink);
+}
+
+.adm-note-body {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--adm-ink-2);
+}
+
+.adm-note-body > *:first-child {
+  margin-top: 0;
+}
+
+.adm-note-heading {
+  margin: 14px 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--adm-ink);
+}
+
+.adm-note-p {
+  margin: 6px 0;
+}
+
+.adm-note-list {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.adm-note-list li {
+  margin: 3px 0;
+}
+
+.adm-note-item-deep {
+  margin-left: 16px;
+  list-style-type: circle;
+}
+
+.adm-note-quote {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--adm-line-2);
+  background: var(--adm-surface-2);
+  color: var(--adm-ink-2);
+}
+
+.adm-note-code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--adm-surface-3);
+  font-family: var(--adm-mono);
+  font-size: 12px;
+}
+
+.adm-note-pre {
+  margin: 8px 0;
+  padding: 10px;
+  border: 1px solid var(--adm-line);
+  border-radius: var(--adm-radius-sm);
+  background: var(--adm-surface-3);
+  font-family: var(--adm-mono);
+  font-size: 12px;
+  overflow-x: auto;
+}
+
+.adm-note-rule {
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--adm-line);
+}
+
+.adm-note-tablewrap {
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
+.adm-note-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.adm-note-table th,
+.adm-note-table td {
+  padding: 6px 8px;
+  border: 1px solid var(--adm-line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.adm-note-table th {
+  background: var(--adm-surface-2);
+  font-weight: 700;
+  color: var(--adm-ink);
+}
+
+.adm-note-body a {
+  color: var(--adm-accent);
+  word-break: break-word;
+}

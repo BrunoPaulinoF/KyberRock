@@ -362,7 +362,7 @@ coisa: _Enviar para teste_, _Liberar para producao_, _Reprovar_ e a volta atras.
 quantas balancas estao em cada anel, porque uma versao em teste com zero balancas marcadas nunca
 sera avaliada.
 
-Tres coisas na tela merecem atencao de quem for mexer nela:
+Quatro coisas na tela merecem atencao de quem for mexer nela:
 
 - **Ela se recarrega sozinha** e nao espera clique: promover so dispara um run, e o estado da
   versao muda no GitHub segundos depois. O ritmo esta em `apps/loader-web/src/lib/desktop-updates.ts`
@@ -379,12 +379,29 @@ Tres coisas na tela merecem atencao de quem for mexer nela:
   atualizou receber a versao antiga e quem ja atualizou parar onde esta; a confirmacao da tela diz
   isso com todas as letras. Com uma regressao em vigor, a versao de onde se voltou ganha _Retomar
   producao nesta versao_ — sem isso a volta atras seria porta de uma via so.
+- **_O que mudou_ abre o texto dos PRs daquela versao.** A lista diz qual versao a frota recebe,
+  mas nao o que ela mudou — e essa e a pergunta de quem esta prestes a liberar um build para todas
+  as pedreiras. O link de cada linha chama `admin-api` → `get_desktop_release_notes`, que cruza a
+  versao com os PRs mesclados **entre ela e a versao anterior** e devolve titulo, autor, data e o
+  corpo de cada um; o modal renderiza o markdown com um parser proprio
+  (`apps/loader-web/src/lib/release-notes.ts` — nada vira HTML, porque o texto vem de fora). A
+  leitura e **sob demanda** e fica em cache por versao enquanto a aba esta aberta: a aba se
+  recarrega sozinha a cada poucos segundos e a API do GitHub tem limite por hora, entao cruzar
+  release com PR em toda verificacao de fundo secaria o limite de que as promocoes precisam.
 
 > **Qual e a producao atual so o `GET /releases/latest` sabe.** `make_latest` nao aparece em campo
 > nenhum da listagem, entao depois de uma regressao a estavel mais nova da lista NAO e a versao que
 > a frota recebe. O `admin-api` consulta `/releases/latest` (best-effort) e passa a tag para
 > `summarizeDesktopReleases`; sem ela a classificacao cai na heuristica antiga, que so erra com
 > regressao em vigor.
+
+> **O numero do PR e de graca; o texto exige uma permissao a mais.** Numero e titulo saem da
+> mensagem do merge commit, que vem no `GET /compare` com o `Contents: read` que o token ja tem. O
+> corpo do PR so existe em `GET /pulls/{n}`, que pede **`Pull requests: read`** no PAT. A leitura e
+> best-effort: sem a permissao a tela continua mostrando **quais** PRs entraram na versao, com link
+> para abrir cada um no GitHub, e explica o que falta — nada quebra. A regra de leitura (qual e a
+> versao anterior, quais commits sao merge de PR) vive em `_shared/desktop-release-notes.ts`, pura e
+> testada; a cadeia do **primeiro pai** e o que evita listar os commits de dentro de cada branch.
 
 O painel **nao mexe em release**: ele so dispara o workflow (`admin-api` →
 `promote_desktop_release` → `POST /actions/workflows/desktop-promote.yml/dispatches`). Por isso o
@@ -445,11 +462,11 @@ nunca para um erro.
 
 Tokens envolvidos — todos PAT fine-grained, **so este repositorio**:
 
-| Onde vive          | Nome                | Escopo                                    | Para que                                                          |
-| ------------------ | ------------------- | ----------------------------------------- | ----------------------------------------------------------------- |
-| Secret do Actions  | `GH_UPDATER_TOKEN`  | `Contents: read`                          | embutido no app instalado, para baixar a release do repo privado  |
-| Secret do Supabase | `GH_RELEASES_TOKEN` | `Contents: read`                          | `desktop-download` (link publico `/download`)                     |
-| Secret do Supabase | `GH_ACTIONS_TOKEN`  | `Actions: write` + `Contents: read+write` | o painel listar builds parados e disparar o `desktop-promote.yml` |
+| Onde vive          | Nome                | Escopo                                                                                   | Para que                                                                                              |
+| ------------------ | ------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Secret do Actions  | `GH_UPDATER_TOKEN`  | `Contents: read`                                                                         | embutido no app instalado, para baixar a release do repo privado                                      |
+| Secret do Supabase | `GH_RELEASES_TOKEN` | `Contents: read`                                                                         | `desktop-download` (link publico `/download`)                                                         |
+| Secret do Supabase | `GH_ACTIONS_TOKEN`  | `Actions: write` + `Contents: read+write` (+ `Pull requests: read` para o texto dos PRs) | o painel listar builds parados, disparar o `desktop-promote.yml` e mostrar o que mudou em cada versao |
 
 > **Por que a listagem do painel precisa de `Contents: read and write`:** `GET /releases` so devolve
 > **rascunho** para quem tem acesso de escrita no repositorio. Como rascunho e exatamente o estado

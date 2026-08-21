@@ -13,11 +13,14 @@ import {
   type ReleaseHighlight,
   type ReleaseState
 } from "../lib/desktop-updates";
+import { parseReleaseNotes, type NoteBlock, type NoteSpan } from "../lib/release-notes";
 import {
   Badge,
   Button,
   ButtonGroup,
   DataTable,
+  LinkButton,
+  Modal,
   Note,
   PageHead,
   Panel,
@@ -276,6 +279,281 @@ export function intentsFor(release: ReleaseRow): PromotionIntent[] {
   return intents;
 }
 
+// ---------------------------------------------------------------------------
+// "O que mudou nesta versao"
+//
+// A lista responde QUAL versao a frota recebe; nao respondia o que essa versao
+// mudou — que e a pergunta de quem esta com o dedo no botao de liberar para
+// todas as pedreiras de uma vez. Ate agora a unica saida era abrir o GitHub e
+// cruzar tag com PR na mao.
+//
+// O texto vem dos PRs mesclados entre esta versao e a ANTERIOR (`admin-api` ->
+// `get_desktop_release_notes`), e nao de nota de release: ninguem escreve
+// changelog aqui, e o PR ja e onde a mudanca foi explicada. Comparar com a
+// versao anterior tambem cobre os merges que nao geraram build proprio — o
+// `desktop-release.yml` tem filtro de paths, mas o build e um checkout da main
+// inteira.
+//
+// A leitura e SOB DEMANDA e fica em cache por versao enquanto a aba estiver
+// aberta: cada abertura custa chamadas na API do GitHub (que tem limite por
+// hora), e esta aba ja se recarrega sozinha de poucos em poucos segundos.
+// ---------------------------------------------------------------------------
+
+/** Um PR (ou um commit direto na main) que entrou na versao. */
+export interface ReleaseNoteEntry {
+  sha: string;
+  pullNumber: number | null;
+  title: string;
+  /** Texto do PR. Vazio quando o PR nao tem descricao — ou nao deu para ler. */
+  body: string;
+  author: string | null;
+  date: string | null;
+  url: string;
+}
+
+export interface ReleaseNotes {
+  version: string;
+  tag: string;
+  /** Versao com que a comparacao foi feita. `null` na mais antiga da janela. */
+  baseVersion: string | null;
+  entries: ReleaseNoteEntry[];
+  /** PRs alem do limite exibido. */
+  omitted: number;
+  releaseUrl: string | null;
+  compareUrl: string | null;
+  /**
+   * Ha PR na versao e nenhum texto veio: falta `Pull requests: read` no PAT.
+   * A tela diz isso em vez de deixar parecer que os PRs sao todos vazios.
+   */
+  bodiesUnavailable: boolean;
+}
+
+function NoteSpans({ spans }: { spans: readonly NoteSpan[] }) {
+  return (
+    <>
+      {spans.map((span, index) => {
+        if (span.kind === "strong") return <strong key={index}>{span.text}</strong>;
+        if (span.kind === "code")
+          return (
+            <code key={index} className="adm-note-code">
+              {span.text}
+            </code>
+          );
+        if (span.kind === "link")
+          return (
+            <a key={index} href={span.href} target="_blank" rel="noreferrer">
+              {span.text}
+            </a>
+          );
+        return <span key={index}>{span.text}</span>;
+      })}
+    </>
+  );
+}
+
+function NoteBlockView({ block }: { block: NoteBlock }) {
+  switch (block.kind) {
+    case "heading": {
+      // O titulo do modal e um h3; os do texto do PR entram abaixo dele.
+      const Tag = `h${block.level + 3}` as "h4" | "h5" | "h6";
+      return (
+        <Tag className="adm-note-heading">
+          <NoteSpans spans={block.spans} />
+        </Tag>
+      );
+    }
+    case "list": {
+      const Tag = block.ordered ? "ol" : "ul";
+      return (
+        <Tag className="adm-note-list">
+          {block.items.map((item, index) => (
+            <li key={index} className={item.depth === 1 ? "adm-note-item-deep" : undefined}>
+              <NoteSpans spans={item.spans} />
+            </li>
+          ))}
+        </Tag>
+      );
+    }
+    case "quote":
+      return (
+        <blockquote className="adm-note-quote">
+          <NoteSpans spans={block.spans} />
+        </blockquote>
+      );
+    case "code":
+      return (
+        <pre className="adm-note-pre">
+          <code>{block.text}</code>
+        </pre>
+      );
+    case "table":
+      return (
+        <div className="adm-note-tablewrap">
+          <table className="adm-note-table">
+            {block.head.length > 0 && (
+              <thead>
+                <tr>
+                  {block.head.map((cell, index) => (
+                    <th key={index}>
+                      <NoteSpans spans={cell} />
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+            )}
+            <tbody>
+              {block.rows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {row.map((cell, cellIndex) => (
+                    <td key={cellIndex}>
+                      <NoteSpans spans={cell} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    case "rule":
+      return <hr className="adm-note-rule" />;
+    default:
+      return (
+        <p className="adm-note-p">
+          <NoteSpans spans={block.spans} />
+        </p>
+      );
+  }
+}
+
+/**
+ * Texto do PR renderizado.
+ *
+ * Nada aqui vira HTML: o parser (`lib/release-notes.ts`) devolve dados e esta
+ * arvore monta elementos React a partir deles. O corpo do PR e conteudo que
+ * chega do GitHub, e conteudo de fora nao pode virar marcacao executavel dentro
+ * do painel.
+ */
+function NoteBody({ markdown }: { markdown: string }) {
+  const blocks = useMemo(() => parseReleaseNotes(markdown), [markdown]);
+  return (
+    <div className="adm-note-body">
+      {blocks.map((block, index) => (
+        <NoteBlockView key={index} block={block} />
+      ))}
+    </div>
+  );
+}
+
+function ReleaseNoteCard({
+  entry,
+  bodiesUnavailable
+}: {
+  entry: ReleaseNoteEntry;
+  bodiesUnavailable: boolean;
+}) {
+  return (
+    <article className="adm-note-entry">
+      <header className="adm-note-entry-head">
+        <div>
+          <p className="adm-note-entry-title">{entry.title}</p>
+          <p className="adm-cell-sub">
+            {[
+              entry.pullNumber === null ? "Commit direto na main" : `PR #${entry.pullNumber}`,
+              entry.author,
+              entry.date ? formatDateTime(entry.date) : null
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+        </div>
+        {entry.url && (
+          <LinkButton href={entry.url} size="sm">
+            Abrir no GitHub
+          </LinkButton>
+        )}
+      </header>
+      {entry.body ? (
+        <NoteBody markdown={entry.body} />
+      ) : bodiesUnavailable ? null : (
+        <p className="adm-cell-sub">Mesclado sem texto de descricao.</p>
+      )}
+    </article>
+  );
+}
+
+export function ReleaseNotesModal({
+  version,
+  notes,
+  isLoading,
+  error,
+  onClose
+}: {
+  version: string;
+  notes: ReleaseNotes | null;
+  isLoading: boolean;
+  error: string | null;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      title={`O que mudou na versao ${version}`}
+      description={
+        notes?.baseVersion
+          ? `Tudo o que foi mesclado depois da versao ${notes.baseVersion}.`
+          : "Os PRs que entraram nesta versao."
+      }
+      onClose={onClose}
+      footer={
+        notes?.compareUrl ? (
+          <LinkButton href={notes.compareUrl} size="sm">
+            Ver a comparacao no GitHub
+          </LinkButton>
+        ) : notes?.releaseUrl ? (
+          <LinkButton href={notes.releaseUrl} size="sm">
+            Ver a versao no GitHub
+          </LinkButton>
+        ) : undefined
+      }
+    >
+      {isLoading && <p className="adm-cell-sub">Lendo os PRs desta versao no GitHub…</p>}
+
+      {error && <Note tone="danger">{error}</Note>}
+
+      {notes && notes.bodiesUnavailable && (
+        <Note tone="warn">
+          Da para ver <strong>quais</strong> PRs entraram, mas nao o texto deles: o PAT{" "}
+          <strong className="adm-mono">GH_ACTIONS_TOKEN</strong> precisa tambem de{" "}
+          <strong>Pull requests: read</strong>. Enquanto isso, cada PR abre no GitHub pelo botao ao
+          lado do titulo.
+        </Note>
+      )}
+
+      {notes && notes.entries.length === 0 && !isLoading && (
+        <Note tone="neutral">
+          Nenhum PR entre esta versao e a anterior. Costuma ser um build refeito da mesma base — o
+          instalador muda, o codigo nao.
+        </Note>
+      )}
+
+      {notes?.entries.map((entry) => (
+        <ReleaseNoteCard
+          key={entry.sha || String(entry.pullNumber)}
+          entry={entry}
+          bodiesUnavailable={notes.bodiesUnavailable}
+        />
+      ))}
+
+      {notes && notes.omitted > 0 && (
+        <p className="adm-cell-sub">
+          E mais {notes.omitted} {notes.omitted === 1 ? "PR" : "PRs"} nesta versao — a lista
+          completa esta na comparacao no GitHub.
+        </p>
+      )}
+    </Modal>
+  );
+}
+
 interface PendingAction extends PendingPromotion {
   intent: PromotionIntent;
 }
@@ -296,6 +574,19 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
     () => typeof document === "undefined" || document.visibilityState !== "hidden"
   );
   const [feedback, setFeedback] = useState<{ tone: Tone; text: string } | null>(null);
+  /** Versao com o modal de "o que mudou" aberto. */
+  const [notesVersion, setNotesVersion] = useState<string | null>(null);
+  /**
+   * Texto ja lido, por versao.
+   *
+   * Guardar importa: abrir a mesma linha duas vezes e comum (compara-se uma
+   * versao com a outra antes de liberar) e cada leitura custa chamadas na API
+   * do GitHub. O cache morre com a aba, entao um PR editado depois aparece
+   * atualizado no proximo carregamento da tela.
+   */
+  const [notesCache, setNotesCache] = useState<Record<string, ReleaseNotes>>({});
+  const [isLoadingNotes, setIsLoadingNotes] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
 
   const handleError = useCallback(
     (error: unknown, fallback: string) => {
@@ -347,6 +638,36 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
       }
     },
     [handleError, onSessionExpired]
+  );
+
+  const openNotes = useCallback(
+    async (version: string) => {
+      setNotesVersion(version);
+      setNotesError(null);
+      if (notesCache[version]) return;
+
+      setIsLoadingNotes(true);
+      try {
+        const notes = await callAdminFunction<ReleaseNotes>("admin-api", {
+          action: "get_desktop_release_notes",
+          payload: { version }
+        });
+        setNotesCache((current) => ({ ...current, [version]: notes }));
+      } catch (error) {
+        if (error instanceof AdminSessionExpiredError) {
+          onSessionExpired();
+          return;
+        }
+        // Erro aqui fica DENTRO do modal: nao ler o texto de uma versao nao e
+        // motivo para pintar de vermelho a tela que distribui as versoes.
+        setNotesError(
+          error instanceof Error ? error.message : "Nao foi possivel ler o que mudou nesta versao."
+        );
+      } finally {
+        setIsLoadingNotes(false);
+      }
+    },
+    [notesCache, onSessionExpired]
   );
 
   useEffect(() => {
@@ -444,6 +765,15 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
               </p>
             )}
             {release.installerName && <p className="adm-cell-sub">{release.installerName}</p>}
+            <p className="adm-cell-sub">
+              <button
+                type="button"
+                className="adm-linkish"
+                onClick={() => void openNotes(release.version)}
+              >
+                O que mudou
+              </button>
+            </p>
           </>
         );
       }
@@ -572,7 +902,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
 
       <Panel
         title="Versoes publicadas"
-        description="No topo: a versao que a frota recebe, o ultimo build gerado pelo GitHub e a versao anterior — que e para onde a volta atras leva."
+        description="No topo: a versao que a frota recebe, o ultimo build gerado pelo GitHub e a versao anterior — que e para onde a volta atras leva. O link de cada linha abre o texto dos PRs que entraram naquela versao."
         flush
         actions={
           <>
@@ -600,6 +930,19 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
           }
         />
       </Panel>
+
+      {notesVersion && (
+        <ReleaseNotesModal
+          version={notesVersion}
+          notes={notesCache[notesVersion] ?? null}
+          isLoading={isLoadingNotes}
+          error={notesError}
+          onClose={() => {
+            setNotesVersion(null);
+            setNotesError(null);
+          }}
+        />
+      )}
     </>
   );
 }
