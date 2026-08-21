@@ -148,11 +148,21 @@ const DETAIL_HEADERS = [
 ];
 
 export function invoiceClosingFileBaseName(report: InvoiceClosingReport): string {
-  const cycles = report.filters.cycles.length
-    ? report.filters.cycles
-        .map((cycle) => slug(INVOICE_CLOSING_CYCLE_LABEL[cycle], "ciclo"))
-        .join("-")
-    : "todos";
+  // Na base `period` o arquivo e da quinzena/mes/semana escolhida, e nao dos ciclos do
+  // cadastro: um "fechamento-faturas-todos" esconderia justamente qual periodo foi fechado.
+  const cycles =
+    report.filters.basis === "period"
+      ? slug(
+          report.filters.periodCycle
+            ? INVOICE_CLOSING_CYCLE_LABEL[report.filters.periodCycle]
+            : "periodo",
+          "periodo"
+        )
+      : report.filters.cycles.length
+        ? report.filters.cycles
+            .map((cycle) => slug(INVOICE_CLOSING_CYCLE_LABEL[cycle], "ciclo"))
+            .join("-")
+        : "todos";
   return `fechamento-faturas-${cycles}${platesSuffix(report)}-${report.startDate}-a-${report.endDate}`;
 }
 
@@ -547,9 +557,15 @@ function carrierCells(carriers: readonly InvoiceClosingCarrierRow[]): string[][]
 
 function scopeText(report: InvoiceClosingReport): string {
   const parts: string[] = [
-    report.filters.cycles.length > 0
-      ? report.filters.cycles.map((cycle) => INVOICE_CLOSING_CYCLE_LABEL[cycle]).join(", ")
-      : "Todos os ciclos"
+    report.filters.basis === "period"
+      ? `Fechamento do periodo${
+          report.filters.periodCycle
+            ? ` (${INVOICE_CLOSING_CYCLE_LABEL[report.filters.periodCycle]})`
+            : ""
+        }`
+      : report.filters.cycles.length > 0
+        ? report.filters.cycles.map((cycle) => INVOICE_CLOSING_CYCLE_LABEL[cycle]).join(", ")
+        : "Todos os ciclos"
   ];
   if (report.filters.customerId) {
     parts.push(report.invoices[0]?.customerName ?? "Cliente selecionado");

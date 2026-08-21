@@ -9,29 +9,48 @@ import {
 } from "../services/invoice-closing-cycle";
 import type { InvoiceClosingCycle } from "../services/invoice-closing-cycle";
 import type {
+  InvoiceClosingBasis,
   InvoiceClosingInvoice,
   InvoiceClosingLine,
   InvoiceClosingReport
 } from "../services/invoice-closing";
+import {
+  INVOICE_CLOSING_PERIOD_KINDS,
+  INVOICE_CLOSING_PERIOD_KIND_LABEL,
+  defaultInvoiceClosingPeriod,
+  formatDayLabel,
+  resolveInvoiceClosingPeriod
+} from "../services/invoice-closing-period";
+import type { InvoiceClosingPeriodSelection } from "../services/invoice-closing-period";
+import type {
+  InvoiceClosingRunItem,
+  InvoiceClosingRunProgress,
+  InvoiceClosingRunResult
+} from "../services/invoice-closing-run";
 import { IconActionButton } from "./IconActionButton";
 import { SituationPill } from "./SituationPill";
 import { HelpTooltip } from "./Tooltip";
 import { formatDbDateTime } from "./format-datetime";
-import {
-  INSIGHTS_PERIOD_OPTIONS,
-  formatDayLabel,
-  resolveInsightsRange,
-  toIsoDate
-} from "./insights-period";
-import type { InsightsPeriod } from "./insights-period";
 
 /**
- * Fechamento de faturas: a fatura de TODOS os clientes de um ciclo, de uma vez.
+ * Fechamento de faturas: a fatura de TODOS os clientes de um periodo, de uma vez.
  *
- * A tela responde a pergunta com que a atendente comeca o mes — "quem fecha quinzenal, e
- * quanto cada um deve nesta quinzena?" —, que antes so tinha resposta abrindo cliente por
- * cliente. Por isso o filtro principal e o CICLO, e nao o cliente: escolher "Quinzenal"
- * traz a lista inteira, com a data de fechamento e o vencimento de cada fatura.
+ * A tela responde a pergunta com que a atendente comeca o mes — "quanto cada cliente deve
+ * nesta quinzena?" —, que antes so tinha resposta abrindo cliente por cliente. Por isso o
+ * filtro principal e o PERIODO: escolher a 2a quinzena de agosto traz a lista inteira, com
+ * a data de fechamento e o vencimento de cada fatura.
+ *
+ * Toda carga do periodo entra na fatura do cliente dela — inclusive a venda EM CARTEIRA e a
+ * do cliente sem credito habilitado. Antes o ciclo vinha do cadastro, e quem nao tinha
+ * periodicidade nao pertencia a fechamento nenhum: a quinzena inteira do cliente em
+ * carteira ficava sem ser cobrada. Essa base continua disponivel em "Cadastro do cliente",
+ * para quem organiza a cobranca por cliente e nao por quinzena.
+ *
+ * O botao "Fazer fechamento" e o outro lado: depois de conferir a lista, ele fatura no OMIE
+ * de uma vez as cargas do periodo que ainda nao tem nota — o que antes era faturar uma por
+ * uma na coluna "Faturar" do OMIE, e por isso escapava carga. Ele EMITE nota fiscal, entao
+ * pede confirmacao com a contagem do que vai sair, nunca refatura o que ja tem nota e
+ * devolve, linha a linha, o que nao passou e por que.
  *
  * Cada fatura abre carga a carga com nota, vale, placa e transportador — as quatro colunas
  * que a cobranca precisa —, e o mesmo periodo ainda sai resumido por transportador e
@@ -100,10 +119,18 @@ function unitPriceLabel(line: InvoiceClosingLine): string {
 export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDesktopApi | null }) {
   const [customers, setCustomers] = useState<CustomerReportOption[]>([]);
   const [customerId, setCustomerId] = useState(ALL_CUSTOMERS);
-  const [period, setPeriod] = useState<InsightsPeriod>("month");
-  const [customStart, setCustomStart] = useState(() => toIsoDate(new Date()));
-  const [customEnd, setCustomEnd] = useState(() => toIsoDate(new Date()));
+  // Comeca na quinzena corrente: e o fechamento que a atendente abre a tela para fazer.
+  const [period, setPeriod] = useState<InvoiceClosingPeriodSelection>(() =>
+    defaultInvoiceClosingPeriod(new Date())
+  );
+  const [basis, setBasis] = useState<InvoiceClosingBasis>("period");
   const [cycles, setCycles] = useState<InvoiceClosingCycle[]>([]);
+  const [confirmingRun, setConfirmingRun] = useState(false);
+  const [runPreview, setRunPreview] = useState<{ billable: number; total: number } | null>(null);
+  const [running, setRunning] = useState(false);
+  const [runProgress, setRunProgress] = useState<InvoiceClosingRunProgress | null>(null);
+  const [runResult, setRunResult] = useState<InvoiceClosingRunResult | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
   const [plates, setPlates] = useState<string[]>([]);
   const [plateSearch, setPlateSearch] = useState("");
   const [search, setSearch] = useState("");
@@ -118,10 +145,7 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
     excel: true
   });
 
-  const range = useMemo(
-    () => resolveInsightsRange(period, customStart, customEnd, new Date()),
-    [period, customStart, customEnd]
-  );
+  const range = useMemo(() => resolveInvoiceClosingPeriod(period, new Date()), [period]);
 
   const selectedFormats = useMemo(
     () => (["pdf", "excel"] as const).filter((format) => formats[format]) as Array<"pdf" | "excel">,
@@ -132,13 +156,15 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
   // precisa trazer exatamente as faturas que estavam na tela.
   const options = useMemo(
     () => ({
+      basis,
+      periodCycle: range.cycle,
       cycles,
       customerId: customerId || null,
       plates,
       search: search.trim() || null,
       periodLabel: range.label
     }),
-    [cycles, customerId, plates, search, range.label]
+    [basis, range.cycle, cycles, customerId, plates, search, range.label]
   );
 
   useEffect(() => {
@@ -176,6 +202,68 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
   useEffect(() => {
     void loadReport();
   }, [loadReport]);
+
+  // Andamento do fechamento, para a tela nao ficar num spinner mudo enquanto vinte notas
+  // sao emitidas uma a uma.
+  useEffect(() => {
+    if (!desktopApi) return;
+    return desktopApi.onInvoiceClosingProgress((progress) => setRunProgress(progress));
+  }, [desktopApi]);
+
+  function setPeriodField<K extends keyof InvoiceClosingPeriodSelection>(
+    field: K,
+    value: InvoiceClosingPeriodSelection[K]
+  ): void {
+    setPeriod((current) => ({ ...current, [field]: value }));
+  }
+
+  /**
+   * Abre a confirmacao do fechamento com a contagem REAL do que sera faturado.
+   *
+   * A contagem vem do processo principal, e nao da tela: as pesagens ja faturadas nao sao
+   * reenviadas, entao "20 cargas na lista" quase nunca e "20 notas a emitir" — e confirmar
+   * um numero que nao e o que vai acontecer e pior que nao mostrar numero nenhum.
+   */
+  async function openRunConfirmation(): Promise<void> {
+    if (!desktopApi) return;
+    setRunError(null);
+    setRunResult(null);
+    // Sem internet, cada pesagem falharia uma a uma contra o OMIE: melhor dizer antes de
+    // abrir a confirmacao do que devolver uma lista de vinte erros iguais.
+    if (!navigator.onLine) {
+      setRunError(
+        "O fechamento fala com o OMIE e precisa de internet conectada. Conecte e tente de novo."
+      );
+      return;
+    }
+    try {
+      setRunPreview(await desktopApi.previewInvoiceClosingRun(range.start, range.end, options));
+      setConfirmingRun(true);
+    } catch (err) {
+      setRunError(err instanceof Error ? err.message : "Falha ao conferir o fechamento.");
+    }
+  }
+
+  async function handleRunClosing(): Promise<void> {
+    if (!desktopApi) return;
+    setConfirmingRun(false);
+    setRunning(true);
+    setRunError(null);
+    setRunProgress(null);
+    setRunResult(null);
+    try {
+      const result = await desktopApi.runInvoiceClosing(range.start, range.end, options);
+      setRunResult(result);
+      // A situacao de cada pesagem mudou no OMIE: sem recarregar, a tela continuaria
+      // mostrando "falta faturar" no que acabou de virar nota.
+      await loadReport();
+    } catch (err) {
+      setRunError(err instanceof Error ? err.message : "Falha ao enviar o fechamento ao OMIE.");
+    } finally {
+      setRunning(false);
+      setRunProgress(null);
+    }
+  }
 
   function toggleCycle(cycle: InvoiceClosingCycle): void {
     setCycles((current) =>
@@ -244,51 +332,106 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Fechamento de faturas</h2>
           <HelpTooltip
-            content="Puxa de uma vez a fatura de todos os clientes de um ciclo: escolha Quinzenal ou Mensal e o periodo. Cada fatura sai com a data de fechamento, o vencimento e a lista carga a carga com nota fiscal, vale, placa e transportador. O ciclo, o dia do fechamento e o prazo do boleto vem do cadastro do cliente. Marcando placas no filtro de Placa, o fechamento sai separado por placa — uma fatura por caminhao dentro de cada cliente; com o filtro vazio, sai a fatura inteira do cliente. No fim da tela, a lista pesagem a pesagem traz TODAS as cargas do periodo numa tabela so — inclusive as dos clientes fora do fechamento, marcadas como tal —, com a operacao inteira em cada linha — vale, cliente, produto, quem levou, valores, situacao no OMIE e a fatura em que ela caiu —, para achar e conferir uma carga sem abrir fatura por fatura. O Excel e o PDF saem com as mesmas faturas que estao na tela."
+            content="Puxa de uma vez a fatura de todos os clientes de um periodo. Escolha o periodo (quinzena, mes, semana ou datas livres) e a tela monta uma fatura por cliente com tudo o que ele carregou nele — inclusive as vendas EM CARTEIRA e as de cliente sem credito no cadastro. Em 'Base do fechamento' voce troca para 'Cadastro do cliente' se preferir a periodicidade cadastrada em cada um; ai o cliente sem credito fica fora das faturas e aparece na lista 'Clientes fora do fechamento'. O botao 'Fazer fechamento' fatura no OMIE, de uma vez, as cargas do periodo que ainda nao tem nota — o OMIE emite a nota de cada cliente; carga ja faturada nunca e reenviada. Marcando placas no filtro de Placa, o fechamento sai separado por placa — uma fatura por caminhao dentro de cada cliente. No fim da tela, a lista pesagem a pesagem traz TODAS as cargas do periodo numa tabela so, com a operacao inteira em cada linha. O Excel e o PDF saem com as mesmas faturas que estao na tela."
             placement="right"
           />
         </div>
-        <IconActionButton
-          icon="download"
-          label={
-            exporting
-              ? "Gerando..."
-              : selectedFormats.length > 1
-                ? `Gerar ${selectedFormats.length} arquivos`
-                : "Gerar fechamento"
-          }
-          tip="Gera os arquivos escolhidos com as faturas filtradas. Com mais de um arquivo, o aplicativo pede a pasta de destino uma unica vez."
-          tone="primary"
-          placement="bottom"
-          disabled={exporting || loading}
-          onClick={() => void handleExport()}
-        />
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <IconActionButton
+            icon="download"
+            label={
+              exporting
+                ? "Gerando..."
+                : selectedFormats.length > 1
+                  ? `Gerar ${selectedFormats.length} arquivos`
+                  : "Gerar arquivo"
+            }
+            tip="Gera os arquivos escolhidos com as faturas filtradas. Com mais de um arquivo, o aplicativo pede a pasta de destino uma unica vez."
+            tone="neutral"
+            placement="bottom"
+            disabled={exporting || loading || running}
+            onClick={() => void handleExport()}
+          />
+          <IconActionButton
+            icon="send"
+            label={running ? "Fechando..." : "Fazer fechamento"}
+            tip="Fatura no OMIE todas as pesagens do periodo que estao na tela, emitindo a nota de cada cliente. Pesagem que ja tem nota nao e reenviada. O aplicativo pede confirmacao antes."
+            tone="primary"
+            placement="bottom"
+            disabled={running || loading || (report?.rows.length ?? 0) === 0}
+            onClick={() => void openRunConfirmation()}
+          />
+        </div>
       </header>
 
       <div style={styles.card}>
         <div style={styles.filterGrid}>
           <div style={styles.filterBlock}>
-            <span style={styles.filterLabel}>Periodo</span>
+            <span style={styles.filterLabel}>Periodo do fechamento</span>
             <div style={styles.chipRow}>
-              {INSIGHTS_PERIOD_OPTIONS.map((option) => (
+              {INVOICE_CLOSING_PERIOD_KINDS.map((kind) => (
                 <button
-                  key={option.id}
+                  key={kind}
                   type="button"
-                  onClick={() => setPeriod(option.id)}
-                  style={period === option.id ? styles.chipActive : styles.chip}
+                  onClick={() => setPeriodField("kind", kind)}
+                  style={period.kind === kind ? styles.chipActive : styles.chip}
                 >
-                  {option.label}
+                  {INVOICE_CLOSING_PERIOD_KIND_LABEL[kind]}
                 </button>
               ))}
             </div>
-            {period === "custom" ? (
+
+            {period.kind === "biweekly" || period.kind === "monthly" ? (
+              <label style={styles.dateField}>
+                Mes
+                <input
+                  type="month"
+                  value={period.month}
+                  onChange={(event) => setPeriodField("month", event.target.value)}
+                  style={styles.input}
+                />
+              </label>
+            ) : null}
+
+            {period.kind === "biweekly" ? (
+              <div style={styles.chipRow}>
+                <button
+                  type="button"
+                  onClick={() => setPeriodField("half", 1)}
+                  style={period.half === 1 ? styles.chipActive : styles.chip}
+                >
+                  1a quinzena (01 a 15)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPeriodField("half", 2)}
+                  style={period.half === 2 ? styles.chipActive : styles.chip}
+                >
+                  2a quinzena (16 ao fim)
+                </button>
+              </div>
+            ) : null}
+
+            {period.kind === "weekly" ? (
+              <label style={styles.dateField}>
+                Qualquer dia da semana
+                <input
+                  type="date"
+                  value={period.weekDay}
+                  onChange={(event) => setPeriodField("weekDay", event.target.value)}
+                  style={styles.input}
+                />
+              </label>
+            ) : null}
+
+            {period.kind === "custom" ? (
               <div style={styles.customDates}>
                 <label style={styles.dateField}>
                   De
                   <input
                     type="date"
-                    value={customStart}
-                    onChange={(event) => setCustomStart(event.target.value)}
+                    value={period.customStart}
+                    onChange={(event) => setPeriodField("customStart", event.target.value)}
                     style={styles.input}
                   />
                 </label>
@@ -296,42 +439,70 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
                   Ate
                   <input
                     type="date"
-                    value={customEnd}
-                    onChange={(event) => setCustomEnd(event.target.value)}
+                    value={period.customEnd}
+                    onChange={(event) => setPeriodField("customEnd", event.target.value)}
                     style={styles.input}
                   />
                 </label>
               </div>
             ) : null}
+
             <p style={styles.hint}>
-              {formatDayLabel(range.start)} a {formatDayLabel(range.end)}
+              {range.label} — {formatDayLabel(range.start)} a {formatDayLabel(range.end)}
             </p>
           </div>
 
           <div style={styles.filterBlock}>
-            <span style={styles.filterLabel}>Ciclo de fechamento</span>
+            <span style={styles.filterLabel}>Base do fechamento</span>
             <div style={styles.chipRow}>
               <button
                 type="button"
-                onClick={() => setCycles([])}
-                style={cycles.length === 0 ? styles.chipActive : styles.chip}
+                onClick={() => setBasis("period")}
+                style={basis === "period" ? styles.chipActive : styles.chip}
               >
-                Todos
+                Periodo escolhido
               </button>
-              {INVOICE_CLOSING_CYCLES.map((cycle) => (
-                <button
-                  key={cycle}
-                  type="button"
-                  onClick={() => toggleCycle(cycle)}
-                  style={cycles.includes(cycle) ? styles.chipActive : styles.chip}
-                >
-                  {INVOICE_CLOSING_CYCLE_LABEL[cycle]}
-                </button>
-              ))}
+              <button
+                type="button"
+                onClick={() => setBasis("customer")}
+                style={basis === "customer" ? styles.chipActive : styles.chip}
+              >
+                Cadastro do cliente
+              </button>
             </div>
-            <p style={styles.hint}>
-              Definido em Cadastros &gt; Clientes, em &quot;Periodicidade do fechamento&quot;.
-            </p>
+            {basis === "period" ? (
+              <p style={styles.hint}>
+                TODA carga do periodo entra na fatura do cliente dela — inclusive as em carteira e
+                as de cliente sem credito no cadastro. A fatura fecha no ultimo dia do periodo.
+              </p>
+            ) : (
+              <>
+                <span style={styles.filterLabel}>Ciclo de fechamento</span>
+                <div style={styles.chipRow}>
+                  <button
+                    type="button"
+                    onClick={() => setCycles([])}
+                    style={cycles.length === 0 ? styles.chipActive : styles.chip}
+                  >
+                    Todos
+                  </button>
+                  {INVOICE_CLOSING_CYCLES.map((cycle) => (
+                    <button
+                      key={cycle}
+                      type="button"
+                      onClick={() => toggleCycle(cycle)}
+                      style={cycles.includes(cycle) ? styles.chipActive : styles.chip}
+                    >
+                      {INVOICE_CLOSING_CYCLE_LABEL[cycle]}
+                    </button>
+                  ))}
+                </div>
+                <p style={styles.hint}>
+                  A data de fechamento vem de Cadastros &gt; Clientes, em &quot;Periodicidade do
+                  fechamento&quot;. Cliente sem credito habilitado fica FORA das faturas.
+                </p>
+              </>
+            )}
           </div>
 
           <div style={styles.filterBlock}>
@@ -445,6 +616,32 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
 
       {error ? <p style={styles.error}>{error}</p> : null}
       {exportMessage ? <p style={styles.info}>{exportMessage}</p> : null}
+      {runError ? <p style={styles.error}>{runError}</p> : null}
+
+      {confirmingRun && runPreview ? (
+        <RunConfirmation
+          preview={runPreview}
+          periodLabel={range.label}
+          customerLabel={
+            customerId
+              ? (customers.find((customer) => customer.id === customerId)?.name ?? "cliente")
+              : "todos os clientes"
+          }
+          onCancel={() => setConfirmingRun(false)}
+          onConfirm={() => void handleRunClosing()}
+        />
+      ) : null}
+
+      {running ? (
+        <p style={styles.info}>
+          {runProgress
+            ? `Faturando ${runProgress.done} de ${runProgress.total} — ${runProgress.customerName}, vale ${formatCouponNumber(runProgress.couponNumber)}.`
+            : "Enviando o fechamento ao OMIE..."}
+        </p>
+      ) : null}
+
+      {runResult ? <RunResultCard result={runResult} onClose={() => setRunResult(null)} /> : null}
+
       {loading && !report ? <p style={styles.hint}>Carregando...</p> : null}
 
       {report && totals ? (
@@ -693,6 +890,138 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
         </>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * A confirmacao do "Fazer fechamento".
+ *
+ * Existe porque o botao EMITE NOTA FISCAL: uma vez que o OMIE fatura, desfazer e cancelar
+ * nota, com prazo e justificativa. O texto diz os tres numeros que decidem — quantas notas
+ * saem, de qual periodo e de quem —, e o botao de confirmar e o unico caminho.
+ */
+function RunConfirmation({
+  preview,
+  periodLabel,
+  customerLabel,
+  onCancel,
+  onConfirm
+}: {
+  preview: { billable: number; total: number };
+  periodLabel: string;
+  customerLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const nothingToBill = preview.billable === 0;
+  return (
+    <div style={styles.confirmCard}>
+      <h3 style={styles.cardTitle}>Confirmar o fechamento no OMIE</h3>
+      {nothingToBill ? (
+        <p style={styles.hint}>
+          Nenhuma das {formatCount(preview.total)} carga(s) deste periodo precisa ser faturada: elas
+          ja tem nota emitida, ou sao vendas internas (que geram ordem de servico, e nao nota
+          fiscal).
+        </p>
+      ) : (
+        <p style={styles.hint}>
+          Vao ser faturadas <strong>{formatCount(preview.billable)}</strong> de{" "}
+          {formatCount(preview.total)} carga(s) de <strong>{customerLabel}</strong> em{" "}
+          <strong>{periodLabel}</strong>. O OMIE emite a nota fiscal de cada uma, para o cliente
+          daquela carga.
+          {"\n"}As cargas que ja tem nota NAO sao reenviadas, e as notas NAO sao impressas aqui —
+          elas ficam no OMIE. Emitir nota nao se desfaz pelo aplicativo: cancelar depois e feito no
+          OMIE, com prazo e justificativa.
+        </p>
+      )}
+      <div style={{ ...styles.chipRow, marginTop: "10px" }}>
+        <button type="button" onClick={onCancel} style={styles.linkButton}>
+          Cancelar
+        </button>
+        {nothingToBill ? null : (
+          <button type="button" onClick={onConfirm} style={styles.dangerButton}>
+            Faturar {formatCount(preview.billable)} carga(s) no OMIE
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * O que a passada do fechamento fez, pesagem a pesagem.
+ *
+ * A contagem sozinha nao resolve: "18 de 20" deixa a atendente procurando as duas que
+ * faltaram no OMIE. A lista traz so as que NAO entraram (com o motivo do OMIE) — as que
+ * deram certo ja aparecem faturadas na tabela do periodo, logo abaixo.
+ */
+function RunResultCard({
+  result,
+  onClose
+}: {
+  result: InvoiceClosingRunResult;
+  onClose: () => void;
+}) {
+  const pending = result.items.filter(
+    (item) => item.status === "blocked" || item.status === "failed"
+  );
+  const tone = pending.length > 0 ? styles.error : styles.info;
+
+  return (
+    <div style={styles.card}>
+      <div style={styles.filterLabelRow}>
+        <h3 style={styles.cardTitle}>Resultado do fechamento</h3>
+        <button type="button" onClick={onClose} style={styles.clearButton}>
+          Fechar
+        </button>
+      </div>
+      <p style={tone}>
+        {formatCount(result.billed)} carga(s) faturada(s) no OMIE
+        {result.billed > 0 ? ` — ${formatBRL(result.billedTotalCents)}` : ""}.
+        {result.alreadyBilled > 0
+          ? ` ${formatCount(result.alreadyBilled)} ja tinha(m) nota e nao foi(ram) reenviada(s).`
+          : ""}
+        {result.skipped > 0
+          ? ` ${formatCount(result.skipped)} venda(s) interna(s) ficaram de fora (nao geram nota fiscal).`
+          : ""}
+        {pending.length > 0
+          ? ` ${formatCount(pending.length)} carga(s) NAO foram faturadas — veja abaixo.`
+          : ""}
+      </p>
+      {pending.length > 0 ? (
+        <div style={styles.tableScroll}>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={{ ...styles.th, textAlign: "left" }}>Vale</th>
+                <th style={{ ...styles.th, textAlign: "left" }}>Cliente</th>
+                <th style={styles.th}>Valor</th>
+                <th style={{ ...styles.th, textAlign: "left" }}>Por que nao faturou</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pending.map((item: InvoiceClosingRunItem) => (
+                <tr key={item.operationId}>
+                  <td style={{ ...styles.td, textAlign: "left" }}>
+                    {formatCouponNumber(item.couponNumber)}
+                  </td>
+                  <td style={{ ...styles.td, textAlign: "left" }} title={item.customerName}>
+                    {item.customerName}
+                  </td>
+                  <td style={styles.td}>{formatBRL(item.totalCents)}</td>
+                  <td
+                    style={{ ...styles.td, textAlign: "left", whiteSpace: "normal" }}
+                    title={item.message}
+                  >
+                    {item.message}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1178,5 +1507,22 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "13px",
     margin: 0,
     whiteSpace: "pre-line"
+  },
+  confirmCard: {
+    background: "var(--kr-card-bg)",
+    border: "2px solid var(--kr-primary-strong)",
+    borderRadius: "12px",
+    padding: "12px",
+    boxShadow: "var(--kr-shadow)"
+  },
+  dangerButton: {
+    border: "none",
+    background: "var(--kr-primary-strong)",
+    color: "var(--kr-primary-text)",
+    borderRadius: "8px",
+    padding: "8px 14px",
+    fontSize: "13px",
+    fontWeight: 800,
+    cursor: "pointer"
   }
 };

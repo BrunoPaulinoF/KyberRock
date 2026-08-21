@@ -189,6 +189,12 @@ import {
 import { InvoiceClosingService } from "./invoice-closing.js";
 import type { InvoiceClosingOptions } from "./invoice-closing.js";
 import {
+  countBillableCandidates,
+  runInvoiceClosing,
+  selectInvoiceClosingCandidates
+} from "./invoice-closing-run.js";
+import type { InvoiceClosingRunProgress, InvoiceClosingRunResult } from "./invoice-closing-run.js";
+import {
   invoiceClosingFileBaseName,
   renderInvoiceClosingHtml,
   renderInvoiceClosingSpreadsheet
@@ -2419,6 +2425,48 @@ export class DesktopRuntime {
           ? renderInvoiceClosingHtml(report)
           : renderInvoiceClosingSpreadsheet(report)
     }));
+  }
+
+  /**
+   * "Fazer fechamento": fatura no OMIE todas as pesagens do periodo que estao na tela.
+   *
+   * Recebe os MESMOS filtros da consulta de proposito: o que e faturado tem de ser
+   * exatamente o que a atendente viu antes de confirmar — refazer a selecao aqui abriria a
+   * porta para o botao emitir nota de uma carga que nao estava na lista.
+   *
+   * Emite nota fiscal de verdade, entao a confirmacao e a contagem sao da tela; aqui a
+   * garantia e outra: pesagem ja faturada nao e reenviada, e uma recusa nao interrompe o
+   * resto da passada.
+   *
+   * NAO imprime as notas, ao contrario do botao de faturar UMA pesagem. Ali o motorista
+   * esta no patio esperando o papel; aqui a quinzena fechada dispararia trinta impressoes
+   * de uma vez, dias depois de as cargas terem saido. O link de cada documento fica
+   * gravado na operacao (`omie_document_url`) e a nota continua no OMIE.
+   */
+  runInvoiceClosing(
+    startDate: string,
+    endDate: string,
+    options?: InvoiceClosingOptions,
+    onProgress?: (progress: InvoiceClosingRunProgress) => void
+  ): Promise<InvoiceClosingRunResult> {
+    this.assertDesktopAccess();
+    const report = this.getInvoiceClosing(startDate, endDate, options);
+    return runInvoiceClosing(
+      selectInvoiceClosingCandidates(report.rows),
+      (operationId) => processFiscalBillingNow(this.database, this.ensureIdentity(), operationId),
+      onProgress
+    );
+  }
+
+  /** Quantas pesagens do periodo o botao de fechamento mandaria ao OMIE, sem mandar nada. */
+  previewInvoiceClosingRun(
+    startDate: string,
+    endDate: string,
+    options?: InvoiceClosingOptions
+  ): { billable: number; total: number } {
+    const report = this.getInvoiceClosing(startDate, endDate, options);
+    const candidates = selectInvoiceClosingCandidates(report.rows);
+    return { billable: countBillableCandidates(candidates), total: candidates.length };
   }
 
   getReportDispatchConfig(): { settings: ReportDispatchSettings; state: ReportDispatchState } {

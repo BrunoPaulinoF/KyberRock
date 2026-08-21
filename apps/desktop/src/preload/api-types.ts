@@ -58,6 +58,10 @@ import type {
   WeighingBillingReportOptions
 } from "../services/weighing-billing-report";
 import type { InvoiceClosingOptions, InvoiceClosingReport } from "../services/invoice-closing";
+import type {
+  InvoiceClosingRunProgress,
+  InvoiceClosingRunResult
+} from "../services/invoice-closing-run";
 import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers";
 import type { UpdatePaymentMethodInput } from "../services/payment-methods";
 import type { SettleWalletInput, WalletQuery, WalletReport } from "../services/wallet";
@@ -302,6 +306,26 @@ export interface KyberRockDesktopApi {
     formats: Array<"pdf" | "excel">,
     options?: InvoiceClosingOptions
   ) => Promise<{ files: string[] } | null>;
+  /**
+   * Quantas pesagens do periodo o botao "Fazer fechamento" mandaria ao OMIE. Nao emite
+   * nota: e o numero que a tela mostra na confirmacao.
+   */
+  previewInvoiceClosingRun: (
+    startDate: string,
+    endDate: string,
+    options?: InvoiceClosingOptions
+  ) => Promise<{ billable: number; total: number }>;
+  /**
+   * "Fazer fechamento": fatura no OMIE as pesagens do periodo, com os mesmos filtros da
+   * tela. EMITE NOTA FISCAL — so depois da confirmacao do operador.
+   */
+  runInvoiceClosing: (
+    startDate: string,
+    endDate: string,
+    options?: InvoiceClosingOptions
+  ) => Promise<InvoiceClosingRunResult>;
+  /** Andamento do fechamento em curso. Devolve a funcao que cancela a escuta. */
+  onInvoiceClosingProgress: (callback: (progress: InvoiceClosingRunProgress) => void) => () => void;
   /** `search` recorta o relatorio por placa ou motorista, como a busca da tela. */
   getTruckControl: (
     startDate: string,

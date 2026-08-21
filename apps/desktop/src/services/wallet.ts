@@ -1,4 +1,9 @@
 import type { DesktopDatabase } from "../database/sqlite.js";
+import {
+  buildCustomerIdentityIndex,
+  identityKeyForOperation,
+  resolveCustomerIdGroup
+} from "./customer-identity.js";
 import { paymentMethodDisplayName } from "./payment-methods.js";
 import { enqueueSyncJob } from "./sync-queue.js";
 import { CLOSED_OPERATION_STATUS_SQL_LIST } from "./weighing-operations.js";
@@ -22,6 +27,15 @@ export interface WalletOperation {
   operationId: string;
   /** Data/hora do fechamento da pesagem (saida); cai no created_at quando ausente. */
   soldAt: string;
+  /**
+   * Data da OPERACAO (`created_at`, YYYY-MM-DD) — a mesma base de data do Fechamento de
+   * faturas e dos demais relatorios, e a que o filtro de periodo desta tela usa.
+   *
+   * Existe porque `soldAt` e a SAIDA da balanca: o caminhao que entra 23h50 e sai 00h30 tem
+   * as duas datas em dias diferentes. Sem esta coluna, a mesma quinzena devolvia listas
+   * diferentes na Carteira e no Fechamento, e nada na tela explicava a diferenca.
+   */
+  operationDate: string;
   customerId: string | null;
   customerName: string;
   plate: string;
@@ -85,7 +99,10 @@ export interface WalletQuery {
   /** `open` (padrao) = sem fechamento; `settled` = ja fechadas; `all` = as duas. */
   status?: WalletStatusFilter;
   customerId?: string;
-  /** Recorte por data da venda (YYYY-MM-DD), inclusivo. */
+  /**
+   * Recorte por data da OPERACAO (YYYY-MM-DD), inclusivo — a mesma base do Fechamento de
+   * faturas, para a mesma quinzena devolver a mesma lista nas duas telas.
+   */
   startDate?: string;
   endDate?: string;
   /** Busca livre por cliente, placa ou produto. */
@@ -104,6 +121,7 @@ export interface SettleWalletInput {
 interface WalletOperationRow {
   id: string;
   sold_at: string;
+  operation_date: string;
   customer_id: string | null;
   customer_name: string | null;
   plate: string | null;
@@ -138,6 +156,7 @@ function mapRow(row: WalletOperationRow): WalletOperation {
   return {
     operationId: row.id,
     soldAt: row.sold_at,
+    operationDate: row.operation_date.slice(0, 10),
     customerId: row.customer_id,
     customerName: row.customer_name?.trim() || "Cliente nao informado",
     plate: row.plate ?? "-",
@@ -188,17 +207,21 @@ export function getWalletReport(database: DesktopDatabase, query: WalletQuery = 
   if (status === "settled") conditions.push("o.wallet_settled_at IS NOT NULL");
 
   if (query.customerId) {
-    conditions.push("o.customer_id = ?");
-    params.push(query.customerId);
+    // O cliente escolhido pode ter mais de um cadastro na base (o que veio do OMIE e o que
+    // nasceu na balanca, mesmo CNPJ). O filtro e do cliente REAL: por um id so, metade das
+    // vendas em carteira dele ficava fora da tela.
+    const customerIds = resolveCustomerIdGroup(database, query.customerId);
+    conditions.push(`o.customer_id IN (${customerIds.map(() => "?").join(", ")})`);
+    params.push(...customerIds);
   }
   if (query.startDate) {
     assertDate(query.startDate, "Data inicial");
-    conditions.push("date(COALESCE(o.exit_weight_captured_at, o.created_at)) >= date(?)");
+    conditions.push("date(o.created_at) >= date(?)");
     params.push(query.startDate);
   }
   if (query.endDate) {
     assertDate(query.endDate, "Data final");
-    conditions.push("date(COALESCE(o.exit_weight_captured_at, o.created_at)) <= date(?)");
+    conditions.push("date(o.created_at) <= date(?)");
     params.push(query.endDate);
   }
   const search = query.search?.trim();
@@ -217,6 +240,7 @@ export function getWalletReport(database: DesktopDatabase, query: WalletQuery = 
       `SELECT
          o.id,
          COALESCE(o.exit_weight_captured_at, o.created_at) AS sold_at,
+         o.created_at AS operation_date,
          o.customer_id,
          COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
          COALESCE(v.plate, o.remote_plate) AS plate,
@@ -247,9 +271,15 @@ export function getWalletReport(database: DesktopDatabase, query: WalletQuery = 
     advanceAppliedTotalCents: 0
   };
 
+  // Um bloco por cliente REAL: com o cadastro duplicado o mesmo cliente aparecia duas
+  // vezes na tela, cada bloco com metade das vendas e metade do total a receber.
+  const identities = buildCustomerIdentityIndex(database);
+
   for (const operation of operations) {
     const openCents = operation.settledAt ? 0 : operation.openAmountCents;
-    const key = operation.customerId ?? `name:${operation.customerName}`;
+    const key = operation.customerId
+      ? identityKeyForOperation(identities, operation.customerId)
+      : `name:${operation.customerName}`;
     const group = groups.get(key);
     if (group) {
       group.operations.push(operation);

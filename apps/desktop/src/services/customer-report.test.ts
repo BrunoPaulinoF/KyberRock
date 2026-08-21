@@ -279,9 +279,50 @@ describe("CustomerReportService.listCustomerOptions", () => {
       db.close();
     }
   });
+
+  it("mostra UMA opcao por cliente real, mesmo com o cadastro duplicado", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      // O cadastro que veio do OMIE, com o mesmo CNPJ do que ja existia na balanca. A lista
+      // mostrava os dois, identicos na tela — e escolher qualquer um trazia metade das cargas.
+      db.prepare(
+        `INSERT INTO customers (id, company_id, legal_name, trade_name, document, source, created_at, updated_at)
+         VALUES ('omie_1', 'comp-1', 'Construtora Alfa LTDA', 'Alfa', '11222333000155', 'omie', datetime('now'), datetime('now'))`
+      ).run();
+
+      const options = new CustomerReportService(db).listCustomerOptions("unit-1");
+      expect(options.map((option) => option.name)).toEqual(["Alfa", "Beta"]);
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe("CustomerReportService.getCustomerReport", () => {
+  it("le as cargas dos DOIS cadastros do mesmo cliente", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+      db.prepare(
+        `INSERT INTO customers (id, company_id, legal_name, trade_name, document, source, created_at, updated_at)
+         VALUES ('omie_1', 'comp-1', 'Construtora Alfa LTDA', 'Alfa', '11222333000155', 'omie', datetime('now'), datetime('now'))`
+      ).run();
+      // Uma carga gravada no cadastro do OMIE: pelo filtro de um id so ela sumia do
+      // relatorio do cliente, sem nada na tela dizendo que faltava.
+      db.prepare("UPDATE weighing_operations SET customer_id = 'omie_1' WHERE id = 'op-2'").run();
+
+      const service = new CustomerReportService(db);
+      for (const chosen of ["cust-1", "omie_1"]) {
+        const report = service.getCustomerReport(chosen, "2026-06-01", "2026-06-30", "unit-1");
+        expect(report.operations.map((operation) => operation.id)).toEqual(["op-1", "op-2"]);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
   it("aggregates only the customer's closed operations in the range", () => {
     const db = createDatabase();
     try {

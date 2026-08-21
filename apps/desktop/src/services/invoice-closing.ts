@@ -2,6 +2,12 @@ import type { DesktopDatabase } from "../database/sqlite.js";
 import { computeCreditInvoiceSchedule, creditClosingConfigFromCustomer } from "./credit-invoice.js";
 import type { CreditClosingConfig } from "./credit-invoice.js";
 import {
+  buildCustomerIdentityIndex,
+  identityKeyForOperation,
+  resolveCustomerIdGroup
+} from "./customer-identity.js";
+import type { CustomerIdentityIndex } from "./customer-identity.js";
+import {
   resolveSituation,
   resolveSituationDetail,
   WEIGHING_BILLING_SITUATION_LABEL
@@ -19,16 +25,24 @@ import type { InvoiceClosingCycle } from "./invoice-closing-cycle.js";
  * quinzena?". Sem ela a atendente abria cliente por cliente da lista inteira, sem nunca
  * saber se tinha esquecido algum — e esquecer um cliente no fechamento e nao cobrar o mes.
  *
- * O CICLO nao e escolhido aqui: vem da "Periodicidade do fechamento" do cadastro do
- * cliente (`credit_periodicity`), que ja e Mensal/Quinzenal/Semanal na tela de Cadastros.
- * Ou seja, o mesmo campo que define quando o credito do cliente fecha define em qual
- * fechamento ele aparece — dois lugares dizendo a mesma coisa acabariam divergindo.
+ * O fechamento tem DUAS bases, e a escolhida muda quem entra em fatura:
  *
- * A conta de QUANDO fecha e QUANDO vence e a de `credit-invoice.ts`, ja testada e ja usada
- * pela fatura de fiado: cada pesagem cai no PROXIMO fechamento na data dela ou depois, e o
- * vencimento e o prazo de boleto daquele fechamento. Por isso uma quinzena pode devolver
- * duas faturas do mesmo cliente (a que fechou dia 1 e a que fechou dia 16), cada uma com o
- * seu vencimento — que e exatamente como a cobranca sai.
+ *  - `period` (padrao): a fatura e a do PERIODO que a atendente escolheu na tela — a
+ *    quinzena, o mes, a semana. Toda pesagem do periodo entra na fatura do cliente dela,
+ *    tenha ele conta de credito no cadastro ou nao. E o que a cobranca precisa: o cliente
+ *    que compra EM CARTEIRA nao tem periodicidade cadastrada e, na outra base, as cargas
+ *    dele simplesmente nao entravam em fatura nenhuma — a quinzena inteira ficava sem ser
+ *    cobrada, sem ninguem perceber.
+ *  - `customer`: a base antiga, em que o ciclo vem da "Periodicidade do fechamento" do
+ *    cadastro (`credit_periodicity`). Continua aqui para quem organiza a cobranca por
+ *    cliente, e nao por quinzena.
+ *
+ * Na base `customer` a conta de QUANDO fecha e QUANDO vence e a de `credit-invoice.ts`, ja
+ * testada e ja usada pela fatura de fiado: cada pesagem cai no PROXIMO fechamento na data
+ * dela ou depois. Por isso uma quinzena pode devolver duas faturas do mesmo cliente (a que
+ * fechou dia 1 e a que fechou dia 16), cada uma com o seu vencimento. Na base `period` o
+ * fechamento e o ULTIMO dia do periodo escolhido, uma fatura por cliente, e o vencimento e
+ * o prazo de boleto do cadastro contado dali (sem prazo cadastrado, vence no fechamento).
  *
  * Escopo igual ao dos demais relatorios (`ReportService`, `CustomerReportService`,
  * `WeighingBillingReportService`): operacoes CONCLUIDAS da unidade, sem as excluidas e sem
@@ -117,6 +131,14 @@ export interface InvoiceClosingTotals {
 /** A fatura de um cliente num fechamento. */
 export interface InvoiceClosingInvoice {
   customerId: string;
+  /**
+   * Todos os cadastros de `customers` que sao este mesmo cliente.
+   *
+   * Quase sempre e um so. Passa de um quando a base tem o cliente duplicado — tipicamente o
+   * cadastro que veio do OMIE e o que nasceu na balanca, com o mesmo CNPJ. A fatura e uma
+   * so (o cliente e um so), e esta lista e o que diz de quais cadastros as cargas vieram.
+   */
+  customerIds: string[];
   customerName: string;
   customerDocument: string | null;
   /**
@@ -127,7 +149,11 @@ export interface InvoiceClosingInvoice {
    * fatura por caminhao — que e como o acerto de quem leva a carga e conferido.
    */
   plate: string | null;
-  cycle: InvoiceClosingCycle;
+  /**
+   * O ciclo da fatura. Null quando o fechamento e de um periodo personalizado, que nao e
+   * quinzena, mes nem semana — a coluna mostra o rotulo de `cycleLabel`.
+   */
+  cycle: InvoiceClosingCycle | null;
   cycleLabel: string;
   /** Data em que a fatura fecha (YYYY-MM-DD). */
   closingDate: string;
@@ -179,7 +205,20 @@ export interface InvoiceClosingPendingCustomer {
   totalCents: number;
 }
 
+/**
+ * De onde sai o fechamento de cada carga: do PERIODO escolhido na tela ou da periodicidade
+ * cadastrada no cliente. Veja o cabecalho do modulo.
+ */
+export type InvoiceClosingBasis = "period" | "customer";
+
+export function isInvoiceClosingBasis(value: unknown): value is InvoiceClosingBasis {
+  return value === "period" || value === "customer";
+}
+
 export interface InvoiceClosingFilters {
+  basis: InvoiceClosingBasis;
+  /** O ciclo que o periodo escolhido representa (base `period`); null no personalizado. */
+  periodCycle: InvoiceClosingCycle | null;
   cycles: InvoiceClosingCycle[];
   customerId: string | null;
   /** Placas escolhidas, ja normalizadas. Vazio e "todas", com a fatura inteira do cliente. */
@@ -233,7 +272,20 @@ export interface InvoiceClosingReport {
 }
 
 export interface InvoiceClosingOptions {
-  /** Vazio (ou ausente) traz todos os ciclos configurados. */
+  /**
+   * De onde sai o fechamento. Ausente e `period` — o fechamento do periodo escolhido, que
+   * e o que a tela pergunta e o unico que enxerga o cliente sem conta de credito.
+   */
+  basis?: InvoiceClosingBasis | null;
+  /**
+   * O ciclo que o periodo escolhido representa (quinzena, mes, semana), so na base
+   * `period`. E o rotulo da fatura; null num intervalo personalizado.
+   */
+  periodCycle?: InvoiceClosingCycle | null;
+  /**
+   * Vazio (ou ausente) traz todos os ciclos configurados. Vale so na base `customer`: na
+   * base `period` quem escolhe o ciclo e a atendente, no seletor de periodo.
+   */
   cycles?: InvoiceClosingCycle[] | null;
   customerId?: string | null;
   /**
@@ -252,12 +304,14 @@ interface InvoiceClosingSourceRow {
   created_at: string;
   exit_at: string | null;
   operation_type: "invoice" | "internal";
-  customer_id: string;
+  // Nulos porque o LEFT JOIN de `customers` e a propria coluna da operacao permitem: a
+  // pesagem antiga pode nao ter cliente, e o cadastro dela pode ter sido excluido depois.
+  customer_id: string | null;
   customer_trade_name: string | null;
   customer_legal_name: string | null;
   customer_document: string | null;
-  credit_account_enabled: number;
-  credit_periodicity: string;
+  credit_account_enabled: number | null;
+  credit_periodicity: string | null;
   credit_closing_day: number | null;
   credit_boleto_days: number | null;
   credit_second_closing_day: number | null;
@@ -291,6 +345,8 @@ export class InvoiceClosingService {
     unitId: string,
     options: InvoiceClosingOptions = {}
   ): InvoiceClosingReport {
+    const basis = isInvoiceClosingBasis(options.basis) ? options.basis : "period";
+    const periodCycle = isInvoiceClosingCycle(options.periodCycle) ? options.periodCycle : null;
     const customerId = options.customerId ?? null;
     // Ciclo vazio e "todos": um filtro que zera a lista quando ninguem escolheu nada
     // pareceria uma quinzena sem movimento.
@@ -302,7 +358,13 @@ export class InvoiceClosingService {
     const selectedPlates = new Set(plates);
     const splitByPlate = plates.length > 0;
 
-    const sourceRows = this.loadRows(startDate, endDate, unitId, customerId);
+    // O cliente escolhido no filtro pode estar cadastrado mais de uma vez (o cadastro do
+    // OMIE e o da balanca). O filtro vale para o cliente REAL: sem isso, escolher LEVISA
+    // trazia so as cargas de uma das duas linhas e a metade restante nao era cobrada.
+    const identities = buildCustomerIdentityIndex(this.db);
+    const customerIds = customerId ? resolveCustomerIdGroup(this.db, customerId) : null;
+
+    const sourceRows = this.loadRows(startDate, endDate, unitId, customerIds);
 
     const invoices = new Map<string, InvoiceClosingInvoice>();
     const pending = new Map<string, InvoiceClosingPendingCustomer>();
@@ -324,33 +386,50 @@ export class InvoiceClosingService {
       availablePlates.add(plate);
       if (splitByPlate && !selectedPlates.has(plate)) continue;
 
-      // Ciclo escolhido: a carga sem periodicidade no cadastro nao pertence a ciclo nenhum,
-      // entao ela sai junto com os ciclos que nao foram marcados.
       const config = closingConfigFor(row);
-      if (cycles.length > 0 && (!config || !cycles.includes(config.periodicity))) continue;
+      // Ciclo escolhido: a carga sem periodicidade no cadastro nao pertence a ciclo nenhum,
+      // entao ela sai junto com os ciclos que nao foram marcados. So na base `customer` —
+      // na base `period` o ciclo e o do periodo escolhido, igual para todo mundo.
+      if (
+        basis === "customer" &&
+        cycles.length > 0 &&
+        (!config || !cycles.includes(config.periodicity))
+      ) {
+        continue;
+      }
 
       // A lista de conferencia vem ANTES da fatura: ela e do periodo, nao das faturas, e
       // mostrar so o que entrou em fatura esconderia justamente a carga que ninguem cobra.
       rows.push(line);
 
-      if (!config) {
-        addPending(pending, row, line);
+      // Base `customer` sem credito habilitado: a carga nao pertence a fechamento nenhum e
+      // vai para "Clientes fora do fechamento". Na base `period` isso nao existe — todo
+      // mundo que teve carga no periodo entra na fatura do periodo.
+      if (basis === "customer" && !config) {
+        addPending(pending, identityKey(identities, row), row, line);
         continue;
       }
 
-      const schedule = computeCreditInvoiceSchedule(config, parseIsoDate(line.date));
+      const schedule =
+        basis === "period"
+          ? periodSchedule(endDate, config)
+          : computeCreditInvoiceSchedule(config as CreditClosingConfig, parseIsoDate(line.date));
       line.closingDate = schedule.closingDate;
       line.dueDate = schedule.dueDate;
+
+      const cycle = basis === "period" ? periodCycle : (config as CreditClosingConfig).periodicity;
+      const identity = identityKey(identities, row);
       const key = splitByPlate
-        ? `${row.customer_id}|${schedule.closingDate}|${plate}`
-        : `${row.customer_id}|${schedule.closingDate}`;
+        ? `${identity}|${schedule.closingDate}|${plate}`
+        : `${identity}|${schedule.closingDate}`;
       const invoice = invoices.get(key) ?? {
-        customerId: row.customer_id,
+        customerId: row.customer_id ?? "",
+        customerIds: [],
         customerName: customerName(row),
         customerDocument: row.customer_document,
         plate: splitByPlate ? plate : null,
-        cycle: config.periodicity,
-        cycleLabel: INVOICE_CLOSING_CYCLE_LABEL[config.periodicity],
+        cycle,
+        cycleLabel: cycle === null ? "Periodo" : INVOICE_CLOSING_CYCLE_LABEL[cycle],
         closingDate: schedule.closingDate,
         dueDate: schedule.dueDate,
         lines: [],
@@ -358,6 +437,14 @@ export class InvoiceClosingService {
         operationsWithoutInvoice: 0
       };
       invoice.lines.push(line);
+      if (row.customer_id && !invoice.customerIds.includes(row.customer_id)) {
+        invoice.customerIds.push(row.customer_id);
+      }
+      // O documento pode faltar num dos cadastros duplicados: o primeiro que tiver manda,
+      // senao a fatura sairia sem CNPJ so por causa da linha que veio primeiro.
+      if (!invoice.customerDocument && row.customer_document) {
+        invoice.customerDocument = row.customer_document;
+      }
       if (!line.invoiceNumber) invoice.operationsWithoutInvoice += 1;
       invoices.set(key, invoice);
 
@@ -378,12 +465,16 @@ export class InvoiceClosingService {
       startDate,
       endDate,
       periodLabel: options.periodLabel ?? null,
-      filters: { cycles, customerId, plates, search: search || null },
+      filters: { basis, periodCycle, cycles, customerId, plates, search: search || null },
       invoices: orderedInvoices,
       rows,
       rowTotals: buildTotals(rows),
       totals: buildTotals(lines),
-      customers: new Set(orderedInvoices.map((invoice) => invoice.customerId)).size,
+      // Por CLIENTE REAL: com o cadastro duplicado, contar `customerId` diria "2 clientes"
+      // onde ha um so — e com o filtro de placa diria um por caminhao.
+      customers: new Set(
+        orderedInvoices.map((invoice) => identityKeyForOperation(identities, invoice.customerId))
+      ).size,
       withoutInvoice: buildTotals(lines.filter((line) => !line.invoiceNumber)),
       byCarrier: groupByCarrier(carrierRows),
       pendingSetup: [...pending.values()].sort((a, b) => b.totalCents - a.totalCents),
@@ -391,12 +482,25 @@ export class InvoiceClosingService {
     };
   }
 
+  /**
+   * As pesagens do periodo.
+   *
+   * `customerIds` e o grupo do cliente escolhido no filtro — ele proprio e os cadastros
+   * duplicados dele —, ou null para "todos os clientes".
+   */
   private loadRows(
     startDate: string,
     endDate: string,
     unitId: string,
-    customerId: string | null
+    customerIds: string[] | null
   ): InvoiceClosingSourceRow[] {
+    // Nunca interpolado: a lista sai de `customers.id` da propria base, mas o `IN (...)`
+    // segue por placeholders como o resto das consultas do modulo.
+    const customerFilter =
+      customerIds && customerIds.length > 0
+        ? `AND o.customer_id IN (${customerIds.map(() => "?").join(", ")})`
+        : "";
+
     return this.db
       .prepare(
         `SELECT
@@ -422,21 +526,25 @@ export class InvoiceClosingService {
            o.omie_sales_order_id, o.omie_service_order_id, o.omie_order_number,
            o.omie_invoice_number, o.omie_billing_status, o.omie_billing_message
          FROM weighing_operations o
-         JOIN customers cust ON cust.id = o.customer_id
+         -- LEFT JOIN de proposito: com JOIN, a pesagem cujo cadastro de cliente sumiu da
+         -- base (excluido, ou nunca projetado) desaparecia do fechamento inteiro — carga
+         -- pesada, saida da pedreira e invisivel para quem cobra. Sem o cadastro o nome
+         -- ainda vem de remote_customer_name, gravado na propria operacao.
+         LEFT JOIN customers cust ON cust.id = o.customer_id
          LEFT JOIN products p ON p.id = o.product_id
          LEFT JOIN vehicles v ON v.id = o.vehicle_id
          LEFT JOIN drivers d ON d.id = o.driver_id
          LEFT JOIN carriers crr ON crr.id = o.carrier_id
          LEFT JOIN carriers vcrr ON vcrr.id = v.carrier_id
          WHERE o.unit_id = ?
-           AND (? IS NULL OR o.customer_id = ?)
+           ${customerFilter}
            AND o.deleted_at IS NULL
            AND o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
            AND date(o.created_at) >= date(?)
            AND date(o.created_at) <= date(?)
          ORDER BY o.created_at ASC, o.operation_code ASC`
       )
-      .all(unitId, customerId, customerId, startDate, endDate) as InvoiceClosingSourceRow[];
+      .all(unitId, ...(customerIds ?? []), startDate, endDate) as InvoiceClosingSourceRow[];
   }
 }
 
@@ -444,7 +552,7 @@ function mapLine(row: InvoiceClosingSourceRow): InvoiceClosingLine {
   const situation = resolveSituation(row);
   return {
     operationId: row.id,
-    customerId: row.customer_id,
+    customerId: row.customer_id ?? "",
     customerName: customerName(row),
     customerDocument: row.customer_document,
     couponNumber: row.operation_code,
@@ -505,6 +613,44 @@ function customerName(row: InvoiceClosingSourceRow): string {
   );
 }
 
+/** A chave do cliente REAL da pesagem — a que junta os cadastros duplicados numa fatura so. */
+function identityKey(index: CustomerIdentityIndex, row: InvoiceClosingSourceRow): string {
+  return identityKeyForOperation(index, row.customer_id);
+}
+
+/**
+ * O fechamento da base `period`: fecha no ULTIMO dia do periodo escolhido.
+ *
+ * O vencimento e o prazo de boleto do cadastro contado dali, quando o cliente tem um. Quem
+ * compra em carteira normalmente nao tem — e ai a fatura vence no proprio fechamento, que
+ * e o unico prazo que o sistema pode afirmar sem inventar. Quem combina o vencimento com o
+ * cliente registra ele na Carteira, no fechamento da venda.
+ */
+function periodSchedule(
+  endDate: string,
+  config: CreditClosingConfig | null
+): { closingDate: string; dueDate: string } {
+  const boletoDays = periodBoletoDays(config);
+  if (boletoDays <= 0) return { closingDate: endDate, dueDate: endDate };
+
+  const due = parseIsoDate(endDate);
+  due.setDate(due.getDate() + boletoDays);
+  const year = due.getFullYear();
+  const month = String(due.getMonth() + 1).padStart(2, "0");
+  const day = String(due.getDate()).padStart(2, "0");
+  return { closingDate: endDate, dueDate: `${year}-${month}-${day}` };
+}
+
+/**
+ * Prazo de boleto do cadastro. Na quinzena vale o do SEGUNDO fechamento: o periodo fechado
+ * a mao termina no fim dele, que e o papel do segundo fechamento no cadastro.
+ */
+function periodBoletoDays(config: CreditClosingConfig | null): number {
+  if (!config) return 0;
+  if (config.periodicity === "biweekly") return config.secondBoletoDays;
+  return config.boletoDays;
+}
+
 /**
  * A configuracao de fechamento do cliente, ou null quando ele nao tem uma.
  *
@@ -516,6 +662,7 @@ function closingConfigFor(row: InvoiceClosingSourceRow): CreditClosingConfig | n
   const periodicity = isInvoiceClosingCycle(row.credit_periodicity)
     ? row.credit_periodicity
     : "monthly";
+
   return creditClosingConfigFromCustomer({
     creditAccountEnabled: row.credit_account_enabled === 1,
     creditPeriodicity: periodicity,
@@ -529,18 +676,21 @@ function closingConfigFor(row: InvoiceClosingSourceRow): CreditClosingConfig | n
 
 function addPending(
   pending: Map<string, InvoiceClosingPendingCustomer>,
+  key: string,
   row: InvoiceClosingSourceRow,
   line: InvoiceClosingLine
 ): void {
-  const entry = pending.get(row.customer_id) ?? {
-    customerId: row.customer_id,
+  // Pela chave do cliente REAL: o cliente cadastrado duas vezes aparecia duas vezes nesta
+  // lista, com o movimento dele partido ao meio.
+  const entry = pending.get(key) ?? {
+    customerId: row.customer_id ?? "",
     customerName: customerName(row),
     operations: 0,
     totalCents: 0
   };
   entry.operations += 1;
   entry.totalCents += line.totalCents;
-  pending.set(row.customer_id, entry);
+  pending.set(key, entry);
 }
 
 /**
