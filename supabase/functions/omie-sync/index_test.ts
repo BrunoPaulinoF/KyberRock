@@ -4195,11 +4195,130 @@ Deno.test("check_order_billing lista a OS pelo modulo de servicos", async () => 
   );
 
   assertEquals(omieQueue.requests.filter((r) => r.call === "ListarOS").length, 1);
-  assertEquals(omieQueue.requests.filter((r) => r.call === "ConsultarOS").length, 0);
+  // UMA consulta individual, e so pela OS que a listagem deu como faturada: a listagem
+  // reconhece o faturamento pela etapa mas nao carrega o numero da NFS-e, e sem ir busca-lo
+  // a pesagem ficaria "Faturada" com a coluna Nota fiscal vazia para sempre. As tres que
+  // ainda nao foram faturadas nao gastam chamada nenhuma.
+  const consults = omieQueue.requests.filter((r) => r.call === "ConsultarOS");
+  assertEquals(consults.length, 1);
+  assertEquals(getParam(consults[0]).nCodOS, 7004);
   const results = response.results as Array<Record<string, unknown>>;
   assertObjectMatch(results[0], { operationId: "op-1", billed: true, orderNumber: "000044" });
   assertObjectMatch(results[3], { operationId: "op-4", billed: false, orderNumber: "000041" });
 });
+
+// A conferencia barata (a listagem) diz QUE foi faturado, nunca QUAL nota saiu: o numero da
+// NF-e mora nos documentos fiscais do pedido. Sem ir busca-lo, o relatorio do cliente saia
+// com "-" na coluna Nota fiscal — e, como a pesagem saia da fila ao virar faturada, ficava
+// assim para sempre.
+Deno.test(
+  "check_order_billing vai buscar o numero da NF-e do que a listagem deu como faturado",
+  async () => {
+    const { ids, fixtures } = await billingDependencies("nf-por-documento");
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarPedidos") {
+        return {
+          pagina: 1,
+          pedido_venda_produto: [
+            salesListingRecord(9002, "60", "1002"),
+            salesListingRecord(9001, "50", "1001")
+          ]
+        };
+      }
+      if (input.call === "ObterPedVenda") {
+        return { nNF: "987", cChaveNFe: "3526...", danfe_pdf: "https://omie.example/danfe.pdf" };
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: ids.deviceId,
+        deviceToken: ids.token,
+        action: "check_order_billing",
+        payload: {
+          orders: [
+            { operationId: "op-faturada", orderType: "sales", omieOrderId: 9002 },
+            { operationId: "op-pendente", orderType: "sales", omieOrderId: 9001 },
+            { operationId: "op-outra", orderType: "sales", omieOrderId: 9000 },
+            { operationId: "op-mais", orderType: "sales", omieOrderId: 8999 }
+          ]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    // So a faturada custa a consulta dos documentos fiscais.
+    const documents = omieQueue.requests.filter((r) => r.call === "ObterPedVenda");
+    assertEquals(documents.length, 1);
+    assertEquals(getParam(documents[0]).nIdPed, 9002);
+
+    const results = response.results as Array<Record<string, unknown>>;
+    assertObjectMatch(results[0], {
+      operationId: "op-faturada",
+      billed: true,
+      invoiceNumber: "987",
+      documentUrl: "https://omie.example/danfe.pdf"
+    });
+    assertObjectMatch(results[1], {
+      operationId: "op-pendente",
+      billed: false,
+      invoiceNumber: null
+    });
+  }
+);
+
+// O numero e um ganho, nao um pre-requisito: a pesagem ja consta faturada, e insistir aqui
+// custaria a passada inteira por causa de um campo.
+Deno.test(
+  "check_order_billing segue sem o numero quando o OMIE recusa a consulta do documento",
+  async () => {
+    const { ids, fixtures } = await billingDependencies("nf-documento-falha");
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarPedidos") {
+        return {
+          pagina: 1,
+          pedido_venda_produto: [
+            salesListingRecord(9002, "60", "1002"),
+            salesListingRecord(9001, "50", "1001"),
+            salesListingRecord(9000, "50", "1000"),
+            salesListingRecord(8999, "50", "0999")
+          ]
+        };
+      }
+      if (input.call === "ObterPedVenda") {
+        throw new Error("[omie] ERROR: SOAP-ERROR: documento nao disponivel");
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: ids.deviceId,
+        deviceToken: ids.token,
+        action: "check_order_billing",
+        payload: {
+          orders: [
+            { operationId: "op-faturada", orderType: "sales", omieOrderId: 9002 },
+            { operationId: "op-b", orderType: "sales", omieOrderId: 9001 },
+            { operationId: "op-c", orderType: "sales", omieOrderId: 9000 },
+            { operationId: "op-d", orderType: "sales", omieOrderId: 8999 }
+          ]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    const results = response.results as Array<Record<string, unknown>>;
+    assertObjectMatch(results[0], {
+      operationId: "op-faturada",
+      found: true,
+      billed: true,
+      invoiceNumber: null,
+      error: null
+    });
+  }
+);
 
 // O nome do campo de ordenacao MUDA entre os modulos do OMIE, e mandar o do outro derruba a
 // chamada inteira ("Tag [ORDEM_DECRESCENTE] nao faz parte da estrutura do tipo complexo

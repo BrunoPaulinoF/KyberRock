@@ -850,6 +850,16 @@ function registerIpcHandlers(): void {
     }
   );
 
+  // "Conferir notas no OMIE" do relatorio por cliente: so LE o estado la e grava o numero
+  // da nota das cargas do periodo. Nao emite nada, entao nao precisa de confirmacao.
+  ipcMain.handle(
+    "desktop:reconcile-customer-report-notes",
+    (_event, customerId: string, startDate: string, endDate: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.reconcileCustomerReportNotes(customerId, startDate, endDate);
+    }
+  );
+
   // Exporta o relatorio por cliente nos modelos (simplificado/completo) e formatos
   // (PDF/Excel) escolhidos. Um unico arquivo usa o "salvar como" de sempre; a partir de
   // dois, pede a pasta uma vez so em vez de abrir um dialogo por arquivo.

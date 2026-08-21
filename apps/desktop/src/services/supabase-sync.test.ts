@@ -3261,7 +3261,7 @@ describe("supabase sync", () => {
     }
   });
 
-  it("nao pergunta pela pesagem ja faturada nem pela cancelada", async () => {
+  it("nao pergunta pela pesagem ja faturada COM nota nem pela cancelada", async () => {
     const database = createDatabase();
 
     try {
@@ -3271,7 +3271,11 @@ describe("supabase sync", () => {
       insertSentOperation(database, { id: "op-cancelada", salesOrderId: 2 });
       insertSentOperation(database, { id: "op-sem-pedido" });
       database
-        .prepare("UPDATE weighing_operations SET omie_billing_status = 'billed' WHERE id = ?")
+        .prepare(
+          `UPDATE weighing_operations
+              SET omie_billing_status = 'billed', omie_invoice_number = '987'
+            WHERE id = ?`
+        )
         .run("op-ja-faturada");
       database
         .prepare("UPDATE weighing_operations SET status = 'cancelled' WHERE id = ?")
@@ -3279,8 +3283,9 @@ describe("supabase sync", () => {
 
       const result = await reconcileOmieBillingFromOmie(database, identity);
 
-      // Nenhuma sobra: faturada e estado final, cancelada saiu do fluxo e a que nunca
-      // chegou ao OMIE nao tem o que conferir la.
+      // Nenhuma sobra: faturada COM o numero da nota e estado final (sem o numero ela
+      // continua na fila, senao a coluna Nota fiscal ficaria vazia para sempre), cancelada
+      // saiu do fluxo e a que nunca chegou ao OMIE nao tem o que conferir la.
       expect(result).toEqual({ checked: 0, billed: 0, errors: [] });
       expect(invokeMock).not.toHaveBeenCalled();
     } finally {
@@ -3356,6 +3361,133 @@ describe("supabase sync", () => {
 
       expect(targeted.skipped).toBeUndefined();
       expect(invokeMock).toHaveBeenCalledTimes(2);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("continua perguntando pela pesagem faturada que ficou sem o numero da nota", async () => {
+    // O caso que deixava o relatorio do cliente com "-" na coluna Nota fiscal: a conferencia
+    // pela listagem reconhece o faturamento pela etapa do kanban e nao traz a NF-e junto.
+    // Marcada como faturada, a pesagem saia da fila e o numero nunca mais era perguntado.
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-sem-numero", salesOrderId: 5001 });
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          ok: true,
+          results: [
+            {
+              operationId: "op-sem-numero",
+              orderType: "sales",
+              omieOrderId: 5001,
+              found: true,
+              billed: true,
+              orderNumber: "1234",
+              invoiceNumber: null,
+              documentUrl: null,
+              error: null
+            }
+          ]
+        }
+      });
+
+      const first = await reconcileOmieBillingFromOmie(database, identity);
+      expect(first).toMatchObject({ billed: 1 });
+
+      // Segunda passada: a pesagem tem de continuar na fila, e o numero que chegar agora
+      // precisa ser gravado mesmo com a pesagem ja marcada como faturada.
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          ok: true,
+          results: [
+            {
+              operationId: "op-sem-numero",
+              orderType: "sales",
+              omieOrderId: 5001,
+              found: true,
+              billed: true,
+              orderNumber: "1234",
+              invoiceNumber: "987",
+              documentUrl: "https://omie.example/danfe.pdf",
+              error: null
+            }
+          ]
+        }
+      });
+      const second = await reconcileOmieBillingFromOmie(database, identity, { force: true });
+
+      // Ja constava faturada: a contagem de "viraram nota agora" nao pode conta-la de novo.
+      expect(second).toMatchObject({ checked: 1, billed: 0 });
+      const row = database
+        .prepare(
+          `SELECT omie_invoice_number, omie_billing_status, omie_document_url
+             FROM weighing_operations WHERE id = 'op-sem-numero'`
+        )
+        .get() as Record<string, string | null>;
+      expect(row.omie_invoice_number).toBe("987");
+      expect(row.omie_billing_status).toBe("billed");
+      expect(row.omie_document_url).toBe("https://omie.example/danfe.pdf");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("para de perguntar assim que o numero da nota chega", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-com-nota", salesOrderId: 5002 });
+      database
+        .prepare(
+          `UPDATE weighing_operations
+              SET omie_billing_status = 'billed', omie_invoice_number = '987'
+            WHERE id = 'op-com-nota'`
+        )
+        .run();
+      invokeMock.mockResolvedValue({ error: null, data: { ok: true, results: [] } });
+
+      await reconcileOmieBillingFromOmie(database, identity);
+
+      // Faturada COM numero e assunto encerrado: nao volta a gastar chamada do OMIE.
+      expect(invokeMock).not.toHaveBeenCalled();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("a conferencia dirigida tambem alcanca a faturada sem numero", async () => {
+    // E o que o botao "Conferir notas no OMIE" faz. Antes ele nao tinha efeito nenhum
+    // nessas cargas: a consulta que monta a fila as excluia por ja estarem faturadas.
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-sem-numero", salesOrderId: 5003 });
+      database
+        .prepare("UPDATE weighing_operations SET omie_billing_status = 'billed' WHERE id = ?")
+        .run("op-sem-numero");
+      invokeMock.mockResolvedValue({ error: null, data: { ok: true, results: [] } });
+
+      await reconcileOmieBillingFromOmie(database, identity, {
+        operationIds: ["op-sem-numero"]
+      });
+
+      const [, options] = invokeMock.mock.calls[0] as [
+        string,
+        { body: { payload: { orders: Array<Record<string, unknown>> } } }
+      ];
+      expect(options.body.payload.orders).toEqual([
+        { operationId: "op-sem-numero", orderType: "sales", omieOrderId: 5003 }
+      ]);
     } finally {
       database.close();
     }
