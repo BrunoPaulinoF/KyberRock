@@ -25,9 +25,11 @@ function formatDate(value: string | null): string {
   return date.toLocaleDateString("pt-BR");
 }
 
+// Peso em quilos, so o numero: a coluna ja diz "Peso" e repetir "kg" em cada linha
+// so atrapalhava a leitura das tabelas.
 function formatKg(kg: number | null): string {
   if (kg === null) return "-";
-  return `${kg.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} kg`;
+  return kg.toLocaleString("pt-BR", { maximumFractionDigits: 0 });
 }
 
 const EMPTY_REPORT: WalletReport = {

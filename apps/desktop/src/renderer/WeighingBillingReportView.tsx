@@ -45,8 +45,10 @@ function formatTons(kg: number): string {
   })} t`;
 }
 
+// Peso em quilos, so o numero: a coluna ja diz "Peso" e repetir "kg" em cada linha
+// so atrapalhava a leitura das tabelas.
 function formatKg(kg: number): string {
-  return `${kg.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} kg`;
+  return kg.toLocaleString("pt-BR", { maximumFractionDigits: 0 });
 }
 
 function formatCount(value: number): string {

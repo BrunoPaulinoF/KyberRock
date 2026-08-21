@@ -130,8 +130,10 @@ function formatTons(kg: number): string {
   })} t`;
 }
 
+// Peso em quilos, so o numero: a coluna ja diz "Peso" e repetir "kg" em cada linha
+// so atrapalhava a leitura das tabelas.
 function formatKg(kg: number): string {
-  return `${kg.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} kg`;
+  return kg.toLocaleString("pt-BR", { maximumFractionDigits: 0 });
 }
 
 function formatNumber(value: number): string {
@@ -550,7 +552,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
             <Kpi
               label="Tonelagem"
               value={formatTons(totals.netWeightKg)}
-              hint={formatKg(totals.netWeightKg)}
+              hint={`${formatKg(totals.netWeightKg)} kg`}
             />
             <Kpi
               label="Total comprado"
@@ -893,7 +895,7 @@ function CustomersOverviewPreview({ overview }: { overview: CustomersOverview })
         <Kpi
           label="Tonelagem"
           value={formatTons(totals.netWeightKg)}
-          hint={formatKg(totals.netWeightKg)}
+          hint={`${formatKg(totals.netWeightKg)} kg`}
         />
         <Kpi label="Total comprado" value={formatBRL(totals.totalCents)} />
         <Kpi
