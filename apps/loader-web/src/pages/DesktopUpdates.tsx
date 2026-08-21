@@ -1,6 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
+import {
+  hasBuildInProgress,
+  isPromotionApplied,
+  isPromotionStale,
+  nextRefreshDelayMs,
+  type PendingPromotion,
+  type PromotionTarget,
+  type ReleaseState
+} from "../lib/desktop-updates";
 import {
   Badge,
   Button,
@@ -38,9 +47,17 @@ import {
 // testada, versao anterior a producao, release incompleta). Aqui elas so evitam
 // oferecer um botao que seria recusado depois — o disparo responde na hora, mas
 // o resultado so aparece no run do Actions.
+//
+// ## Por que a tela se atualiza sozinha
+//
+// Nenhum dos tres gestos muda alguma coisa na hora: o painel dispara um run e
+// quem publica a release e o Actions, segundos depois. A tela por isso NAO
+// espera clique nenhum para reler — ela se recarrega em segundo plano, rapido
+// enquanto uma promocao esta a caminho e devagar quando nao ha nada em
+// movimento (ver `lib/desktop-updates.ts`). Antes disso a unica saida era
+// recarregar a pagina, o que jogava o administrador de volta na primeira aba do
+// console a cada promocao.
 // ---------------------------------------------------------------------------
-
-type ReleaseState = "producao" | "teste" | "parado" | "compilando" | "reprovada" | "incompleto";
 
 interface ReleaseRow {
   version: string;
@@ -71,7 +88,15 @@ const STATE_LABEL: Record<string, { text: string; tone: Tone }> = {
   incompleto: { text: "Incompleto", tone: "danger" }
 };
 
-const PROMOTE_FEEDBACK: Record<"beta" | "latest" | "reprovar", (version: string) => string> = {
+/** Mensagem do clique: o pedido saiu, o resultado ainda vai aparecer sozinho. */
+const PROMOTE_DISPATCHED: Record<PromotionTarget, (version: string) => string> = {
+  beta: (v) => `Enviando a versao ${v} para o anel de teste…`,
+  latest: (v) => `Liberando a versao ${v} para producao…`,
+  reprovar: (v) => `Reprovando a versao ${v}…`
+};
+
+/** Mensagem de quando o run terminou e a lista JA mostra o novo estado. */
+const PROMOTE_FEEDBACK: Record<PromotionTarget, (version: string) => string> = {
   beta: (v) =>
     `Versao ${v} enviada para o anel de teste. As balancas marcadas como teste recebem na proxima verificacao.`,
   latest: (v) =>
@@ -99,11 +124,27 @@ function formatDateTime(value: string | null): string {
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("pt-BR");
 }
 
+function formatClock(value: number | null): string {
+  if (!value) return "—";
+  return new Date(value).toLocaleTimeString("pt-BR");
+}
+
 export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => void }) {
   const [data, setData] = useState<ReleasesResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [busyVersion, setBusyVersion] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  /** Verificacao de fundo em curso: informa, mas nunca esvazia a tela. */
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshAt, setLastRefreshAt] = useState<number | null>(null);
+  /** Sobe a cada verificacao concluida (inclusive as que falharam) e reagenda a proxima. */
+  const [refreshTick, setRefreshTick] = useState(0);
+  /** Promocao disparada cujo resultado ainda nao apareceu na lista. */
+  const [pending, setPending] = useState<PendingPromotion | null>(null);
+  /** Versao entre o clique e a resposta do disparo. */
+  const [dispatching, setDispatching] = useState<string | null>(null);
+  const [isVisible, setIsVisible] = useState(
+    () => typeof document === "undefined" || document.visibilityState !== "hidden"
+  );
+  const [feedback, setFeedback] = useState<{ tone: Tone; text: string } | null>(null);
 
   const handleError = useCallback(
     (error: unknown, fallback: string) => {
@@ -111,31 +152,97 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
         onSessionExpired();
         return;
       }
-      setFeedback({ tone: "error", text: error instanceof Error ? error.message : fallback });
+      setFeedback({ tone: "danger", text: error instanceof Error ? error.message : fallback });
     },
     [onSessionExpired]
   );
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      setData(
-        await callAdminFunction<ReleasesResponse>("admin-api", {
+  const load = useCallback(
+    async (options: { silent?: boolean } = {}) => {
+      if (options.silent) setIsRefreshing(true);
+      else setIsLoading(true);
+      try {
+        const next = await callAdminFunction<ReleasesResponse>("admin-api", {
           action: "list_desktop_releases"
-        })
-      );
-    } catch (error) {
-      handleError(error, "Nao foi possivel carregar as versoes.");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [handleError]);
+        });
+        setData(next);
+        setLastRefreshAt(Date.now());
+        // A promocao so termina quando a versao aparece no estado pedido: e
+        // isso que devolve os botoes da linha e fecha a mensagem do clique.
+        setPending((current) => {
+          if (!current || !isPromotionApplied(next.releases, current)) return current;
+          setFeedback({ tone: "ok", text: PROMOTE_FEEDBACK[current.target](current.version) });
+          return null;
+        });
+      } catch (error) {
+        if (error instanceof AdminSessionExpiredError) {
+          onSessionExpired();
+          return;
+        }
+        // Verificacao de fundo que falhou nao apaga a lista nem pinta a tela de
+        // vermelho: a leitura anterior continua valendo e a proxima vem em
+        // segundos. So o pedido explicito (abrir a aba, clicar em Atualizar)
+        // vira mensagem de erro.
+        if (!options.silent) {
+          handleError(error, "Nao foi possivel carregar as versoes.");
+        }
+      } finally {
+        setIsLoading(false);
+        setIsRefreshing(false);
+        setRefreshTick((tick) => tick + 1);
+      }
+    },
+    [handleError, onSessionExpired]
+  );
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  async function promote(release: ReleaseRow, target: "beta" | "latest" | "reprovar") {
+  // Aba escondida nao tem quem olhe: parar de verificar poupa o limite por hora
+  // da API do GitHub, e voltar para a aba recarrega na hora — que e justamente
+  // quando o administrador quer ver o estado atual.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    function handleVisibility() {
+      const visible = document.visibilityState !== "hidden";
+      setIsVisible(visible);
+      if (visible) void load({ silent: true });
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [load]);
+
+  // O run nao respondeu no prazo: quase sempre o workflow recusou o pedido, e
+  // recusa nao muda estado nenhum. Devolve os botoes e manda olhar o run em vez
+  // de deixar a linha girando para sempre.
+  useEffect(() => {
+    if (!pending || !isPromotionStale(pending, Date.now())) return;
+    setPending(null);
+    setFeedback({
+      tone: "warn",
+      text: `A versao ${pending.version} ainda nao mudou de situacao. O workflow pode ter recusado o pedido — confira o run no GitHub Actions.`
+    });
+  }, [pending, refreshTick]);
+
+  const refreshDelay = useMemo(
+    () =>
+      nextRefreshDelayMs({
+        isVisible,
+        hasPendingPromotion: pending !== null,
+        isBuilding: hasBuildInProgress(data?.releases ?? [])
+      }),
+    [isVisible, pending, data]
+  );
+
+  useEffect(() => {
+    if (refreshDelay === null || typeof window === "undefined") return;
+    const timer = window.setTimeout(() => void load({ silent: true }), refreshDelay);
+    return () => window.clearTimeout(timer);
+    // `refreshTick` reagenda a proxima verificacao assim que a anterior termina.
+  }, [refreshDelay, refreshTick, load]);
+
+  async function promote(release: ReleaseRow, target: PromotionTarget) {
     if (target === "reprovar") {
       const confirmed = window.confirm(
         `Reprovar a versao ${release.version}?\n\n` +
@@ -144,24 +251,22 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
       );
       if (!confirmed) return;
     }
-    setFeedback(null);
-    setBusyVersion(release.version);
+    setDispatching(release.version);
+    setFeedback({ tone: "info", text: PROMOTE_DISPATCHED[target](release.version) });
     try {
       await callAdminFunction("admin-api", {
         action: "promote_desktop_release",
         payload: { version: release.version, target, force: false }
       });
-      setFeedback({
-        tone: "ok",
-        text: PROMOTE_FEEDBACK[target](release.version)
-      });
-      // O workflow leva alguns segundos para publicar a release; a lista so
-      // reflete o novo estado no proximo carregamento.
-      window.setTimeout(() => void load(), 4000);
+      // O disparo respondeu; o resultado sai do run. A linha fica em espera e a
+      // tela passa a reler de poucos em poucos segundos ate o estado mudar.
+      setPending({ version: release.version, target, startedAt: Date.now() });
+      void load({ silent: true });
     } catch (error) {
+      setFeedback(null);
       handleError(error, "Nao foi possivel promover a versao.");
     } finally {
-      setBusyVersion(null);
+      setDispatching(null);
     }
   }
 
@@ -184,6 +289,11 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
           <Badge tone={stateLabel(release.state).tone} dot>
             {stateLabel(release.state).text}
           </Badge>
+          {pending?.version === release.version && (
+            <p className="adm-cell-sub">
+              Aplicando no GitHub… a situacao muda aqui sozinha quando o run terminar.
+            </p>
+          )}
           {release.isCurrentProduction && (
             <p className="adm-cell-sub">E a versao que a frota esta recebendo.</p>
           )}
@@ -211,7 +321,10 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
       header: "",
       actions: true,
       render: (release) => {
-        const busy = busyVersion === release.version;
+        const busy = dispatching === release.version || pending?.version === release.version;
+        // Enquanto um run esta a caminho a tela nao oferece outro: o workflow
+        // trata um pedido por vez e o segundo clique so viraria confusao.
+        const blocked = busy || dispatching !== null || pending !== null;
         if (!release.canSendToTest && !release.canReleaseToProduction && !release.canReject) {
           return (
             <span className="adm-cell-sub">
@@ -224,7 +337,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
         return (
           <ButtonGroup>
             {release.canSendToTest && (
-              <Button size="sm" disabled={busy} onClick={() => void promote(release, "beta")}>
+              <Button size="sm" disabled={blocked} onClick={() => void promote(release, "beta")}>
                 {busy ? "Enviando…" : "Enviar para teste"}
               </Button>
             )}
@@ -232,7 +345,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
               <Button
                 size="sm"
                 variant="primary"
-                disabled={busy}
+                disabled={blocked}
                 onClick={() => void promote(release, "latest")}
               >
                 {busy ? "Liberando…" : "Liberar para producao"}
@@ -242,7 +355,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
               <Button
                 size="sm"
                 variant="danger"
-                disabled={busy}
+                disabled={blocked}
                 onClick={() => void promote(release, "reprovar")}
               >
                 {busy ? "Reprovando…" : "Reprovar"}
@@ -261,7 +374,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
         description="Cada merge gera uma versao que fica parada ate voce mandar. Nada chega nas balancas sozinho."
       />
 
-      {feedback && <Note tone={feedback.tone === "ok" ? "ok" : "danger"}>{feedback.text}</Note>}
+      {feedback && <Note tone={feedback.tone}>{feedback.text}</Note>}
 
       {data && !data.canPromote && (
         <Note tone="warn">
@@ -296,9 +409,18 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
         title="Versoes publicadas"
         flush
         actions={
-          <Button onClick={() => void load()} disabled={isLoading}>
-            {isLoading ? "Carregando…" : "Atualizar"}
-          </Button>
+          <>
+            <span className="adm-cell-sub">
+              {isLoading || isRefreshing
+                ? "Verificando…"
+                : pending
+                  ? "Acompanhando o run…"
+                  : `Atualizado as ${formatClock(lastRefreshAt)}`}
+            </span>
+            <Button onClick={() => void load()} disabled={isLoading}>
+              {isLoading ? "Carregando…" : "Atualizar"}
+            </Button>
+          </>
         }
       >
         <DataTable
