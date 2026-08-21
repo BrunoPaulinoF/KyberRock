@@ -3335,7 +3335,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                                 <small>Motorista: {operation.driverName}</small>
                               </span>
                               <span style={styles.operationCellStack}>
-                                <strong>{formatWeightKg(operation.entryWeightKg ?? 0)}</strong>
+                                <strong>{formatWeightNumber(operation.entryWeightKg ?? 0)}</strong>
                                 <span>{formatMoney(operation.unitPriceCents)}/ton</span>
                                 <small
                                   style={{
@@ -3478,7 +3478,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           <small>Motorista: {operation.driverName}</small>
                         </span>
                         <span style={styles.operationCellStack}>
-                          <strong>{formatWeightKg(operation.netWeightKg ?? 0)}</strong>
+                          <strong>{formatWeightNumber(operation.netWeightKg ?? 0)}</strong>
                           <span>{formatMoney(operation.totalCents)}</span>
                         </span>
                         <span>{formatDbDateTime(operation.updatedAt)}</span>
@@ -9087,8 +9087,16 @@ function formatClockTime(value: string): string {
   return parsed.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
+// Peso em quilos, so o numero: nas listas de operacao o cabecalho da coluna ja diz que
+// aquilo e um peso, e o "kg" repetido em cada linha so atrapalhava a leitura.
+function formatWeightNumber(value: number): string {
+  return value.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
+// Na tela da balanca o numero E a leitura do mostrador: ali a unidade fica, ao lado do
+// "-- kg" que aparece enquanto nao ha peso.
 function formatWeightKg(value: number): string {
-  return `${value.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} kg`;
+  return `${formatWeightNumber(value)} kg`;
 }
 
 // Tempo decorrido desde a entrada do caminhao (ex.: "ha 12 min", "ha 2 h 05 min").

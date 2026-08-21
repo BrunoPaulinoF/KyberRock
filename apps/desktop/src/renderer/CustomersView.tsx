@@ -71,11 +71,12 @@ const FUTURE_BILLING_ANY_PRODUCT = "__any__";
 
 /**
  * Peso do quadro das notas de entrega futura. Sempre em quilos, a unidade em que a balanca
- * pesa e em que o total da nota e digitado: converter para tonelada aqui obrigaria o
- * operador a comparar duas unidades diferentes na mesma linha para conferir o saldo.
+ * pesa e em que o total da nota e digitado ("Total da nota (kg)"): converter para tonelada
+ * aqui obrigaria o operador a comparar duas unidades diferentes na mesma linha para conferir
+ * o saldo. So o numero, sem "kg" repetido nas tres colunas da mesma linha.
  */
 function formatKgAmount(value: number): string {
-  return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} kg`;
+  return value.toLocaleString("pt-BR", { maximumFractionDigits: 0 });
 }
 
 const initialForm: CustomerFormData = {

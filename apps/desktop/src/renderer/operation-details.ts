@@ -74,9 +74,10 @@ export function formatCents(value: number | null | undefined): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value / 100);
 }
 
+// Peso em quilos, so o numero: o rotulo ao lado ja diz que a linha e um peso.
 export function formatKg(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
-  return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} kg`;
+  return value.toLocaleString("pt-BR", { maximumFractionDigits: 0 });
 }
 
 export interface OperationFreight {

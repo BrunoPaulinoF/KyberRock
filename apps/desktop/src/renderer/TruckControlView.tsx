@@ -446,7 +446,7 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
                         : truck.customers.map((customer) => (
                             <div key={customer.customerName}>
                               {customer.customerName}:{" "}
-                              {customer.totalNetWeightKg.toLocaleString("pt-BR")} kg (
+                              {customer.totalNetWeightKg.toLocaleString("pt-BR")} (
                               {customer.operations}x)
                             </div>
                           ))}
@@ -457,7 +457,7 @@ export function TruckControlView({ desktopApi }: { desktopApi: KyberRockDesktopA
                         : truck.products.map((product) => (
                             <div key={product.productDescription}>
                               {product.productDescription}:{" "}
-                              {product.totalNetWeightKg.toLocaleString("pt-BR")} kg
+                              {product.totalNetWeightKg.toLocaleString("pt-BR")}
                             </div>
                           ))}
                     </td>
