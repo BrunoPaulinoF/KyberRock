@@ -4,6 +4,7 @@ import { invalidEmailsInList, normalizeEmailList } from "@kyberrock/shared";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
+import { DOCUMENT_DIGITS_SQL, documentDigits } from "./customer-identity.js";
 
 /** Key do e-mail padrao de NF-e (usado quando o cliente nao tem e-mail proprio). */
 export const DEFAULT_NFE_EMAIL_KEY = "default_nfe_email";
@@ -140,9 +141,8 @@ export interface CustomerRow {
  * identifica o cliente no OMIE (find-or-create por CNPJ/CPF), entao dois cadastros
  * com o mesmo documento sao sempre o mesmo cliente — e virariam o mesmo cadastro la.
  */
-function onlyDigits(value: string | null | undefined): string {
-  return (value ?? "").replace(/\D/g, "");
-}
+/** Alias local de `documentDigits`: o mesmo criterio usado pelo sync e pelas telas. */
+const onlyDigits = documentDigits;
 
 export function findCustomerByDocument(
   database: DesktopDatabase,
@@ -157,7 +157,7 @@ export function findCustomerByDocument(
       `SELECT id, trade_name, legal_name, is_active FROM customers
        WHERE company_id = ?
          AND deleted_at IS NULL
-         AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
+         AND ${DOCUMENT_DIGITS_SQL} = ?
          AND (? IS NULL OR id <> ?)
        LIMIT 1`
     )

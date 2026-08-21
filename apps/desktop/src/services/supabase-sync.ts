@@ -42,6 +42,7 @@ import {
   enqueueOmieBillingJob,
   validateOperationFiscalReadiness
 } from "./weighing-operations.js";
+import { DOCUMENT_DIGITS_SQL, documentDigits } from "./customer-identity.js";
 import {
   isCadastroIncompleteFault,
   isOmieCustomerRegistrationFault,
@@ -5800,8 +5801,14 @@ function upsertOmieCustomers(
   const findByIntegrationCode = database.prepare(
     "SELECT id FROM customers WHERE company_id = ? AND omie_integration_code = ? LIMIT 1"
   );
+  // Sem mascara dos dois lados: o OMIE devolve "06.020.284/0001-64" e o cadastro nascido na
+  // balanca guarda "06020284000164". Comparando literal, o pull nunca reconhecia o cliente
+  // que ja existia aqui e criava um `omie_<id>` do lado — e o mesmo cliente passava a ter
+  // dois cadastros, com as pesagens divididas entre eles.
   const findByDocument = database.prepare(
-    "SELECT id FROM customers WHERE company_id = ? AND document = ? AND deleted_at IS NULL LIMIT 1"
+    `SELECT id FROM customers
+     WHERE company_id = ? AND ${DOCUMENT_DIGITS_SQL} = ? AND deleted_at IS NULL
+     LIMIT 1`
   );
   const upsert = database.prepare(`
     INSERT INTO customers (
@@ -5874,8 +5881,9 @@ function upsertOmieCustomers(
           | { id: string }
           | undefined)
       : undefined;
-    const byDocument = customer.document
-      ? (findByDocument.get(companyId, customer.document) as { id: string } | undefined)
+    const customerDigits = documentDigits(customer.document);
+    const byDocument = customerDigits
+      ? (findByDocument.get(companyId, customerDigits) as { id: string } | undefined)
       : undefined;
     const localId =
       existing?.id ??
@@ -6260,14 +6268,17 @@ function findCarrierLocalId(
     if (byIntegrationCode?.id) return byIntegrationCode.id;
   }
 
-  if (supplier.document) {
+  // Mesma normalizacao do cliente, e pelo mesmo motivo: o documento do OMIE vem com
+  // mascara e o daqui sem, e a comparacao literal duplicava a transportadora.
+  const supplierDigits = documentDigits(supplier.document);
+  if (supplierDigits) {
     const byDocument = database
       .prepare(
         `SELECT id FROM carriers
-         WHERE company_id = ? AND document = ? AND deleted_at IS NULL
+         WHERE company_id = ? AND ${DOCUMENT_DIGITS_SQL} = ? AND deleted_at IS NULL
          LIMIT 1`
       )
-      .get(companyId, supplier.document) as { id: string } | undefined;
+      .get(companyId, supplierDigits) as { id: string } | undefined;
 
     if (byDocument?.id) return byDocument.id;
   }
