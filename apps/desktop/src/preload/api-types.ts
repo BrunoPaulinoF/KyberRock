@@ -388,6 +388,15 @@ export interface KyberRockDesktopApi {
     endDate: string,
     periodLabel?: string
   ) => Promise<CustomerFullReport>;
+  /**
+   * "Conferir notas no OMIE" do relatorio por cliente: pergunta AGORA o numero da nota das
+   * cargas do periodo e grava cada um na pesagem. So LE o OMIE — nao emite nada.
+   */
+  reconcileCustomerReportNotes: (
+    customerId: string,
+    startDate: string,
+    endDate: string
+  ) => Promise<{ checked: number; billed: number; errors: string[] }>;
   exportCustomerReport: (
     customerId: string,
     startDate: string,
