@@ -582,3 +582,68 @@ describe("documentos da conferencia", () => {
     expect(renderWeighingBillingReportSpreadsheet(report)).toContain("Sem dados no periodo.");
   });
 });
+
+describe("numero da nota fiscal na conferencia de faturamento", () => {
+  it("mostra a nota emitida e o traco na carga que ainda nao faturou", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertOperations(db, [
+        {
+          id: "op-com-nota",
+          code: 1,
+          customer: "cust-1",
+          product: "prod-1",
+          net: 30000,
+          productCents: 90000,
+          freightCents: 10000,
+          totalCents: 100000,
+          salesOrderId: 4017998231,
+          orderNumber: "50139",
+          billingStatus: "billed",
+          createdAt: "2026-07-10"
+        },
+        {
+          id: "op-sem-nota",
+          code: 2,
+          customer: "cust-1",
+          product: "prod-1",
+          net: 30000,
+          productCents: 90000,
+          freightCents: 10000,
+          totalCents: 100000,
+          salesOrderId: 4017998232,
+          createdAt: "2026-07-11"
+        }
+      ]);
+      db.prepare(
+        "UPDATE weighing_operations SET omie_invoice_number = '28727' WHERE id = 'op-com-nota'"
+      ).run();
+
+      const report = new WeighingBillingReportService(db).getReport(
+        "2026-07-01",
+        "2026-07-31",
+        "unit-1"
+      );
+
+      const byId = new Map(report.rows.map((row) => [row.operationId, row]));
+      expect(byId.get("op-com-nota")?.omieInvoiceNumber).toBe("28727");
+      expect(byId.get("op-sem-nota")?.omieInvoiceNumber).toBeNull();
+
+      // A busca tambem acha pelo numero da nota: e por ele que o cliente contesta a carga.
+      const found = new WeighingBillingReportService(db).getReport(
+        "2026-07-01",
+        "2026-07-31",
+        "unit-1",
+        { search: "28727" }
+      );
+      expect(found.rows.map((row) => row.operationId)).toEqual(["op-com-nota"]);
+
+      const html = renderWeighingBillingReportHtml(report, new Date("2026-08-01T12:00:00Z"));
+      expect(html).toContain("Nota fiscal");
+      expect(html).toContain("28727");
+    } finally {
+      db.close();
+    }
+  });
+});

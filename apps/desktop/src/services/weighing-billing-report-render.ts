@@ -57,6 +57,8 @@ const ROW_HEADERS = [
   "Total (R$)",
   "Tipo",
   "Situacao",
+  // A nota vem antes do pedido: e o numero que sai desta pedreira e chega ao cliente.
+  "Nota fiscal",
   "Pedido/OS OMIE"
 ];
 
@@ -183,6 +185,7 @@ function rowCells(row: WeighingBillingRow): string[] {
     formatBRL(row.totalCents),
     row.operationTypeLabel,
     row.situationLabel,
+    row.omieInvoiceNumber ?? "-",
     omieReference(row)
   ];
 }

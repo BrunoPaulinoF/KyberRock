@@ -96,6 +96,14 @@ export interface CustomerReportOperation {
   installments: number | null;
   downPaymentCents: number | null;
   omieSalesOrderId: number | null;
+  /**
+   * Numero da NOTA FISCAL emitida no OMIE — o que o cliente pede quando confere a fatura,
+   * e o unico numero desta lista que existe fora do KyberRock e fora do OMIE.
+   *
+   * Diferente do `omieSalesOrderId`, que e o codigo INTERNO do pedido e nao acha nada na
+   * busca do OMIE. Null enquanto a nota nao saiu.
+   */
+  omieInvoiceNumber: string | null;
   omieBillingStatus: string | null;
   omieBilledAt: string | null;
   omieDocumentUrl: string | null;
@@ -413,6 +421,7 @@ interface OperationRow extends CustomerColumns {
   manual_installments: number | null;
   manual_down_payment_cents: number | null;
   omie_sales_order_id: number | null;
+  omie_invoice_number: string | null;
   omie_billing_status: string | null;
   omie_billed_at: string | null;
   omie_document_url: string | null;
@@ -680,7 +689,8 @@ export class CustomerReportService {
            o.price_savings_percent, o.product_total_cents, o.total_cents,
            pm.name as payment_method_name, pt.name as payment_term_name,
            o.manual_installments, o.manual_down_payment_cents,
-           o.omie_sales_order_id, o.omie_billing_status, o.omie_billed_at, o.omie_document_url,
+           o.omie_sales_order_id, o.omie_invoice_number,
+           o.omie_billing_status, o.omie_billed_at, o.omie_document_url,
            o.cloud_synced_at, o.omie_synced_at
          FROM weighing_operations o
          LEFT JOIN products p ON p.id = o.product_id
@@ -989,6 +999,7 @@ function mapOperation(row: OperationRow): CustomerReportOperation {
     installments: row.manual_installments,
     downPaymentCents: row.manual_down_payment_cents,
     omieSalesOrderId: row.omie_sales_order_id,
+    omieInvoiceNumber: (row.omie_invoice_number ?? "").trim() || null,
     omieBillingStatus: row.omie_billing_status,
     omieBilledAt: row.omie_billed_at,
     omieDocumentUrl: row.omie_document_url,

@@ -1492,3 +1492,48 @@ describe("customer report installment schedule", () => {
     expect(addDaysToIsoDate("nao-e-data", 30)).toBe("nao-e-data");
   });
 });
+
+describe("numero da nota fiscal no relatorio do cliente", () => {
+  it("traz a nota de cada carga na tela, no PDF e na planilha", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+      // Como a reconciliacao com o OMIE grava quando a nota sai.
+      db.prepare(
+        "UPDATE weighing_operations SET omie_invoice_number = '28727' WHERE id = 'op-1'"
+      ).run();
+
+      const report = new CustomerReportService(db).getCustomerReport(
+        "cust-1",
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1"
+      );
+
+      const withInvoice = report.operations.find((operation) => operation.id === "op-1");
+      expect(withInvoice?.omieInvoiceNumber).toBe("28727");
+      // Carga ainda sem nota emitida no OMIE volta nula, e nao com string vazia: e o que
+      // deixa a coluna dizer "-" em vez de parecer um numero em branco.
+      expect(
+        report.operations.find((operation) => operation.id === "op-2")?.omieInvoiceNumber
+      ).toBeNull();
+
+      // O documento que vai para o cliente e o que ele confere: o numero precisa sair nos
+      // dois formatos, nao so na tela.
+      const html = renderCustomerReportHtml(report, "complete", new Date("2026-07-15T12:00:00Z"));
+      expect(html).toContain("Nota fiscal");
+      expect(html).toContain("28727");
+
+      const sheet = renderCustomerReportSpreadsheet(
+        report,
+        "complete",
+        new Date("2026-07-15T12:00:00Z")
+      );
+      expect(sheet).toContain("Nota fiscal");
+      expect(sheet).toContain("28727");
+    } finally {
+      db.close();
+    }
+  });
+});

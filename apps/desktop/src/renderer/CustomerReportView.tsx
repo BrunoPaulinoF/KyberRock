@@ -824,6 +824,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
                     "Total",
                     "Forma",
                     "Condicao",
+                    "Nota fiscal",
                     "Pedido OMIE",
                     "Status"
                   ]}
@@ -844,6 +845,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
                     formatBRL(operation.totalCents),
                     operation.paymentMethodName ?? "-",
                     operation.paymentTermName ?? "-",
+                    operation.omieInvoiceNumber ?? "-",
                     operation.omieSalesOrderId === null ? "-" : String(operation.omieSalesOrderId),
                     operation.statusLabel
                   ])}

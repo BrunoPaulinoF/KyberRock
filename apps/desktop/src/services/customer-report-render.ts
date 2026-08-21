@@ -336,29 +336,7 @@ export function renderCustomerReportHtml(
       section(
         "Operacoes (detalhado)",
         table(
-          [
-            "Data",
-            "Operacao",
-            "Tipo",
-            "Produto",
-            "Placa",
-            "Motorista",
-            "Transportadora",
-            "Frete",
-            "Entrada (kg)",
-            "Saida (kg)",
-            "Liquido (kg)",
-            "Tempo",
-            "Preco/t",
-            "Tabela",
-            "Produto (R$)",
-            "Frete (R$)",
-            "Total (R$)",
-            "Forma",
-            "Condicao",
-            "Pedido OMIE",
-            "Status"
-          ],
+          [...OPERATION_HEADERS],
           report.operations.map((operation) => operationCells(operation)),
           null,
           "Sem operacoes no periodo.",
@@ -632,29 +610,7 @@ export function renderCustomerReportSpreadsheet(
     blocks.push(
       sheetTable(
         "Operacoes",
-        [
-          "Data",
-          "Operacao",
-          "Tipo",
-          "Produto",
-          "Placa",
-          "Motorista",
-          "Transportadora",
-          "Frete",
-          "Entrada (kg)",
-          "Saida (kg)",
-          "Liquido (kg)",
-          "Tempo",
-          "Preco/t",
-          "Tabela",
-          "Produto (R$)",
-          "Frete (R$)",
-          "Total (R$)",
-          "Forma",
-          "Condicao",
-          "Pedido OMIE",
-          "Status"
-        ],
+        [...OPERATION_HEADERS],
         report.operations.map((operation) => operationCells(operation))
       )
     );
@@ -827,6 +783,41 @@ function periodCells(row: CustomerReportPeriodRow, labelOf: (period: string) => 
   ];
 }
 
+/**
+ * Cabecalhos da lista operacao a operacao, UM lugar so para o PDF e para a planilha.
+ *
+ * Estavam copiados nos dois, e uma coluna nova precisava ser lembrada duas vezes — quem
+ * esquecesse a segunda entregaria um Excel com os dados fora de coluna, sem erro nenhum
+ * aparecer.
+ */
+const OPERATION_HEADERS = [
+  "Data",
+  "Operacao",
+  "Tipo",
+  "Produto",
+  "Placa",
+  "Motorista",
+  "Transportadora",
+  "Frete",
+  "Entrada (kg)",
+  "Saida (kg)",
+  "Liquido (kg)",
+  "Tempo",
+  "Preco/t",
+  "Tabela",
+  "Produto (R$)",
+  "Frete (R$)",
+  "Total (R$)",
+  "Forma",
+  "Condicao",
+  // A NOTA FISCAL vem antes do pedido de proposito: e o numero que o cliente (e o
+  // contador dele) usa para conferir a fatura. O "Pedido OMIE" ao lado e o codigo interno,
+  // que so serve para achar a origem dentro do OMIE.
+  "Nota fiscal",
+  "Pedido OMIE",
+  "Status"
+];
+
 function operationCells(operation: CustomerReportOperation): string[] {
   return [
     formatDayLabel(operation.date),
@@ -848,6 +839,7 @@ function operationCells(operation: CustomerReportOperation): string[] {
     formatBRL(operation.totalCents),
     operation.paymentMethodName ?? "-",
     operation.paymentTermName ?? "-",
+    operation.omieInvoiceNumber ?? "-",
     operation.omieSalesOrderId === null ? "-" : String(operation.omieSalesOrderId),
     operation.statusLabel
   ];
