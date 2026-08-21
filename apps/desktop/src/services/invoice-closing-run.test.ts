@@ -18,6 +18,7 @@ function candidate(
     operationType: "invoice",
     invoiceNumber: null,
     alreadyBilled: false,
+    hasCustomer: true,
     totalCents: 100_000,
     ...overrides
   };
@@ -150,6 +151,35 @@ describe("runInvoiceClosing", () => {
     ]);
   });
 
+  it("o OMIE dizendo 'ja foi autorizado' e conciliacao, nao falha", async () => {
+    // A atendente ja tinha faturado na coluna "Faturar" do OMIE. Antes isso voltava como
+    // erro vermelho e o fechamento parecia ter quebrado, quando na verdade estava pronto.
+    const result = await runInvoiceClosing([candidate()], async () => ({
+      billed: true,
+      alreadyBilledInOmie: true,
+      billingStatusMessage: "Ja faturada no OMIE (o pedido la ja estava autorizado)."
+    }));
+
+    expect(result).toMatchObject({ billed: 0, alreadyBilled: 1, failed: 0, blocked: 0 });
+    // Nao entra no total DESTA passada: ela nao faturou esse dinheiro agora.
+    expect(result.billedTotalCents).toBe(0);
+  });
+
+  it("carga sem cliente nao vai ao OMIE e volta com o conserto na mensagem", async () => {
+    const bill = vi.fn(async () => BILLED);
+
+    const result = await runInvoiceClosing(
+      [candidate({ operationId: "orfa", hasCustomer: false }), candidate({ operationId: "op-2" })],
+      bill
+    );
+
+    expect(bill).toHaveBeenCalledTimes(1);
+    expect(bill).toHaveBeenCalledWith("op-2");
+    expect(result).toMatchObject({ billed: 1, blocked: 1 });
+    expect(result.items[0]).toMatchObject({ status: "blocked" });
+    expect(result.items[0].message).toContain("Vincule o cliente");
+  });
+
   it("lista vazia devolve zeros em vez de estourar", async () => {
     const result = await runInvoiceClosing([], async () => BILLED);
     expect(result).toMatchObject({ requested: 0, billed: 0, items: [] });
@@ -201,6 +231,16 @@ describe("selectInvoiceClosingCandidates", () => {
     ]);
 
     expect(candidates.map((item) => item.alreadyBilled)).toEqual([true, true, false]);
+    expect(countBillableCandidates(candidates)).toBe(1);
+  });
+
+  it("a carga sem cliente nao conta como faturavel", () => {
+    const candidates = selectInvoiceClosingCandidates([
+      line({ operationId: "a", customerId: "" }),
+      line({ operationId: "b" })
+    ]);
+
+    expect(candidates[0].hasCustomer).toBe(false);
     expect(countBillableCandidates(candidates)).toBe(1);
   });
 

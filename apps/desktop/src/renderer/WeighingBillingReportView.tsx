@@ -416,6 +416,7 @@ export function WeighingBillingReportView({
                       <th style={styles.th}>Total</th>
                       <th style={{ ...styles.th, textAlign: "left" }}>Tipo</th>
                       <th style={{ ...styles.th, textAlign: "left" }}>Situacao</th>
+                      <th style={{ ...styles.th, textAlign: "left" }}>Nota fiscal</th>
                       <th style={{ ...styles.th, textAlign: "left" }}>Pedido/OS OMIE</th>
                     </tr>
                   </thead>
@@ -458,6 +459,9 @@ export function WeighingBillingReportView({
                             title={row.situationDetail ?? undefined}
                           />
                         </td>
+                        <td style={{ ...styles.td, textAlign: "left" }}>
+                          {row.omieInvoiceNumber ?? "-"}
+                        </td>
                         <td style={{ ...styles.td, textAlign: "left" }}>{omieReference(row)}</td>
                       </tr>
                     ))}
@@ -472,7 +476,8 @@ export function WeighingBillingReportView({
                       <td style={styles.tdTotal}>{formatBRL(totals.productCents)}</td>
                       <td style={styles.tdTotal}>{formatBRL(totals.freightCents)}</td>
                       <td style={styles.tdTotal}>{formatBRL(totals.totalCents)}</td>
-                      <td style={styles.tdTotal} colSpan={3} />
+                      {/* Tipo, Situacao, Nota fiscal e Pedido/OS: quatro colunas sem total. */}
+                      <td style={styles.tdTotal} colSpan={4} />
                     </tr>
                   </tfoot>
                 </table>

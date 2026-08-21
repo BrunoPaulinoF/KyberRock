@@ -153,3 +153,27 @@ export function dedupeCustomerOptions(
   }
   return result;
 }
+
+/**
+ * Os digitos do CNPJ/CPF — a unica forma em que dois documentos podem ser comparados.
+ *
+ * O OMIE devolve o documento COM mascara ("06.020.284/0001-64") e o KyberRock grava so os
+ * digitos (o campo da tela normaliza antes de salvar). Comparar as duas formas letra a
+ * letra nunca casa, e foi assim que o mesmo cliente virou dois cadastros: o pull nao
+ * reconhecia o cadastro que tinha nascido na balanca e criava um `omie_<id>` novo do lado.
+ */
+export function documentDigits(value: string | null | undefined): string {
+  return (value ?? "").replace(/\D/g, "");
+}
+
+/**
+ * O mesmo `documentDigits`, em SQL, para comparar a coluna `document` de uma tabela com o
+ * resultado de `documentDigits(...)`.
+ *
+ * Existe como constante compartilhada, e nao copiado em cada consulta, porque a divergencia
+ * entre duas copias e exatamente o defeito que originou os cadastros duplicados: o cadastro
+ * manual (`customers.ts`) e o sync direto com o OMIE (`omie-sync.ts`) normalizavam, o pull
+ * pela nuvem (`supabase-sync.ts`) comparava literal — e so ele criava as linhas repetidas.
+ */
+export const DOCUMENT_DIGITS_SQL =
+  "replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '')";

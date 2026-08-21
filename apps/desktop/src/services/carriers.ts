@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
+import { DOCUMENT_DIGITS_SQL, documentDigits } from "./customer-identity.js";
 
 export interface CreateCarrierInput {
   companyId: string;
@@ -36,9 +37,8 @@ export interface UpdateCarrierInput {
   isActive?: boolean;
 }
 
-function onlyDigits(value: string | null | undefined): string {
-  return (value ?? "").replace(/\D/g, "");
-}
+/** Alias local de `documentDigits`: o mesmo criterio usado pelo sync e pelas telas. */
+const onlyDigits = documentDigits;
 
 /**
  * Transportadora ativa com o mesmo CNPJ/CPF na empresa, ignorando mascara. E o mesmo
@@ -58,7 +58,7 @@ export function findCarrierByDocument(
       `SELECT id, name FROM carriers
        WHERE company_id = ?
          AND deleted_at IS NULL
-         AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
+         AND ${DOCUMENT_DIGITS_SQL} = ?
          AND (? IS NULL OR id <> ?)
        LIMIT 1`
     )

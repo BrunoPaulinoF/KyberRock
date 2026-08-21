@@ -42,12 +42,14 @@ import {
   enqueueOmieBillingJob,
   validateOperationFiscalReadiness
 } from "./weighing-operations.js";
+import { DOCUMENT_DIGITS_SQL, documentDigits } from "./customer-identity.js";
 import {
   isCadastroIncompleteFault,
   isOmieCustomerRegistrationFault,
   isOmieMissingDocumentFault,
   isOmieProtectedRecordFault,
-  isOmieStaleCustomerCodeFault
+  isOmieStaleCustomerCodeFault,
+  isOmieAlreadyBilledFault
 } from "./omie-fault-classifier.js";
 import { provisionPaymentTermsFromOmieMirror } from "./payment-terms.js";
 import { upsertUnitDevices } from "./unit-devices.js";
@@ -197,6 +199,12 @@ export interface FiscalBillingResult {
   blocked?: boolean;
   /** Mensagem acionavel da pendencia (ex.: preencher Numero do Endereco + E-mail). */
   blockReason?: string | null;
+  /**
+   * O OMIE recusou o faturamento dizendo que o pedido JA estava faturado la, e a situacao
+   * local foi reconciliada a partir disso. Vem junto de `billed: true`: nao ha o que
+   * refazer, a nota daquela carga existe.
+   */
+  alreadyBilledInOmie?: boolean;
   billingStatusCode: string | null;
   billingStatusMessage: string | null;
   documentUrl: string | null;
@@ -2271,9 +2279,17 @@ function upsertCloudOperations(
       driver_id = COALESCE(excluded.driver_id, weighing_operations.driver_id),
       -- carrier_id chega resolvido de resolveMirroredId: quando a nuvem manda um
       -- id que esta maquina ainda nao espelhou, o valor local e mantido; quando a
-      -- nuvem manda vazio (transporte proprio do cliente), o vinculo e limpo.
+      -- nuvem manda vazio (transporte proprio do cliente), o vinculo e limpo — ali o
+      -- vazio E informacao.
       carrier_id = excluded.carrier_id,
-      product_id = excluded.product_id,
+      -- Cliente e produto NAO seguem essa regra: nao existe pesagem sem cliente nem sem
+      -- produto, entao um vazio vindo da projecao nunca e "o operador tirou" — e a nuvem
+      -- que ainda nao sabe. Sem o COALESCE, um eco vazio APAGAVA o cliente de uma carga ja
+      -- concluida: ela virava "Cliente nao informado", sumia de qualquer busca pelo nome e
+      -- o fechamento passava a recusa-la com "operacao fiscal sem cliente vinculado" — ou
+      -- seja, carga pesada, entregue, e sem ninguem para cobrar.
+      customer_id = COALESCE(excluded.customer_id, weighing_operations.customer_id),
+      product_id = COALESCE(excluded.product_id, weighing_operations.product_id),
       payment_term_id = excluded.payment_term_id,
       entry_weight_kg = excluded.entry_weight_kg,
       entry_weight_captured_at = excluded.entry_weight_captured_at,
@@ -4933,6 +4949,15 @@ export async function reconcileOmieBillingFromOmie(
     hotWindowDays?: number;
     includeBacklog?: boolean;
     force?: boolean;
+    /**
+     * Conferir ESTAS pesagens, em vez do rodizio por janela de data.
+     *
+     * E o que o "Fazer fechamento" usa antes de faturar: ele precisa saber o estado no OMIE
+     * das cargas que estao na tela AGORA, e nao das que calharam de estar na vez do
+     * rodizio. Ignora o freio de janela pelo mesmo motivo — a pergunta e do operador, nao
+     * da rotina de fundo.
+     */
+    operationIds?: readonly string[];
   } = {}
 ): Promise<OmieBillingReconcileResult> {
   const settings = getCloudSettings(database, identity);
@@ -4940,7 +4965,16 @@ export async function reconcileOmieBillingFromOmie(
   const windowDays = options.windowDays ?? OMIE_BILLING_CHECK_WINDOW_DAYS;
   const hotWindowDays = options.hotWindowDays ?? OMIE_BILLING_CHECK_HOT_WINDOW_DAYS;
 
-  if (options.force !== true && !hasWindowElapsed(database, OMIE_BILLING_CHECK_LAST_RUN_KEY)) {
+  const targeted = options.operationIds ?? null;
+  if (targeted !== null && targeted.length === 0) {
+    return { checked: 0, billed: 0, errors: [] };
+  }
+
+  if (
+    targeted === null &&
+    options.force !== true &&
+    !hasWindowElapsed(database, OMIE_BILLING_CHECK_LAST_RUN_KEY)
+  ) {
     return { checked: 0, billed: 0, skipped: true, errors: [] };
   }
 
@@ -4957,9 +4991,23 @@ export async function reconcileOmieBillingFromOmie(
       OMIE_BILLING_CHECK_FULL_INTERVAL_MS
     );
 
-  const pending = database
-    .prepare(
-      `SELECT id, operation_type, omie_sales_order_id, omie_service_order_id
+  const pending = targeted
+    ? (database
+        .prepare(
+          `SELECT id, operation_type, omie_sales_order_id, omie_service_order_id
+             FROM weighing_operations
+            WHERE unit_id = ?
+              AND id IN (${targeted.map(() => "?").join(", ")})
+              AND deleted_at IS NULL
+              AND status <> 'cancelled'
+              AND (omie_sales_order_id IS NOT NULL OR omie_service_order_id IS NOT NULL)
+              AND (omie_billing_status IS NULL
+                   OR omie_billing_status NOT IN ('billed', 'cancelled_in_omie'))`
+        )
+        .all(settings.unitId, ...targeted) as PendingOmieBillingRow[])
+    : (database
+        .prepare(
+          `SELECT id, operation_type, omie_sales_order_id, omie_service_order_id
          FROM weighing_operations
         WHERE unit_id = ?
           AND deleted_at IS NULL
@@ -4979,13 +5027,13 @@ export async function reconcileOmieBillingFromOmie(
           omie_billing_checked_at ASC,
           created_at DESC
         LIMIT ?`
-    )
-    .all(
-      settings.unitId,
-      `-${includeBacklog ? windowDays : hotWindowDays} days`,
-      `-${hotWindowDays} days`,
-      limit
-    ) as PendingOmieBillingRow[];
+        )
+        .all(
+          settings.unitId,
+          `-${includeBacklog ? windowDays : hotWindowDays} days`,
+          `-${hotWindowDays} days`,
+          limit
+        ) as PendingOmieBillingRow[]);
 
   if (pending.length === 0) return { checked: 0, billed: 0, errors: [] };
 
@@ -5006,10 +5054,14 @@ export async function reconcileOmieBillingFromOmie(
 
   // Marca a passada ANTES de chamar o OMIE: mesmo que a chamada falhe, o freio vale — uma
   // instabilidade do OMIE nao pode virar uma tentativa por fechamento.
-  const startedAt = new Date().toISOString();
-  writeLocalSetting(database, OMIE_BILLING_CHECK_LAST_RUN_KEY, startedAt);
-  if (includeBacklog) {
-    writeLocalSetting(database, OMIE_BILLING_CHECK_FULL_LAST_RUN_KEY, startedAt);
+  // So o rodizio carimba o freio: a conferencia pedida pelo operador nao pode consumir a
+  // vez da rotina de fundo (nem ser barrada por ela).
+  if (targeted === null) {
+    const startedAt = new Date().toISOString();
+    writeLocalSetting(database, OMIE_BILLING_CHECK_LAST_RUN_KEY, startedAt);
+    if (includeBacklog) {
+      writeLocalSetting(database, OMIE_BILLING_CHECK_FULL_LAST_RUN_KEY, startedAt);
+    }
   }
 
   const supabase = getSupabaseClient();
@@ -5479,6 +5531,34 @@ export async function processFiscalBillingNow(
     // job (re-executavel manualmente apos corrigir) e retorna pendencia clara — sem throw/storm.
     // A recusa do cadastro do cliente no OMIE entra aqui pelo mesmo motivo, mas com a
     // mensagem que diz qual campo do cliente falta preencher.
+    // O pedido JA estava faturado no OMIE (alguem emitiu a nota na coluna "Faturar" antes
+    // de o fechamento rodar). Nao e falha: reconcilia a situacao aqui e devolve como
+    // faturada. Sem isto, o fechamento de uma quinzena ja resolvida no OMIE voltava com uma
+    // lista de erros vermelhos e mandava procurar problema onde nao havia.
+    if (isOmieAlreadyBilledFault(message)) {
+      markSyncJobDone(database, job.id);
+      database
+        .prepare(
+          `UPDATE weighing_operations
+           SET omie_billing_status = 'billed',
+               omie_billed_at = COALESCE(omie_billed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+               omie_billing_message = ?,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+           WHERE id = ?`
+        )
+        .run("Ja faturada no OMIE (o pedido la ja estava autorizado).", operationId);
+      return {
+        orderId: null,
+        billed: true,
+        alreadyBilledInOmie: true,
+        billingStatusCode: null,
+        billingStatusMessage: "Ja faturada no OMIE (o pedido la ja estava autorizado).",
+        documentUrl: null,
+        documentPrinted: false,
+        documentPrintError: null
+      };
+    }
+
     if (
       isCadastroIncompleteFault(message) ||
       isOmieCustomerRegistrationFault(message) ||
@@ -5800,8 +5880,14 @@ function upsertOmieCustomers(
   const findByIntegrationCode = database.prepare(
     "SELECT id FROM customers WHERE company_id = ? AND omie_integration_code = ? LIMIT 1"
   );
+  // Sem mascara dos dois lados: o OMIE devolve "06.020.284/0001-64" e o cadastro nascido na
+  // balanca guarda "06020284000164". Comparando literal, o pull nunca reconhecia o cliente
+  // que ja existia aqui e criava um `omie_<id>` do lado — e o mesmo cliente passava a ter
+  // dois cadastros, com as pesagens divididas entre eles.
   const findByDocument = database.prepare(
-    "SELECT id FROM customers WHERE company_id = ? AND document = ? AND deleted_at IS NULL LIMIT 1"
+    `SELECT id FROM customers
+     WHERE company_id = ? AND ${DOCUMENT_DIGITS_SQL} = ? AND deleted_at IS NULL
+     LIMIT 1`
   );
   const upsert = database.prepare(`
     INSERT INTO customers (
@@ -5874,8 +5960,9 @@ function upsertOmieCustomers(
           | { id: string }
           | undefined)
       : undefined;
-    const byDocument = customer.document
-      ? (findByDocument.get(companyId, customer.document) as { id: string } | undefined)
+    const customerDigits = documentDigits(customer.document);
+    const byDocument = customerDigits
+      ? (findByDocument.get(companyId, customerDigits) as { id: string } | undefined)
       : undefined;
     const localId =
       existing?.id ??
@@ -6260,14 +6347,17 @@ function findCarrierLocalId(
     if (byIntegrationCode?.id) return byIntegrationCode.id;
   }
 
-  if (supplier.document) {
+  // Mesma normalizacao do cliente, e pelo mesmo motivo: o documento do OMIE vem com
+  // mascara e o daqui sem, e a comparacao literal duplicava a transportadora.
+  const supplierDigits = documentDigits(supplier.document);
+  if (supplierDigits) {
     const byDocument = database
       .prepare(
         `SELECT id FROM carriers
-         WHERE company_id = ? AND document = ? AND deleted_at IS NULL
+         WHERE company_id = ? AND ${DOCUMENT_DIGITS_SQL} = ? AND deleted_at IS NULL
          LIMIT 1`
       )
-      .get(companyId, supplier.document) as { id: string } | undefined;
+      .get(companyId, supplierDigits) as { id: string } | undefined;
 
     if (byDocument?.id) return byDocument.id;
   }

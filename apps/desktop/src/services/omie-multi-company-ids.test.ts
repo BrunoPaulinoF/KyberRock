@@ -135,6 +135,144 @@ describe("cadastro OMIE espelhado em duas pedreiras da mesma conta", () => {
   });
 });
 
+/**
+ * O cliente que nasce na balanca e depois sobe para o OMIE voltava no pull seguinte como
+ * uma LINHA NOVA (`omie_<id>`), e o mesmo cliente passava a ter dois cadastros com as
+ * pesagens divididas entre eles — foi assim que uma quinzena de quatro cargas apareceu com
+ * duas no Fechamento de faturas.
+ *
+ * A causa era so a mascara: o OMIE devolve "12.345.678/0001-99" e a tela grava
+ * "12345678000199" (o campo normaliza antes de salvar). O pull comparava os dois literal,
+ * nunca casava, e criava o cadastro do lado.
+ */
+describe("cliente ja cadastrado aqui, com o documento em outro formato", () => {
+  it("adota o cadastro local em vez de criar um `omie_<id>` do lado", () => {
+    const database = createDatabase();
+
+    try {
+      // Como a balanca grava: so digitos.
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, document,
+                                  is_active, created_at, updated_at)
+           VALUES ('local-uuid', 'company-a', 'local', 'Cliente Compartilhado',
+                   'Cliente Compartilhado', '12345678000199', 1, datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      // Como o OMIE devolve: com mascara.
+      const data = referenceData();
+      data.customers[0].document = "12.345.678/0001-99";
+      applyOmieReferenceData(database, "company-a", data);
+
+      expect(countCustomers(database, "company-a")).toBe(1);
+      const row = database
+        .prepare("SELECT id, omie_customer_id FROM customers WHERE company_id = 'company-a'")
+        .get() as { id: string; omie_customer_id: number };
+      expect(row.id).toBe("local-uuid");
+      expect(row.omie_customer_id).toBe(11455923824);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("vale nos dois sentidos: documento mascarado aqui e so digitos no OMIE", () => {
+    const database = createDatabase();
+
+    try {
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, document,
+                                  is_active, created_at, updated_at)
+           VALUES ('local-uuid', 'company-a', 'local', 'Cliente', 'Cliente',
+                   '12.345.678/0001-99', 1, datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      // O fixture ja traz o documento so com digitos.
+      applyOmieReferenceData(database, "company-a", referenceData());
+
+      expect(countCustomers(database, "company-a")).toBe(1);
+      expect(
+        database.prepare("SELECT id FROM customers WHERE company_id = 'company-a'").pluck().get()
+      ).toBe("local-uuid");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("a transportadora do OMIE adota o cadastro local pela mesma regra", () => {
+    const database = createDatabase();
+
+    try {
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, name, document, source, is_active, created_at, updated_at)
+           VALUES ('carr-local', 'company-a', 'Transportadora', '98765432000155', 'local', 1,
+                   datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      const data = referenceData();
+      data.suppliers[0].document = "98.765.432/0001-55";
+      applyOmieReferenceData(database, "company-a", data);
+
+      expect(countCarriers(database, "company-a")).toBe(1);
+      expect(
+        database.prepare("SELECT id FROM carriers WHERE company_id = 'company-a'").pluck().get()
+      ).toBe("carr-local");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("documento diferente continua sendo cliente diferente", () => {
+    const database = createDatabase();
+
+    try {
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, document,
+                                  is_active, created_at, updated_at)
+           VALUES ('local-uuid', 'company-a', 'local', 'Outro', 'Outro', '99999999000191', 1,
+                   datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      applyOmieReferenceData(database, "company-a", referenceData());
+
+      // Normalizar a mascara nao pode virar "casa qualquer um": sao dois clientes mesmo.
+      expect(countCustomers(database, "company-a")).toBe(2);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("cliente do OMIE sem documento nao adota o cadastro local sem documento", () => {
+    const database = createDatabase();
+
+    try {
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, document,
+                                  is_active, created_at, updated_at)
+           VALUES ('sem-doc', 'company-a', 'local', 'Sem documento', 'Sem documento', NULL, 1,
+                   datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      const data = referenceData();
+      data.customers[0].document = null;
+      applyOmieReferenceData(database, "company-a", data);
+
+      // Documento vazio casaria com todo cadastro sem documento da base.
+      expect(countCustomers(database, "company-a")).toBe(2);
+    } finally {
+      database.close();
+    }
+  });
+});
+
 function referenceData(
   customerName = "Cliente Compartilhado"
 ): Parameters<typeof applyOmieReferenceData>[2] {
