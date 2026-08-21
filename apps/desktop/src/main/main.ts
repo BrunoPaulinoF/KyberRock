@@ -62,7 +62,7 @@ import { isCustomerReportVariant } from "../services/customer-report.js";
 import { isWeighingBillingSituation } from "../services/weighing-billing-situation.js";
 import type { WeighingBillingReportOptions } from "../services/weighing-billing-report.js";
 import { isInvoiceClosingCycle } from "../services/invoice-closing-cycle.js";
-import { normalizePlateList } from "../services/invoice-closing.js";
+import { isInvoiceClosingBasis, normalizePlateList } from "../services/invoice-closing.js";
 import type { InvoiceClosingOptions } from "../services/invoice-closing.js";
 import { GITHUB_UPDATER_TOKEN } from "./updater-config.js";
 import { DEFAULT_UPDATE_CHANNEL, updaterChannelSettings } from "../services/update-channel.js";
@@ -949,6 +949,35 @@ function registerIpcHandlers(): void {
     (_event, startDate: string, endDate: string, options?: unknown) => {
       if (!runtime) throw new Error("Desktop runtime is not ready.");
       return runtime.getInvoiceClosing(startDate, endDate, sanitizeInvoiceClosingOptions(options));
+    }
+  );
+
+  // Quantas pesagens do periodo o fechamento mandaria ao OMIE — a contagem que a tela
+  // mostra na confirmacao, ANTES de emitir nota nenhuma.
+  ipcMain.handle(
+    "desktop:preview-invoice-closing-run",
+    (_event, startDate: string, endDate: string, options?: unknown) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.previewInvoiceClosingRun(
+        startDate,
+        endDate,
+        sanitizeInvoiceClosingOptions(options)
+      );
+    }
+  );
+
+  // "Fazer fechamento": fatura no OMIE as pesagens do periodo. Emite nota fiscal — a tela
+  // confirma com o operador antes de chegar aqui.
+  ipcMain.handle(
+    "desktop:run-invoice-closing",
+    (_event, startDate: string, endDate: string, options?: unknown) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.runInvoiceClosing(
+        startDate,
+        endDate,
+        sanitizeInvoiceClosingOptions(options),
+        (progress) => mainWindow?.webContents.send("desktop:invoice-closing-progress", progress)
+      );
     }
   );
 
@@ -2555,6 +2584,8 @@ function sanitizeInvoiceClosingOptions(options: unknown): InvoiceClosingOptions 
   const cycles = Array.isArray(raw.cycles) ? raw.cycles.filter(isInvoiceClosingCycle) : [];
   const plates = Array.isArray(raw.plates) ? normalizePlateList(raw.plates as string[]) : [];
   return {
+    basis: isInvoiceClosingBasis(raw.basis) ? raw.basis : "period",
+    periodCycle: isInvoiceClosingCycle(raw.periodCycle) ? raw.periodCycle : null,
     cycles,
     customerId: typeof raw.customerId === "string" && raw.customerId ? raw.customerId : null,
     plates,

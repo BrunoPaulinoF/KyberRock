@@ -5,6 +5,7 @@ import {
   CLOSED_OPERATION_STATUS_SQL_LIST,
   isClosedOperationStatus
 } from "./weighing-operations.js";
+import { customerIdentityKey, resolveCustomerIdGroup } from "./customer-identity.js";
 
 /**
  * Relatorio por cliente: todos os dados das operacoes de um cliente num periodo
@@ -359,10 +360,16 @@ const CUSTOMER_COLUMNS_SQL = `
 const CUSTOMER_JOIN_SQL = "LEFT JOIN customers cust ON cust.id = o.customer_id";
 
 /**
- * Filtro de cliente aceitando "todos": com `customerId` nulo o primeiro parametro anula a
- * comparacao e a consulta devolve o periodo inteiro. Os dois `?` recebem o mesmo valor.
+ * Filtro de cliente aceitando "todos": lista vazia (ou nula) devolve o periodo inteiro.
+ *
+ * Recebe uma LISTA e nao um id porque o mesmo cliente pode ter mais de um cadastro — o que
+ * veio do OMIE e o que nasceu na balanca, com o mesmo CNPJ. Filtrando por um id so, metade
+ * das cargas dele ficava de fora do relatorio, sem nada na tela dizendo que faltava algo.
  */
-const CUSTOMER_FILTER_SQL = "AND (? IS NULL OR o.customer_id = ?)";
+function customerFilterSql(customerIds: readonly string[] | null): string {
+  if (!customerIds || customerIds.length === 0) return "";
+  return `AND o.customer_id IN (${customerIds.map(() => "?").join(", ")})`;
+}
 
 function readCustomerKey(row: CustomerColumns): CustomerReportCustomerKey {
   const name =
@@ -420,11 +427,18 @@ export class CustomerReportService {
    * Clientes que podem entrar no relatorio: os ativos da unidade, ordenados por nome.
    * Nao filtra pelo periodo de propósito — o usuario escolhe o cliente antes do periodo
    * e um cliente sem movimento no periodo gera um relatorio vazio (informacao util).
+   *
+   * UMA opcao por cliente REAL. O mesmo cliente pode ter dois cadastros (o do OMIE e o da
+   * balanca, mesmo CNPJ) e a lista mostrava os dois, identicos na tela: nao havia como
+   * saber qual escolher, e escolher qualquer um trazia so metade das cargas. Hoje o filtro
+   * expande a escolha de volta para o grupo inteiro (`resolveCustomerIdGroup`), entao o id
+   * que sobra aqui pode ser o de qualquer um dos cadastros.
    */
   listCustomerOptions(unitId: string): CustomerReportOption[] {
     const rows = this.db
       .prepare(
-        `SELECT c.id as id, c.trade_name as trade_name, c.legal_name as legal_name, c.document as document
+        `SELECT c.id as id, c.trade_name as trade_name, c.legal_name as legal_name,
+                c.document as document, c.omie_customer_id as omie_customer_id
          FROM customers c
          WHERE c.deleted_at IS NULL
            AND c.is_active = 1
@@ -436,13 +450,26 @@ export class CustomerReportService {
       trade_name: string | null;
       legal_name: string | null;
       document: string | null;
+      omie_customer_id: number | null;
     }>;
 
-    return rows.map((row) => ({
-      id: row.id,
-      name: (row.trade_name ?? "").trim() || (row.legal_name ?? "").trim() || "Sem nome",
-      document: row.document
-    }));
+    const seen = new Set<string>();
+    const options: CustomerReportOption[] = [];
+    for (const row of rows) {
+      const key = customerIdentityKey({
+        id: row.id,
+        document: row.document,
+        omie_customer_id: row.omie_customer_id
+      });
+      if (seen.has(key)) continue;
+      seen.add(key);
+      options.push({
+        id: row.id,
+        name: (row.trade_name ?? "").trim() || (row.legal_name ?? "").trim() || "Sem nome",
+        document: row.document
+      });
+    }
+    return options;
   }
 
   getCustomerReport(
@@ -454,7 +481,10 @@ export class CustomerReportService {
     now: Date = new Date()
   ): CustomerReport {
     const customer = this.loadCustomer(customerId);
-    const rows = this.loadOperations(customerId, startDate, endDate, unitId);
+    // O cliente escolhido pode ter mais de um cadastro na base (o do OMIE e o da balanca,
+    // mesmo CNPJ): o relatorio e do cliente REAL, e le as cargas de todos eles.
+    const customerIds = resolveCustomerIdGroup(this.db, customerId);
+    const rows = this.loadOperations(customerIds, startDate, endDate, unitId);
 
     const all = rows.map((row) => mapOperation(row));
     const operations = all.filter((operation) => !operation.cancelled);
@@ -463,7 +493,7 @@ export class CustomerReportService {
     const referenceDate = toLocalIsoDate(now);
     // O cliente ja e um so aqui: a chave que o resumo usa para agrupar sai do relatorio.
     const installments = this.loadInstallments(
-      customerId,
+      customerIds,
       startDate,
       endDate,
       unitId,
@@ -626,9 +656,9 @@ export class CustomerReportService {
     };
   }
 
-  /** `customerId` nulo carrega o periodo inteiro (resumo de todos os clientes). */
+  /** Lista vazia/nula carrega o periodo inteiro (resumo de todos os clientes). */
   private loadOperations(
-    customerId: string | null,
+    customerIds: string[] | null,
     startDate: string,
     endDate: string,
     unitId: string
@@ -661,14 +691,14 @@ export class CustomerReportService {
          LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
          ${CUSTOMER_JOIN_SQL}
          WHERE o.unit_id = ?
-           ${CUSTOMER_FILTER_SQL}
+           ${customerFilterSql(customerIds)}
            AND o.deleted_at IS NULL
            AND o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST}, 'cancelled')
            AND date(o.created_at) >= date(?)
            AND date(o.created_at) <= date(?)
          ORDER BY o.created_at ASC`
       )
-      .all(unitId, customerId, customerId, startDate, endDate) as OperationRow[];
+      .all(unitId, ...(customerIds ?? []), startDate, endDate) as OperationRow[];
   }
 
   /**
@@ -678,9 +708,9 @@ export class CustomerReportService {
    * limite superior de data de operacao porque uma operacao posterior ao periodo so
    * geraria vencimentos posteriores ainda.
    */
-  /** `customerId` nulo carrega o periodo inteiro (resumo de todos os clientes). */
+  /** Lista vazia/nula carrega o periodo inteiro (resumo de todos os clientes). */
   private loadInstallments(
-    customerId: string | null,
+    customerIds: string[] | null,
     startDate: string,
     endDate: string,
     unitId: string,
@@ -710,13 +740,13 @@ export class CustomerReportService {
           AND opt.is_active = 1
          ${CUSTOMER_JOIN_SQL}
          WHERE o.unit_id = ?
-           ${CUSTOMER_FILTER_SQL}
+           ${customerFilterSql(customerIds)}
            AND o.deleted_at IS NULL
            AND o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
            AND date(COALESCE(o.exit_weight_captured_at, o.created_at)) <= date(?)
          ORDER BY o.created_at ASC`
       )
-      .all(unitId, customerId, customerId, endDate) as InstallmentSourceRow[];
+      .all(unitId, ...(customerIds ?? []), endDate) as InstallmentSourceRow[];
 
     const installments: ScopedInstallment[] = [];
     for (const row of rows) {

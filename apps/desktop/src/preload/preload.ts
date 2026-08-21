@@ -166,6 +166,17 @@ const desktopApi = {
     formats: string[],
     options?: unknown
   ) => ipcRenderer.invoke("desktop:export-invoice-closing", startDate, endDate, formats, options),
+  previewInvoiceClosingRun: (startDate: string, endDate: string, options?: unknown) =>
+    ipcRenderer.invoke("desktop:preview-invoice-closing-run", startDate, endDate, options),
+  runInvoiceClosing: (startDate: string, endDate: string, options?: unknown) =>
+    ipcRenderer.invoke("desktop:run-invoice-closing", startDate, endDate, options),
+  onInvoiceClosingProgress: (callback: (progress: unknown) => void) => {
+    const wrapper = (_event: unknown, progress: unknown): void => callback(progress);
+    ipcRenderer.on("desktop:invoice-closing-progress", wrapper);
+    return () => {
+      ipcRenderer.removeListener("desktop:invoice-closing-progress", wrapper);
+    };
+  },
   getTruckControl: (startDate: string, endDate: string, search?: string) =>
     ipcRenderer.invoke("desktop:get-truck-control", startDate, endDate, search),
   exportTruckControl: (

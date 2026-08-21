@@ -488,4 +488,143 @@ describe("wallet service", () => {
     // O abatimento continua valendo: volta a receber so o que passou do adiantamento.
     expect(getWalletReport(database, { status: "open" }).summary.openTotalCents).toBe(18000);
   });
+
+  it("junta num bloco so o cliente que esta cadastrado duas vezes", () => {
+    // O caso real: o cadastro que veio do OMIE e o que nasceu na balanca, mesmo CNPJ. Cada
+    // um virava um bloco na tela, com metade das vendas e metade do total a receber.
+    database
+      .prepare(
+        `INSERT INTO customers (id, company_id, legal_name, trade_name, document, source, created_at, updated_at)
+         VALUES ('omie_1', ?, 'Levisa', 'Levisa', '06020284000164', 'omie', datetime('now'), datetime('now'))`
+      )
+      .run(COMPANY_ID);
+    database
+      .prepare(
+        `INSERT INTO customers (id, company_id, legal_name, trade_name, document, source, created_at, updated_at)
+         VALUES ('local_1', ?, 'Levisa', 'Levisa', '06020284000164', 'local', datetime('now'), datetime('now'))`
+      )
+      .run(COMPANY_ID);
+    insertOperations(database, [
+      {
+        id: "op-1",
+        customer: "omie_1",
+        paymentMethodId: walletMethodId,
+        totalCents: 10000,
+        soldAt: "2026-07-17"
+      },
+      {
+        id: "op-2",
+        customer: "local_1",
+        paymentMethodId: walletMethodId,
+        totalCents: 20000,
+        soldAt: "2026-07-20"
+      }
+    ]);
+
+    const report = getWalletReport(database, { status: "open" });
+    expect(report.groups).toHaveLength(1);
+    expect(report.groups[0].operations.map((op) => op.operationId).sort()).toEqual([
+      "op-1",
+      "op-2"
+    ]);
+    expect(report.groups[0].totalCents).toBe(30000);
+  });
+
+  it("filtrar por um dos cadastros duplicados traz as vendas dos dois", () => {
+    database
+      .prepare(
+        `INSERT INTO customers (id, company_id, legal_name, trade_name, document, source, created_at, updated_at)
+         VALUES ('omie_1', ?, 'Levisa', 'Levisa', '06020284000164', 'omie', datetime('now'), datetime('now'))`
+      )
+      .run(COMPANY_ID);
+    database
+      .prepare(
+        `INSERT INTO customers (id, company_id, legal_name, trade_name, document, source, created_at, updated_at)
+         VALUES ('local_1', ?, 'Levisa', 'Levisa', '06020284000164', 'local', datetime('now'), datetime('now'))`
+      )
+      .run(COMPANY_ID);
+    insertOperations(database, [
+      {
+        id: "op-1",
+        customer: "omie_1",
+        paymentMethodId: walletMethodId,
+        totalCents: 10000,
+        soldAt: "2026-07-17"
+      },
+      {
+        id: "op-2",
+        customer: "local_1",
+        paymentMethodId: walletMethodId,
+        totalCents: 20000,
+        soldAt: "2026-07-20"
+      },
+      {
+        id: "op-outro",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 5000,
+        soldAt: "2026-07-18"
+      }
+    ]);
+
+    for (const chosen of ["omie_1", "local_1"]) {
+      const report = getWalletReport(database, { status: "open", customerId: chosen });
+      expect(report.groups).toHaveLength(1);
+      expect(report.summary.openTotalCents).toBe(30000);
+    }
+  });
+
+  it("o recorte por periodo usa a data da OPERACAO, a mesma do Fechamento de faturas", () => {
+    insertOperations(database, [
+      {
+        id: "op-dentro",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 10000,
+        soldAt: "2026-07-20"
+      },
+      {
+        id: "op-fora",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 20000,
+        soldAt: "2026-08-02"
+      }
+    ]);
+    // Caminhao que entra dia 31 e sai dia 1: o fechamento conta pela ENTRADA, e a carteira
+    // precisa concordar, senao a mesma quinzena da duas listas diferentes.
+    database
+      .prepare(
+        "UPDATE weighing_operations SET exit_weight_captured_at = '2026-08-01T02:00:00.000Z' WHERE id = 'op-dentro'"
+      )
+      .run();
+
+    const report = getWalletReport(database, {
+      status: "open",
+      startDate: "2026-07-16",
+      endDate: "2026-07-31"
+    });
+    expect(report.groups.flatMap((group) => group.operations.map((op) => op.operationId))).toEqual([
+      "op-dentro"
+    ]);
+    // A tela mostra as duas datas: a da operacao (que o filtro usa) e a da saida.
+    expect(report.groups[0].operations[0].operationDate).toBe("2026-07-20");
+    expect(report.groups[0].operations[0].soldAt).toContain("2026-08-01");
+  });
+
+  it("sem periodo, a venda antiga em aberto continua na tela", () => {
+    insertOperations(database, [
+      {
+        id: "op-antiga",
+        customer: "cust-1",
+        paymentMethodId: walletMethodId,
+        totalCents: 10000,
+        soldAt: "2025-01-05"
+      }
+    ]);
+
+    // A carteira responde "o que ainda esta para receber": recortar por padrao esconderia
+    // justamente a venda mais atrasada.
+    expect(getWalletReport(database, { status: "open" }).summary.openCount).toBe(1);
+  });
 });

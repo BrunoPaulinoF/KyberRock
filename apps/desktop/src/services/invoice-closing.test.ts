@@ -56,9 +56,25 @@ function setupBaseData(db: Database): void {
   ).run();
 }
 
+/**
+ * Um CNPJ diferente por cliente do fixture.
+ *
+ * Todos nasciam com o MESMO documento, o que nunca acontece na base real (o cadastro
+ * recusa e o OMIE tem um cadastro por documento) — e passou a importar quando o fechamento
+ * comecou a juntar os cadastros duplicados do mesmo cliente pelo CNPJ. Com o documento
+ * repetido, dois clientes distintos do teste virariam um so.
+ */
+function documentFor(id: string): string {
+  let hash = 0;
+  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) % 100_000_000_000_000;
+  return String(hash).padStart(14, "0");
+}
+
 interface CustomerSeed {
   id: string;
   name: string;
+  /** Ausente = um CNPJ proprio. Dois seeds com o MESMO documento sao o cliente duplicado. */
+  document?: string;
   creditEnabled?: boolean;
   periodicity?: "monthly" | "biweekly" | "weekly";
   closingDay?: number | null;
@@ -74,12 +90,13 @@ function insertCustomer(db: Database, seed: CustomerSeed): void {
        (id, company_id, legal_name, trade_name, document, source, created_at, updated_at,
         credit_account_enabled, credit_periodicity, credit_closing_day, credit_boleto_days,
         credit_second_closing_day, credit_second_boleto_days, credit_closing_weekday)
-     VALUES (?, 'comp-1', ?, ?, '11222333000155', 'local', datetime('now'), datetime('now'),
+     VALUES (?, 'comp-1', ?, ?, ?, 'local', datetime('now'), datetime('now'),
              ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     seed.id,
     seed.name,
     seed.name,
+    seed.document ?? documentFor(seed.id),
     seed.creditEnabled === false ? 0 : 1,
     seed.periodicity ?? "monthly",
     seed.closingDay ?? null,
@@ -153,8 +170,19 @@ function insertOperation(db: Database, seed: OperationSeed): void {
   );
 }
 
-function report(db: Database, options = {}) {
-  return new InvoiceClosingService(db).getReport("2026-07-01", "2026-07-31", "unit-1", options);
+/**
+ * O fechamento pela base do CADASTRO — a que estes testes descrevem.
+ *
+ * A base padrao da tela e a do PERIODO (toda carga do periodo entra na fatura, inclusive a
+ * do cliente em carteira); a do cadastro continua disponivel e e ela que decide ciclo,
+ * data de fechamento e "clientes fora do fechamento". Os testes da base do periodo passam
+ * `basis: "period"` explicitamente.
+ */
+function report(db: Database, options: Record<string, unknown> = {}) {
+  return new InvoiceClosingService(db).getReport("2026-07-01", "2026-07-31", "unit-1", {
+    basis: "customer",
+    ...options
+  });
 }
 
 describe("InvoiceClosingService", () => {
@@ -553,7 +581,13 @@ describe("InvoiceClosingService", () => {
     const db = createDatabase();
     try {
       setupBaseData(db);
-      insertCustomer(db, { id: "cust-1", name: "Alfa", closingDay: 31, boletoDays: 10 });
+      insertCustomer(db, {
+        id: "cust-1",
+        name: "Alfa",
+        document: "11222333000155",
+        closingDay: 31,
+        boletoDays: 10
+      });
       insertOperation(db, {
         id: "op-1",
         code: 22,
@@ -707,6 +741,196 @@ describe("InvoiceClosingService", () => {
       expect(invoices[0].lines.map((line) => line.operationId)).toEqual(["op-16"]);
       expect(invoices[1].closingDate).toBe("2026-08-01");
       expect(invoices[1].lines.map((line) => line.operationId)).toEqual(["op-17"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  // ---------------------------------------------------------------------------------
+  // Base do PERIODO: o fechamento que a atendente escolhe na tela.
+  // ---------------------------------------------------------------------------------
+
+  /** O fechamento da quinzena, como a tela pede. */
+  function periodReport(db: Database, options: Record<string, unknown> = {}) {
+    return new InvoiceClosingService(db).getReport("2026-07-16", "2026-07-31", "unit-1", {
+      basis: "period",
+      periodCycle: "biweekly",
+      ...options
+    });
+  }
+
+  it("na base do periodo, a venda EM CARTEIRA entra na fatura mesmo sem credito no cadastro", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      // O cliente que compra em carteira nao tem conta de credito: pela base do cadastro ele
+      // caia em "clientes fora do fechamento" e a quinzena inteira dele nao era cobrada.
+      insertCustomer(db, { id: "cust-carteira", name: "Levisa", creditEnabled: false });
+      insertOperation(db, { id: "op-1", customer: "cust-carteira", createdAt: "2026-07-17" });
+      insertOperation(db, { id: "op-2", customer: "cust-carteira", createdAt: "2026-07-20" });
+      insertOperation(db, { id: "op-3", customer: "cust-carteira", createdAt: "2026-07-28" });
+      insertOperation(db, { id: "op-4", customer: "cust-carteira", createdAt: "2026-07-31" });
+
+      const result = periodReport(db);
+
+      expect(result.invoices).toHaveLength(1);
+      expect(result.invoices[0].lines.map((line) => line.operationId)).toEqual([
+        "op-1",
+        "op-2",
+        "op-3",
+        "op-4"
+      ]);
+      expect(result.pendingSetup).toEqual([]);
+      // A fatura fecha no ultimo dia do periodo; sem prazo de boleto no cadastro, vence nele.
+      expect(result.invoices[0]).toMatchObject({
+        closingDate: "2026-07-31",
+        dueDate: "2026-07-31",
+        cycle: "biweekly",
+        cycleLabel: "Quinzenal"
+      });
+      // O total a faturar e o total do periodo: nao sobra carga fora da cobranca.
+      expect(result.totals.totalCents).toBe(result.rowTotals.totalCents);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("na base do periodo, o prazo de boleto do cadastro conta a partir do fechamento", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, {
+        id: "cust-1",
+        name: "Alfa",
+        periodicity: "biweekly",
+        closingDay: 1,
+        secondClosingDay: 16,
+        boletoDays: 3,
+        secondBoletoDays: 10
+      });
+      insertOperation(db, { id: "op-1", customer: "cust-1", createdAt: "2026-07-20" });
+
+      // Quinzena: vale o prazo do SEGUNDO fechamento, que e o que termina o periodo.
+      expect(periodReport(db).invoices[0]).toMatchObject({
+        closingDate: "2026-07-31",
+        dueDate: "2026-08-10"
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("periodo personalizado nao inventa ciclo", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, { id: "cust-1", name: "Alfa", creditEnabled: false });
+      insertOperation(db, { id: "op-1", customer: "cust-1", createdAt: "2026-07-20" });
+
+      const result = periodReport(db, { periodCycle: null });
+      expect(result.invoices[0]).toMatchObject({ cycle: null, cycleLabel: "Periodo" });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("na base do periodo o filtro de ciclo nao esconde carga nenhuma", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, { id: "cust-1", name: "Alfa", creditEnabled: false });
+      insertOperation(db, { id: "op-1", customer: "cust-1", createdAt: "2026-07-20" });
+
+      // O ciclo vem do periodo escolhido, e nao do cadastro: um filtro de ciclo herdado da
+      // outra base zeraria a quinzena do cliente em carteira.
+      expect(periodReport(db, { cycles: ["weekly"] }).rows).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  // ---------------------------------------------------------------------------------
+  // Cadastro duplicado do mesmo cliente.
+  // ---------------------------------------------------------------------------------
+
+  it("o cliente cadastrado duas vezes rende UMA fatura, com as cargas dos dois cadastros", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      // O caso real: o cadastro que veio do OMIE e o que nasceu na balanca, mesmo CNPJ.
+      insertCustomer(db, {
+        id: "omie_11488403507",
+        name: "Levisa",
+        document: "06020284000164",
+        creditEnabled: false
+      });
+      insertCustomer(db, {
+        id: "28cbc2e5",
+        name: "Levisa",
+        document: "06020284000164",
+        creditEnabled: false
+      });
+      insertOperation(db, { id: "op-1", customer: "omie_11488403507", createdAt: "2026-07-17" });
+      insertOperation(db, { id: "op-2", customer: "28cbc2e5", createdAt: "2026-07-20" });
+      insertOperation(db, { id: "op-3", customer: "omie_11488403507", createdAt: "2026-07-28" });
+      insertOperation(db, { id: "op-4", customer: "28cbc2e5", createdAt: "2026-07-31" });
+
+      const result = periodReport(db);
+
+      expect(result.invoices).toHaveLength(1);
+      expect(result.customers).toBe(1);
+      expect(result.invoices[0].lines.map((line) => line.operationId)).toEqual([
+        "op-1",
+        "op-2",
+        "op-3",
+        "op-4"
+      ]);
+      expect(result.invoices[0].customerIds.sort()).toEqual(["28cbc2e5", "omie_11488403507"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("escolher UM dos cadastros duplicados traz as cargas dos dois", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, { id: "omie_1", name: "Levisa", document: "06020284000164" });
+      insertCustomer(db, { id: "local-1", name: "Levisa", document: "06020284000164" });
+      insertCustomer(db, { id: "outro", name: "Beta", document: "11222333000155" });
+      insertOperation(db, { id: "op-1", customer: "omie_1", createdAt: "2026-07-17" });
+      insertOperation(db, { id: "op-2", customer: "local-1", createdAt: "2026-07-20" });
+      insertOperation(db, { id: "op-outro", customer: "outro", createdAt: "2026-07-21" });
+
+      // Era aqui que a quinzena de quatro cargas aparecia com duas: o filtro pegava so o
+      // cadastro escolhido.
+      for (const chosen of ["omie_1", "local-1"]) {
+        expect(
+          periodReport(db, { customerId: chosen }).rows.map((line) => line.operationId)
+        ).toEqual(["op-1", "op-2"]);
+      }
+      expect(
+        periodReport(db, { customerId: "outro" }).rows.map((line) => line.operationId)
+      ).toEqual(["op-outro"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("a carga cujo cadastro de cliente sumiu continua aparecendo", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, { id: "cust-1", name: "Alfa", creditEnabled: false });
+      insertOperation(db, { id: "op-1", customer: "cust-1", createdAt: "2026-07-20" });
+      insertOperation(db, { id: "op-orfa", customer: "cust-1", createdAt: "2026-07-21" });
+      // Cadastro apagado da base: com JOIN, a carga sumia do fechamento inteiro — pesada,
+      // saida da pedreira e invisivel para quem cobra.
+      db.prepare("UPDATE weighing_operations SET customer_id = NULL WHERE id = 'op-orfa'").run();
+
+      const result = periodReport(db);
+      expect(result.rows.map((line) => line.operationId)).toEqual(["op-1", "op-orfa"]);
+      expect(result.rowTotals.operations).toBe(2);
     } finally {
       db.close();
     }

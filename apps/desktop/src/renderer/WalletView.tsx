@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
+import {
+  INVOICE_CLOSING_PERIOD_KINDS,
+  INVOICE_CLOSING_PERIOD_KIND_LABEL,
+  defaultInvoiceClosingPeriod,
+  formatDayLabel,
+  resolveInvoiceClosingPeriod
+} from "../services/invoice-closing-period";
+import type { InvoiceClosingPeriodSelection } from "../services/invoice-closing-period";
 import type { WalletOperation, WalletReport, WalletStatusFilter } from "../services/wallet";
 import type { PaymentMethodCacheEntry } from "./customers.types";
 import { IconActionButton } from "./IconActionButton";
@@ -105,6 +113,32 @@ const styles = {
     borderRadius: "14px",
     padding: "12px 14px",
     flexShrink: 0
+  },
+  chipRow: {
+    display: "flex",
+    flexWrap: "wrap" as const,
+    gap: "6px",
+    alignItems: "center"
+  },
+  chip: {
+    border: "1px solid var(--kr-border)",
+    background: "var(--kr-surface)",
+    color: "var(--kr-muted)",
+    borderRadius: "999px",
+    padding: "5px 11px",
+    fontSize: "12px",
+    fontWeight: 600,
+    cursor: "pointer"
+  },
+  chipActive: {
+    border: "1px solid var(--kr-primary-strong)",
+    background: "var(--kr-primary-strong)",
+    color: "var(--kr-primary-text)",
+    borderRadius: "999px",
+    padding: "5px 11px",
+    fontSize: "12px",
+    fontWeight: 700,
+    cursor: "pointer"
   },
   primaryButton: {
     border: "none",
@@ -211,6 +245,18 @@ const styles = {
 export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | null }) {
   const [status, setStatus] = useState<WalletStatusFilter>("open");
   const [search, setSearch] = useState("");
+  /**
+   * O recorte por periodo comeca DESLIGADO de proposito.
+   *
+   * A carteira responde "o que ainda esta para receber", e uma venda em aberto de tres
+   * meses atras continua sendo dinheiro a receber hoje. Abrir a tela ja recortada na
+   * quinzena esconderia justamente a venda mais atrasada — o oposto do que a tela existe
+   * para mostrar. Ligar o filtro e o passo de quem esta fechando UMA quinzena.
+   */
+  const [periodEnabled, setPeriodEnabled] = useState(false);
+  const [period, setPeriod] = useState<InvoiceClosingPeriodSelection>(() =>
+    defaultInvoiceClosingPeriod(new Date())
+  );
   const [report, setReport] = useState<WalletReport>(EMPTY_REPORT);
   const [methods, setMethods] = useState<PaymentMethodCacheEntry[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -222,12 +268,21 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  const range = useMemo(() => resolveInvoiceClosingPeriod(period, new Date()), [period]);
+
   const load = useCallback(async () => {
     if (!desktopApi) return;
     setLoading(true);
     setError(null);
     try {
-      const result = await desktopApi.walletReport({ status, search: search.trim() || undefined });
+      const result = await desktopApi.walletReport({
+        status,
+        search: search.trim() || undefined,
+        // Mesma base de data do Fechamento de faturas (data da operacao): a mesma quinzena
+        // tem de devolver a mesma lista nas duas telas.
+        startDate: periodEnabled ? range.start : undefined,
+        endDate: periodEnabled ? range.end : undefined
+      });
       setReport(result);
       // Some da selecao o que saiu do recorte atual (ex.: venda ja fechada).
       const visible = new Set(
@@ -239,7 +294,7 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
     } finally {
       setLoading(false);
     }
-  }, [desktopApi, status, search]);
+  }, [desktopApi, status, search, periodEnabled, range.start, range.end]);
 
   useEffect(() => {
     void load();
@@ -360,7 +415,7 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <h2 style={styles.title}>Carteira</h2>
           <HelpTooltip
-            content="Vendas fechadas na forma de pagamento 'Em carteira': elas saem da balanca sem forma de recebimento definida e ficam aqui ate o fechamento, quando voce escolhe como o cliente vai pagar e para quando. Quem pagou adiantado ja chega com a compra abatida do deposito: 'A receber' mostra so o que passou do adiantamento."
+            content="Vendas fechadas na forma de pagamento 'Em carteira': elas saem da balanca sem forma de recebimento definida e ficam aqui ate o fechamento, quando voce escolhe como o cliente vai pagar e para quando. Quem pagou adiantado ja chega com a compra abatida do deposito: 'A receber' mostra so o que passou do adiantamento. O filtro de periodo comeca em 'Tudo em aberto' para nao esconder venda antiga sem receber; escolha a quinzena (ou o mes, a semana, datas livres) quando estiver fechando um periodo com o cliente. O recorte usa a data da OPERACAO, a mesma do Fechamento de faturas, para as duas telas mostrarem a mesma quinzena."
             placement="right"
           />
         </div>
@@ -398,6 +453,107 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
             style={styles.input}
           />
         </label>
+        <div style={{ ...styles.field, minWidth: "260px" }}>
+          Periodo
+          <div style={styles.chipRow}>
+            <button
+              type="button"
+              onClick={() => setPeriodEnabled(false)}
+              style={periodEnabled ? styles.chip : styles.chipActive}
+            >
+              Tudo em aberto
+            </button>
+            {INVOICE_CLOSING_PERIOD_KINDS.map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => {
+                  setPeriodEnabled(true);
+                  setPeriod((current) => ({ ...current, kind }));
+                }}
+                style={periodEnabled && period.kind === kind ? styles.chipActive : styles.chip}
+              >
+                {INVOICE_CLOSING_PERIOD_KIND_LABEL[kind]}
+              </button>
+            ))}
+          </div>
+          {periodEnabled ? (
+            <>
+              <div style={styles.chipRow}>
+                {period.kind === "biweekly" || period.kind === "monthly" ? (
+                  <input
+                    type="month"
+                    aria-label="Mes do periodo"
+                    value={period.month}
+                    onChange={(event) =>
+                      setPeriod((current) => ({ ...current, month: event.target.value }))
+                    }
+                    style={styles.input}
+                  />
+                ) : null}
+                {period.kind === "biweekly" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setPeriod((current) => ({ ...current, half: 1 }))}
+                      style={period.half === 1 ? styles.chipActive : styles.chip}
+                    >
+                      1a
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPeriod((current) => ({ ...current, half: 2 }))}
+                      style={period.half === 2 ? styles.chipActive : styles.chip}
+                    >
+                      2a
+                    </button>
+                  </>
+                ) : null}
+                {period.kind === "weekly" ? (
+                  <input
+                    type="date"
+                    aria-label="Qualquer dia da semana"
+                    value={period.weekDay}
+                    onChange={(event) =>
+                      setPeriod((current) => ({ ...current, weekDay: event.target.value }))
+                    }
+                    style={styles.input}
+                  />
+                ) : null}
+                {period.kind === "custom" ? (
+                  <>
+                    <input
+                      type="date"
+                      aria-label="Data inicial"
+                      value={period.customStart}
+                      onChange={(event) =>
+                        setPeriod((current) => ({ ...current, customStart: event.target.value }))
+                      }
+                      style={styles.input}
+                    />
+                    <input
+                      type="date"
+                      aria-label="Data final"
+                      value={period.customEnd}
+                      onChange={(event) =>
+                        setPeriod((current) => ({ ...current, customEnd: event.target.value }))
+                      }
+                      style={styles.input}
+                    />
+                  </>
+                ) : null}
+              </div>
+              <span style={styles.muted}>
+                {formatDayLabel(range.start)} a {formatDayLabel(range.end)} — pela data da operacao,
+                a mesma do Fechamento de faturas.
+              </span>
+            </>
+          ) : (
+            <span style={styles.muted}>
+              Sem recorte: mostra tambem as vendas antigas ainda em aberto.
+            </span>
+          )}
+        </div>
       </div>
 
       {error ? <p style={styles.error}>{error}</p> : null}
@@ -523,7 +679,8 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
                   <thead>
                     <tr>
                       <th style={styles.th} aria-label="Selecao" />
-                      <th style={styles.th}>Data</th>
+                      <th style={styles.th}>Operacao</th>
+                      <th style={styles.th}>Saida</th>
                       <th style={styles.th}>Placa</th>
                       <th style={styles.th}>Produto</th>
                       <th style={{ ...styles.th, ...styles.num }}>Peso</th>
@@ -544,6 +701,7 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
                             aria-label={`Selecionar venda de ${formatDate(operation.soldAt)}`}
                           />
                         </td>
+                        <td style={styles.td}>{formatDate(operation.operationDate)}</td>
                         <td style={styles.td}>{formatDate(operation.soldAt)}</td>
                         <td style={styles.td}>
                           <span style={styles.plate}>{operation.plate}</span>
