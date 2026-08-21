@@ -5,7 +5,8 @@ import {
   isOmieCustomerRegistrationFault,
   isOmieMissingDocumentFault,
   isOmieProtectedRecordFault,
-  isOmieStaleCustomerCodeFault
+  isOmieStaleCustomerCodeFault,
+  isOmieAlreadyBilledFault
 } from "./omie-fault-classifier.js";
 
 describe("isCadastroIncompleteFault", () => {
@@ -146,5 +147,36 @@ describe("isOmieStaleCustomerCodeFault", () => {
     expect(isOmieStaleCustomerCodeFault("OMIE offline, tente novamente")).toBe(false);
     expect(isOmieStaleCustomerCodeFault("OMIE nao retornou orderId")).toBe(false);
     expect(isOmieStaleCustomerCodeFault("")).toBe(false);
+  });
+});
+
+describe("isOmieAlreadyBilledFault", () => {
+  it("reconhece a recusa que a pedreira viu no fechamento da quinzena", () => {
+    // Texto exato devolvido pelo OMIE, com acentos e a frase inteira.
+    expect(
+      isOmieAlreadyBilledFault(
+        "Nao foi possivel faturar no OMIE. Verifique a internet conectada e a configuracao " +
+          "da API OMIE. Detalhe: Não foi possível realizar o faturamento desse Pedido de " +
+          "Venda de Produto! Não é possível faturar, pois o Pedido de Venda de Produto já " +
+          "foi autorizado."
+      )
+    ).toBe(true);
+  });
+
+  it("reconhece as outras formas de 'ja tem nota'", () => {
+    expect(isOmieAlreadyBilledFault("Pedido já foi faturado.")).toBe(true);
+    expect(isOmieAlreadyBilledFault("O pedido já está faturado no OMIE.")).toBe(true);
+    expect(isOmieAlreadyBilledFault("Nota fiscal já emitida para este pedido.")).toBe(true);
+  });
+
+  it("nao confunde com falha de verdade", () => {
+    // Estas precisam continuar sendo erro: tratar como "ja faturada" esconderia carga que
+    // nunca virou nota, que e o pior desfecho possivel para a cobranca.
+    expect(isOmieAlreadyBilledFault("")).toBe(false);
+    expect(isOmieAlreadyBilledFault("Falha de conexao com o OMIE.")).toBe(false);
+    expect(
+      isOmieAlreadyBilledFault("Falta preencher o Numero do Endereco para emitir a NF-e.")
+    ).toBe(false);
+    expect(isOmieAlreadyBilledFault("Cliente nao cadastrado para o codigo_cliente.")).toBe(false);
   });
 });

@@ -48,7 +48,8 @@ import {
   isOmieCustomerRegistrationFault,
   isOmieMissingDocumentFault,
   isOmieProtectedRecordFault,
-  isOmieStaleCustomerCodeFault
+  isOmieStaleCustomerCodeFault,
+  isOmieAlreadyBilledFault
 } from "./omie-fault-classifier.js";
 import { provisionPaymentTermsFromOmieMirror } from "./payment-terms.js";
 import { upsertUnitDevices } from "./unit-devices.js";
@@ -198,6 +199,12 @@ export interface FiscalBillingResult {
   blocked?: boolean;
   /** Mensagem acionavel da pendencia (ex.: preencher Numero do Endereco + E-mail). */
   blockReason?: string | null;
+  /**
+   * O OMIE recusou o faturamento dizendo que o pedido JA estava faturado la, e a situacao
+   * local foi reconciliada a partir disso. Vem junto de `billed: true`: nao ha o que
+   * refazer, a nota daquela carga existe.
+   */
+  alreadyBilledInOmie?: boolean;
   billingStatusCode: string | null;
   billingStatusMessage: string | null;
   documentUrl: string | null;
@@ -4934,6 +4941,15 @@ export async function reconcileOmieBillingFromOmie(
     hotWindowDays?: number;
     includeBacklog?: boolean;
     force?: boolean;
+    /**
+     * Conferir ESTAS pesagens, em vez do rodizio por janela de data.
+     *
+     * E o que o "Fazer fechamento" usa antes de faturar: ele precisa saber o estado no OMIE
+     * das cargas que estao na tela AGORA, e nao das que calharam de estar na vez do
+     * rodizio. Ignora o freio de janela pelo mesmo motivo — a pergunta e do operador, nao
+     * da rotina de fundo.
+     */
+    operationIds?: readonly string[];
   } = {}
 ): Promise<OmieBillingReconcileResult> {
   const settings = getCloudSettings(database, identity);
@@ -4941,7 +4957,16 @@ export async function reconcileOmieBillingFromOmie(
   const windowDays = options.windowDays ?? OMIE_BILLING_CHECK_WINDOW_DAYS;
   const hotWindowDays = options.hotWindowDays ?? OMIE_BILLING_CHECK_HOT_WINDOW_DAYS;
 
-  if (options.force !== true && !hasWindowElapsed(database, OMIE_BILLING_CHECK_LAST_RUN_KEY)) {
+  const targeted = options.operationIds ?? null;
+  if (targeted !== null && targeted.length === 0) {
+    return { checked: 0, billed: 0, errors: [] };
+  }
+
+  if (
+    targeted === null &&
+    options.force !== true &&
+    !hasWindowElapsed(database, OMIE_BILLING_CHECK_LAST_RUN_KEY)
+  ) {
     return { checked: 0, billed: 0, skipped: true, errors: [] };
   }
 
@@ -4958,9 +4983,23 @@ export async function reconcileOmieBillingFromOmie(
       OMIE_BILLING_CHECK_FULL_INTERVAL_MS
     );
 
-  const pending = database
-    .prepare(
-      `SELECT id, operation_type, omie_sales_order_id, omie_service_order_id
+  const pending = targeted
+    ? (database
+        .prepare(
+          `SELECT id, operation_type, omie_sales_order_id, omie_service_order_id
+             FROM weighing_operations
+            WHERE unit_id = ?
+              AND id IN (${targeted.map(() => "?").join(", ")})
+              AND deleted_at IS NULL
+              AND status <> 'cancelled'
+              AND (omie_sales_order_id IS NOT NULL OR omie_service_order_id IS NOT NULL)
+              AND (omie_billing_status IS NULL
+                   OR omie_billing_status NOT IN ('billed', 'cancelled_in_omie'))`
+        )
+        .all(settings.unitId, ...targeted) as PendingOmieBillingRow[])
+    : (database
+        .prepare(
+          `SELECT id, operation_type, omie_sales_order_id, omie_service_order_id
          FROM weighing_operations
         WHERE unit_id = ?
           AND deleted_at IS NULL
@@ -4980,13 +5019,13 @@ export async function reconcileOmieBillingFromOmie(
           omie_billing_checked_at ASC,
           created_at DESC
         LIMIT ?`
-    )
-    .all(
-      settings.unitId,
-      `-${includeBacklog ? windowDays : hotWindowDays} days`,
-      `-${hotWindowDays} days`,
-      limit
-    ) as PendingOmieBillingRow[];
+        )
+        .all(
+          settings.unitId,
+          `-${includeBacklog ? windowDays : hotWindowDays} days`,
+          `-${hotWindowDays} days`,
+          limit
+        ) as PendingOmieBillingRow[]);
 
   if (pending.length === 0) return { checked: 0, billed: 0, errors: [] };
 
@@ -5007,10 +5046,14 @@ export async function reconcileOmieBillingFromOmie(
 
   // Marca a passada ANTES de chamar o OMIE: mesmo que a chamada falhe, o freio vale — uma
   // instabilidade do OMIE nao pode virar uma tentativa por fechamento.
-  const startedAt = new Date().toISOString();
-  writeLocalSetting(database, OMIE_BILLING_CHECK_LAST_RUN_KEY, startedAt);
-  if (includeBacklog) {
-    writeLocalSetting(database, OMIE_BILLING_CHECK_FULL_LAST_RUN_KEY, startedAt);
+  // So o rodizio carimba o freio: a conferencia pedida pelo operador nao pode consumir a
+  // vez da rotina de fundo (nem ser barrada por ela).
+  if (targeted === null) {
+    const startedAt = new Date().toISOString();
+    writeLocalSetting(database, OMIE_BILLING_CHECK_LAST_RUN_KEY, startedAt);
+    if (includeBacklog) {
+      writeLocalSetting(database, OMIE_BILLING_CHECK_FULL_LAST_RUN_KEY, startedAt);
+    }
   }
 
   const supabase = getSupabaseClient();
@@ -5480,6 +5523,34 @@ export async function processFiscalBillingNow(
     // job (re-executavel manualmente apos corrigir) e retorna pendencia clara — sem throw/storm.
     // A recusa do cadastro do cliente no OMIE entra aqui pelo mesmo motivo, mas com a
     // mensagem que diz qual campo do cliente falta preencher.
+    // O pedido JA estava faturado no OMIE (alguem emitiu a nota na coluna "Faturar" antes
+    // de o fechamento rodar). Nao e falha: reconcilia a situacao aqui e devolve como
+    // faturada. Sem isto, o fechamento de uma quinzena ja resolvida no OMIE voltava com uma
+    // lista de erros vermelhos e mandava procurar problema onde nao havia.
+    if (isOmieAlreadyBilledFault(message)) {
+      markSyncJobDone(database, job.id);
+      database
+        .prepare(
+          `UPDATE weighing_operations
+           SET omie_billing_status = 'billed',
+               omie_billed_at = COALESCE(omie_billed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+               omie_billing_message = ?,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+           WHERE id = ?`
+        )
+        .run("Ja faturada no OMIE (o pedido la ja estava autorizado).", operationId);
+      return {
+        orderId: null,
+        billed: true,
+        alreadyBilledInOmie: true,
+        billingStatusCode: null,
+        billingStatusMessage: "Ja faturada no OMIE (o pedido la ja estava autorizado).",
+        documentUrl: null,
+        documentPrinted: false,
+        documentPrintError: null
+      };
+    }
+
     if (
       isCadastroIncompleteFault(message) ||
       isOmieCustomerRegistrationFault(message) ||

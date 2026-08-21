@@ -97,3 +97,28 @@ export function isOmieCustomerRegistrationFault(message: string): boolean {
     isOmieMissingDocumentFault(message)
   );
 }
+
+/**
+ * O OMIE recusou o faturamento porque o pedido JA FOI FATURADO la — tipicamente
+ * "Nao e possivel faturar, pois o Pedido de Venda de Produto ja foi autorizado."
+ *
+ * Isto NAO e falha: e o OMIE dizendo que a nota daquela carga ja saiu, normalmente porque
+ * alguem faturou a mao na coluna "Faturar" antes de o fechamento rodar. Tratar como erro
+ * pintava de vermelho um fechamento que na verdade estava pronto, e mandava a atendente
+ * procurar problema onde nao havia — o certo e reconhecer o estado e reconciliar a
+ * situacao da pesagem aqui.
+ *
+ * "Autorizado" e o vocabulario da NF-e (autorizada pela SEFAZ), e so aparece depois de a
+ * nota existir; por isso ele basta como sinal, sem exigir outro contexto.
+ */
+export function isOmieAlreadyBilledFault(message: string): boolean {
+  if (!message) return false;
+  const text = normalize(message);
+  return (
+    text.includes("ja foi autorizado") ||
+    text.includes("ja foi faturado") ||
+    text.includes("ja esta faturado") ||
+    text.includes("ja foi autorizada") ||
+    (text.includes("nota fiscal") && text.includes("ja emitida"))
+  );
+}

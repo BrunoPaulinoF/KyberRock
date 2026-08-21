@@ -2443,13 +2443,14 @@ export class DesktopRuntime {
    * de uma vez, dias depois de as cargas terem saido. O link de cada documento fica
    * gravado na operacao (`omie_document_url`) e a nota continua no OMIE.
    */
-  runInvoiceClosing(
+  async runInvoiceClosing(
     startDate: string,
     endDate: string,
     options?: InvoiceClosingOptions,
     onProgress?: (progress: InvoiceClosingRunProgress) => void
   ): Promise<InvoiceClosingRunResult> {
     this.assertDesktopAccess();
+    await this.reconcileClosingPeriodWithOmie(startDate, endDate, options);
     const report = this.getInvoiceClosing(startDate, endDate, options);
     return runInvoiceClosing(
       selectInvoiceClosingCandidates(report.rows),
@@ -2458,12 +2459,50 @@ export class DesktopRuntime {
     );
   }
 
-  /** Quantas pesagens do periodo o botao de fechamento mandaria ao OMIE, sem mandar nada. */
-  previewInvoiceClosingRun(
+  /**
+   * Pergunta ao OMIE o que das cargas do periodo JA foi faturado la, antes de faturar
+   * qualquer coisa.
+   *
+   * O KyberRock cria o pedido na etapa "Faturar" e para ali: quem emite a nota costuma ser
+   * uma pessoa, dentro do OMIE, e a balanca so descobre isso pela reconciliacao — que roda
+   * por rodizio e pode nao ter chegado nestas cargas ainda. Sem esta passada, o fechamento
+   * de uma quinzena ja resolvida no OMIE tentava faturar tudo de novo e voltava com uma
+   * lista de "nao foi possivel faturar... ja foi autorizado", que parece erro e nao e.
+   *
+   * Falha aqui nao impede o fechamento: sem internet ou com o OMIE fora, a passada segue
+   * com o que se sabe localmente, e a recusa por "ja autorizado" ainda e reconhecida uma a
+   * uma no faturamento.
+   */
+  private async reconcileClosingPeriodWithOmie(
     startDate: string,
     endDate: string,
     options?: InvoiceClosingOptions
-  ): { billable: number; total: number } {
+  ): Promise<void> {
+    const report = this.getInvoiceClosing(startDate, endDate, options);
+    const operationIds = report.rows
+      .filter(
+        (line) =>
+          line.operationType === "invoice" && !line.invoiceNumber && line.omieSalesOrderId !== null
+      )
+      .map((line) => line.operationId);
+    if (operationIds.length === 0) return;
+
+    try {
+      await reconcileOmieBillingFromOmie(this.database, this.ensureIdentity(), { operationIds });
+    } catch {
+      // Silencioso de proposito: a conferencia e um ganho, nao um pre-requisito.
+    }
+  }
+
+  /** Quantas pesagens do periodo o botao de fechamento mandaria ao OMIE, sem mandar nada. */
+  async previewInvoiceClosingRun(
+    startDate: string,
+    endDate: string,
+    options?: InvoiceClosingOptions
+  ): Promise<{ billable: number; total: number }> {
+    // Concilia antes de contar: a confirmacao precisa dizer quantas notas vao SAIR, e nao
+    // quantas o app ainda achava que faltavam.
+    await this.reconcileClosingPeriodWithOmie(startDate, endDate, options);
     const report = this.getInvoiceClosing(startDate, endDate, options);
     const candidates = selectInvoiceClosingCandidates(report.rows);
     return { billable: countBillableCandidates(candidates), total: candidates.length };

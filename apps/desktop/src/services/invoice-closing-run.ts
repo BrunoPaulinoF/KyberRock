@@ -51,6 +51,8 @@ export interface InvoiceClosingRunCandidate {
   invoiceNumber: string | null;
   /** `billed` = o OMIE ja faturou (pelo app ou pela reconciliacao). */
   alreadyBilled: boolean;
+  /** Falso na carga antiga que ficou sem cliente: nao ha para quem emitir nota. */
+  hasCustomer: boolean;
   totalCents: number;
 }
 
@@ -90,6 +92,8 @@ export interface InvoiceClosingBillOutcome {
   billed: boolean;
   blocked?: boolean;
   blockReason?: string | null;
+  /** O OMIE respondeu que o pedido ja estava faturado la — conciliado, nao faturado agora. */
+  alreadyBilledInOmie?: boolean;
   billingStatusMessage: string | null;
 }
 
@@ -110,6 +114,7 @@ export function selectInvoiceClosingCandidates(
     operationType: line.operationType,
     invoiceNumber: line.invoiceNumber,
     alreadyBilled: line.situation === "billed" || Boolean(line.invoiceNumber),
+    hasCustomer: Boolean(line.customerId),
     totalCents: line.totalCents
   }));
 }
@@ -117,7 +122,8 @@ export function selectInvoiceClosingCandidates(
 /** Quantas pesagens da lista o fechamento de fato mandaria para o OMIE. */
 export function countBillableCandidates(candidates: readonly InvoiceClosingRunCandidate[]): number {
   return candidates.filter(
-    (candidate) => candidate.operationType === "invoice" && !candidate.alreadyBilled
+    (candidate) =>
+      candidate.operationType === "invoice" && !candidate.alreadyBilled && candidate.hasCustomer
   ).length;
 }
 
@@ -153,6 +159,19 @@ export async function runInvoiceClosing(
         ...base,
         status: "skipped",
         message: "Venda interna: nao gera nota fiscal, e sim ordem de servico no OMIE."
+      });
+      continue;
+    }
+
+    // Carga sem cliente nao tem para quem emitir nota. Ela aparece na lista do periodo (e
+    // precisa aparecer — e carga que saiu da pedreira sem cobranca), mas o fechamento nao
+    // tem o que tentar: o conserto e vincular o cliente na operacao.
+    if (!candidate.hasCustomer) {
+      items.push({
+        ...base,
+        status: "blocked",
+        message:
+          "Carga sem cliente vinculado: nao ha para quem emitir a nota. Vincule o cliente na operacao e refaca o fechamento."
       });
       continue;
     }
@@ -196,7 +215,10 @@ export async function runInvoiceClosing(
       }
       items.push({
         ...base,
-        status: "billed",
+        // O OMIE respondeu "esse pedido ja foi autorizado": a nota daquela carga ja existe.
+        // Conta como ja faturada, e nao como faturada AGORA, senao o total desta passada
+        // somaria dinheiro que ela nao faturou.
+        status: outcome.alreadyBilledInOmie ? "already_billed" : "billed",
         message: outcome.billingStatusMessage || "Faturada no OMIE."
       });
     } catch (error) {
