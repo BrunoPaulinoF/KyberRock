@@ -58,14 +58,29 @@ import {
   createInitialUpdateState,
   type UpdateState
 } from "../services/update-flow.js";
+import {
+  compareUpdateVersions,
+  fetchUpdateCandidates,
+  resolveUpdatePlan,
+  type UpdatePlan,
+  type UpdateRing
+} from "../services/update-candidates.js";
 import { isCustomerReportVariant } from "../services/customer-report.js";
 import { isWeighingBillingSituation } from "../services/weighing-billing-situation.js";
 import type { WeighingBillingReportOptions } from "../services/weighing-billing-report.js";
 import { isInvoiceClosingCycle } from "../services/invoice-closing-cycle.js";
 import { isInvoiceClosingBasis, normalizePlateList } from "../services/invoice-closing.js";
 import type { InvoiceClosingOptions } from "../services/invoice-closing.js";
-import { GITHUB_UPDATER_TOKEN } from "./updater-config.js";
-import { DEFAULT_UPDATE_CHANNEL, updaterChannelSettings } from "../services/update-channel.js";
+import {
+  GITHUB_UPDATER_OWNER,
+  GITHUB_UPDATER_REPO,
+  GITHUB_UPDATER_TOKEN
+} from "./updater-config.js";
+import {
+  DEFAULT_UPDATE_CHANNEL,
+  updaterChannelSettings,
+  type DesktopUpdateChannel
+} from "../services/update-channel.js";
 import type { OperationType } from "../services/weighing-operations.js";
 
 const require = createRequire(import.meta.url);
@@ -75,6 +90,14 @@ const appIconPath = path.join(currentDirectory, "../../midia/logo.png");
 let mainWindow: BrowserWindow | null = null;
 let runtime: DesktopRuntime | null = null;
 let updateState: UpdateState = createInitialUpdateState();
+/**
+ * O que a ultima aplicacao de canal decidiu: qual anel o updater esta mirando e
+ * quais versoes a balanca de TESTE pode escolher. Fica aqui, e nao dentro do
+ * `updateState`, porque os eventos do `electron-updater` recriam o estado e
+ * perderiam a escolha no meio do caminho.
+ */
+let updatePlan: UpdatePlan = { autoRing: "latest", options: [] };
+let updateChannelInUse: DesktopUpdateChannel = DEFAULT_UPDATE_CHANNEL;
 const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 minutos
 
 /**
@@ -274,42 +297,47 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("desktop:check-for-updates", async () => {
     if (!app.isPackaged) {
-      updateState = {
-        status: "error",
-        availableVersion: null,
-        errorMessage: "Atualizacoes so funcionam no aplicativo instalado."
-      };
+      updateState = updateErrorState("Atualizacoes so funcionam no aplicativo instalado.");
       return updateState;
     }
 
-    updateState = { status: "checking", availableVersion: null, errorMessage: null };
+    updateState = { ...createInitialUpdateState(), status: "checking" };
     try {
       // Tambem aqui, e nao so no ciclo automatico: o operador pode clicar logo
-      // depois de o painel mover esta balanca de canal.
-      applyUpdateChannel();
-      const result = await autoUpdater.checkForUpdates();
-      updateState = result?.updateInfo
-        ? { status: "available", availableVersion: result.updateInfo.version, errorMessage: null }
-        : createInitialUpdateState();
+      // depois de o painel mover esta balanca de canal. E e esta chamada que
+      // descobre as duas versoes quando a balanca esta no anel de teste.
+      const plan = await applyUpdateChannel();
+      updateState = await runUpdateCheck(plan.options.length > 1);
     } catch (err) {
-      updateState = {
-        status: "error",
-        availableVersion: null,
-        errorMessage: err instanceof Error ? err.message : "Falha ao verificar atualizacoes."
-      };
+      updateState = updateErrorState(
+        err instanceof Error ? err.message : "Falha ao verificar atualizacoes."
+      );
     }
 
     return updateState;
   });
 
-  ipcMain.handle("desktop:download-and-install-update", async () => {
+  ipcMain.handle("desktop:download-and-install-update", async (_event, requestedRing?: unknown) => {
     if (!app.isPackaged) {
-      updateState = {
-        status: "error",
-        availableVersion: null,
-        errorMessage: "Instalacao de update so funciona no aplicativo instalado."
-      };
+      updateState = updateErrorState("Instalacao de update so funciona no aplicativo instalado.");
       return updateState;
+    }
+
+    // Anel escolhido pelo operador na tela (so a balanca de teste escolhe).
+    // Trocar o anel obriga a REVERIFICAR: e a verificacao que faz o updater
+    // resolver a release do anel pedido, e e ela que o download instala.
+    const chosenRing = normalizeRequestedRing(requestedRing);
+    if (chosenRing) {
+      try {
+        aimUpdaterAt(chosenRing);
+        updateState = { ...updateState, status: "checking", errorMessage: null };
+        updateState = await runUpdateCheck(true);
+      } catch (err) {
+        updateState = updateErrorState(
+          err instanceof Error ? err.message : "Falha ao verificar atualizacoes."
+        );
+        return updateState;
+      }
     }
 
     if (
@@ -329,11 +357,9 @@ function registerIpcHandlers(): void {
       }
       autoUpdater.quitAndInstall(false, true);
     } catch (err) {
-      updateState = {
-        status: "error",
-        availableVersion: null,
-        errorMessage: err instanceof Error ? err.message : "Falha ao baixar atualizacao."
-      };
+      updateState = updateErrorState(
+        err instanceof Error ? err.message : "Falha ao baixar atualizacao."
+      );
     }
 
     return updateState;
@@ -2414,30 +2440,129 @@ function configureAutoUpdater(): void {
   }
 
   autoUpdater.on("update-available", (info) => {
-    // autoDownload esta ligado, entao o download comeca automaticamente aqui.
-    updateState = { status: "downloading", availableVersion: info.version, errorMessage: null };
+    // Com o autoDownload ligado o download ja comecou aqui. Ele fica desligado
+    // so na verificacao que vai ABRIR a escolha de versao na balanca de teste:
+    // baixar o anel errado enquanto o operador ainda escolhe seria download
+    // jogado fora — e, se ele escolhesse o outro, dois downloads concorrentes.
+    updateState = describeAvailableUpdate(
+      info.version,
+      autoUpdater.autoDownload ? "downloading" : "available"
+    );
     mainWindow?.webContents.send("desktop:update-available", info.version);
   });
   autoUpdater.on("update-not-available", () => {
-    updateState = createInitialUpdateState();
+    updateState = { ...createInitialUpdateState(), ringOptions: updatePlan.options };
   });
   autoUpdater.on("download-progress", (progress) => {
     if (updateState.status !== "downloaded") {
-      updateState = {
-        status: "downloading",
-        availableVersion: updateState.availableVersion,
-        errorMessage: null
-      };
+      updateState = { ...updateState, status: "downloading", errorMessage: null };
     }
     mainWindow?.webContents.send("desktop:update-download-progress", progress.percent);
   });
   autoUpdater.on("update-downloaded", (info) => {
-    updateState = { status: "downloaded", availableVersion: info.version, errorMessage: null };
+    updateState = describeAvailableUpdate(info.version, "downloaded");
     mainWindow?.webContents.send("desktop:update-downloaded", info.version);
   });
   autoUpdater.on("error", (error) => {
-    updateState = { status: "error", availableVersion: null, errorMessage: error.message };
+    updateState = updateErrorState(error.message);
   });
+}
+
+function updateErrorState(message: string): UpdateState {
+  return {
+    status: "error",
+    availableVersion: null,
+    errorMessage: message,
+    availableRing: null,
+    ringOptions: updatePlan.options
+  };
+}
+
+/**
+ * De qual anel veio a versao que o updater ofereceu.
+ *
+ * A balanca de producao nao mostra anel nenhum — la so existe um, e nomea-lo em
+ * cada aviso seria ruido. Na de teste, a versao que nao bate com nenhuma das
+ * opcoes conhecidas cai no anel que a verificacao mirou.
+ */
+function describeAvailableUpdate(
+  version: string,
+  status: "available" | "downloading" | "downloaded"
+): UpdateState {
+  const matched = updatePlan.options.find(
+    (option) => compareUpdateVersions(option.version, version) === 0
+  );
+  return {
+    status,
+    availableVersion: version,
+    errorMessage: null,
+    availableRing: updateChannelInUse === "beta" ? (matched?.ring ?? updatePlan.autoRing) : null,
+    ringOptions: updatePlan.options
+  };
+}
+
+function normalizeRequestedRing(value: unknown): UpdateRing | null {
+  // So a balanca de teste escolhe versao. Um pedido chegando numa balanca de
+  // producao e ignorado de proposito: e la que oferecer versao em avaliacao
+  // seria exatamente o que os dois aneis existem para impedir.
+  if (updateChannelInUse !== "beta") return null;
+  if (value !== "beta" && value !== "latest") return null;
+  return value;
+}
+
+/**
+ * Aponta o updater para um anel especifico, sem mexer no que o canal decide.
+ *
+ * A escolha **consome** as opcoes: o operador ja decidiu, e deixar as duas
+ * versoes penduradas no estado faria a tela continuar pedindo para escolher no
+ * meio do download. A verificacao seguinte recalcula tudo do zero.
+ */
+function aimUpdaterAt(ring: UpdateRing): void {
+  updatePlan = { autoRing: ring, options: [] };
+  autoUpdater.allowPrerelease = ring === "beta";
+  writeStartupLog("updater:ring", { channel: updateChannelInUse, ring });
+}
+
+/**
+ * Roda a verificacao e traduz o resultado para o estado que a tela le.
+ *
+ * `withoutAutoDownload` desliga o download automatico so por esta passada (ver
+ * o handler de `update-available`).
+ *
+ * A disponibilidade sai do `isUpdateAvailable`, e nao da mera presenca de
+ * `updateInfo`: o `electron-updater` devolve a versao resolvida MESMO quando
+ * ela e a que ja esta instalada. Ler so o `updateInfo` fazia a balanca de teste
+ * parada na 0.8.200 anunciar "versao 0.8.200 disponivel" e oferecer o botao de
+ * instalar a cada verificacao — a versao presa que o operador via na tela.
+ */
+async function runUpdateCheck(withoutAutoDownload: boolean): Promise<UpdateState> {
+  const previousAutoDownload = autoUpdater.autoDownload;
+  if (withoutAutoDownload) {
+    autoUpdater.autoDownload = false;
+  }
+
+  let result: Awaited<ReturnType<typeof autoUpdater.checkForUpdates>>;
+  try {
+    result = await autoUpdater.checkForUpdates();
+  } finally {
+    autoUpdater.autoDownload = previousAutoDownload;
+  }
+
+  const version = result?.updateInfo?.version ?? null;
+  if (!version || !result?.isUpdateAvailable) {
+    return { ...createInitialUpdateState(), ringOptions: updatePlan.options };
+  }
+
+  // O download desta mesma versao pode ter terminado enquanto a verificacao
+  // corria; voltar para "baixando" esconderia o botao de reiniciar e instalar.
+  if (updateState.status === "downloaded" && updateState.availableVersion === version) {
+    return describeAvailableUpdate(version, "downloaded");
+  }
+
+  // "baixando" so quando o autoDownload realmente comecou o download nesta
+  // passada; caso contrario a versao esta apenas disponivel, esperando o clique.
+  const downloadStarted = previousAutoDownload && !withoutAutoDownload;
+  return describeAvailableUpdate(version, downloadStarted ? "downloading" : "available");
 }
 
 /**
@@ -2455,20 +2580,54 @@ function configureAutoUpdater(): void {
  * sempre procura `latest.yml`, e o setter dele ligaria `allowDowngrade` para
  * TODA a frota de brinde. O porque completo esta em
  * `services/update-channel.ts`.
+ *
+ * No anel de TESTE ele ainda olha os dois aneis antes de escolher o valor de
+ * `allowPrerelease` (ver `services/update-candidates.ts`): com ele ligado o
+ * updater instala a prerelease mais nova, que pode ser mais VELHA que a
+ * producao — foi assim que uma balanca de teste ficou presa na 0.8.200 depois
+ * de a 0.8.201 ir para producao. Consulta que falhar volta ao padrao do anel,
+ * que e a prerelease.
  */
-function applyUpdateChannel(): void {
+async function applyUpdateChannel(): Promise<UpdatePlan> {
   try {
-    const settings = updaterChannelSettings(runtime?.getUpdateChannel() ?? DEFAULT_UPDATE_CHANNEL);
-    if (autoUpdater.allowPrerelease !== settings.allowPrerelease) {
-      writeStartupLog("updater:channel", settings);
+    const channel = runtime?.getUpdateChannel() ?? DEFAULT_UPDATE_CHANNEL;
+    updateChannelInUse = channel;
+    autoUpdater.allowDowngrade = updaterChannelSettings(channel).allowDowngrade;
+
+    const plan = resolveUpdatePlan({
+      channel,
+      installedVersion: app.getVersion(),
+      candidates:
+        channel === "beta" ? await readUpdateCandidates() : { test: null, production: null }
+    });
+    updatePlan = plan;
+
+    const allowPrerelease = plan.autoRing === "beta";
+    if (autoUpdater.allowPrerelease !== allowPrerelease) {
+      writeStartupLog("updater:channel", { channel, plan });
     }
-    autoUpdater.allowPrerelease = settings.allowPrerelease;
-    autoUpdater.allowDowngrade = settings.allowDowngrade;
+    autoUpdater.allowPrerelease = allowPrerelease;
+    return plan;
   } catch (error) {
     // Nunca impedir a verificacao de atualizacao: sem canal aplicado o updater
     // segue no padrao, que e producao.
     writeStartupLog("updater:channel:error", error);
+    return updatePlan;
   }
+}
+
+/** Le os dois aneis no GitHub com o mesmo token de leitura que o updater usa. */
+async function readUpdateCandidates(): Promise<{ test: string | null; production: string | null }> {
+  if (!GITHUB_UPDATER_TOKEN) {
+    // Build sem token (dev): o updater tambem nao roda, entao nao ha o que ler.
+    return { test: null, production: null };
+  }
+
+  return fetchUpdateCandidates({
+    owner: GITHUB_UPDATER_OWNER,
+    repo: GITHUB_UPDATER_REPO,
+    token: GITHUB_UPDATER_TOKEN
+  });
 }
 
 function startAutomaticUpdateChecks(): void {
@@ -2476,14 +2635,28 @@ function startAutomaticUpdateChecks(): void {
     return;
   }
 
-  applyUpdateChannel();
-  void autoUpdater.checkForUpdates();
+  void runAutomaticUpdateCheck();
   setInterval(() => {
     if (updateState.status === "idle" || updateState.status === "error") {
-      applyUpdateChannel();
-      void autoUpdater.checkForUpdates();
+      void runAutomaticUpdateCheck();
     }
   }, UPDATE_CHECK_INTERVAL_MS);
+}
+
+/**
+ * Ciclo automatico: mira o anel mais novo e deixa o `autoDownload` trabalhar.
+ *
+ * Ele NAO pergunta nada — a escolha entre teste e producao e um gesto do
+ * operador, no botao de verificar. Sozinha, a balanca de teste vai sempre para
+ * a versao mais nova dos dois aneis, que e o que a tira de uma versao presa.
+ */
+async function runAutomaticUpdateCheck(): Promise<void> {
+  try {
+    await applyUpdateChannel();
+    updateState = await runUpdateCheck(false);
+  } catch (error) {
+    writeStartupLog("updater:check:error", error);
+  }
 }
 
 function getStartupLogPath(): string {

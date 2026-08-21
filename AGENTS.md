@@ -480,6 +480,32 @@ promocao so fica no GitHub ate ele existir.
   `desktop-status` e e aplicado em `main.ts` (`applyUpdateChannel`) a cada verificacao — trocar o
   canal vale sem reiniciar o app. Os DOIS lados normalizam para `latest` qualquer valor que nao
   seja exatamente `beta`: balanca de cliente nunca entra no anel de teste por acidente.
+- **A balanca de teste olha os DOIS aneis** (`apps/desktop/src/services/update-candidates.ts`).
+  `allowPrerelease` ligado nao significa "a versao mais nova": o `PrivateGitHubProvider` resolve
+  `candidates.find((it) => it.prerelease) || candidates[0]`, ou seja, a **prerelease mais nova** —
+  que pode ser mais VELHA que a producao. Foi assim que uma balanca de teste ficou presa na 0.8.200
+  depois de a 0.8.201 ser liberada para producao: ate a promocao seguinte para teste, ela era a
+  unica maquina da frota rodando uma versao atrasada. Agora cada verificacao no anel de teste le os
+  dois lados antes de decidir (`GET /releases` para a prerelease, `GET /releases/latest` para a
+  producao — tem que ser essa chamada, porque `make_latest` nao aparece na listagem):
+  - **sozinha** (ciclo de 30 min) a balanca mira o anel cuja versao e a mais nova, entao teste nunca
+    mais fica abaixo de producao;
+  - **no clique** de _Verificar atualizacao_, quando os dois aneis tem versao instalavel e elas
+    divergem, a tela pergunta qual instalar (modal _Escolha a versao para instalar_ no `App.tsx`);
+    a resposta viaja no argumento `ring` de `desktop:download-and-install-update`, que reaponta o
+    `allowPrerelease` e **reverifica** antes de baixar — e a verificacao que faz o updater resolver
+    a release do anel pedido.
+    A verificacao que vai abrir a escolha roda com `autoDownload` desligado: baixar o anel errado
+    enquanto o operador escolhe seria download jogado fora e, se ele escolhesse o outro, dois
+    downloads concorrentes disputando o `quitAndInstall`. A balanca de **producao** nao escolhe nada —
+    `normalizeRequestedRing` recusa o pedido fora do anel de teste, porque oferecer versao em
+    avaliacao para cliente e exatamente o que os dois aneis existem para impedir. Consulta ao GitHub
+    que falhar volta ao comportamento historico (mirar a prerelease): nunca pode impedir a balanca de
+    se atualizar.
+- **"Disponivel" sai do `isUpdateAvailable`, nao da presenca de `updateInfo`.** O
+  `electron-updater` devolve a versao resolvida MESMO quando ela e a que ja esta instalada, entao
+  a leitura antiga fazia a balanca parada na 0.8.200 anunciar "versao 0.8.200 disponivel" e oferecer
+  o botao de instalar a cada verificacao — a versao presa que o operador via na tela.
 - **Leituras da coluna sao tolerantes a ela nao existir** (`selectDeviceRow` no `desktop-status`,
   `selectDevicesForList` no `admin-api`). As Edge Functions sao implantadas pelo CI a cada push e
   as migracoes SQL sao aplicadas a parte: sem isso, nessa janela o `desktop-status` falharia e

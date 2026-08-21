@@ -22,7 +22,8 @@ const desktopApi = {
   activateDesktop: (input: unknown) => ipcRenderer.invoke("desktop:activate", input),
   logoutDesktop: () => ipcRenderer.invoke("desktop:logout"),
   checkForUpdates: () => ipcRenderer.invoke("desktop:check-for-updates"),
-  downloadAndInstallUpdate: () => ipcRenderer.invoke("desktop:download-and-install-update"),
+  downloadAndInstallUpdate: (ring?: "beta" | "latest" | null) =>
+    ipcRenderer.invoke("desktop:download-and-install-update", ring ?? null),
   listOpenWeighingOperations: () => ipcRenderer.invoke("desktop:list-open-weighing-operations"),
   getCustomerLastEntryPreferences: (customerId: string) =>
     ipcRenderer.invoke("desktop:customer-last-entry-preferences", customerId),

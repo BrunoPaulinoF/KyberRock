@@ -7,6 +7,7 @@ import type {
 } from "../services/printing";
 import type { DesktopStatusSnapshot } from "../services/status";
 import type { UpdateState } from "../services/update-flow";
+import type { UpdateRing } from "../services/update-candidates";
 import type {
   OperationFreightInput,
   OperationOmieIssue,
@@ -126,7 +127,13 @@ export interface KyberRockDesktopApi {
   activateDesktop: (input: ActivateDesktopInput) => Promise<DesktopAccessStatus>;
   logoutDesktop: () => Promise<void>;
   checkForUpdates: () => Promise<UpdateState>;
-  downloadAndInstallUpdate: () => Promise<UpdateState>;
+  /**
+   * `ring` so vale na balanca marcada como teste: e por ele que o operador diz
+   * se instala a versao em avaliacao ou a de producao (ver
+   * `services/update-candidates.ts`). Sem ele, instala o que a verificacao
+   * mirou.
+   */
+  downloadAndInstallUpdate: (ring?: UpdateRing | null) => Promise<UpdateState>;
   listOpenWeighingOperations: () => Promise<WeighingOperationSummary[]>;
   /**
    * Transportadora/condicao/forma de pagamento da ultima entrada daquele cliente, para a
