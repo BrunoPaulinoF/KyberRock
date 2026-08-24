@@ -22,6 +22,7 @@ import {
   toIsoDate
 } from "./insights-period";
 import type { InsightsPeriod } from "./insights-period";
+import { useOmieInvoiceNumbers } from "./useOmieInvoiceNumbers";
 
 /**
  * Conferencia de faturamento: a lista PESAGEM A PESAGEM do periodo — cliente, data,
@@ -154,6 +155,21 @@ export function WeighingBillingReportView({
   useEffect(() => {
     void loadReport();
   }, [loadReport]);
+
+  // Esta tela existe para dizer o que ja virou nota e o que nao virou: sair com "-" numa
+  // carga cuja nota ja existe no OMIE e o proprio erro que ela deveria denunciar. As
+  // cargas sem numero sao perguntadas ao OMIE assim que a lista aparece.
+  const invoiceNumberRows = useMemo(
+    () =>
+      report?.rows.map((row) => ({
+        operationId: row.operationId,
+        invoiceNumber: row.omieInvoiceNumber,
+        omieSalesOrderId: row.omieSalesOrderId,
+        omieServiceOrderId: row.omieServiceOrderId
+      })),
+    [report]
+  );
+  useOmieInvoiceNumbers(desktopApi, invoiceNumberRows, loadReport);
 
   function toggleSituation(situation: WeighingBillingSituation): void {
     setSituations((current) =>

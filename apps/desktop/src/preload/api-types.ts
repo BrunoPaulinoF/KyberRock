@@ -332,13 +332,14 @@ export interface KyberRockDesktopApi {
     options?: InvoiceClosingOptions
   ) => Promise<InvoiceClosingRunResult>;
   /**
-   * "Conferir notas no OMIE": pergunta AGORA quais cargas do periodo ja foram faturadas la
-   * e grava o numero da nota de cada uma. So LE o OMIE — nao emite nada.
+   * Pergunta ao OMIE o numero da nota DESTAS cargas e grava o que vier.
+   *
+   * A tela que mostra a coluna "Nota fiscal" chama sozinha, ao abrir, pelas cargas que
+   * ainda estao sem numero: a conferencia de fundo roda por rodizio e deixa o acervo — que
+   * e exatamente o que se olha ao fechar uma quinzena — para depois. So LE o OMIE.
    */
-  reconcileInvoiceClosingNotes: (
-    startDate: string,
-    endDate: string,
-    options?: InvoiceClosingOptions
+  reconcileOmieInvoiceNumbers: (
+    operationIds: readonly string[]
   ) => Promise<{ checked: number; billed: number; errors: string[] }>;
   /**
    * "Cancelar as pesagens repetidas": cancela as cargas que o fechamento identificou como a
