@@ -5593,3 +5593,120 @@ Deno.test("check_order_billing nao usa o numero de uma nota cancelada", async ()
   const results = response.results as Array<Record<string, unknown>>;
   assertEquals(results.find((row) => row.operationId === "op-452")?.invoiceNumber, null);
 });
+
+// Verificado contra a resposta real do OMIE: `ConsultarNF` de um pedido que nao gerou nota
+// devolve "ERROR: NF nao cadastrada para o pedido [...]" — ACENTUADO. Os padroes de fault
+// sempre foram escritos sem acento, entao nenhum casava: o fault conhecido passava por
+// falha desconhecida, ia para o log como erro e ainda disparava as duas chamadas de
+// recuperacao por carga, na fila que tambem envia os fechamentos.
+Deno.test(
+  "check_order_billing encerra a busca no fault acentuado de nota inexistente",
+  async () => {
+    const { ids, fixtures } = await billingDependencies("nf-fault-acentuado");
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarPedidos") {
+        return {
+          pagina: 1,
+          total_de_paginas: 1,
+          pedido_venda_produto: [
+            salesListingRecord(9002, "60", "452"),
+            salesListingRecord(9001, "60", "451"),
+            salesListingRecord(9000, "60", "450"),
+            salesListingRecord(8999, "60", "449")
+          ]
+        };
+      }
+      if (input.call === "ListarNF") return { pagina: 1, total_de_paginas: 1, nfCadastro: [] };
+      if (input.call === "ConsultarNF") {
+        // O texto exato que o OMIE devolveu na verificacao contra a API real.
+        throw new Error("ERROR: NF não cadastrada para o pedido [11495336979] !] !");
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    await postOmieSync(
+      {
+        deviceId: ids.deviceId,
+        deviceToken: ids.token,
+        action: "check_order_billing",
+        payload: {
+          orders: [
+            { operationId: "op-452", orderType: "sales", omieOrderId: 9002 },
+            { operationId: "op-451", orderType: "sales", omieOrderId: 9001 },
+            { operationId: "op-450", orderType: "sales", omieOrderId: 9000 },
+            { operationId: "op-449", orderType: "sales", omieOrderId: 8999 }
+          ]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    // A resposta e conclusiva: nenhuma das quatro cargas gasta as chamadas que perguntam ao
+    // pedido. Sem a normalizacao de acento eram oito chamadas a toa nesta unica passada.
+    assertEquals(
+      omieQueue.requests.filter((request) => request.call === "ObterPedVenda").length,
+      0
+    );
+    assertEquals(
+      omieQueue.requests.filter((request) => request.call === "ConsultarPedido").length,
+      0
+    );
+  }
+);
+
+// `ide.nNF` vem preenchido a esquerda na resposta real ("00029490" para a nota 29490), e o
+// mesmo documento sai sem zeros quando o numero e derivado da chave de acesso. A coluna
+// "Nota fiscal" nao pode mostrar a mesma nota de dois jeitos conforme quem a encontrou.
+Deno.test("check_order_billing normaliza os zeros a esquerda do numero da nota", async () => {
+  const { ids, fixtures } = await billingDependencies("nf-zeros-a-esquerda");
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarPedidos") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        pedido_venda_produto: [
+          salesListingRecord(9002, "60", "452"),
+          salesListingRecord(9001, "60", "451"),
+          salesListingRecord(9000, "60", "450"),
+          salesListingRecord(8999, "60", "449")
+        ]
+      };
+    }
+    if (input.call === "ListarNF") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        // A forma exata da resposta real: numero zero-preenchido em `ide`, pedido em
+        // `compl.nIdPedido`, numero visivel do pedido em `pedido.cNumPedido`.
+        nfCadastro: [
+          {
+            ide: { nNF: "00029490", serie: "001", dCan: "", dInut: "", cDeneg: "N" },
+            compl: { nIdNF: 11495337714, nIdPedido: 9002 },
+            pedido: { cNumPedido: "452", cCancelado: "N" }
+          }
+        ]
+      };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-452", orderType: "sales", omieOrderId: 9002, orderNumber: "452" },
+          { operationId: "op-451", orderType: "sales", omieOrderId: 9001 },
+          { operationId: "op-450", orderType: "sales", omieOrderId: 9000 },
+          { operationId: "op-449", orderType: "sales", omieOrderId: 8999 }
+        ]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const results = response.results as Array<Record<string, unknown>>;
+  assertEquals(results.find((row) => row.operationId === "op-452")?.invoiceNumber, "29490");
+});

@@ -4008,9 +4008,30 @@ async function consultServiceOrder(
   });
 }
 
-// Faults do OMIE quando o registro ja nao existe (cancelamento idempotente).
+/**
+ * O texto de um fault do OMIE sem acento, para ser comparado por regex.
+ *
+ * Os faults vem ACENTUADOS ("NF nao cadastrada" chega como "NF nao cadastrada" com til), e
+ * os padroes daqui sempre foram escritos sem acento — entao nenhum deles casava. O efeito
+ * era silencioso: um fault conhecido passava por falha desconhecida, ia para o log como
+ * erro e disparava o caminho caro de recuperacao.
+ */
+function normalizeOmieFault(message: string): string {
+  return message.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
+ * Faults do OMIE quando o registro ja nao existe (cancelamento idempotente) ou quando o
+ * pedido consultado nao gerou nota.
+ *
+ * Verificado contra a resposta real do OMIE: `ConsultarNF` de um pedido sem nota devolve
+ * "ERROR: NF nao cadastrada para o pedido [...]" — com til em "nao". Sem a normalizacao
+ * acima, `nao cadastrad` nao casava com `nao cadastrada` acentuado.
+ */
 function isOmieNotFoundFault(message: string): boolean {
-  return /nao cadastrad|nao encontrad|not found|inexistente|nao existe/i.test(message);
+  return /nao cadastrad|nao encontrad|not found|inexistente|nao existe/i.test(
+    normalizeOmieFault(message)
+  );
 }
 
 // Faults que indicam que o pedido/OS nao pode ser excluido pelo estado (ja faturado,
@@ -4108,13 +4129,22 @@ const OMIE_FISCAL_CONTAINER_PATTERN = /(documento|dfe|danfe|nfe|nfse|nota_fiscal
 /** Nomes da CHAVE de acesso da NF-e (44 digitos), de onde o numero pode ser derivado. */
 const OMIE_INVOICE_KEY_KEYS = ["chave_nfe", "cChaveNFe", "chave_acesso", "cChaveAcesso"];
 
-/** Um valor de campo do OMIE que serve como numero de nota (nem vazio, nem so zeros). */
+/**
+ * Um valor de campo do OMIE que serve como numero de nota (nem vazio, nem so zeros).
+ *
+ * Os zeros a esquerda caem fora. O OMIE devolve `ide.nNF` preenchido a esquerda —
+ * "00029490" para a nota 29490 —, e o mesmo documento sai sem eles quando o numero e
+ * derivado da chave de acesso, que ja e cortada por posicao. Sem esta normalizacao a mesma
+ * nota aparecia de dois jeitos conforme o caminho que a encontrou, e o fechamento mandava
+ * ao cliente um numero que a DANFE dele nao mostra assim.
+ */
 function usableInvoiceNumber(value: string | null): string | null {
   if (value === null) return null;
   const trimmed = value.trim();
   // "0" e o vazio do OMIE em campo numerico.
   if (trimmed.length === 0 || /^0+$/.test(trimmed)) return null;
-  return trimmed;
+  // So em numero puro: serie/numero com letra ou pontuacao fica como veio.
+  return /^\d+$/.test(trimmed) ? trimmed.replace(/^0+/, "") : trimmed;
 }
 
 /**
@@ -5260,14 +5290,16 @@ async function listOmieInvoicesPage(
       apenas_importado_api: "N",
       ordenar_por: "CODIGO",
       ordem_decrescente: "S",
-      // Traz o bloco `pedido` junto da nota. SEM isto o OMIE devolve so `compl.nIdPedido`,
-      // e o bloco onde mora `cNumPedido` — a chave de reserva por numero visivel — nao vem
-      // na resposta. A busca por essa chave existia e nunca casava nada: nao porque o
-      // numero estivesse errado, mas porque o campo nao estava la para ser lido.
+      // Preenche o bloco `pedido` de cada nota. Verificado contra a API real: sem isto o
+      // bloco vem na resposta, mas VAZIO (`"pedido": {}`) — e `cNumPedido`, a chave de
+      // reserva pelo numero visivel do pedido, nao existe para ser lida. A busca por essa
+      // chave existia e nunca casava nada; com o parametro, o mesmo registro volta com
+      // `cNumPedido: "622"` ao lado de `compl.nIdPedido`.
       cDetalhesPedido: "S",
       // So nota valida. Nota cancelada continua listada com numero e pedido, e sem este
       // filtro o numero de uma nota que foi cancelada ia parar na coluna "Nota fiscal" do
       // fechamento — o pior tipo de erro aqui, porque parece certo e vai para o cliente.
+      // Na base verificada o filtro tirou 19 notas canceladas de 794.
       filtrar_por_status: "N",
       ...(window ? { dEmiInicial: window.from, dEmiFinal: window.to } : {})
     }
