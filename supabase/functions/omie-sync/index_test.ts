@@ -4014,6 +4014,10 @@ Deno.test("check_order_billing resolve um lote inteiro com UMA chamada de listag
         ]
       };
     }
+    // O numero da nota vem pelo documento fiscal: sem isso a busca do numero cairia
+    // no `ConsultarPedido`, e a contagem abaixo deixaria de medir a consulta de
+    // SITUACAO — que e o que este teste vigia.
+    if (input.call === "ObterPedVenda") return { nNF: "500" };
     return defaultOmieListResponse(input);
   });
 
@@ -4067,6 +4071,10 @@ Deno.test("check_order_billing para de paginar quando passa do documento mais an
       const page = Number(getParam(input).pagina);
       return { pagina: page, pedido_venda_produto: pages[page] ?? [] };
     }
+    // O numero da nota vem pelo documento fiscal: sem isso a busca do numero cairia
+    // no `ConsultarPedido`, e a contagem abaixo deixaria de medir a consulta de
+    // SITUACAO — que e o que este teste vigia.
+    if (input.call === "ObterPedVenda") return { nNF: "500" };
     return defaultOmieListResponse(input);
   });
 
@@ -4649,6 +4657,10 @@ Deno.test(
         const page = Number(getParam(input).pagina);
         return { pagina: page, total_de_paginas: 4, pedido_venda_produto: pages[page] ?? [] };
       }
+      // O numero da nota vem pelo documento fiscal: sem isso a busca do numero cairia
+      // no `ConsultarPedido`, e a contagem abaixo deixaria de medir a consulta de
+      // SITUACAO — que e o que este teste vigia.
+      if (input.call === "ObterPedVenda") return { nNF: "500" };
       return defaultOmieListResponse(input);
     });
 
