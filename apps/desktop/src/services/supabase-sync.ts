@@ -4911,6 +4911,15 @@ interface PendingOmieBillingRow {
   operation_type: "invoice" | "internal";
   omie_sales_order_id: number | null;
   omie_service_order_id: number | null;
+  /**
+   * O que a operacao ja sabia antes da passada.
+   *
+   * `omie_billing_status` separa a pesagem que passou a constar faturada AGORA da que ja
+   * constava (a contagem devolvida a tela e "quantas viraram nota", nao "quantas foram
+   * conferidas"); `omie_invoice_number` e o que decide se ela ainda precisa ser perguntada.
+   */
+  omie_billing_status: string | null;
+  omie_invoice_number: string | null;
 }
 
 interface OmieOrderBillingState {
@@ -4940,6 +4949,27 @@ interface OmieOrderBillingState {
  * proprio OMIE —, e bumpar a versao republicaria a operacao inteira na nuvem a toa (na
  * primeira passada, o acervo inteiro de uma vez).
  */
+/**
+ * Quais pesagens ainda tem o que perguntar ao OMIE.
+ *
+ * Cancelada no OMIE nao volta: e estado final do documento la. Faturada tambem sairia da
+ * fila — mas so depois que o NUMERO DA NOTA chegar. A conferencia barata (pela listagem de
+ * pedidos) reconhece o faturamento pela etapa do kanban e nao traz o numero da NF-e junto;
+ * quando a pesagem saia da fila ao virar "faturada", o numero nunca mais era perguntado e a
+ * coluna "Nota fiscal" ficava com "-" para sempre — inclusive no relatorio que vai para o
+ * cliente, e inclusive depois de a atendente apertar "Conferir notas no OMIE", que usa esta
+ * mesma consulta.
+ *
+ * Enquanto o numero falta, a pesagem continua no rodizio (por `omie_billing_checked_at`,
+ * dentro da janela de data), e o edge gasta uma consulta dirigida por passada para busca-lo.
+ */
+const PENDING_OMIE_BILLING_SQL = `(
+  omie_billing_status IS NULL
+  OR omie_billing_status NOT IN ('billed', 'cancelled_in_omie')
+  OR (omie_billing_status = 'billed'
+      AND (omie_invoice_number IS NULL OR trim(omie_invoice_number) = ''))
+)`;
+
 export async function reconcileOmieBillingFromOmie(
   database: DesktopDatabase,
   identity: LocalDesktopIdentity,
@@ -4994,29 +5024,27 @@ export async function reconcileOmieBillingFromOmie(
   const pending = targeted
     ? (database
         .prepare(
-          `SELECT id, operation_type, omie_sales_order_id, omie_service_order_id
+          `SELECT id, operation_type, omie_sales_order_id, omie_service_order_id,
+                  omie_billing_status, omie_invoice_number
              FROM weighing_operations
             WHERE unit_id = ?
               AND id IN (${targeted.map(() => "?").join(", ")})
               AND deleted_at IS NULL
               AND status <> 'cancelled'
               AND (omie_sales_order_id IS NOT NULL OR omie_service_order_id IS NOT NULL)
-              AND (omie_billing_status IS NULL
-                   OR omie_billing_status NOT IN ('billed', 'cancelled_in_omie'))`
+              AND ${PENDING_OMIE_BILLING_SQL}`
         )
         .all(settings.unitId, ...targeted) as PendingOmieBillingRow[])
     : (database
         .prepare(
-          `SELECT id, operation_type, omie_sales_order_id, omie_service_order_id
+          `SELECT id, operation_type, omie_sales_order_id, omie_service_order_id,
+                  omie_billing_status, omie_invoice_number
          FROM weighing_operations
         WHERE unit_id = ?
           AND deleted_at IS NULL
           AND status <> 'cancelled'
           AND (omie_sales_order_id IS NOT NULL OR omie_service_order_id IS NOT NULL)
-          -- Ja faturada nao volta a ser perguntada; cancelada no OMIE tambem nao, que e
-          -- estado final do documento la.
-          AND (omie_billing_status IS NULL
-               OR omie_billing_status NOT IN ('billed', 'cancelled_in_omie'))
+          AND ${PENDING_OMIE_BILLING_SQL}
           AND date(created_at) >= date('now', ?)
         -- O movimento recente vem na frente do acervo, sempre. Depois disso vale o
         -- rodizio (quem nunca foi conferido, depois o conferido ha mais tempo), e o
@@ -5085,6 +5113,11 @@ export async function reconcileOmieBillingFromOmie(
   const errors: string[] = [];
   let billed = 0;
 
+  // Sem a guarda de "ainda nao faturada" que existia aqui: era ela que impedia a passada
+  // seguinte de gravar o NUMERO DA NOTA numa pesagem ja marcada como faturada — o numero
+  // chega DEPOIS do faturamento, pela consulta dirigida, e a linha nunca era atualizada.
+  // A contagem de "quantas viraram nota nesta passada" nao depende mais do UPDATE: ela sai
+  // do estado que a pesagem tinha ANTES da passada (`alreadyBilled`, abaixo).
   const markBilled = database.prepare(
     `UPDATE weighing_operations
         SET omie_billing_status = 'billed',
@@ -5094,8 +5127,12 @@ export async function reconcileOmieBillingFromOmie(
             omie_invoice_number = COALESCE(?, omie_invoice_number),
             omie_document_url = COALESCE(?, omie_document_url),
             omie_billing_checked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-      WHERE id = ?
-        AND (omie_billing_status IS NULL OR omie_billing_status <> 'billed')`
+      WHERE id = ?`
+  );
+
+  /** As que ja constavam faturadas antes desta passada — nao contam como novidade. */
+  const alreadyBilled = new Set(
+    pending.filter((row) => row.omie_billing_status === "billed").map((row) => row.id)
   );
   const markChecked = database.prepare(
     `UPDATE weighing_operations
@@ -5133,14 +5170,14 @@ export async function reconcileOmieBillingFromOmie(
       continue;
     }
 
-    const changes = markBilled.run(
+    markBilled.run(
       buildBilledMessage(result),
       result.orderNumber,
       result.invoiceNumber,
       result.documentUrl,
       result.operationId
-    ).changes;
-    if (changes > 0) billed++;
+    );
+    if (!alreadyBilled.has(result.operationId)) billed++;
   }
 
   return { checked: results.length, billed, errors };

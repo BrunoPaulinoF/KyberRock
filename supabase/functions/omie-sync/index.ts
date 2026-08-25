@@ -4190,6 +4190,21 @@ const ORDER_LISTING_MIN_BATCH = 4;
  */
 const CONSULT_FALLBACK_MAX = 25;
 
+/**
+ * Teto de chamadas numa passada para ir buscar o NUMERO DA NOTA do que ja consta faturado.
+ *
+ * A listagem reconhece o faturamento pela etapa do kanban, mas nao carrega a NF-e: o numero
+ * mora nos documentos fiscais do pedido (`/produtos/dfedocs/`), fora da listagem e fora do
+ * proprio pedido. Sem esta busca dirigida a pesagem virava "Faturada" com a coluna "Nota
+ * fiscal" vazia — e como ela saia da fila de conferencia ao virar faturada, ficava assim
+ * para sempre, inclusive no relatorio que vai para o cliente.
+ *
+ * Dez chamadas = ~30s da fila serializada, ao lado das 25 do caminho de recuperacao. O que
+ * nao couber volta na proxima passada: o desktop mantem na fila quem esta faturado sem
+ * numero, entao o acervo e drenado em passadas sucessivas em vez de tudo numa so.
+ */
+const INVOICE_NUMBER_CHASE_MAX = 10;
+
 /** O que a listagem sabe dizer sobre um documento, sem a consulta individual. */
 type ListedBillingState = {
   billed: boolean;
@@ -4255,6 +4270,50 @@ async function checkOmieOrdersBilling(
       if (consultBudget <= 0) continue;
       consultBudget--;
       results.push(await consultOmieOrderBilling(credentials, order));
+    }
+  }
+
+  return await fillMissingInvoiceNumbers(credentials, results);
+}
+
+/**
+ * Vai buscar o numero da nota do que voltou faturado SEM numero.
+ *
+ * E o caso normal, nao a excecao: quem fatura e uma pessoa dentro do OMIE, e a conferencia
+ * barata (a listagem) so enxerga a etapa do kanban. O numero da NF-e sai dos documentos
+ * fiscais do pedido — o mesmo `ObterPedVenda` que o faturamento pelo proprio app ja
+ * consultava — e o da NFS-e sai da consulta da ordem de servico.
+ *
+ * Uma chamada por pesagem, com teto por passada: o que nao couber continua na fila do
+ * desktop e volta na proxima. Falha aqui nao invalida a conferencia — a pesagem ja consta
+ * faturada, so segue sem o numero ate a proxima tentativa.
+ */
+async function fillMissingInvoiceNumbers(
+  credentials: OmieCredentials,
+  results: OrderBillingState[]
+): Promise<OrderBillingState[]> {
+  let budget = INVOICE_NUMBER_CHASE_MAX;
+
+  for (const result of results) {
+    if (budget <= 0) break;
+    if (!result.found || !result.billed || result.invoiceNumber !== null) continue;
+    if (result.omieOrderId <= 0) continue;
+    budget--;
+
+    try {
+      const document =
+        result.orderType === "sales"
+          ? await getSalesOrderDocument(credentials, result.omieOrderId)
+          : await consultServiceOrder(credentials, result.omieOrderId);
+      result.invoiceNumber = extractOmieInvoiceNumber(document);
+      result.documentUrl = result.documentUrl ?? extractDocumentUrl(document);
+    } catch (error) {
+      console.error(
+        `[omie] nao foi possivel obter o numero da nota do ${
+          result.orderType === "sales" ? "pedido" : "OS"
+        } ${result.omieOrderId}`,
+        error
+      );
     }
   }
 

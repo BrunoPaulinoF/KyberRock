@@ -2313,6 +2313,34 @@ export class DesktopRuntime {
   }
 
   /**
+   * "Conferir notas no OMIE" do relatorio por cliente: pergunta AGORA o numero da nota das
+   * cargas do cliente no periodo.
+   *
+   * A atendente que vai mandar o relatorio para o cliente nao pode esperar a vez do rodizio
+   * — e era exatamente isso que ela via: o relatorio saindo com "-" na coluna Nota fiscal
+   * numa carga cuja nota ja existia no OMIE havia dias.
+   *
+   * Manda TODAS as operacoes do periodo e deixa a reconciliacao escolher: e ela que sabe
+   * quais ainda tem documento a perguntar (pedido de venda ou ordem de servico) e quais ja
+   * estao resolvidas. Filtrar aqui duplicaria essa regra em dois lugares — e a versao daqui
+   * nem enxerga a ordem de servico da venda interna.
+   */
+  async reconcileCustomerReportNotes(
+    customerId: string,
+    startDate: string,
+    endDate: string
+  ): Promise<{ checked: number; billed: number; errors: string[] }> {
+    this.assertDesktopAccess();
+    const report = this.getCustomerReport(customerId, startDate, endDate);
+    const operationIds = report.operations.map((operation) => operation.id);
+    if (operationIds.length === 0) return { checked: 0, billed: 0, errors: [] };
+    const result = await reconcileOmieBillingFromOmie(this.database, this.ensureIdentity(), {
+      operationIds
+    });
+    return { checked: result.checked, billed: result.billed, errors: result.errors };
+  }
+
+  /**
    * Documentos do relatorio por cliente prontos para gravar em disco. O main so escolhe
    * o destino e escreve: PDF passa pelo `renderHtmlToPdf` (HTML A4) e Excel e gravado
    * direto (HTML de tabelas com extensao `.xls`).

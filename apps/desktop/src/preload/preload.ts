@@ -127,6 +127,8 @@ const desktopApi = {
     periodLabel?: string
   ) =>
     ipcRenderer.invoke("desktop:get-customer-report", customerId, startDate, endDate, periodLabel),
+  reconcileCustomerReportNotes: (customerId: string, startDate: string, endDate: string) =>
+    ipcRenderer.invoke("desktop:reconcile-customer-report-notes", customerId, startDate, endDate),
   exportCustomerReport: (
     customerId: string,
     startDate: string,

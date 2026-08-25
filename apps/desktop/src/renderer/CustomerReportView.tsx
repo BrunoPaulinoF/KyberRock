@@ -179,6 +179,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
   const [report, setReport] = useState<CustomerReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [checkingNotes, setCheckingNotes] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [variants, setVariants] = useState<Record<CustomerReportVariant, boolean>>({
@@ -289,6 +290,42 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
   );
   useOmieInvoiceNumbers(desktopApi, invoiceNumberRows, loadReport);
 
+  /**
+   * Puxa do OMIE o numero da nota das cargas do cliente no periodo.
+   *
+   * So LE — nao fatura nada. Existe porque a conferencia automatica roda por rodizio, e
+   * quem vai mandar o relatorio ao cliente AGORA nao pode esperar a vez dela: sem isto a
+   * coluna "Nota fiscal" sai com "-" numa carga cuja nota ja existe no OMIE.
+   */
+  async function handleCheckNotes(): Promise<void> {
+    if (!desktopApi || !customerId || allCustomers) return;
+    setExportMessage(null);
+    if (!navigator.onLine) {
+      setExportMessage("Conferir as notas exige internet conectada para falar com o OMIE.");
+      return;
+    }
+    setCheckingNotes(true);
+    try {
+      const result = await desktopApi.reconcileCustomerReportNotes(
+        customerId,
+        range.start,
+        range.end
+      );
+      await loadReport();
+      setExportMessage(
+        result.checked === 0
+          ? "Todas as cargas do periodo ja estavam com a nota conferida."
+          : result.billed > 0
+            ? `${result.billed} carga(s) passaram a constar faturadas. ${result.checked} conferida(s) no OMIE.`
+            : `${result.checked} carga(s) conferida(s) no OMIE.`
+      );
+    } catch (err) {
+      setExportMessage(err instanceof Error ? err.message : "Falha ao conferir as notas no OMIE.");
+    } finally {
+      setCheckingNotes(false);
+    }
+  }
+
   async function handleExport(): Promise<void> {
     if (!desktopApi || !customerId) return;
     // O resumo de todos os clientes e uma lista unica: nao ha modelo simplificado/completo
@@ -350,21 +387,32 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
             placement="right"
           />
         </div>
-        <IconActionButton
-          icon="download"
-          label={
-            exporting
-              ? "Gerando..."
-              : fileCount > 1
-                ? `Gerar ${fileCount} arquivos`
-                : "Gerar relatorio"
-          }
-          tip="Gera os arquivos escolhidos. Com mais de um arquivo, o aplicativo pede a pasta de destino uma unica vez."
-          tone="primary"
-          placement="bottom"
-          disabled={exporting || !customerId || loading}
-          onClick={() => void handleExport()}
-        />
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <IconActionButton
+            icon="retry"
+            label={checkingNotes ? "Conferindo..." : "Conferir notas no OMIE"}
+            tip="Pergunta ao OMIE o numero da nota das cargas do cliente no periodo e grava cada um na pesagem, para o relatorio sair com a NF-e/NFS-e preenchida. So consulta: nao fatura e nao emite nada."
+            tone="neutral"
+            placement="bottom"
+            disabled={checkingNotes || exporting || loading || !customerId || allCustomers}
+            onClick={() => void handleCheckNotes()}
+          />
+          <IconActionButton
+            icon="download"
+            label={
+              exporting
+                ? "Gerando..."
+                : fileCount > 1
+                  ? `Gerar ${fileCount} arquivos`
+                  : "Gerar relatorio"
+            }
+            tip="Gera os arquivos escolhidos. Com mais de um arquivo, o aplicativo pede a pasta de destino uma unica vez."
+            tone="primary"
+            placement="bottom"
+            disabled={exporting || !customerId || loading}
+            onClick={() => void handleExport()}
+          />
+        </div>
       </header>
 
       <div style={styles.card}>
