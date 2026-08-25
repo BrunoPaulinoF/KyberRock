@@ -30,17 +30,21 @@ export interface OmieInvoiceNumberRow {
 /**
  * Quantas cargas cabem em UMA pergunta.
  *
- * O numero da nota nao vem de graca com a conferencia: a listagem do OMIE reconhece o
- * faturamento pela etapa do kanban e nao carrega a NF-e, entao cada numero custa uma
- * consulta dirigida ao documento — ~3s na fila serializada. O edge tem teto para isso, e
- * mandar 300 ids numa pergunta so nao fazia 300 numeros chegarem: chegavam os do teto, e
- * os outros 290 voltavam marcados como "ja perguntados" sem nunca terem sido consultados.
- * Era assim que um relatorio de 326 cargas ganhava dez numeros e parava.
+ * Era vinte porque cada numero custava uma consulta dirigida ao documento (~3s na fila
+ * serializada) e o edge tinha teto para isso: mandar 300 ids numa pergunta so devolvia os
+ * do teto e marcava os outros 290 como "ja perguntados" sem nunca te-los consultado. Era
+ * assim que um relatorio de 326 cargas ganhava dez numeros e parava.
  *
- * Por isso a leva e do TAMANHO do teto do edge: tudo que vai numa pergunta e de fato
- * consultado, e a leva seguinte sai quando esta volta (ver `useOmieInvoiceNumbers`).
+ * Agora o edge procura a nota na LISTAGEM DE NOTAS do OMIE, e ali uma chamada devolve cem
+ * notas ja apontando para o pedido que as gerou. O custo deixou de ser por carga e passou
+ * a ser por leva — e uma leva de vinte gastaria a mesma varredura para trazer um quinto do
+ * proveito. Cem e o tamanho de uma pagina da listagem: a leva inteira cabe no que uma
+ * chamada ja traz, e o fechamento de uma quinzena se preenche em tres levas em vez de
+ * dezessete.
+ *
+ * A leva seguinte sai quando esta volta (ver `useOmieInvoiceNumbers`).
  */
-export const OMIE_INVOICE_NUMBER_ASK_CHUNK = 20;
+export const OMIE_INVOICE_NUMBER_ASK_CHUNK = 100;
 
 /**
  * Teto de cargas que UMA tela pergunta enquanto esta aberta.
@@ -56,9 +60,11 @@ export const OMIE_INVOICE_NUMBER_ASK_LIMIT = 300;
  * Quantas levas o botao "Conferir notas no OMIE" encadeia numa apertada so.
  *
  * O botao existe para quem vai MANDAR o relatorio agora, e o operador fica esperando ele
- * terminar: cinco levas de vinte sao ~100 cargas, e cada consulta e uma chamada de ~3s na
- * fila serializada do OMIE — a mesma que envia os fechamentos. Mais que isso viraria um
- * botao que fica minutos girando e uma fila de faturamento parada atras dele.
+ * terminar. Cinco levas de cem cobrem 500 cargas — um periodo inteiro —, e cada leva custa
+ * a varredura da listagem de notas, nao uma chamada por carga. O laco para sozinho assim
+ * que nao sobra carga sem numero, entao na pratica quase sempre acaba antes da quinta.
+ * Mais levas que isso so serviriam para deixar o botao girando com a fila do OMIE — a
+ * mesma que envia os fechamentos — ocupada atras dele.
  *
  * O que nao couber nao se perde: a propria tela continua perguntando sozinha enquanto
  * estiver aberta, a conferencia de fundo cobre o resto, e apertar de novo continua de onde

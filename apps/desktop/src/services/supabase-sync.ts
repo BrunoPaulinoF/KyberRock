@@ -4943,6 +4943,15 @@ interface PendingOmieBillingRow {
    */
   omie_billing_status: string | null;
   omie_invoice_number: string | null;
+  /**
+   * O numero visivel do pedido/OS, que a tela ja mostra em "Pedido/OS OMIE".
+   *
+   * Vai junto na pergunta porque e a segunda chave pela qual a nota e reencontrada no
+   * OMIE: a listagem de notas casa pelo codigo interno do pedido, mas devolve tambem o
+   * numero impresso — e ha registro que so traz esse. Mandar o que a balanca ja sabe nao
+   * custa chamada nenhuma.
+   */
+  omie_order_number: string | null;
 }
 
 interface OmieOrderBillingState {
@@ -5063,7 +5072,7 @@ export async function reconcileOmieBillingFromOmie(
     ? (database
         .prepare(
           `SELECT id, operation_type, omie_sales_order_id, omie_service_order_id,
-                  omie_billing_status, omie_invoice_number
+                  omie_billing_status, omie_invoice_number, omie_order_number
              FROM weighing_operations
             WHERE unit_id = ?
               AND id IN (${targeted.map(() => "?").join(", ")})
@@ -5076,7 +5085,7 @@ export async function reconcileOmieBillingFromOmie(
     : (database
         .prepare(
           `SELECT id, operation_type, omie_sales_order_id, omie_service_order_id,
-                  omie_billing_status, omie_invoice_number
+                  omie_billing_status, omie_invoice_number, omie_order_number
          FROM weighing_operations
         WHERE unit_id = ?
           AND deleted_at IS NULL
@@ -5108,11 +5117,12 @@ export async function reconcileOmieBillingFromOmie(
     .map((row) => {
       // A interna vira ordem de servico; a com nota, pedido de venda. Quando as duas
       // existem (reenvio que mudou o tipo), o tipo da operacao decide.
+      const orderNumber = (row.omie_order_number ?? "").trim() || null;
       const preferred =
         row.operation_type === "invoice"
           ? { orderType: "sales" as const, omieOrderId: row.omie_sales_order_id ?? 0 }
           : { orderType: "service" as const, omieOrderId: row.omie_service_order_id ?? 0 };
-      if (preferred.omieOrderId > 0) return { operationId: row.id, ...preferred };
+      if (preferred.omieOrderId > 0) return { operationId: row.id, orderNumber, ...preferred };
 
       // O tipo da operacao nao bate com o documento que ela TEM no OMIE — acontece quando
       // a operacao foi convertida (interna virou com nota, ou o contrario) depois de o
@@ -5124,7 +5134,7 @@ export async function reconcileOmieBillingFromOmie(
         row.operation_type === "invoice"
           ? { orderType: "service" as const, omieOrderId: row.omie_service_order_id ?? 0 }
           : { orderType: "sales" as const, omieOrderId: row.omie_sales_order_id ?? 0 };
-      return { operationId: row.id, ...fallback };
+      return { operationId: row.id, orderNumber, ...fallback };
     })
     .filter((order) => order.omieOrderId > 0);
 

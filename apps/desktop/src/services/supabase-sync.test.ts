@@ -2996,7 +2996,14 @@ describe("supabase sync", () => {
         body: expect.objectContaining({
           action: "check_order_billing",
           payload: {
-            orders: [{ operationId: "op-faturada", orderType: "sales", omieOrderId: 11489137846 }]
+            orders: [
+              {
+                operationId: "op-faturada",
+                orderNumber: null,
+                orderType: "sales",
+                omieOrderId: 11489137846
+              }
+            ]
           }
         })
       });
@@ -3333,7 +3340,12 @@ describe("supabase sync", () => {
         {
           body: {
             payload: {
-              orders: Array<{ operationId: string; orderType: string; omieOrderId: number }>;
+              orders: Array<{
+                operationId: string;
+                orderNumber: string | null;
+                orderType: string;
+                omieOrderId: number;
+              }>;
             };
           };
         }
@@ -3341,8 +3353,13 @@ describe("supabase sync", () => {
       // A OS entra junto do pedido: a nota da venda interna tambem nasce no OMIE, e sem
       // perguntar por ela a coluna "Nota fiscal" do relatorio sai vazia. E so as da tela.
       expect(options.body.payload.orders).toEqual([
-        { operationId: "op-os", orderType: "service", omieOrderId: 11493172000 },
-        { operationId: "op-pedido", orderType: "sales", omieOrderId: 11493187126 }
+        { operationId: "op-os", orderNumber: null, orderType: "service", omieOrderId: 11493172000 },
+        {
+          operationId: "op-pedido",
+          orderNumber: null,
+          orderType: "sales",
+          omieOrderId: 11493187126
+        }
       ]);
     } finally {
       database.close();
@@ -3528,7 +3545,7 @@ describe("supabase sync", () => {
         payload: { orders: Array<{ orderType: string; omieOrderId: number }> };
       };
       expect(body.payload.orders).toEqual([
-        { operationId: "op-convertida", orderType: "service", omieOrderId: 7007 }
+        { operationId: "op-convertida", orderNumber: null, orderType: "service", omieOrderId: 7007 }
       ]);
       expect(result).toMatchObject({ checked: 1, invoiceNumbers: 1 });
       expect(
@@ -3629,7 +3646,11 @@ describe("supabase sync", () => {
       createCloudSettings(database);
       insertSentOperation(database, { id: "op-sem-numero", salesOrderId: 5003 });
       database
-        .prepare("UPDATE weighing_operations SET omie_billing_status = 'billed' WHERE id = ?")
+        .prepare(
+          `UPDATE weighing_operations
+              SET omie_billing_status = 'billed', omie_order_number = '452'
+            WHERE id = ?`
+        )
         .run("op-sem-numero");
       invokeMock.mockResolvedValue({ error: null, data: { ok: true, results: [] } });
 
@@ -3641,8 +3662,11 @@ describe("supabase sync", () => {
         string,
         { body: { payload: { orders: Array<Record<string, unknown>> } } }
       ];
+      // O numero do pedido vai junto: a listagem de notas do OMIE reencontra a nota pelo
+      // codigo interno do pedido, mas ha registro que so traz o numero impresso — e este a
+      // balanca ja tem guardado, sem custar chamada nenhuma.
       expect(options.body.payload.orders).toEqual([
-        { operationId: "op-sem-numero", orderType: "sales", omieOrderId: 5003 }
+        { operationId: "op-sem-numero", orderNumber: "452", orderType: "sales", omieOrderId: 5003 }
       ]);
     } finally {
       database.close();
