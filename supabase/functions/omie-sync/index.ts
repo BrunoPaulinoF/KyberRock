@@ -4065,6 +4065,12 @@ function isOmieOrderBilled(consult: unknown): boolean {
  */
 const OMIE_INVOICE_NUMBER_KEYS = [
   // NFS-e (ordem de servico / venda interna)
+  //
+  // `nNfse` e o nome que o `ConsultarOS` de fato usa, dentro de
+  // `InformacoesAdicionais.DetalhesNfse.ListaRpsNfse`. Ele faltava aqui, e a busca por
+  // chave e sensivel a maiuscula: nenhum dos vizinhos abaixo casava com ele, entao a
+  // venda interna que EMITE nota de servico ficava sem numero do mesmo jeito.
+  "nNfse",
   "numero_nfse",
   "cNumNFSe",
   "nNumNFSe",
@@ -4261,6 +4267,15 @@ type CheckOrderBillingPayload = {
     operationId: string;
     orderType: "sales" | "service";
     omieOrderId: number;
+    /**
+     * Numero visivel do pedido/OS que o desktop ja tem guardado.
+     *
+     * A listagem de notas casa a nota com o pedido pelo codigo interno, mas nem todo
+     * registro do OMIE devolve esse codigo — alguns so trazem o numero impresso no
+     * documento. Mandar o que a balanca ja sabe da a segunda chave de graca, sem chamada
+     * nenhuma: e o mesmo numero que a coluna "Pedido/OS OMIE" ja mostra na tela.
+     */
+    orderNumber?: string | null;
   }>;
   /**
    * Quantas consultas dirigidas esta passada pode gastar atras do NUMERO da nota.
@@ -4361,6 +4376,22 @@ function resolveInvoiceNumberBudget(requested: number | undefined): number {
   return Math.min(Math.floor(requested), INVOICE_NUMBER_CHASE_CEILING);
 }
 
+/**
+ * Registros por pagina na listagem de notas fiscais (o maximo que o OMIE aceita).
+ *
+ * Uma chamada traz ate cem notas JA com o numero e com o pedido de onde cada uma saiu —
+ * e o que troca "uma chamada por carga" por "uma chamada por cem notas".
+ */
+const INVOICE_LISTING_PAGE_SIZE = 100;
+
+/**
+ * Teto de paginas da listagem de notas numa passada. Oito paginas = 800 notas = ~24s da
+ * fila serializada, e cobrem com folga a quinzena de uma pedreira movimentada. A varredura
+ * quase nunca chega la: ela para assim que acha todas as que procura, ou assim que passa
+ * do pedido mais antigo da leva.
+ */
+const INVOICE_LISTING_MAX_PAGES = 8;
+
 /** O que a listagem sabe dizer sobre um documento, sem a consulta individual. */
 type ListedBillingState = {
   billed: boolean;
@@ -4442,7 +4473,8 @@ async function checkOmieOrdersBilling(
     credentials,
     results,
     resolveInvoiceNumberBudget(payload?.invoiceNumberBudget),
-    alreadyConsulted
+    alreadyConsulted,
+    new Map(orders.map((order) => [order.operationId, order.orderNumber ?? null]))
   );
 }
 
@@ -4450,21 +4482,59 @@ async function checkOmieOrdersBilling(
  * Vai buscar o numero da nota do que voltou faturado SEM numero.
  *
  * E o caso normal, nao a excecao: quem fatura e uma pessoa dentro do OMIE, e a conferencia
- * barata (a listagem) so enxerga a etapa do kanban. O numero da NF-e sai dos documentos
- * fiscais do pedido — o mesmo `ObterPedVenda` que o faturamento pelo proprio app ja
- * consultava — e o da NFS-e sai da consulta da ordem de servico.
+ * barata (a listagem de pedidos) so enxerga a etapa do kanban.
  *
- * Uma chamada por pesagem, com teto por passada: o que nao couber continua na fila do
- * desktop e volta na proxima. Falha aqui nao invalida a conferencia — a pesagem ja consta
- * faturada, so segue sem o numero ate a proxima tentativa.
+ * Sao duas passadas, e a ordem entre elas e a correcao:
+ *
+ *  1. **A listagem de NOTAS** (`listOmieInvoicesByOrder`), uma chamada por cem notas. E o
+ *     lugar onde a nota emitida de fato esta, e ela ja volta apontando para o pedido que a
+ *     gerou. Antes esta passada nao existia, e era por isso que a coluna "Nota fiscal"
+ *     ficava em "Sem nota": os dois caminhos abaixo perguntam pelo PEDIDO, e o pedido nao
+ *     guarda o numero da nota.
+ *  2. **A consulta dirigida**, uma chamada por carga e com teto, so para o que a listagem
+ *     nao resolveu. Continua sendo o caminho da NFS-e — a nota de servico volta na propria
+ *     `ConsultarOS` — e a rede de seguranca da venda com nota.
+ *
+ * O que nao couber no teto continua na fila do desktop e volta na proxima passada. Falha
+ * aqui nao invalida a conferencia: a pesagem ja consta faturada, so segue sem o numero.
  */
 async function fillMissingInvoiceNumbers(
   credentials: OmieCredentials,
   results: OrderBillingState[],
   maxChases: number = INVOICE_NUMBER_CHASE_MAX,
   /** Ids que ja passaram pela consulta individual — ver `alreadyConsulted`. */
-  alreadyConsulted: ReadonlySet<string> = new Set()
+  alreadyConsulted: ReadonlySet<string> = new Set(),
+  /** Numero visivel do pedido que o desktop mandou, por operacao. */
+  orderNumbers: ReadonlyMap<string, string | null> = new Map()
 ): Promise<OrderBillingState[]> {
+  /** O pedido desta carga, do jeito que a listagem de notas o reencontra. */
+  const lookupKey = (result: OrderBillingState): InvoiceLookupKey => ({
+    omieOrderId: result.omieOrderId,
+    // O numero que a propria conferencia acabou de ler vem na frente do que o desktop
+    // guardava: se o pedido foi renumerado no OMIE, o de la e o certo.
+    orderNumber: result.orderNumber ?? orderNumbers.get(result.operationId) ?? null
+  });
+
+  // 1) A listagem de notas, para as vendas com nota. Uma chamada resolve ate cem cargas.
+  const salesMissing = results.filter(
+    (result) =>
+      result.orderType === "sales" &&
+      result.found &&
+      result.billed &&
+      result.invoiceNumber === null &&
+      result.omieOrderId > 0
+  );
+  if (salesMissing.length > 0) {
+    const invoices = await listOmieInvoicesByOrder(credentials, salesMissing.map(lookupKey));
+    for (const result of salesMissing) {
+      const listed = resolveListedInvoice(invoices, lookupKey(result));
+      if (listed === null) continue;
+      result.invoiceNumber = listed.invoiceNumber;
+      result.documentUrl = result.documentUrl ?? listed.documentUrl;
+    }
+  }
+
+  // 2) A consulta dirigida, so no que sobrou.
   let budget = maxChases;
 
   for (const result of results) {
@@ -4489,14 +4559,12 @@ async function fillMissingInvoiceNumbers(
       );
     }
 
-    // Segunda tentativa da venda com nota: o PROPRIO pedido.
+    // Ultima tentativa da venda com nota: o PROPRIO pedido.
     //
-    // O numero da NF-e aparece em dois lugares do OMIE, e nem sempre nos dois ao mesmo
-    // tempo: nos documentos fiscais do pedido (`/produtos/dfedocs/`) e nas informacoes
-    // adicionais do pedido (`ConsultarPedido`) — este ultimo e o campo que o proprio
-    // faturamento pelo app ja lia. Parar na primeira consulta deixava a coluna "Nota
-    // fiscal" vazia justamente na venda faturada por uma pessoa dentro do OMIE, que e o
-    // caso normal. Custa uma chamada a mais, e so para quem voltou faturado SEM numero.
+    // Depois da listagem de notas, isto e rede de seguranca — para a instalacao cujo
+    // modulo fiscal a listagem nao alcanca, e para o pedido cuja nota o OMIE guarde nas
+    // informacoes adicionais. Custa uma chamada a mais, e so para quem chegou ate aqui
+    // ainda sem numero.
     if (
       result.invoiceNumber === null &&
       result.orderType === "sales" &&
@@ -4631,7 +4699,12 @@ async function listOmieOrderBillingStates(
     // ignorado — e ai a pagina 1 traz os documentos mais VELHOS do cadastro, longe do
     // movimento de hoje. Quando isso acontece a varredura segue pela outra ponta: da ultima
     // pagina para tras, que e onde a ordem crescente guarda os fechamentos recentes.
-    if (visited === 0 && isOrderListingAscending(page.records, orderType)) {
+    if (
+      visited === 0 &&
+      isListingAscending(page.records, (record) =>
+        orderType === "sales" ? extractSalesOrderId(record) : extractServiceOrderId(record)
+      )
+    ) {
       // Sem `total_de_paginas` nao da para achar essa ponta: a listagem nao serve, e a
       // conferencia cai na consulta individual — exata, so mais cara por documento.
       if (page.totalPages === null || page.totalPages <= 1) break;
@@ -4716,12 +4789,18 @@ function extractOrderListTotalPages(response: unknown): number | null {
  * So responde "sim" com prova: precisa de um par em ordem crescente e de nenhum par
  * decrescente. Pagina de um registro so — ou de registros cujo codigo nao se le — nao
  * prova nada, e ai a varredura segue reto, como sempre seguiu.
+ *
+ * Serve as duas listagens que a conferencia varre — a de pedidos/OS e a de notas —, que
+ * so diferem em de onde se le o codigo de cada registro.
  */
-function isOrderListingAscending(records: unknown[], orderType: "sales" | "service"): boolean {
+function isListingAscending(
+  records: unknown[],
+  getId: (record: unknown) => number | null
+): boolean {
   let previous: number | null = null;
   let sawIncrease = false;
   for (const record of records) {
-    const id = orderType === "sales" ? extractSalesOrderId(record) : extractServiceOrderId(record);
+    const id = getId(record);
     if (id === null) continue;
     if (previous !== null) {
       if (id < previous) return false;
@@ -4803,6 +4882,221 @@ function extractSalesOrderId(value: unknown): number | null {
     }
   }
   return null;
+}
+
+/** A nota que a listagem achou para UM pedido. */
+type ListedInvoice = {
+  invoiceNumber: string;
+  documentUrl: string | null;
+};
+
+/** As notas emitidas, indexadas pelos dois jeitos de reencontrar o pedido de cada uma. */
+type InvoiceIndex = {
+  /** Pelo codigo interno do pedido (`compl.nIdPedido`) — a chave exata. */
+  byOrderId: Map<number, ListedInvoice>;
+  /** Pelo numero visivel do pedido (`pedido.cNumPedido`) — a chave de reserva. */
+  byOrderNumber: Map<string, ListedInvoice>;
+};
+
+/** Como o pedido de uma operacao e procurado na listagem de notas. */
+type InvoiceLookupKey = {
+  omieOrderId: number;
+  orderNumber: string | null;
+};
+
+/**
+ * O numero do pedido reduzido a uma forma comparavel.
+ *
+ * O mesmo pedido volta como "452" de um modulo do OMIE e como "0452" de outro — e o
+ * fechamento nao pode deixar de achar a nota por causa de um zero a esquerda.
+ */
+function normalizeOrderNumber(value: string | null | undefined): string | null {
+  const trimmed = (value ?? "").trim();
+  if (trimmed.length === 0 || /^0+$/.test(trimmed)) return null;
+  const withoutLeadingZeros = trimmed.replace(/^0+/, "");
+  return (withoutLeadingZeros.length > 0 ? withoutLeadingZeros : trimmed).toUpperCase();
+}
+
+/** O codigo interno do pedido de onde a nota saiu (`compl.nIdPedido`). */
+function extractInvoiceOrderId(record: unknown): number | null {
+  return toIntOrNull(findStringByKey(record, "nIdPedido"));
+}
+
+/**
+ * O numero visivel do pedido de onde a nota saiu. O nome muda entre os modulos do OMIE:
+ * a listagem de notas usa `cNumPedido`, os documentos do pedido usam `cNumPed`.
+ */
+function extractInvoiceOrderNumber(record: unknown): string | null {
+  return (
+    extractOrderNumber(record, "cNumPedido") ??
+    extractOrderNumber(record, "cNumPed") ??
+    extractOrderNumber(record, "numero_pedido")
+  );
+}
+
+/** A nota desta operacao dentro do indice: primeiro pelo codigo, depois pelo numero. */
+function resolveListedInvoice(index: InvoiceIndex, key: InvoiceLookupKey): ListedInvoice | null {
+  if (key.omieOrderId > 0) {
+    const byId = index.byOrderId.get(key.omieOrderId);
+    if (byId) return byId;
+  }
+  const number = normalizeOrderNumber(key.orderNumber);
+  if (number !== null) {
+    const byNumber = index.byOrderNumber.get(number);
+    if (byNumber) return byNumber;
+  }
+  return null;
+}
+
+/**
+ * As NOTAS emitidas, procuradas pelo pedido que as gerou.
+ *
+ * Este e o caminho que faltava. O numero da NF-e nao esta no pedido de venda: nem o
+ * `ConsultarPedido` nem o `ObterPedVenda` dos documentos do pedido (`/produtos/dfedocs/`,
+ * que so devolve `cNumPed` e o PDF do proprio pedido) carregam a nota emitida. A nota mora
+ * no seu proprio cadastro, em `/produtos/nfconsultar/`, e e de la que ela volta ja
+ * apontando para o pedido de origem: `compl.nIdPedido` e o codigo interno que a balanca
+ * guarda em `omie_sales_order_id`, e `pedido.cNumPedido` e o numero que a coluna
+ * "Pedido/OS OMIE" ja mostra na tela. Por isso a coluna "Nota fiscal" saia "Sem nota" em
+ * carga faturada ha semanas: ninguem estava perguntando onde a nota de fato esta.
+ *
+ * E barato de um jeito que a consulta dirigida nunca foi: uma chamada traz cem notas, com
+ * numero e pedido, entao o fechamento inteiro de uma quinzena se resolve em uma mao cheia
+ * de chamadas em vez de duas por carga.
+ *
+ * A varredura anda do documento mais novo para o mais velho e para em quatro situacoes:
+ * achou todas, passou do pedido mais antigo procurado, acabou a listagem, ou bateu no teto
+ * de paginas. Indice vazio nao e erro — significa "a listagem nao resolveu", e quem chama
+ * cai na consulta dirigida de sempre.
+ */
+async function listOmieInvoicesByOrder(
+  credentials: OmieCredentials,
+  wanted: readonly InvoiceLookupKey[]
+): Promise<InvoiceIndex> {
+  const index: InvoiceIndex = { byOrderId: new Map(), byOrderNumber: new Map() };
+
+  const wantedIds = new Set(wanted.map((key) => key.omieOrderId).filter((id) => id > 0));
+  const wantedNumbers = new Set(
+    wanted
+      .map((key) => normalizeOrderNumber(key.orderNumber))
+      .filter((number): number is string => number !== null)
+  );
+  if (wantedIds.size === 0 && wantedNumbers.size === 0) return index;
+  // Sem codigo nenhum para comparar, a varredura nao tem onde parar por idade: o teto de
+  // paginas e quem a segura.
+  const smallestWantedId = wantedIds.size > 0 ? Math.min(...wantedIds) : 0;
+
+  // Mesma mecanica da listagem de pedidos: comeca pela ponta nova e confere na primeira
+  // pagina se o OMIE de fato respondeu em ordem decrescente (ver `listOmieOrderBillingStates`).
+  let nextPage = 1;
+  let step = 1;
+
+  for (let visited = 0; visited < INVOICE_LISTING_MAX_PAGES; visited++) {
+    const pageNumber = nextPage;
+    let page: OrderListingPage;
+    try {
+      page = await listOmieInvoicesPage(credentials, pageNumber);
+    } catch (error) {
+      // Listagem indisponivel (modulo fiscal sem acesso, campo recusado, instabilidade):
+      // nao derruba a conferencia, so a devolve para a consulta dirigida.
+      console.error(
+        `[omie] listagem de notas fiscais falhou na pagina ${pageNumber}; ` +
+          "buscando o numero da nota por consulta dirigida",
+        error
+      );
+      break;
+    }
+    if (page.records.length === 0) break;
+
+    let pageSmallestOrderId = Number.POSITIVE_INFINITY;
+    for (const record of page.records) {
+      const orderId = extractInvoiceOrderId(record);
+      if (orderId !== null && orderId < pageSmallestOrderId) pageSmallestOrderId = orderId;
+
+      const orderNumber = normalizeOrderNumber(extractInvoiceOrderNumber(record));
+      const matchesId = orderId !== null && wantedIds.has(orderId);
+      const matchesNumber = orderNumber !== null && wantedNumbers.has(orderNumber);
+      if (!matchesId && !matchesNumber) continue;
+
+      const invoiceNumber = extractOmieInvoiceNumber(record);
+      if (invoiceNumber === null) continue;
+      const listed: ListedInvoice = {
+        invoiceNumber,
+        documentUrl: extractDocumentUrl(record)
+      };
+      if (matchesId && orderId !== null) index.byOrderId.set(orderId, listed);
+      if (matchesNumber && orderNumber !== null) index.byOrderNumber.set(orderNumber, listed);
+    }
+
+    if (wanted.every((key) => resolveListedInvoice(index, key) !== null)) return index;
+
+    // A virada, pelo mesmo motivo da listagem de pedidos: a ordem pedida pode ser aceita e
+    // ignorada, e ai a pagina 1 traz o cadastro mais VELHO. Quando isso acontece a
+    // varredura segue pela outra ponta, da ultima pagina para tras.
+    if (visited === 0 && isListingAscending(page.records, extractInvoiceOrderId)) {
+      if (page.totalPages === null || page.totalPages <= 1) break;
+      nextPage = page.totalPages;
+      step = -1;
+      continue;
+    }
+
+    // Passou do pedido mais antigo procurado: dali para tras so tem nota de coisa ainda
+    // mais velha.
+    if (pageSmallestOrderId <= smallestWantedId) break;
+
+    nextPage = pageNumber + step;
+    if (nextPage < (step === -1 ? 2 : 1)) break;
+  }
+
+  return index;
+}
+
+/**
+ * Uma pagina da listagem de notas fiscais.
+ *
+ * Sem filtro de entrada/saida de proposito: a nota casa com a carga pelo CODIGO do pedido,
+ * que e exato, e um filtro a mais so acrescentaria um jeito de a chamada voltar vazia.
+ */
+async function listOmieInvoicesPage(
+  credentials: OmieCredentials,
+  page: number
+): Promise<OrderListingPage> {
+  const response = await callOmie<unknown, unknown>(
+    credentials,
+    "/produtos/nfconsultar/",
+    "ListarNF",
+    {
+      pagina: page,
+      registros_por_pagina: INVOICE_LISTING_PAGE_SIZE,
+      apenas_importado_api: "N",
+      ordenar_por: "CODIGO",
+      ordem_decrescente: "S"
+    }
+  );
+  return {
+    records: extractInvoiceListRecords(response),
+    totalPages: extractOrderListTotalPages(response)
+  };
+}
+
+/**
+ * As notas de uma resposta de listagem. `nfCadastro` e o nome documentado; depois dele
+ * vale o primeiro array de objetos da resposta, porque os outros campos do envelope
+ * (pagina, total_de_paginas, registros) sao numeros.
+ */
+function extractInvoiceListRecords(response: unknown): unknown[] {
+  if (!response || typeof response !== "object") return [];
+  const record = response as Record<string, unknown>;
+  for (const key of ["nfCadastro", "nf_cadastro", "nfsCadastro"]) {
+    const value = record[key];
+    if (Array.isArray(value)) return value;
+  }
+  for (const value of Object.values(record)) {
+    if (Array.isArray(value) && value.some((item) => item && typeof item === "object")) {
+      return value;
+    }
+  }
+  return [];
 }
 
 async function getSalesOrderDocument(

@@ -4755,3 +4755,315 @@ Deno.test(
     );
   }
 );
+
+// ---------------------------------------------------------------------------------------
+// A listagem de NOTAS. O numero da NF-e nao mora no pedido de venda — nem o
+// `ConsultarPedido` nem o `ObterPedVenda` dos documentos do pedido o carregam —, e era por
+// isso que a coluna "Nota fiscal" saia "Sem nota" em carga faturada ha semanas. Ele mora no
+// cadastro da propria nota, que ja volta apontando para o pedido que a gerou.
+// ---------------------------------------------------------------------------------------
+
+/** Um registro da listagem de notas, do jeito que o OMIE o devolve. */
+function invoiceListingRecord(
+  nIdPedido: number,
+  cNumPedido: string,
+  nNF: string,
+  extra: Record<string, unknown> = {}
+) {
+  return {
+    ide: { nNF, serie: "1" },
+    compl: { nIdNF: nIdPedido + 500000, nIdPedido },
+    pedido: { cNumPedido },
+    ...extra
+  };
+}
+
+Deno.test(
+  "check_order_billing pega o numero da nota pelo pedido, na listagem de notas",
+  async () => {
+    const { ids, fixtures } = await billingDependencies("nf-listagem");
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarPedidos") {
+        return {
+          pagina: 1,
+          total_de_paginas: 1,
+          pedido_venda_produto: [
+            salesListingRecord(9002, "60", "452"),
+            salesListingRecord(9001, "60", "451"),
+            salesListingRecord(9000, "60", "450"),
+            salesListingRecord(8999, "60", "449")
+          ]
+        };
+      }
+      if (input.call === "ListarNF") {
+        return {
+          pagina: 1,
+          total_de_paginas: 1,
+          nfCadastro: [
+            invoiceListingRecord(9002, "452", "45231"),
+            invoiceListingRecord(9001, "451", "45230"),
+            invoiceListingRecord(9000, "450", "45229"),
+            invoiceListingRecord(8999, "449", "45228")
+          ]
+        };
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: ids.deviceId,
+        deviceToken: ids.token,
+        action: "check_order_billing",
+        payload: {
+          orders: [
+            { operationId: "op-452", orderType: "sales", omieOrderId: 9002, orderNumber: "452" },
+            { operationId: "op-451", orderType: "sales", omieOrderId: 9001, orderNumber: "451" },
+            { operationId: "op-450", orderType: "sales", omieOrderId: 9000, orderNumber: "450" },
+            { operationId: "op-449", orderType: "sales", omieOrderId: 8999, orderNumber: "449" }
+          ]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    const results = response.results as Array<Record<string, unknown>>;
+    assertEquals(
+      results.map((row) => row.invoiceNumber),
+      ["45231", "45230", "45229", "45228"]
+    );
+
+    // O ponto da mudanca: as quatro notas saem de UMA chamada, e as consultas dirigidas —
+    // que custam ~3s cada na fila que tambem envia os fechamentos — nao acontecem.
+    assertEquals(omieQueue.requests.filter((r) => r.call === "ListarNF").length, 1);
+    assertEquals(omieQueue.requests.filter((r) => r.call === "ObterPedVenda").length, 0);
+    assertEquals(omieQueue.requests.filter((r) => r.call === "ConsultarPedido").length, 0);
+  }
+);
+
+// A nota volta sem o codigo interno do pedido: sobra o numero impresso, que e o mesmo que a
+// coluna "Pedido/OS OMIE" mostra na tela e que o desktop manda junto na pergunta.
+Deno.test(
+  "check_order_billing acha a nota pelo numero do pedido quando falta o codigo",
+  async () => {
+    const { ids, fixtures } = await billingDependencies("nf-por-numero");
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarPedidos") {
+        return {
+          pagina: 1,
+          total_de_paginas: 1,
+          pedido_venda_produto: [
+            salesListingRecord(9002, "60", "452"),
+            salesListingRecord(9001, "60", "451"),
+            salesListingRecord(9000, "60", "450"),
+            salesListingRecord(8999, "60", "449")
+          ]
+        };
+      }
+      if (input.call === "ListarNF") {
+        return {
+          pagina: 1,
+          total_de_paginas: 1,
+          nfCadastro: [
+            // Sem `compl.nIdPedido`, e com o numero preenchido com zeros a esquerda.
+            { ide: { nNF: "45231" }, pedido: { cNumPedido: "0452" } },
+            invoiceListingRecord(9001, "451", "45230"),
+            invoiceListingRecord(9000, "450", "45229"),
+            invoiceListingRecord(8999, "449", "45228")
+          ]
+        };
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: ids.deviceId,
+        deviceToken: ids.token,
+        action: "check_order_billing",
+        payload: {
+          orders: [
+            { operationId: "op-452", orderType: "sales", omieOrderId: 9002, orderNumber: "452" },
+            { operationId: "op-451", orderType: "sales", omieOrderId: 9001, orderNumber: "451" },
+            { operationId: "op-450", orderType: "sales", omieOrderId: 9000, orderNumber: "450" },
+            { operationId: "op-449", orderType: "sales", omieOrderId: 8999, orderNumber: "449" }
+          ]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    const results = response.results as Array<Record<string, unknown>>;
+    assertObjectMatch(results[0], { operationId: "op-452", invoiceNumber: "45231" });
+  }
+);
+
+// A nota da carga mais velha esta na segunda pagina. A varredura anda do documento mais
+// novo para o mais velho e so vai ate onde precisa: para assim que acha todas as que
+// procura.
+Deno.test("check_order_billing vira a pagina da listagem de notas ate achar todas", async () => {
+  const { ids, fixtures } = await billingDependencies("nf-paginacao");
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarPedidos") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        pedido_venda_produto: [
+          salesListingRecord(9002, "60", "452"),
+          salesListingRecord(9001, "60", "451"),
+          salesListingRecord(9000, "60", "450"),
+          salesListingRecord(8999, "60", "449")
+        ]
+      };
+    }
+    if (input.call === "ListarNF") {
+      const page = Number(getParam(input).pagina);
+      if (page === 1) {
+        return {
+          pagina: 1,
+          total_de_paginas: 3,
+          nfCadastro: [
+            invoiceListingRecord(9500, "700", "45300"),
+            invoiceListingRecord(9002, "452", "45231"),
+            invoiceListingRecord(9001, "451", "45230")
+          ]
+        };
+      }
+      if (page === 2) {
+        return {
+          pagina: 2,
+          total_de_paginas: 3,
+          nfCadastro: [
+            invoiceListingRecord(9000, "450", "45229"),
+            invoiceListingRecord(8999, "449", "45228")
+          ]
+        };
+      }
+      return { pagina: page, total_de_paginas: 3, nfCadastro: [] };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-452", orderType: "sales", omieOrderId: 9002 },
+          { operationId: "op-451", orderType: "sales", omieOrderId: 9001 },
+          { operationId: "op-450", orderType: "sales", omieOrderId: 9000 },
+          { operationId: "op-449", orderType: "sales", omieOrderId: 8999 }
+        ]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const results = response.results as Array<Record<string, unknown>>;
+  assertEquals(
+    results.map((row) => row.invoiceNumber),
+    ["45231", "45230", "45229", "45228"]
+  );
+  // Duas paginas bastam: a terceira nao chega a ser pedida.
+  assertEquals(omieQueue.requests.filter((r) => r.call === "ListarNF").length, 2);
+});
+
+// Listagem de notas indisponivel (modulo fiscal sem acesso, instabilidade) nao derruba a
+// conferencia: ela volta para a consulta dirigida, que e o caminho que ja existia.
+Deno.test(
+  "check_order_billing cai na consulta dirigida quando a listagem de notas falha",
+  async () => {
+    const { ids, fixtures } = await billingDependencies("nf-listagem-fora");
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarPedidos") {
+        return {
+          pagina: 1,
+          total_de_paginas: 1,
+          pedido_venda_produto: [
+            salesListingRecord(9002, "60", "452"),
+            salesListingRecord(9001, "50", "451"),
+            salesListingRecord(9000, "50", "450"),
+            salesListingRecord(8999, "50", "449")
+          ]
+        };
+      }
+      if (input.call === "ListarNF") {
+        throw new Error("faultstring: Acesso negado ao modulo de notas fiscais");
+      }
+      if (input.call === "ObterPedVenda") {
+        return {
+          nIdPed: 9002,
+          documentos_fiscais: [{ cTipoDoc: "NFE", cNumero: "45231" }]
+        };
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: ids.deviceId,
+        deviceToken: ids.token,
+        action: "check_order_billing",
+        payload: {
+          orders: [
+            { operationId: "op-452", orderType: "sales", omieOrderId: 9002 },
+            { operationId: "op-451", orderType: "sales", omieOrderId: 9001 },
+            { operationId: "op-450", orderType: "sales", omieOrderId: 9000 },
+            { operationId: "op-449", orderType: "sales", omieOrderId: 8999 }
+          ]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    const results = response.results as Array<Record<string, unknown>>;
+    assertObjectMatch(results[0], { operationId: "op-452", invoiceNumber: "45231" });
+  }
+);
+
+// A venda INTERNA vira ordem de servico, e quando a pedreira emite a nota de servico o
+// numero volta em `nNfse` — um nome que a busca nao conhecia, e a busca e sensivel a
+// maiuscula. A coluna mostrava "—" mesmo com a NFS-e emitida.
+Deno.test("check_order_billing le o numero da NFS-e da ordem de servico", async () => {
+  const { ids, fixtures } = await billingDependencies("nfse-os");
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarOS") {
+      return { pagina: 1, total_de_paginas: 1, osCadastro: [] };
+    }
+    if (input.call === "ConsultarOS") {
+      return {
+        Cabecalho: { nCodOS: 7001, cNumOS: "503", cEtapa: "60" },
+        InformacoesAdicionais: {
+          DetalhesNfse: {
+            ListaRpsNfse: [{ nRps: "120", nNfse: "8812", cCodVerif: "ABC123" }]
+          }
+        }
+      };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: {
+        orders: [{ operationId: "op-interna", orderType: "service", omieOrderId: 7001 }]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const results = response.results as Array<Record<string, unknown>>;
+  assertObjectMatch(results[0], {
+    operationId: "op-interna",
+    billed: true,
+    invoiceNumber: "8812"
+  });
+  // A nota de servico sai da propria `ConsultarOS`: a listagem de notas de PRODUTO nao tem
+  // o que dizer sobre ela, e nao chega a ser chamada.
+  assertEquals(omieQueue.requests.filter((r) => r.call === "ListarNF").length, 0);
+});
