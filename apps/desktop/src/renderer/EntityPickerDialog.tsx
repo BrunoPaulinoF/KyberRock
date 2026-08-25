@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { CrudFormModal } from "./CrudFormModal";
-import { filterEntityPickerItems } from "./entity-picker";
 import type { EntityPickerItem } from "./entity-picker";
 
 interface EntityPickerDialogProps {
@@ -10,7 +9,12 @@ interface EntityPickerDialogProps {
   /** Linha de contexto da operacao sendo alterada (placa, produto, cliente atual). */
   contextLines: string[];
   searchPlaceholder: string;
+  /** Ja filtrados e ordenados pelo cache — a tela nao reordena nem refiltra. */
   items: EntityPickerItem[];
+  /** Quantos cadastros casaram ao todo. Pode ser maior que `items.length`. */
+  totalMatches: number;
+  search: string;
+  onSearchChange: (search: string) => void;
   loading: boolean;
   /** Id ja vinculado a operacao, destacado como "Atual" na lista. */
   selectedId: string | null;
@@ -57,18 +61,23 @@ const badgeStyle: CSSProperties = {
 };
 
 /**
- * Modal de troca de cliente/transportadora em operacoes: lista COMPLETA do cadastro
- * com barra de pesquisa por nome.
+ * Modal de troca de cliente/transportadora em operacoes: procura no cadastro e mostra o
+ * que mais se aproxima do que foi digitado.
  *
- * Antes era um `<select>` nativo carregado com uma unica pagina do cache — quem tinha
- * muitos cadastros perdia os que ficavam fora da pagina e nao tinha como procurar
- * pelo nome dentro da lista.
+ * Foi um `<select>` nativo de uma pagina do cache (cadastro que ficasse fora da pagina
+ * sumia) e depois a lista COMPLETA na tela — que resolvia o sumico e criava outro
+ * problema: a pedreira com milhares de clientes travava por segundos ao abrir o modal, e
+ * ninguem escolhia rolando milhares de linhas. Agora quem procura e o cache, a cada busca,
+ * e a tela so pinta a pagina de resultados.
  */
 export function EntityPickerDialog({
   title,
   contextLines,
   searchPlaceholder,
   items,
+  totalMatches,
+  search,
+  onSearchChange,
   loading,
   selectedId,
   clearOption = null,
@@ -76,11 +85,8 @@ export function EntityPickerDialog({
   onClear,
   onClose
 }: EntityPickerDialogProps) {
-  const [search, setSearch] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const listRef = useRef<HTMLDivElement | null>(null);
-
-  const visibleItems = useMemo(() => filterEntityPickerItems(items, search), [items, search]);
 
   useEffect(() => {
     setHighlightedIndex(0);
@@ -95,7 +101,7 @@ export function EntityPickerDialog({
   function handleSearchKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void {
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setHighlightedIndex((index) => Math.min(Math.max(0, visibleItems.length - 1), index + 1));
+      setHighlightedIndex((index) => Math.min(Math.max(0, items.length - 1), index + 1));
       return;
     }
     if (event.key === "ArrowUp") {
@@ -104,7 +110,7 @@ export function EntityPickerDialog({
       return;
     }
     if (event.key === "Enter") {
-      const item = visibleItems[highlightedIndex];
+      const item = items[highlightedIndex];
       if (!item) return;
       event.preventDefault();
       onSelect(item.id);
@@ -130,7 +136,7 @@ export function EntityPickerDialog({
         <input
           type="search"
           value={search}
-          onChange={(event) => setSearch(event.target.value)}
+          onChange={(event) => onSearchChange(event.target.value)}
           onKeyDown={handleSearchKeyDown}
           autoFocus
           placeholder={searchPlaceholder}
@@ -149,16 +155,16 @@ export function EntityPickerDialog({
         <div ref={listRef} style={listBoxStyle}>
           {loading ? (
             <div style={{ padding: "14px", color: "var(--kr-muted)", fontSize: "13px" }}>
-              Carregando lista completa...
+              Procurando...
             </div>
-          ) : visibleItems.length === 0 ? (
+          ) : items.length === 0 ? (
             <div style={{ padding: "14px", color: "var(--kr-muted)", fontSize: "13px" }}>
-              {items.length === 0
-                ? "Nenhum cadastro disponivel."
-                : "Nenhum resultado para a pesquisa."}
+              {search.trim()
+                ? `Nenhum resultado para "${search.trim()}".`
+                : "Nenhum cadastro disponivel."}
             </div>
           ) : (
-            visibleItems.map((item, index) => {
+            items.map((item, index) => {
               const isCurrent = selectedId !== null && item.id === selectedId;
               return (
                 <button
@@ -240,12 +246,20 @@ export function EntityPickerDialog({
             flexWrap: "wrap"
           }}
         >
+          {/*
+            A contagem diz o que ficou de FORA da tela, e nao so o que coube nela: sem isso
+            o corte era invisivel e o operador concluia que o cadastro nao existia.
+          */}
           <span style={{ fontSize: "12px", color: "var(--kr-muted)" }}>
             {loading
-              ? "Carregando..."
+              ? "Procurando..."
               : search.trim()
-                ? `${visibleItems.length} de ${items.length} cadastro(s)`
-                : `${items.length} cadastro(s)`}
+                ? totalMatches > items.length
+                  ? `Mostrando ${items.length} de ${totalMatches} resultado(s) — escreva mais para afunilar.`
+                  : `${totalMatches} resultado(s)`
+                : totalMatches > items.length
+                  ? `Escreva para procurar entre ${totalMatches} cadastro(s). Mostrando os ${items.length} primeiros.`
+                  : `${totalMatches} cadastro(s)`}
           </span>
           <span style={{ display: "flex", gap: "8px" }}>
             {clearOption && onClear ? (

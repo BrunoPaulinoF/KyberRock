@@ -22,6 +22,8 @@ import {
   toIsoDate
 } from "./insights-period";
 import type { InsightsPeriod } from "./insights-period";
+import { CustomerSearchSelect } from "./CustomerSearchSelect";
+import { useDebouncedValue } from "./use-debounced-value";
 import { useOmieInvoiceNumbers } from "./useOmieInvoiceNumbers";
 
 /**
@@ -107,17 +109,22 @@ export function WeighingBillingReportView({
     [formats]
   );
 
-  // Os filtros que vao para a consulta e para o arquivo. `search` entra com debounce na
-  // dependencia do efeito, mas o objeto e o mesmo dos dois lados de proposito: o PDF/planilha
-  // precisa sair com as MESMAS linhas que estao na tela.
+  // A busca espera a palavra antes de virar consulta. O comentario aqui ja dizia
+  // "entra com debounce" — mas nao havia debounce nenhum no codigo, e cada tecla
+  // disparava a consulta multi-tabela do periodo inteiro. Era isso que travava a tela em
+  // periodos grandes.
+  const debouncedSearch = useDebouncedValue(search);
+
+  // Os filtros que vao para a consulta e para o arquivo. O objeto e o mesmo dos dois lados
+  // de proposito: o PDF/planilha precisa sair com as MESMAS linhas que estao na tela.
   const options = useMemo(
     () => ({
       customerId: customerId || null,
       situations,
-      search: search.trim() || null,
+      search: debouncedSearch.trim() || null,
       periodLabel: range.label
     }),
-    [customerId, situations, search, range.label]
+    [customerId, situations, debouncedSearch, range.label]
   );
 
   useEffect(() => {
@@ -284,18 +291,14 @@ export function WeighingBillingReportView({
 
           <div style={styles.filterBlock}>
             <span style={styles.filterLabel}>Cliente</span>
-            <select
+            <CustomerSearchSelect
+              customers={customers}
               value={customerId}
-              onChange={(event) => setCustomerId(event.target.value)}
-              style={styles.input}
-            >
-              <option value={ALL_CUSTOMERS}>Todos os clientes</option>
-              {customers.map((customer) => (
-                <option key={customer.id} value={customer.id}>
-                  {customer.document ? `${customer.name} - ${customer.document}` : customer.name}
-                </option>
-              ))}
-            </select>
+              onChange={setCustomerId}
+              leadingOptions={[{ value: ALL_CUSTOMERS, label: "Todos os clientes" }]}
+              inputStyle={styles.input}
+              hintStyle={styles.hint}
+            />
             <span style={styles.filterLabel}>Buscar</span>
             <input
               value={search}

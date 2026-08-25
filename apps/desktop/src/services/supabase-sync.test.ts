@@ -3172,7 +3172,14 @@ describe("supabase sync", () => {
       // perguntando de novo pelas mesmas pesagens.
       const second = await reconcileOmieBillingFromOmie(database, identity);
 
-      expect(second).toEqual({ checked: 0, billed: 0, skipped: true, errors: [] });
+      expect(second).toEqual({
+        checked: 0,
+        billed: 0,
+        invoiceNumbers: 0,
+        stillWithoutInvoiceNumber: 0,
+        skipped: true,
+        errors: []
+      });
       expect(invokeMock).toHaveBeenCalledTimes(1);
     } finally {
       database.close();
@@ -3286,7 +3293,13 @@ describe("supabase sync", () => {
       // Nenhuma sobra: faturada COM o numero da nota e estado final (sem o numero ela
       // continua na fila, senao a coluna Nota fiscal ficaria vazia para sempre), cancelada
       // saiu do fluxo e a que nunca chegou ao OMIE nao tem o que conferir la.
-      expect(result).toEqual({ checked: 0, billed: 0, errors: [] });
+      expect(result).toEqual({
+        checked: 0,
+        billed: 0,
+        invoiceNumbers: 0,
+        stillWithoutInvoiceNumber: 0,
+        errors: []
+      });
       expect(invokeMock).not.toHaveBeenCalled();
     } finally {
       database.close();
@@ -3398,7 +3411,9 @@ describe("supabase sync", () => {
       });
 
       const first = await reconcileOmieBillingFromOmie(database, identity);
-      expect(first).toMatchObject({ billed: 1 });
+      // Faturada e SEM numero: e exatamente este estado que a tela precisa enxergar para
+      // saber que ainda ha o que perguntar.
+      expect(first).toMatchObject({ billed: 1, invoiceNumbers: 0, stillWithoutInvoiceNumber: 1 });
 
       // Segunda passada: a pesagem tem de continuar na fila, e o numero que chegar agora
       // precisa ser gravado mesmo com a pesagem ja marcada como faturada.
@@ -3424,7 +3439,14 @@ describe("supabase sync", () => {
       const second = await reconcileOmieBillingFromOmie(database, identity, { force: true });
 
       // Ja constava faturada: a contagem de "viraram nota agora" nao pode conta-la de novo.
-      expect(second).toMatchObject({ checked: 1, billed: 0 });
+      // Mas a contagem do NUMERO conta — e ela que a tela e o botao usam para saber se a
+      // leva rendeu e se vale pedir a proxima.
+      expect(second).toMatchObject({
+        checked: 1,
+        billed: 0,
+        invoiceNumbers: 1,
+        stillWithoutInvoiceNumber: 0
+      });
       const row = database
         .prepare(
           `SELECT omie_invoice_number, omie_billing_status, omie_document_url
@@ -3459,6 +3481,139 @@ describe("supabase sync", () => {
 
       // Faturada COM numero e assunto encerrado: nao volta a gastar chamada do OMIE.
       expect(invokeMock).not.toHaveBeenCalled();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("pergunta pelo documento que a pesagem TEM, mesmo quando o tipo dela nao bate", async () => {
+    // Operacao convertida depois de o documento ja existir no OMIE (interna virou com nota,
+    // ou o contrario). O tipo pedia um pedido de venda que ela nao tem; descartada, ela
+    // ficava com `omie_billing_checked_at` parado e voltava na FRENTE do rodizio em toda
+    // passada, ocupando uma vaga do lote sem nunca ser conferida.
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, {
+        id: "op-convertida",
+        operationType: "invoice",
+        salesOrderId: null,
+        serviceOrderId: 7007
+      });
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          ok: true,
+          results: [
+            {
+              operationId: "op-convertida",
+              orderType: "service",
+              omieOrderId: 7007,
+              found: true,
+              billed: true,
+              orderNumber: "000077",
+              invoiceNumber: "551",
+              documentUrl: null,
+              error: null
+            }
+          ]
+        }
+      });
+
+      const result = await reconcileOmieBillingFromOmie(database, identity);
+
+      const body = invokeMock.mock.calls[0][1].body as {
+        payload: { orders: Array<{ orderType: string; omieOrderId: number }> };
+      };
+      expect(body.payload.orders).toEqual([
+        { operationId: "op-convertida", orderType: "service", omieOrderId: 7007 }
+      ]);
+      expect(result).toMatchObject({ checked: 1, invoiceNumbers: 1 });
+      expect(
+        (
+          database
+            .prepare(`SELECT omie_invoice_number FROM weighing_operations WHERE id = ?`)
+            .get("op-convertida") as { omie_invoice_number: string | null }
+        ).omie_invoice_number
+      ).toBe("551");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("guarda o numero da nota mesmo quando o OMIE ainda nao deu por faturada", async () => {
+    // O numero e prova de que a nota existe. Descarta-lo por causa da etapa do kanban
+    // deixava a coluna "Nota fiscal" vazia com a nota ja na mao do cliente.
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-etapa-baixa", salesOrderId: 6001 });
+      invokeMock.mockResolvedValueOnce({
+        error: null,
+        data: {
+          ok: true,
+          results: [
+            {
+              operationId: "op-etapa-baixa",
+              orderType: "sales",
+              omieOrderId: 6001,
+              found: true,
+              billed: false,
+              orderNumber: "1234",
+              invoiceNumber: "778",
+              documentUrl: null,
+              error: null
+            }
+          ]
+        }
+      });
+
+      const result = await reconcileOmieBillingFromOmie(database, identity);
+
+      const row = database
+        .prepare(
+          `SELECT omie_invoice_number, omie_billing_status FROM weighing_operations WHERE id = ?`
+        )
+        .get("op-etapa-baixa") as Record<string, string | null>;
+      expect(row.omie_invoice_number).toBe("778");
+      // A SITUACAO continua sendo decidida pelo OMIE — so o numero e aproveitado.
+      expect(row.omie_billing_status).toBeNull();
+      expect(result).toMatchObject({ invoiceNumbers: 1 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("a conferencia pedida pela tela leva um teto maior de consultas do numero", async () => {
+    // O rodizio de fundo divide a fila do OMIE com o envio dos fechamentos e fica com o teto
+    // baixo do edge. Quando quem pede e a tela, existe alguem esperando o numero — e sem
+    // este teto a leva voltava com dez numeros e o resto marcado como "ja perguntado".
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-1", salesOrderId: 8001 });
+      invokeMock.mockResolvedValue({ error: null, data: { ok: true, results: [] } });
+
+      await reconcileOmieBillingFromOmie(database, identity);
+      const background = invokeMock.mock.calls[0][1].body as {
+        payload: Record<string, unknown>;
+      };
+      expect(background.payload.invoiceNumberBudget).toBeUndefined();
+
+      await reconcileOmieBillingFromOmie(database, identity, {
+        operationIds: ["op-1"],
+        invoiceNumberBudget: 20
+      });
+      const fromScreen = invokeMock.mock.calls[1][1].body as {
+        payload: Record<string, unknown>;
+      };
+      expect(fromScreen.payload.invoiceNumberBudget).toBe(20);
     } finally {
       database.close();
     }
@@ -3504,6 +3659,8 @@ describe("supabase sync", () => {
       expect(await reconcileOmieBillingFromOmie(database, identity, { operationIds: [] })).toEqual({
         checked: 0,
         billed: 0,
+        invoiceNumbers: 0,
+        stillWithoutInvoiceNumber: 0,
         errors: []
       });
       expect(invokeMock).not.toHaveBeenCalled();

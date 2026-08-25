@@ -8,10 +8,13 @@ import {
   normalizeDocument,
   normalizeEmailList,
   normalizePhone,
-  parseMoneyInputToCents
+  parseMoneyInputToCents,
+  rankByText
 } from "@kyberrock/shared";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
+import { readAllCacheRows } from "./cache-rows";
+import { useDebouncedValue } from "./use-debounced-value";
 import { FREIGHT_MODALITIES, getFreightModalityInfo } from "../services/freight";
 import type { FreightModality } from "../services/freight";
 import type { CustomerFreightRule as CustomerFreightRuleView } from "../services/customer-freight-rules";
@@ -331,24 +334,20 @@ export function creditMovementSignedCents(movement: {
 }
 
 /**
- * Filtro da busca de transportadoras: ignora acentos e caixa para "sao" achar
- * "São" — o cadastro tem nomes acentuados e o operador digita sem acento.
+ * Busca de transportadoras dentro da ficha do cliente: ignora acentos e caixa ("sao" acha
+ * "São") e poe no topo quem mais se parece com o que foi digitado.
+ *
+ * A ordenacao importa aqui tanto quanto o filtro: a lista de transportadoras de uma
+ * pedreira grande tem dezenas de nomes parecidos ("Transportes Alfa", "Alfa Transportes",
+ * "Alfa Log"), e antes o desempate era a ordem do cadastro no banco.
  */
 export function filterCarriersBySearch<T extends { name: string }>(
   carriers: T[],
   search: string
 ): T[] {
-  const term = normalizeSearchTerm(search);
-  if (!term) return carriers;
-  return carriers.filter((carrier) => normalizeSearchTerm(carrier.name).includes(term));
-}
-
-function normalizeSearchTerm(value: string): string {
-  return value
-    .trim()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
+  return rankByText(carriers, (carrier) => carrier.name, search, {
+    tieBreak: (a, b) => a.name.localeCompare(b.name, "pt-BR")
+  });
 }
 
 export interface CustomerFreightEntry {
@@ -576,19 +575,29 @@ export function CustomersView({
 
   const pageSize = 50;
 
+  /**
+   * As listas que a ficha do cliente oferece: transportadoras a vincular, condicoes, formas
+   * e produtos (para a tabela de preco e as regras de frete).
+   *
+   * Lista COMPLETA, e nao a primeira pagina de 200/500. Aqui o operador esta VINCULANDO, e
+   * a transportadora que ficasse fora do corte simplesmente nao podia ser vinculada — nao
+   * havia busca que a alcancasse, porque a busca desta tela filtra o que ja foi lido. As
+   * quatro sao listas fechadas do cadastro (dezenas a poucas centenas de linhas), lidas uma
+   * vez ao abrir a tela.
+   */
   const loadOptions = useCallback(async () => {
     if (!desktopApi) return;
     try {
-      const [carriersResult, termsResult, methodsResult, productsResult] = await Promise.all([
-        desktopApi.queryCache({ entityType: "carrier", limit: 200 }),
-        desktopApi.queryCache({ entityType: "payment_term", limit: 500 }),
-        desktopApi.queryCache({ entityType: "payment_method", limit: 200 }),
-        desktopApi.queryCache({ entityType: "product", activeOnly: true, limit: 500 })
+      const [carrierRows, termRows, methodRows, productRows] = await Promise.all([
+        readAllCacheRows<CarrierOption>(desktopApi, "carrier", { activeOnly: true }),
+        readAllCacheRows<PaymentTermOption>(desktopApi, "payment_term", { activeOnly: true }),
+        readAllCacheRows<PaymentMethodOption>(desktopApi, "payment_method", { activeOnly: true }),
+        readAllCacheRows<ProductOption>(desktopApi, "product", { activeOnly: true })
       ]);
-      setCarriers((carriersResult.rows as CarrierOption[]) ?? []);
-      setPaymentTerms((termsResult.rows as PaymentTermOption[]) ?? []);
-      setPaymentMethods((methodsResult.rows as PaymentMethodOption[]) ?? []);
-      setProducts((productsResult.rows as ProductOption[]) ?? []);
+      setCarriers(carrierRows);
+      setPaymentTerms(termRows);
+      setPaymentMethods(methodRows);
+      setProducts(productRows);
     } catch {
       /* ignore */
     }
@@ -598,6 +607,10 @@ export function CustomersView({
   // identidade nova refaria a leitura do cache sem necessidade.
   const isStandalone = Boolean(standaloneForm);
 
+  // A leitura espera a palavra: sem isso cada tecla era um IPC com uma varredura do
+  // cadastro inteiro do outro lado — e a tela piscava a cada letra.
+  const debouncedSearch = useDebouncedValue(search);
+
   const loadCustomers = useCallback(async () => {
     // Modo somente-formulario nao tem lista: nao vale pagar a leitura do cache.
     if (!desktopApi || isStandalone) return;
@@ -605,7 +618,7 @@ export function CustomersView({
     try {
       const result = await desktopApi.queryCache({
         entityType: "customer",
-        search: search || undefined,
+        search: debouncedSearch || undefined,
         // A tela de cadastro mostra TODOS os clientes, inclusive os inativos. Escondendo
         // os inativos, o CNPJ/CPF deles continuava ocupado ("Ja existe um cliente com
         // este CNPJ/CPF") sem que o operador tivesse como achar — ou reativar — o
@@ -619,7 +632,7 @@ export function CustomersView({
     } finally {
       setLoading(false);
     }
-  }, [desktopApi, page, search, isStandalone]);
+  }, [desktopApi, page, debouncedSearch, isStandalone]);
 
   useEffect(() => {
     void loadOptions();
@@ -627,7 +640,7 @@ export function CustomersView({
 
   useEffect(() => {
     setPage(0);
-  }, [search]);
+  }, [debouncedSearch]);
 
   // Abre a tela ja filtrada por um cliente (ex.: "Editar cliente" numa operacao).
   useEffect(() => {

@@ -1,3 +1,5 @@
+import { readAllCacheRows } from "./cache-rows";
+
 import type { KyberRockDesktopApi } from "../preload/api-types";
 import type { PaymentTermCacheEntry } from "../services/cache-store";
 import { tryParsePaymentCondition } from "../services/payment-condition-parser";
@@ -125,10 +127,13 @@ export async function resolveConditionTermId(
     );
   }
 
-  const termResult = await desktopApi.queryCache({ entityType: "payment_term", limit: 200 });
-  const existing = (termResult.rows as PaymentTermCacheEntry[]).find((term) =>
-    conditionTermMatches(term.rulesJson, parsed)
-  );
+  // A lista INTEIRA, e nao a primeira pagina: aqui o `.find()` decide entre reusar e CRIAR.
+  // Com a leitura cortada em 200, uma condicao que existisse a partir da linha 201 nunca era
+  // encontrada e o cadastro ganhava uma duplicata a cada fechamento que a usasse.
+  const terms = await readAllCacheRows<PaymentTermCacheEntry>(desktopApi, "payment_term", {
+    activeOnly: false
+  });
+  const existing = terms.find((term) => conditionTermMatches(term.rulesJson, parsed));
   if (existing) return existing.id;
 
   const created = (await desktopApi.paymentTermsCreate({

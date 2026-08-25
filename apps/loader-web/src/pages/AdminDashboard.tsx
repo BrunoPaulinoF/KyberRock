@@ -4,6 +4,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
 import { supabaseConfig } from "../config/supabase-config";
 import { DEVICE_NAME_MAX_LENGTH, parseDeviceName } from "../lib/device-name";
+import { matchesSearch, rankBySearch } from "../lib/search-ranking";
 import { AiAssistantSettings } from "./AiAssistantSettings";
 import { DesktopUpdates } from "./DesktopUpdates";
 import { FinancialBackoffice } from "./FinancialBackoffice";
@@ -148,15 +149,26 @@ export function buildDeleteRequest(target: DeleteTarget): {
  * dos campos da linha. Buscar por termo (e nao pela frase inteira) e o que faz
  * "sul joao" achar o carregador Joao da Pedreira Sul — a ordem em que a pessoa
  * lembra dos dois nao pode importar.
+ *
+ * Delega ao `search-ranking`, que tambem ignora acento e pontuacao — antes "sao" nao
+ * achava "São" e o CNPJ digitado com pontos nao achava o gravado sem eles.
  */
 export function matchesCadastroSearch(search: string, fields: Array<string | null | undefined>) {
-  const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return true;
-  const haystack = fields
-    .filter((field): field is string => Boolean(field))
-    .join(" ")
-    .toLowerCase();
-  return terms.every((term) => haystack.includes(term));
+  return matchesSearch(search, fields);
+}
+
+/**
+ * Filtra e ORDENA uma lista de cadastro pela proximidade com o que foi digitado.
+ *
+ * A ordem importa em toda tabela do painel: sem ela, procurar "alfa" trazia a Pedreira
+ * Alfa depois de "Transportes Beta Alfa Norte" so porque esta foi cadastrada antes.
+ */
+function rankCadastro<T>(
+  items: readonly T[],
+  fieldsOf: (item: T) => Array<string | null | undefined>,
+  search: string
+): T[] {
+  return rankBySearch(items, fieldsOf, search);
 }
 
 type Section =
@@ -381,46 +393,47 @@ export function AdminDashboard() {
 
   const filteredCompanies = useMemo(
     () =>
-      companies.filter(
-        (company) =>
-          (!filterCompanyId || company.id === filterCompanyId) &&
-          matchesCadastroSearch(search, [company.name, company.legalName, company.document])
+      rankCadastro(
+        companies.filter((company) => !filterCompanyId || company.id === filterCompanyId),
+        (company) => [company.name, company.legalName, company.document],
+        search
       ),
     [companies, filterCompanyId, search]
   );
 
   const filteredUnits = useMemo(
     () =>
-      units.filter(
-        (unit) =>
-          (!filterCompanyId || unit.companyId === filterCompanyId) &&
-          matchesCadastroSearch(search, [unit.name, companyName(unit.companyId)])
+      rankCadastro(
+        units.filter((unit) => !filterCompanyId || unit.companyId === filterCompanyId),
+        (unit) => [unit.name, companyName(unit.companyId)],
+        search
       ),
     [units, filterCompanyId, search, companyName]
   );
 
   const filteredDevices = useMemo(
     () =>
-      devices.filter(
-        (device) =>
-          (!filterCompanyId || device.companyId === filterCompanyId) &&
-          matchesCadastroSearch(search, [
-            device.name,
-            device.id,
-            companyName(device.companyId),
-            unitName(device.unitId)
-          ])
+      rankCadastro(
+        devices.filter((device) => !filterCompanyId || device.companyId === filterCompanyId),
+        (device) => [
+          device.name,
+          device.id,
+          companyName(device.companyId),
+          unitName(device.unitId)
+        ],
+        search
       ),
     [devices, filterCompanyId, search, companyName, unitName]
   );
 
   const usersByRole = useCallback(
     (role: "loader" | "comercial") =>
-      users.filter(
-        (user) =>
-          user.role === role &&
-          (!filterCompanyId || user.companyId === filterCompanyId) &&
-          matchesCadastroSearch(search, [user.name, user.email, companyName(user.companyId)])
+      rankCadastro(
+        users.filter(
+          (user) => user.role === role && (!filterCompanyId || user.companyId === filterCompanyId)
+        ),
+        (user) => [user.name, user.email, companyName(user.companyId)],
+        search
       ),
     [users, filterCompanyId, search, companyName]
   );

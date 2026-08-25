@@ -22,7 +22,13 @@ describe("customer carrier search", () => {
   it("matches ignoring case and accents", () => {
     expect(filterCarriersBySearch(carriers, "sao joao").map((c) => c.id)).toEqual(["1"]);
     expect(filterCarriersBySearch(carriers, "alfa").map((c) => c.id)).toEqual(["2"]);
-    expect(filterCarriersBySearch(carriers, "transport").map((c) => c.id)).toEqual(["1", "2"]);
+  });
+
+  it("poe no topo quem mais se aproxima do que foi digitado", () => {
+    // As duas comecam por "transport", mas em "TRANSPORTES ALFA" o trecho digitado cobre
+    // mais do nome — e o que o operador quer ver primeiro. Antes o desempate era a ordem
+    // do cadastro no banco, que para ele e ordem nenhuma.
+    expect(filterCarriersBySearch(carriers, "transport").map((c) => c.id)).toEqual(["2", "1"]);
   });
 
   it("returns nothing when no carrier matches", () => {

@@ -1,3 +1,5 @@
+import { rankByText, searchTerms } from "@kyberrock/shared";
+
 import type { WeighingOperationSummary } from "../services/weighing-operations";
 
 /**
@@ -6,16 +8,24 @@ import type { WeighingOperationSummary } from "../services/weighing-operations";
  * Placa e motorista entram junto porque estao na mesma linha da tabela e o operador
  * naturalmente cola a placa no campo de busca.
  */
-export function normalizeSearchText(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim();
-}
 
-function onlyDigits(value: string): string {
-  return value.replace(/\D/g, "");
+/** Os campos que a busca varre, na ordem em que aparecem na linha da tabela. */
+type SearchableOperation = Pick<
+  WeighingOperationSummary,
+  "customerName" | "customerDocument" | "productDescription" | "plate" | "driverName"
+>;
+
+/** O texto pesquisavel de uma linha — o mesmo para casar e para pontuar. */
+function searchTextOf(operation: SearchableOperation): string {
+  return [
+    operation.customerName,
+    operation.customerDocument ?? "",
+    operation.productDescription,
+    operation.plate,
+    operation.driverName
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 /**
@@ -24,39 +34,25 @@ function onlyDigits(value: string): string {
  * digitos tambem e comparado com o CNPJ/CPF sem pontuacao.
  */
 export function matchesClosedOperationSearch(
-  operation: Pick<
-    WeighingOperationSummary,
-    "customerName" | "customerDocument" | "productDescription" | "plate" | "driverName"
-  >,
+  operation: SearchableOperation,
   search: string
 ): boolean {
-  const terms = normalizeSearchText(search).split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return true;
-
-  const haystack = normalizeSearchText(
-    [
-      operation.customerName,
-      operation.customerDocument ?? "",
-      operation.productDescription,
-      operation.plate,
-      operation.driverName
-    ].join(" ")
-  );
-  const documentDigits = onlyDigits(operation.customerDocument ?? "");
-
-  return terms.every((term) => {
-    if (haystack.includes(term)) return true;
-    const digits = onlyDigits(term);
-    return digits.length > 0 && documentDigits.includes(digits);
-  });
+  if (searchTerms(search).length === 0) return true;
+  return rankByText([operation], searchTextOf, search).length === 1;
 }
 
-export function filterClosedOperationsBySearch<
-  T extends Pick<
-    WeighingOperationSummary,
-    "customerName" | "customerDocument" | "productDescription" | "plate" | "driverName"
-  >
->(operations: T[], search: string): T[] {
+/**
+ * Filtra e ORDENA as operacoes concluidas pela proximidade com o que foi digitado.
+ *
+ * A ordem importa porque a tela lista o historico inteiro: procurar "levisa" trazia as
+ * cargas da Levisa espalhadas na ordem cronologica, junto com as da "Transportadora Levisa
+ * Norte", e o operador tinha de ler linha a linha. Empate mantem a ordem que veio — que e
+ * a cronologica da consulta.
+ */
+export function filterClosedOperationsBySearch<T extends SearchableOperation>(
+  operations: T[],
+  search: string
+): T[] {
   if (!search.trim()) return operations;
-  return operations.filter((operation) => matchesClosedOperationSearch(operation, search));
+  return rankByText(operations, searchTextOf, search);
 }

@@ -212,23 +212,35 @@ function situationCells(row: WeighingBillingSituationRow): string[] {
 }
 
 /** Rodape alinhado com `ROW_HEADERS`: so as colunas somaveis levam numero. */
+/**
+ * O rodape TOTAL da lista pesagem a pesagem.
+ *
+ * Uma celula por coluna de `ROW_HEADERS`, sempre: tinha treze para catorze colunas, e o
+ * navegador (e o Excel) encurtavam a linha do total — na pratica a coluna "Pedido/OS OMIE"
+ * ficava fora da linha e o alinhamento do rodape saia deslocado em relacao a tabela.
+ */
 function footerCells(report: WeighingBillingReport): string[] {
   const { totals } = report;
-  return [
+  const cells = [
     "TOTAL",
-    "",
-    "",
-    "",
-    "",
+    "", // Data
+    "", // Cliente
+    "", // Produto
+    "", // Placa
     num(totals.netWeightKg),
-    "",
+    "", // Preco unit.
     formatBRL(totals.productCents),
     formatBRL(totals.freightCents),
     formatBRL(totals.totalCents),
-    "",
-    "",
-    ""
+    "", // Tipo
+    "", // Situacao
+    "", // Nota fiscal
+    "" // Pedido/OS OMIE
   ];
+  // Uma coluna nova nos cabecalhos tem de aparecer aqui tambem — e nada avisa quando nao
+  // aparece: a linha so sai curta, sem erro nenhum.
+  while (cells.length < ROW_HEADERS.length) cells.push("");
+  return cells.slice(0, ROW_HEADERS.length);
 }
 
 function scopeText(report: WeighingBillingReport): string {

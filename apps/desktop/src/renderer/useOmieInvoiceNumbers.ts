@@ -1,7 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
-import { selectInvoiceNumbersToAsk } from "../services/omie-invoice-numbers";
+import {
+  OMIE_INVOICE_NUMBER_ASK_LIMIT,
+  selectInvoiceNumbersToAsk
+} from "../services/omie-invoice-numbers";
 import type { OmieInvoiceNumberRow } from "../services/omie-invoice-numbers";
 
 /**
@@ -27,6 +30,14 @@ import type { OmieInvoiceNumberRow } from "../services/omie-invoice-numbers";
  *     — que refaz a lista — vire uma chamada ao OMIE por tecla.
  *  3. **Nao bloqueia.** A tela ja renderizou com o dado local antes disto rodar; o numero
  *     aparece quando chegar.
+ *
+ * E vai ate o FIM da tela, em levas. O numero da nota nao vem junto com a conferencia: a
+ * listagem do OMIE so enxerga a etapa do kanban, e cada numero custa uma consulta dirigida
+ * ao documento, que o edge limita por passada. Mandar as 326 cargas do relatorio numa
+ * pergunta so devolvia o teto — dez — e marcava as outras 316 como "ja perguntadas": a
+ * coluna ficava com dez numeros e nao andava mais enquanto a tela estivesse aberta. Agora
+ * cada leva e do tamanho do teto (tudo que vai e consultado) e a proxima sai assim que
+ * esta volta, ate a tela nao ter mais o que perguntar.
  */
 export function useOmieInvoiceNumbers(
   desktopApi: KyberRockDesktopApi | null,
@@ -35,6 +46,11 @@ export function useOmieInvoiceNumbers(
 ): void {
   const askedRef = useRef<Set<string>>(new Set());
   const busyRef = useRef(false);
+  // Contador de levas. So existe para RE-DISPARAR o efeito quando a leva termina sem nada
+  // ter mudado na tela: sem ele, uma leva em que nenhum numero saiu (as cargas ainda nao
+  // foram faturadas no OMIE) deixaria `rows` igual e a drenagem pararia ali, com centenas
+  // de cargas nunca perguntadas.
+  const [round, setRound] = useState(0);
   // A tela recria `onFilled` a cada render. Guardar a ultima versao numa ref evita que
   // isso re-dispare a pergunta — o gatilho tem de ser a lista, e so ela.
   const onFilledRef = useRef(onFilled);
@@ -46,6 +62,9 @@ export function useOmieInvoiceNumbers(
     // Sem internet nao ha o que perguntar. Sair aqui — antes de marcar qualquer id como
     // perguntado — e o que faz a tela tentar de novo quando a conexao voltar.
     if (!navigator.onLine) return;
+    // Teto do que UMA tela aberta pergunta. O que sobra fica para a proxima abertura e para
+    // a conferencia de fundo: a fila do OMIE tambem envia os fechamentos.
+    if (askedRef.current.size >= OMIE_INVOICE_NUMBER_ASK_LIMIT) return;
 
     const operationIds = selectInvoiceNumbersToAsk(rows, askedRef.current);
     if (operationIds.length === 0) return;
@@ -56,8 +75,16 @@ export function useOmieInvoiceNumbers(
       .reconcileOmieInvoiceNumbers(operationIds)
       .then((result) => {
         for (const operationId of operationIds) askedRef.current.add(operationId);
-        if (cancelled || result.billed === 0) return;
-        return onFilledRef.current();
+        if (cancelled) return;
+        // Proxima leva. Vem depois do recarregamento quando algum numero chegou, para a
+        // lista nova ja entrar sem as cargas resolvidas.
+        if (result.invoiceNumbers === 0 && result.billed === 0) {
+          setRound((value) => value + 1);
+          return;
+        }
+        return Promise.resolve(onFilledRef.current()).then(() => {
+          if (!cancelled) setRound((value) => value + 1);
+        });
       })
       .catch(() => {
         // De proposito: ver o numero da nota e um ganho, nao um pre-requisito da tela.
@@ -69,5 +96,5 @@ export function useOmieInvoiceNumbers(
     return () => {
       cancelled = true;
     };
-  }, [desktopApi, rows]);
+  }, [desktopApi, rows, round]);
 }

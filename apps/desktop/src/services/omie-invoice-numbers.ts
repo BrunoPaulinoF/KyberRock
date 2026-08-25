@@ -28,14 +28,56 @@ export interface OmieInvoiceNumberRow {
 }
 
 /**
- * Teto de uma pergunta so, igual ao lote da conferencia de fundo.
+ * Quantas cargas cabem em UMA pergunta.
  *
- * Um periodo longo pode ter milhares de cargas, e a pergunta vira chamada ao OMIE pela
- * MESMA fila que envia os pedidos: sem teto, abrir um relatorio anual atrasaria o
- * faturamento de quem esta fechando ao lado. O que sobra nao se perde — cai na proxima
- * abertura da tela e na conferencia de fundo.
+ * O numero da nota nao vem de graca com a conferencia: a listagem do OMIE reconhece o
+ * faturamento pela etapa do kanban e nao carrega a NF-e, entao cada numero custa uma
+ * consulta dirigida ao documento — ~3s na fila serializada. O edge tem teto para isso, e
+ * mandar 300 ids numa pergunta so nao fazia 300 numeros chegarem: chegavam os do teto, e
+ * os outros 290 voltavam marcados como "ja perguntados" sem nunca terem sido consultados.
+ * Era assim que um relatorio de 326 cargas ganhava dez numeros e parava.
+ *
+ * Por isso a leva e do TAMANHO do teto do edge: tudo que vai numa pergunta e de fato
+ * consultado, e a leva seguinte sai quando esta volta (ver `useOmieInvoiceNumbers`).
+ */
+export const OMIE_INVOICE_NUMBER_ASK_CHUNK = 20;
+
+/**
+ * Teto de cargas que UMA tela pergunta enquanto esta aberta.
+ *
+ * As levas se sucedem sozinhas, entao sem teto um relatorio anual perguntaria por milhares
+ * de cargas seguidas, ocupando a fila que tambem envia os fechamentos. Trezentas cobrem a
+ * quinzena de uma pedreira movimentada; o que sobra nao se perde — cai na proxima abertura
+ * da tela e na conferencia de fundo.
  */
 export const OMIE_INVOICE_NUMBER_ASK_LIMIT = 300;
+
+/**
+ * Quantas levas o botao "Conferir notas no OMIE" encadeia numa apertada so.
+ *
+ * O botao existe para quem vai MANDAR o relatorio agora, e o operador fica esperando ele
+ * terminar: cinco levas de vinte sao ~100 cargas, e cada consulta e uma chamada de ~3s na
+ * fila serializada do OMIE — a mesma que envia os fechamentos. Mais que isso viraria um
+ * botao que fica minutos girando e uma fila de faturamento parada atras dele.
+ *
+ * O que nao couber nao se perde: a propria tela continua perguntando sozinha enquanto
+ * estiver aberta, a conferencia de fundo cobre o resto, e apertar de novo continua de onde
+ * parou — a resposta do botao diz quantas ainda estao sem numero.
+ */
+export const OMIE_INVOICE_NUMBER_ASK_ROUNDS = 5;
+
+/** Contagem de uma passada da conferencia, do ponto de vista do numero da nota. */
+export interface OmieInvoiceNumberReconcileResult {
+  /** Pesagens conferidas no OMIE. */
+  checked: number;
+  /** Quantas passaram a constar faturadas. */
+  billed: number;
+  /** Quantas ganharam o numero da nota. */
+  invoiceNumbers: number;
+  /** Quantas continuam faturadas sem numero. */
+  stillWithoutInvoiceNumber: number;
+  errors: string[];
+}
 
 /**
  * As cargas que ja tem documento no OMIE e ainda estao sem o numero da nota aqui.
@@ -64,11 +106,15 @@ export function selectOperationsMissingInvoiceNumber(
  * tecla viraria uma chamada ao OMIE. Uma carga que ainda nao foi faturada la continua sem
  * numero de proposito: ela sera perguntada de novo quando a tela for aberta outra vez, que
  * e quando faz sentido perguntar.
+ *
+ * A mesma memoria e o que faz as levas ANDAREM: cada leva marca os seus ids, e a chamada
+ * seguinte pega a leva de baixo em vez de repetir a de cima. E assim que uma tela de
+ * centenas de cargas se preenche inteira, e nao so ate o teto de uma pergunta.
  */
 export function selectInvoiceNumbersToAsk(
   rows: readonly OmieInvoiceNumberRow[],
   alreadyAsked: ReadonlySet<string>,
-  limit: number = OMIE_INVOICE_NUMBER_ASK_LIMIT
+  limit: number = OMIE_INVOICE_NUMBER_ASK_CHUNK
 ): string[] {
   const missing = selectOperationsMissingInvoiceNumber(rows).filter(
     (operationId) => !alreadyAsked.has(operationId)

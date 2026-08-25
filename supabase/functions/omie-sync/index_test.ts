@@ -4268,6 +4268,197 @@ Deno.test(
   }
 );
 
+// O `/produtos/dfedocs/` nao devolve `nNF`: o numero da nota mora num bloco de documentos
+// fiscais, com um nome generico (`cNumero`). Procurar esse nome solto na resposta inteira
+// pegaria numero de endereco e de parcela pelo caminho — por isso ele so vale dentro do
+// bloco, e e esse recorte que este teste fixa.
+Deno.test(
+  "check_order_billing acha o numero da nota no bloco de documentos fiscais do pedido",
+  async () => {
+    const { ids, fixtures } = await billingDependencies("nf-bloco-documentos");
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarPedidos") {
+        return {
+          pagina: 1,
+          pedido_venda_produto: [
+            salesListingRecord(9002, "60", "1002"),
+            salesListingRecord(9001, "50", "1001"),
+            salesListingRecord(9000, "50", "1000"),
+            salesListingRecord(8999, "50", "0999")
+          ]
+        };
+      }
+      if (input.call === "ObterPedVenda") {
+        return {
+          nIdPed: 9002,
+          // Numero de ENDERECO solto na resposta: nao pode virar numero de nota.
+          endereco: { cNumero: "742", cEndereco: "Rua das Pedreiras" },
+          documentos_fiscais: [
+            {
+              cTipoDoc: "NFE",
+              cNumero: "45231",
+              cSerie: "1",
+              cUrlDanfe: "https://omie.example/d.pdf"
+            }
+          ]
+        };
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: ids.deviceId,
+        deviceToken: ids.token,
+        action: "check_order_billing",
+        payload: {
+          orders: [
+            { operationId: "op-faturada", orderType: "sales", omieOrderId: 9002 },
+            { operationId: "op-b", orderType: "sales", omieOrderId: 9001 },
+            { operationId: "op-c", orderType: "sales", omieOrderId: 9000 },
+            { operationId: "op-d", orderType: "sales", omieOrderId: 8999 }
+          ]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    const results = response.results as Array<Record<string, unknown>>;
+    assertObjectMatch(results[0], { operationId: "op-faturada", invoiceNumber: "45231" });
+  }
+);
+
+// Quando so a chave de acesso volta, o numero sai DELA: posicoes 26 a 34 dos 44 digitos.
+// Guardar a chave inteira na coluna "Nota fiscal" nao serve para ninguem — o cliente e o
+// contador dele pedem o numero, que e o que esta impresso na DANFE.
+Deno.test("check_order_billing tira o numero da nota da chave de acesso", async () => {
+  const { ids, fixtures } = await billingDependencies("nf-pela-chave");
+  // cUF(35) AAMM(2608) CNPJ(14) modelo(55) serie(001) numero(000045231) tpEmis(1)
+  // codigo(12345678) DV(0)
+  const chave =
+    "35" + "2608" + "12345678000190" + "55" + "001" + "000045231" + "1" + "12345678" + "0";
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarPedidos") {
+      return {
+        pagina: 1,
+        pedido_venda_produto: [
+          salesListingRecord(9002, "60", "1002"),
+          salesListingRecord(9001, "50", "1001"),
+          salesListingRecord(9000, "50", "1000"),
+          salesListingRecord(8999, "50", "0999")
+        ]
+      };
+    }
+    if (input.call === "ObterPedVenda") {
+      return { nIdPed: 9002, chave_nfe: chave };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  assertEquals(chave.length, 44);
+
+  const response = await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-faturada", orderType: "sales", omieOrderId: 9002 },
+          { operationId: "op-b", orderType: "sales", omieOrderId: 9001 },
+          { operationId: "op-c", orderType: "sales", omieOrderId: 9000 },
+          { operationId: "op-d", orderType: "sales", omieOrderId: 8999 }
+        ]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const results = response.results as Array<Record<string, unknown>>;
+  assertObjectMatch(results[0], { operationId: "op-faturada", invoiceNumber: "45231" });
+});
+
+// Nota emitida E faturamento, qualquer que seja a etapa do kanban. A etapa mandava sozinha,
+// e uma venda com nota cuja etapa nao tivesse sido movida voltava como NAO faturada — com o
+// desktop jogando fora o numero que tinha vindo junto.
+Deno.test(
+  "check_order_billing da por faturada a venda com nota, mesmo em etapa baixa",
+  async () => {
+    const { ids, fixtures } = await billingDependencies("nf-etapa-baixa");
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ConsultarPedido") {
+        return {
+          pedido_venda_produto: {
+            cabecalho: { codigo_pedido: 9001, numero_pedido: "1001", etapa: "50" },
+            informacoes_adicionais: { numero_nfe: "778" }
+          }
+        };
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: ids.deviceId,
+        deviceToken: ids.token,
+        action: "check_order_billing",
+        payload: { orders: [{ operationId: "op-1", orderType: "sales", omieOrderId: 9001 }] }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    const results = response.results as Array<Record<string, unknown>>;
+    assertObjectMatch(results[0], {
+      operationId: "op-1",
+      found: true,
+      billed: true,
+      invoiceNumber: "778"
+    });
+  }
+);
+
+// O teto de consultas dirigidas e o que decidia quantas notas chegavam por passada. Dez
+// bastam para o rodizio de fundo; a TELA pede mais, porque ali existe alguem esperando o
+// numero e a leva seguinte so sai quando esta terminar.
+Deno.test("check_order_billing respeita o teto de consultas do numero da nota", async () => {
+  const { ids, fixtures } = await billingDependencies("nf-teto");
+  // Do mais novo para o mais velho, como o OMIE devolve a listagem em ordem decrescente.
+  const listed = Array.from({ length: 14 }, (_, index) =>
+    salesListingRecord(9113 - index, "60", `${1113 - index}`)
+  );
+  const orders = listed.map((_, index) => ({
+    operationId: `op-${index}`,
+    orderType: "sales" as const,
+    omieOrderId: 9113 - index
+  }));
+
+  async function run(invoiceNumberBudget?: number) {
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarPedidos") return { pagina: 1, pedido_venda_produto: listed };
+      if (input.call === "ObterPedVenda") return { nNF: "500" };
+      return defaultOmieListResponse(input);
+    });
+    await postOmieSync(
+      {
+        deviceId: ids.deviceId,
+        deviceToken: ids.token,
+        action: "check_order_billing",
+        payload: invoiceNumberBudget === undefined ? { orders } : { orders, invoiceNumberBudget }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+    return omieQueue.requests.filter((r) => r.call === "ObterPedVenda").length;
+  }
+
+  // Rodizio de fundo: dez por passada, e o resto volta na proxima.
+  assertEquals(await run(), 10);
+  // Pedido da tela: gasta o que foi pedido...
+  assertEquals(await run(12), 12);
+  // ...mas o pedido nao passa do teto do teto (20), para a fila voltar ao faturamento logo
+  // em seguida: com 14 documentos faturados sem numero, sao as 14 e para por ali.
+  assertEquals(await run(999), listed.length);
+});
+
 // O numero e um ganho, nao um pre-requisito: a pesagem ja consta faturada, e insistir aqui
 // custaria a passada inteira por causa de um campo.
 Deno.test(

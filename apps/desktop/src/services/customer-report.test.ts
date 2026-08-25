@@ -1532,6 +1532,26 @@ describe("numero da nota fiscal no relatorio do cliente", () => {
       );
       expect(sheet).toContain("Nota fiscal");
       expect(sheet).toContain("28727");
+
+      // E no SIMPLIFICADO tambem — que e o modelo que de fato vai por e-mail ao cliente.
+      // A unica lista carga a carga dele e "Viagens por placa e motorista"; enquanto a nota
+      // so aparecia na tabela "Operacoes (detalhado)" do modelo completo, o relatorio que o
+      // cliente recebia nao trazia numero de nota nenhum.
+      const simple = renderCustomerReportHtml(
+        report,
+        "simplified",
+        new Date("2026-07-15T12:00:00Z")
+      );
+      expect(simple).toContain("Nota fiscal");
+      expect(simple).toContain("28727");
+
+      const simpleSheet = renderCustomerReportSpreadsheet(
+        report,
+        "simplified",
+        new Date("2026-07-15T12:00:00Z")
+      );
+      expect(simpleSheet).toContain("Nota fiscal");
+      expect(simpleSheet).toContain("28727");
     } finally {
       db.close();
     }

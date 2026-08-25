@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { CacheQueryOptions } from "../services/cache-store";
 import {
-  ENTITY_PICKER_PAGE_SIZE,
+  ENTITY_PICKER_PREVIEW_LIMIT,
+  ENTITY_PICKER_RESULT_LIMIT,
   buildEntityPickerItems,
-  filterEntityPickerItems,
-  loadAllCacheRows
+  loadEntityPickerPage
 } from "./entity-picker";
 
 describe("entity picker items", () => {
@@ -27,14 +26,16 @@ describe("entity picker items", () => {
     expect(items.map((item) => item.title).sort()).toEqual(["98765432000155", "t2"]);
   });
 
-  it("sorts alphabetically and flags inactive records instead of hiding them", () => {
+  it("mantem a ordem que o cache mandou e marca o inativo em vez de esconde-lo", () => {
+    // A ordem e a do cache — alfabetica em repouso, por proximidade com a busca. Reordenar
+    // aqui desfazia a pontuacao e devolvia o melhor resultado para o meio da lista.
     const items = buildEntityPickerItems("customer", [
       { id: "c1", tradeName: "Zeta", isActive: true },
       { id: "c2", tradeName: "Levisa", isActive: false },
       { id: "c3", tradeName: "Alfa", isActive: true }
     ]);
 
-    expect(items.map((item) => item.title)).toEqual(["Alfa", "Levisa", "Zeta"]);
+    expect(items.map((item) => item.title)).toEqual(["Zeta", "Levisa", "Alfa"]);
     expect(items.find((item) => item.title === "Levisa")?.isActive).toBe(false);
   });
 
@@ -57,68 +58,43 @@ describe("entity picker items", () => {
   });
 });
 
-describe("entity picker search", () => {
-  const items = buildEntityPickerItems("customer", [
-    {
-      id: "c1",
-      tradeName: "Levisa",
-      legalName: "Levisa Mineracao",
-      document: "12.345.678/0001-90"
-    },
-    { id: "c2", tradeName: "Concreteira Sao Joao", legalName: "Sao Joao SA" },
-    { id: "c3", tradeName: "Construtora São Paulo", legalName: "SP Ltda" }
-  ]);
+describe("loadEntityPickerPage", () => {
+  it("pede a busca ao cache e devolve a pagina com o total que casou", async () => {
+    const queryCache = vi.fn(async () => ({
+      rows: [{ id: "c1", tradeName: "Levisa" }],
+      total: 312
+    }));
 
-  it("matches a fragment anywhere in the name", () => {
-    expect(filterEntityPickerItems(items, "visa").map((item) => item.id)).toEqual(["c1"]);
-  });
+    const page = await loadEntityPickerPage({ queryCache }, "customer", "levisa");
 
-  it("ignores case and accents", () => {
-    expect(filterEntityPickerItems(items, "SAO PAULO").map((item) => item.id)).toEqual(["c3"]);
-  });
-
-  it("matches the document typed with or without punctuation", () => {
-    expect(filterEntityPickerItems(items, "12345678000190").map((item) => item.id)).toEqual(["c1"]);
-    expect(filterEntityPickerItems(items, "12.345.678/0001-90").map((item) => item.id)).toEqual([
-      "c1"
-    ]);
-  });
-
-  it("returns everything when the search is empty", () => {
-    expect(filterEntityPickerItems(items, "   ")).toHaveLength(3);
-  });
-});
-
-describe("loadAllCacheRows", () => {
-  it("pages through the cache until the full list is read", async () => {
-    const total = ENTITY_PICKER_PAGE_SIZE + 3;
-    const all = Array.from({ length: total }, (_, index) => ({ id: `c${index}` }));
-    const queryCache = vi.fn(async (options: CacheQueryOptions) => {
-      const offset = options.offset ?? 0;
-      const limit = options.limit ?? ENTITY_PICKER_PAGE_SIZE;
-      return { rows: all.slice(offset, offset + limit), total };
+    expect(queryCache).toHaveBeenCalledWith({
+      entityType: "customer",
+      search: "levisa",
+      activeOnly: false,
+      limit: ENTITY_PICKER_RESULT_LIMIT
     });
-
-    const rows = await loadAllCacheRows({ queryCache }, "customer");
-
-    expect(rows).toHaveLength(total);
-    expect(queryCache).toHaveBeenCalledTimes(2);
-    expect(rows[total - 1]).toEqual({ id: `c${total - 1}` });
+    expect(page.items.map((item) => item.id)).toEqual(["c1"]);
+    // O total e o que CASOU, nao o que coube: e por ele que o rodape avisa que ha mais.
+    expect(page.total).toBe(312);
   });
 
-  it("stops after a single page when everything fits", async () => {
-    const queryCache = vi.fn(async () => ({ rows: [{ id: "c1" }], total: 1 }));
-
-    const rows = await loadAllCacheRows({ queryCache }, "carrier");
-
-    expect(rows).toEqual([{ id: "c1" }]);
-    expect(queryCache).toHaveBeenCalledTimes(1);
-  });
-
-  it("reads inactive records by default so the list matches the cadastro screen", async () => {
+  it("sem busca le so uma amostra, em vez do cadastro inteiro", async () => {
     const queryCache = vi.fn(async () => ({ rows: [] as unknown[], total: 0 }));
 
-    await loadAllCacheRows({ queryCache }, "customer");
+    await loadEntityPickerPage({ queryCache }, "carrier", "   ");
+
+    expect(queryCache).toHaveBeenCalledWith({
+      entityType: "carrier",
+      search: "",
+      activeOnly: false,
+      limit: ENTITY_PICKER_PREVIEW_LIMIT
+    });
+  });
+
+  it("le os inativos por padrao, para a lista bater com a tela de cadastro", async () => {
+    const queryCache = vi.fn(async () => ({ rows: [] as unknown[], total: 0 }));
+
+    await loadEntityPickerPage({ queryCache }, "customer", "alfa");
 
     expect(queryCache).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: "customer", activeOnly: false })

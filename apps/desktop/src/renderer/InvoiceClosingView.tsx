@@ -31,6 +31,10 @@ import { IconActionButton } from "./IconActionButton";
 import { SituationPill } from "./SituationPill";
 import { HelpTooltip } from "./Tooltip";
 import { formatDbDateTime } from "./format-datetime";
+import { rankByText } from "@kyberrock/shared";
+
+import { CustomerSearchSelect } from "./CustomerSearchSelect";
+import { useDebouncedValue } from "./use-debounced-value";
 import { useOmieInvoiceNumbers } from "./useOmieInvoiceNumbers";
 
 /**
@@ -157,6 +161,10 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
     [formats]
   );
 
+  // A busca espera a palavra antes de virar consulta: cada leitura aqui e o fechamento
+  // INTEIRO do periodo, e disparar uma por tecla travava a tela em quinzena movimentada.
+  const debouncedSearch = useDebouncedValue(search);
+
   // Os filtros que vao para a consulta E para o arquivo: o fechamento entregue ao cliente
   // precisa trazer exatamente as faturas que estavam na tela.
   const options = useMemo(
@@ -166,10 +174,10 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
       cycles,
       customerId: customerId || null,
       plates,
-      search: search.trim() || null,
+      search: debouncedSearch.trim() || null,
       periodLabel: range.label
     }),
-    [basis, range.cycle, cycles, customerId, plates, search, range.label]
+    [basis, range.cycle, cycles, customerId, plates, debouncedSearch, range.label]
   );
 
   useEffect(() => {
@@ -372,10 +380,14 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
     return [...all].sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [report?.availablePlates, plates]);
 
-  const visiblePlates = useMemo(() => {
-    const term = plateSearch.trim().toUpperCase();
-    return term ? plateOptions.filter((plate) => plate.includes(term)) : plateOptions;
-  }, [plateOptions, plateSearch]);
+  // A placa e digitada do jeito que esta escrita no caminhao — "ABC-1D23", "abc 1d23" — e
+  // guardada sem o traco. Comparar por trecho em maiuscula so achava quem digitasse igual ao
+  // cadastro; a comparacao do `search-ranking` ignora o traco, o espaco e a caixa, e ainda
+  // poe a placa mais parecida no topo.
+  const visiblePlates = useMemo(
+    () => rankByText(plateOptions, (plate) => plate, plateSearch),
+    [plateOptions, plateSearch]
+  );
 
   return (
     <section style={styles.page}>
@@ -558,18 +570,14 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
 
           <div style={styles.filterBlock}>
             <span style={styles.filterLabel}>Cliente</span>
-            <select
+            <CustomerSearchSelect
+              customers={customers}
               value={customerId}
-              onChange={(event) => setCustomerId(event.target.value)}
-              style={styles.input}
-            >
-              <option value={ALL_CUSTOMERS}>Todos os clientes</option>
-              {customers.map((customer) => (
-                <option key={customer.id} value={customer.id}>
-                  {customer.document ? `${customer.name} - ${customer.document}` : customer.name}
-                </option>
-              ))}
-            </select>
+              onChange={setCustomerId}
+              leadingOptions={[{ value: ALL_CUSTOMERS, label: "Todos os clientes" }]}
+              inputStyle={styles.input}
+              hintStyle={styles.hint}
+            />
             <span style={styles.filterLabel}>Buscar</span>
             <input
               value={search}

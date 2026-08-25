@@ -1,4 +1,3 @@
-import type { CacheEntityType } from "../services/cache-store";
 import type { KyberRockDesktopApi } from "../preload/api-types";
 
 /**
@@ -46,23 +45,36 @@ function firstFilled(row: Record<string, unknown>, keys: string[]): string {
   return "";
 }
 
-const TITLE_FIELDS: Record<string, string[]> = {
+/** Os cadastros que o modal de troca sabe listar. */
+export type EntityPickerType = "customer" | "carrier" | "product";
+
+const TITLE_FIELDS: Record<EntityPickerType, string[]> = {
   customer: ["tradeName", "legalName", "name"],
-  carrier: ["name", "tradeName", "legalName"]
+  carrier: ["name", "tradeName", "legalName"],
+  product: ["description", "name"]
 };
 
-const SUBTITLE_FIELDS: Record<string, string[]> = {
+const SUBTITLE_FIELDS: Record<EntityPickerType, string[]> = {
   customer: ["legalName"],
-  carrier: ["city"]
+  carrier: ["city"],
+  // O codigo do produto e o que separa dois materiais de descricao parecida ("Brita 1" e
+  // "Brita 1 lavada"), e e por ele que o cadastro conversa com o OMIE.
+  product: ["code"]
 };
 
 /**
- * Converte as linhas cruas do cache no formato do modal, ordenadas por nome. Linhas
- * sem nenhum nome legivel caem para o documento e, em ultimo caso, para o id — assim
- * um cadastro torto continua selecionavel em vez de virar uma linha em branco.
+ * Converte as linhas cruas do cache no formato do modal, PRESERVANDO a ordem que veio.
+ *
+ * A ordem e do cache: alfabetica em repouso, por proximidade com o que foi digitado. Antes
+ * a lista era reordenada aqui, em ordem alfabetica, DEPOIS de o cache ja ter pontuado a
+ * busca — o cliente que casava melhor voltava para o meio da lista e o operador rolava
+ * atras dele.
+ *
+ * Linhas sem nenhum nome legivel caem para o documento e, em ultimo caso, para o id —
+ * assim um cadastro torto continua selecionavel em vez de virar uma linha em branco.
  */
 export function buildEntityPickerItems(
-  entityType: "customer" | "carrier",
+  entityType: EntityPickerType,
   rows: Array<Record<string, unknown>>
 ): EntityPickerItem[] {
   const titleFields = TITLE_FIELDS[entityType] ?? ["name"];
@@ -91,69 +103,55 @@ export function buildEntityPickerItems(
     };
   });
 
-  return sortEntityPickerItems(items);
-}
-
-/** Ordem alfabetica pelo nome exibido, com os inativos mantidos no meio da lista. */
-export function sortEntityPickerItems(items: EntityPickerItem[]): EntityPickerItem[] {
-  return [...items].sort((a, b) => a.title.localeCompare(b.title, "pt-BR"));
+  return items;
 }
 
 /**
- * Filtra pela barra de pesquisa. Casa por trecho em qualquer posicao ("visa" acha
- * "Levisa") e ignora acento e pontuacao, para o operador digitar do jeito que lembra.
- */
-export function filterEntityPickerItems(
-  items: EntityPickerItem[],
-  search: string
-): EntityPickerItem[] {
-  const term = normalizePickerText(search.trim());
-  if (!term) return items;
-  const compactTerm = compactPickerText(search);
-
-  return items.filter((item) => {
-    if (item.searchText.includes(term)) return true;
-    return compactTerm.length > 0 && item.searchText.includes(compactTerm);
-  });
-}
-
-/** Tamanho de cada pagina lida do cache ao montar a lista completa. */
-export const ENTITY_PICKER_PAGE_SIZE = 500;
-
-/**
- * Guarda contra loop infinito caso o cache devolva `total` inconsistente: 40 paginas
- * de 500 cobrem 20 mil cadastros, muito acima de qualquer unidade real.
- */
-const MAX_PAGES = 40;
-
-/**
- * Le a lista COMPLETA de um tipo do cache, paginando ate cobrir `total`.
+ * Quantos cadastros o modal mostra ANTES de o operador digitar.
  *
- * O modal de troca lia uma unica pagina de 500 linhas e so depois ordenava por nome:
- * numa unidade com mais de 500 cadastros, o corte acontecia na ordem do banco e
- * clientes existentes (o caso relatado: "Levisa") simplesmente nao apareciam na lista.
- * Aqui a paginacao vai ate o fim antes de qualquer ordenacao.
+ * Amostra, nao filtro: a pedreira pequena continua escolhendo no clique. A grande nao
+ * espera mais o cadastro inteiro atravessar o IPC — o modal lia TUDO ao abrir, em paginas
+ * de 500, e uma unidade com milhares de clientes travava a tela por segundos antes de
+ * pintar milhares de linhas que ninguem ia rolar.
  */
-export async function loadAllCacheRows(
+export const ENTITY_PICKER_PREVIEW_LIMIT = 25;
+
+/** Quantos resultados o modal mostra COM busca digitada. */
+export const ENTITY_PICKER_RESULT_LIMIT = 50;
+
+/** O que o modal precisa saber a cada leitura: as linhas e quantas casaram ao todo. */
+export interface EntityPickerPage {
+  items: EntityPickerItem[];
+  /** Quantos cadastros casaram — pode ser mais do que veio em `items`. */
+  total: number;
+}
+
+/**
+ * Le do cache a pagina que o modal vai mostrar.
+ *
+ * A busca acontece do lado do cache, que e quem tem o cadastro em memoria e sabe pontuar a
+ * proximidade. Antes o modal puxava a lista COMPLETA pelo IPC e filtrava na tela: ate 40
+ * idas e voltas de 500 linhas so para abrir, e uma comparacao por trecho sem ordem nenhuma.
+ */
+export async function loadEntityPickerPage(
   desktopApi: Pick<KyberRockDesktopApi, "queryCache">,
-  entityType: CacheEntityType,
-  options: { activeOnly?: boolean } = {}
-): Promise<Array<Record<string, unknown>>> {
-  const rows: Array<Record<string, unknown>> = [];
-
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    const offset = page * ENTITY_PICKER_PAGE_SIZE;
-    const result = await desktopApi.queryCache({
+  entityType: EntityPickerType,
+  search: string,
+  options: { activeOnly?: boolean; productFiscalType?: "finished_goods" } = {}
+): Promise<EntityPickerPage> {
+  const term = search.trim();
+  const result = await desktopApi.queryCache({
+    entityType,
+    search: term,
+    activeOnly: options.activeOnly ?? false,
+    productFiscalType: options.productFiscalType,
+    limit: term ? ENTITY_PICKER_RESULT_LIMIT : ENTITY_PICKER_PREVIEW_LIMIT
+  });
+  return {
+    items: buildEntityPickerItems(
       entityType,
-      activeOnly: options.activeOnly ?? false,
-      limit: ENTITY_PICKER_PAGE_SIZE,
-      offset
-    });
-    const pageRows = (result.rows as Array<Record<string, unknown>>) ?? [];
-    rows.push(...pageRows);
-    if (pageRows.length < ENTITY_PICKER_PAGE_SIZE) break;
-    if (rows.length >= result.total) break;
-  }
-
-  return rows;
+      (result.rows as Array<Record<string, unknown>>) ?? []
+    ),
+    total: result.total
+  };
 }

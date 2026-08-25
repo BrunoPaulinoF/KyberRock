@@ -1,3 +1,5 @@
+import { scoreTermAgainstText, searchTerms } from "@kyberrock/shared";
+
 import type { TruckControlReport, TruckControlRow, TruckControlTrip } from "./reports.js";
 import {
   SPREADSHEET_STYLE,
@@ -64,13 +66,21 @@ export function normalizeTruckSearch(search: string | null | undefined): string 
   return (search ?? "").trim().toUpperCase();
 }
 
-/** A linha entra no recorte quando a placa OU o motorista contem o termo digitado. */
+/**
+ * A linha entra no recorte quando a placa OU o motorista casa com o que foi digitado.
+ *
+ * Casa por termo (a ordem em que a pessoa lembra de placa e motorista nao importa), sem
+ * acento e sem pontuacao: "ABC-1D23" acha a placa gravada como "ABC1D23" e "joao" acha
+ * "João" — antes nenhum dos dois achava, e a busca so servia se o operador digitasse
+ * exatamente como estava no cadastro.
+ *
+ * A ORDEM do relatorio nao muda: ele lista caminhoes com totais por linha e um total geral
+ * no rodape, e reordenar por proximidade tiraria o sentido da lista impressa.
+ */
 export function truckMatchesSearch(truck: TruckControlRow, term: string): boolean {
   if (!term) return true;
-  return (
-    truck.plate.toUpperCase().includes(term) ||
-    (truck.driverName ?? "").toUpperCase().includes(term)
-  );
+  const haystack = [truck.plate, truck.driverName ?? ""].filter(Boolean).join(" ");
+  return searchTerms(term).every((token) => scoreTermAgainstText(token, haystack) > 0);
 }
 
 /**

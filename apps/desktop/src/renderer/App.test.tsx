@@ -14,7 +14,6 @@ import {
   carrierSelectorFilterIds,
   carrierToLinkForPickedVehicle,
   createCacheSelectOptions,
-  filterCacheSelectOptions,
   formatElapsedSince,
   getDriverFilterIds,
   getFiscalBillingStatus,
@@ -335,7 +334,7 @@ describe("App", () => {
     );
   });
 
-  it("builds and filters cache select modal options", () => {
+  it("builds cache select modal options", () => {
     const options = createCacheSelectOptions([
       { id: "customer-1", tradeName: "Cliente A" },
       { id: "vehicle-1", plate: "ABC1D23" },
@@ -351,8 +350,6 @@ describe("App", () => {
       "A prazo",
       "Levisa Mineracao Ltda"
     ]);
-    expect(filterCacheSelectOptions(options, ["vehicle-1"])).toEqual([options[1]]);
-    expect(filterCacheSelectOptions(options, undefined)).toEqual(options);
   });
 
   it("diz ao operador de quanto e o adiantamento antes de ele marcar a caixa", () => {
