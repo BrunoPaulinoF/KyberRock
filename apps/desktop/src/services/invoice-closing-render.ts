@@ -1,3 +1,4 @@
+import { invoiceNumberText } from "./invoice-number-label.js";
 import {
   SPREADSHEET_STYLE,
   documentStyle,
@@ -455,7 +456,7 @@ function detailCells(line: InvoiceClosingLine): string[] {
     formatBRL(line.totalCents),
     line.operationTypeLabel,
     line.situationLabel,
-    line.invoiceNumber ?? "-",
+    invoiceNumberText(line.invoiceNumber, line.operationType),
     omieReference(line),
     line.closingDate ? formatDayLabel(line.closingDate) : "Fora do fechamento",
     line.dueDate ? formatDayLabel(line.dueDate) : "-"
@@ -562,7 +563,7 @@ function lineCells(line: InvoiceClosingLine): string[] {
   return [
     formatDayLabel(line.date),
     formatCouponNumber(line.couponNumber),
-    line.invoiceNumber ?? "-",
+    invoiceNumberText(line.invoiceNumber, line.operationType),
     line.omieOrderNumber ?? "-",
     line.plate,
     line.carrierName,

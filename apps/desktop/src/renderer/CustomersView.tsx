@@ -14,6 +14,7 @@ import {
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
 import { readAllCacheRows } from "./cache-rows";
+import { OptionSearchPicker } from "./OptionSearchPicker";
 import { useDebouncedValue } from "./use-debounced-value";
 import { FREIGHT_MODALITIES, getFreightModalityInfo } from "../services/freight";
 import type { FreightModality } from "../services/freight";
@@ -1831,22 +1832,23 @@ export function CustomersView({
                             nao foi faturado naquela nota — escolha que tem de ser
                             deliberada, nao o que sai de um Salvar apressado.
                           */}
-                          <select
+                          <OptionSearchPicker
+                            options={[
+                              {
+                                id: FUTURE_BILLING_ANY_PRODUCT,
+                                label: "Qualquer produto do cliente"
+                              },
+                              ...products.map((product) => ({
+                                id: product.id,
+                                label: `${product.code ? `${product.code} - ` : ""}${product.description}`
+                              }))
+                            ]}
                             value={futureBillingProductId}
-                            onChange={(e) => setFutureBillingProductId(e.target.value)}
-                            style={getInputStyle(false)}
-                          >
-                            <option value="">Selecione o produto da nota</option>
-                            {products.map((product) => (
-                              <option key={product.id} value={product.id}>
-                                {product.code ? `${product.code} - ` : ""}
-                                {product.description}
-                              </option>
-                            ))}
-                            <option value={FUTURE_BILLING_ANY_PRODUCT}>
-                              Qualquer produto do cliente
-                            </option>
-                          </select>
+                            onChange={setFutureBillingProductId}
+                            placeholder="Buscar produto da nota..."
+                            leadingOption={{ id: "", label: "Selecione o produto da nota" }}
+                            inputStyle={getInputStyle(false)}
+                          />
                         </Field>
                         <NumberInput
                           label="Numero da NF-e"
@@ -2016,18 +2018,17 @@ export function CustomersView({
                     label="Forma de pagamento padrao"
                     hint="Puxada automaticamente na Nova entrada (pode ser trocada)"
                   >
-                    <select
+                    <OptionSearchPicker
+                      options={paymentMethods.map((method) => ({
+                        id: method.id,
+                        label: method.name
+                      }))}
                       value={form.defaultPaymentMethodId}
-                      onChange={(e) => setForm({ ...form, defaultPaymentMethodId: e.target.value })}
-                      style={getInputStyle(false)}
-                    >
-                      <option value="">Selecione</option>
-                      {paymentMethods.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(id) => setForm({ ...form, defaultPaymentMethodId: id })}
+                      placeholder="Buscar forma de pagamento..."
+                      leadingOption={{ id: "", label: "Selecione" }}
+                      inputStyle={getInputStyle(false)}
+                    />
                   </Field>
                   <Field
                     label="Condicao de pagamento padrao"
@@ -2049,19 +2050,18 @@ export function CustomersView({
                     label="Transportadora padrao"
                     hint="Puxada automaticamente na Nova entrada. Vincular uma transportadora na aba Transportadoras ja assume o padrao quando ele ainda nao foi definido."
                   >
-                    <select
+                    <OptionSearchPicker
+                      options={defaultCarrierOptions.map((carrier) => ({
+                        id: carrier.id,
+                        label: carrier.name,
+                        badge: linkedCarrierIds.includes(carrier.id) ? "vinculada" : null
+                      }))}
                       value={form.defaultCarrierId}
-                      onChange={(e) => setForm({ ...form, defaultCarrierId: e.target.value })}
-                      style={getInputStyle(false)}
-                    >
-                      <option value="">Sem transportadora padrao</option>
-                      {defaultCarrierOptions.map((carrier) => (
-                        <option key={carrier.id} value={carrier.id}>
-                          {carrier.name}
-                          {linkedCarrierIds.includes(carrier.id) ? " (vinculada)" : ""}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(id) => setForm({ ...form, defaultCarrierId: id })}
+                      placeholder="Buscar transportadora..."
+                      leadingOption={{ id: "", label: "Sem transportadora padrao" }}
+                      inputStyle={getInputStyle(false)}
+                    />
                   </Field>
                   <label style={styles.checkbox}>
                     <input
@@ -2469,19 +2469,17 @@ export function CustomersView({
                         <div style={styles.fieldRow}>
                           {freightMode === "product" ? (
                             <Field label="Produto">
-                              <select
+                              <OptionSearchPicker
+                                options={products.map((product) => ({
+                                  id: product.id,
+                                  label: `${product.code ? `${product.code} - ` : ""}${product.description}`
+                                }))}
                                 value={freightProductId}
-                                onChange={(e) => setFreightProductId(e.target.value)}
-                                style={getInputStyle(false)}
-                              >
-                                <option value="">Selecione</option>
-                                {products.map((product) => (
-                                  <option key={product.id} value={product.id}>
-                                    {product.code ? `${product.code} - ` : ""}
-                                    {product.description}
-                                  </option>
-                                ))}
-                              </select>
+                                onChange={setFreightProductId}
+                                placeholder="Buscar produto..."
+                                leadingOption={{ id: "", label: "Selecione" }}
+                                inputStyle={getInputStyle(false)}
+                              />
                             </Field>
                           ) : null}
                           <Field
@@ -2571,19 +2569,17 @@ export function CustomersView({
                       <>
                         <div style={styles.fieldRow}>
                           <Field label="Produto">
-                            <select
+                            <OptionSearchPicker
+                              options={products.map((product) => ({
+                                id: product.id,
+                                label: `${product.code ? `${product.code} - ` : ""}${product.description}`
+                              }))}
                               value={specialProductId}
-                              onChange={(e) => setSpecialProductId(e.target.value)}
-                              style={getInputStyle(false)}
-                            >
-                              <option value="">Selecione</option>
-                              {products.map((product) => (
-                                <option key={product.id} value={product.id}>
-                                  {product.code ? `${product.code} - ` : ""}
-                                  {product.description}
-                                </option>
-                              ))}
-                            </select>
+                              onChange={setSpecialProductId}
+                              placeholder="Buscar produto..."
+                              leadingOption={{ id: "", label: "Selecione" }}
+                              inputStyle={getInputStyle(false)}
+                            />
                           </Field>
                           <MoneyInput
                             label="Preco/ton (R$)"

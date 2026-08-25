@@ -615,6 +615,7 @@ export const documentationSections: DocumentationSection[] = [
       "Use Controle de caminhoes para acompanhar as viagens do periodo e baixar a lista em PDF ou Excel.",
       "Use Relatorio por cliente para gerar o relatorio simplificado e/ou completo de um cliente em PDF e/ou Excel.",
       'A coluna "Nota fiscal" se preenche sozinha: com a tela aberta, o aplicativo vai perguntando ao OMIE o numero da nota das cargas que ainda estao sem ele, em levas, ate acabar. Um periodo grande leva alguns minutos — deixe a tela aberta e os numeros vao aparecendo.',
+      'Carga INTERNA aparece com um tracinho na coluna "Nota fiscal", e nao com "Sem nota": venda interna vira ordem de servico no OMIE e nao emite NF-e, entao nao ha nota a esperar. So a venda COM NOTA ainda sem numero sai destacada — nessa, ou a NF-e nao foi emitida no OMIE, ou a conferencia ainda nao chegou nela.',
       'No Relatorio por cliente, para nao esperar, clique em "Conferir notas no OMIE" antes de gerar o arquivo: ele insiste ate a fila secar e responde quantas cargas ganharam numero e quantas continuam sem. Carga que continua sem numero e carga cuja nota ainda nao foi emitida no OMIE.',
       'O numero da nota sai nos dois modelos do Relatorio por cliente — no simplificado ele fica na lista "Viagens por placa e motorista", que e a lista que o cliente confere.',
       "Use Conferencia de faturamento para ver o periodo pesagem a pesagem — cliente, data, produto, peso, frete e total de cada carregamento — e conferir contra o faturamento do OMIE.",
@@ -904,7 +905,7 @@ export const documentationFaqs: DocumentationFaq[] = [
   {
     question: "A lista de clientes nao abre inteira. Como acho o cliente?",
     answer:
-      "Escrevendo. Ao clicar no campo, a lista mostra so os primeiros cadastros em ordem alfabetica — nao o cadastro inteiro. Escreva o nome, o nome fantasia, o CNPJ/CPF (com ou sem pontuacao) ou a placa, e a lista passa a mostrar so o que corresponde, com o mais parecido no topo. Vale para cliente, produto, placa, motorista e transportadora, na nova entrada e nos modais de alterar. O rodape da lista diz quantos cadastros casaram com o que voce escreveu: quando ele disser que ha mais do que cabe na tela, escreva mais uma letra em vez de rolar. A lista deixou de abrir inteira de proposito — numa pedreira com milhares de cadastros era isso que travava a tela.",
+      "Escrevendo. Os campos de escolha do aplicativo deixaram de ser uma caixa de rolagem com o cadastro inteiro: agora sao barras de pesquisa. Clique no campo e a lista aparece logo abaixo dele com os primeiros cadastros em ordem alfabetica; escreva o nome, o nome fantasia, o CNPJ/CPF (com ou sem pontuacao) ou a placa e a lista vai mostrando so o que corresponde, com o mais parecido no topo. Setas para cima e para baixo andam na lista, Enter escolhe e Esc fecha. Vale para cliente, produto, placa, motorista, transportadora, forma de pagamento, conta e categoria do OMIE — na Nova entrada, na ficha da operacao, nos cadastros e nos relatorios. O rodape da lista diz quantos cadastros casaram: quando disser que ha mais do que cabe, escreva mais uma letra em vez de rolar.",
     category: "operacao",
     sectionId: "weighing",
     keywords: [
@@ -913,7 +914,9 @@ export const documentationFaqs: DocumentationFaq[] = [
       "buscar cliente",
       "procurar produto",
       "seletor",
+      "dropdown",
       "lista nao abre",
+      "barra de pesquisa",
       "travando",
       "lento"
     ]

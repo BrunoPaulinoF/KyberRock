@@ -4014,6 +4014,10 @@ Deno.test("check_order_billing resolve um lote inteiro com UMA chamada de listag
         ]
       };
     }
+    // O numero da nota vem pelo documento fiscal: sem isso a busca do numero cairia
+    // no `ConsultarPedido`, e a contagem abaixo deixaria de medir a consulta de
+    // SITUACAO — que e o que este teste vigia.
+    if (input.call === "ObterPedVenda") return { nNF: "500" };
     return defaultOmieListResponse(input);
   });
 
@@ -4067,6 +4071,10 @@ Deno.test("check_order_billing para de paginar quando passa do documento mais an
       const page = Number(getParam(input).pagina);
       return { pagina: page, pedido_venda_produto: pages[page] ?? [] };
     }
+    // O numero da nota vem pelo documento fiscal: sem isso a busca do numero cairia
+    // no `ConsultarPedido`, e a contagem abaixo deixaria de medir a consulta de
+    // SITUACAO — que e o que este teste vigia.
+    if (input.call === "ObterPedVenda") return { nNF: "500" };
     return defaultOmieListResponse(input);
   });
 
@@ -4378,6 +4386,64 @@ Deno.test("check_order_billing tira o numero da nota da chave de acesso", async 
   assertObjectMatch(results[0], { operationId: "op-faturada", invoiceNumber: "45231" });
 });
 
+// O numero da NF-e aparece em DOIS lugares do OMIE, e nem sempre nos dois: nos documentos
+// fiscais do pedido (`/produtos/dfedocs/`) e nas informacoes adicionais do proprio pedido.
+// Parar no primeiro deixava a coluna "Nota fiscal" vazia justamente na venda faturada por
+// uma pessoa dentro do OMIE — que e o caso normal.
+Deno.test(
+  "check_order_billing cai no proprio pedido quando o documento fiscal nao traz a nota",
+  async () => {
+    const { ids, fixtures } = await billingDependencies("nf-fallback-pedido");
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarPedidos") {
+        return {
+          pagina: 1,
+          pedido_venda_produto: [
+            salesListingRecord(9002, "60", "1002"),
+            salesListingRecord(9001, "50", "1001"),
+            salesListingRecord(9000, "50", "1000"),
+            salesListingRecord(8999, "50", "0999")
+          ]
+        };
+      }
+      // O documento fiscal existe, mas veio sem numero nenhum.
+      if (input.call === "ObterPedVenda") return { nIdPed: 9002 };
+      if (input.call === "ConsultarPedido") {
+        return {
+          pedido_venda_produto: {
+            cabecalho: { codigo_pedido: 9002, numero_pedido: "1002", etapa: "60" },
+            informacoes_adicionais: { numero_nfe: "45231" }
+          }
+        };
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: ids.deviceId,
+        deviceToken: ids.token,
+        action: "check_order_billing",
+        payload: {
+          orders: [
+            { operationId: "op-faturada", orderType: "sales", omieOrderId: 9002 },
+            { operationId: "op-b", orderType: "sales", omieOrderId: 9001 },
+            { operationId: "op-c", orderType: "sales", omieOrderId: 9000 },
+            { operationId: "op-d", orderType: "sales", omieOrderId: 8999 }
+          ]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    // A segunda consulta so acontece para a faturada que voltou sem numero.
+    assertEquals(omieQueue.requests.filter((r) => r.call === "ConsultarPedido").length, 1);
+
+    const results = response.results as Array<Record<string, unknown>>;
+    assertObjectMatch(results[0], { operationId: "op-faturada", invoiceNumber: "45231" });
+  }
+);
+
 // Nota emitida E faturamento, qualquer que seja a etapa do kanban. A etapa mandava sozinha,
 // e uma venda com nota cuja etapa nao tivesse sido movida voltava como NAO faturada — com o
 // desktop jogando fora o numero que tinha vindo junto.
@@ -4591,6 +4657,10 @@ Deno.test(
         const page = Number(getParam(input).pagina);
         return { pagina: page, total_de_paginas: 4, pedido_venda_produto: pages[page] ?? [] };
       }
+      // O numero da nota vem pelo documento fiscal: sem isso a busca do numero cairia
+      // no `ConsultarPedido`, e a contagem abaixo deixaria de medir a consulta de
+      // SITUACAO — que e o que este teste vigia.
+      if (input.call === "ObterPedVenda") return { nNF: "500" };
       return defaultOmieListResponse(input);
     });
 

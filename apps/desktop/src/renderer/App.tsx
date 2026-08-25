@@ -123,6 +123,8 @@ import { MountainOutline } from "./MountainOutline";
 import { CrudFormModal } from "./CrudFormModal";
 import { EntityPickerDialog } from "./EntityPickerDialog";
 import { readAllCacheRows } from "./cache-rows";
+import { OptionSearchPicker } from "./OptionSearchPicker";
+import { SearchPicker } from "./SearchPicker";
 import { loadEntityPickerPage } from "./entity-picker";
 import { SEARCH_DEBOUNCE_MS, useDebouncedValue } from "./use-debounced-value";
 import type { EntityPickerItem } from "./entity-picker";
@@ -5955,6 +5957,14 @@ export function resolveCarrierPrefill(
  * continuar escolhendo no clique e a com dez mil nao travar. Quem procura, digita — e ai
  * vale o teto de baixo.
  */
+/**
+ * A partir de quantas opcoes um campo de escolha vira barra de pesquisa.
+ *
+ * Abaixo disso o `<select>` nativo e melhor: abre, mostra tudo, escolhe. Acima, ele vira a
+ * lista que ninguem rola — e e ai que a busca ganha.
+ */
+const SELECT_FIELD_PICKER_THRESHOLD = 8;
+
 const CACHE_SELECT_PREVIEW_LIMIT = 25;
 
 /**
@@ -5981,6 +5991,18 @@ const cacheSelectInlineButtonStyle: React.CSSProperties = {
   padding: "4px 8px"
 };
 
+/**
+ * O seletor de cadastro da Nova entrada e da ficha da operacao: cliente, produto, forma de
+ * pagamento, transportadora, placa, motorista, condicao.
+ *
+ * Escreve e a lista aparece logo abaixo do campo. Antes o campo era um `<input readOnly>`
+ * que abria um MODAL em cima da tela, com a busca la dentro: para trocar o cliente o
+ * operador clicava, esperava o modal, digitava, escolhia e o modal fechava — quatro passos
+ * com o caminhao na fila, num campo que ele preenche dezenas de vezes por dia.
+ *
+ * Quem procura e ordena e o cache (`queryCache` com `search`), que tem o cadastro em
+ * memoria: a lista ja chega com o mais parecido no topo, e a tela so desenha.
+ */
 function CacheSelect({
   label,
   entityType,
@@ -6002,7 +6024,7 @@ function CacheSelect({
   onCreateNew?: () => void;
   /** Abre o cadastro do item ja selecionado para correcao (botao "Editar"). */
   onEditSelected?: () => void;
-  /** Esvazia o campo (botao "Vazio"). Sem ele o campo nao oferece a limpeza. */
+  /** Esvazia o campo. Sem ele o campo nao oferece a limpeza. */
   onClear?: () => void;
   desktopApi: KyberRockDesktopApi | null;
   disabled?: boolean;
@@ -6016,15 +6038,6 @@ function CacheSelect({
   const [totalMatches, setTotalMatches] = useState(0);
   const [selectedOption, setSelectedOption] = useState<CacheSelectOption | null>(null);
   const [loading, setLoading] = useState(false);
-  const [open, setOpen] = useState(false);
-  const [highlightedIndex, setHighlightedIndex] = useState(0);
-
-  const selectedLabel = useMemo(() => {
-    return (
-      options.find((o) => o.id === value)?.label ??
-      (selectedOption?.id === value ? selectedOption.label : "")
-    );
-  }, [options, selectedOption, value]);
 
   useEffect(() => {
     if (!value) {
@@ -6038,7 +6051,7 @@ function CacheSelect({
     }
     if (selectedOption?.id === value) return;
 
-    // O item escolhido quase nunca esta na lista mostrada — ela agora e uma amostra, ou o
+    // O item escolhido quase nunca esta na lista mostrada — ela e uma amostra, ou o
     // resultado de outra busca. Sem esta leitura pelo id, reabrir uma operacao ja montada
     // mostrava o campo Cliente EM BRANCO, como se ninguem tivesse sido escolhido.
     let cancelled = false;
@@ -6053,7 +6066,7 @@ function CacheSelect({
   }, [options, value, desktopApi, entityType, selectedOption]);
 
   // O que de fato vai ao cache. Segura o texto por um instante para uma palavra digitada
-  // depressa nao virar seis leituras seguidas — o seletor abre em cima da fila de pesagem,
+  // depressa nao virar seis leituras seguidas — o seletor fica em cima da fila de pesagem,
   // e cada tecla era um IPC com uma varredura do cadastro inteiro atras.
   const debouncedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE_MS);
 
@@ -6068,11 +6081,11 @@ function CacheSelect({
           entityType,
           search: term,
           // Sem busca, uma AMOSTRA; com busca, o lote de resultados. A lista completa nao
-          // e mais despejada na tela ao abrir: numa pedreira com milhares de cadastros era
-          // ela que travava o seletor, e ninguem escolhe rolando milhares de linhas — o
-          // caminho e digitar. A ordem agora vem pronta do cache (alfabetica em repouso,
-          // por proximidade com busca), entao a amostra e o comeco do alfabeto e nao "os
-          // primeiros que entraram no banco".
+          // e despejada na tela: numa pedreira com milhares de cadastros era ela que
+          // travava o seletor, e ninguem escolhe rolando milhares de linhas — o caminho e
+          // digitar. A ordem vem pronta do cache (alfabetica em repouso, por proximidade
+          // com busca), entao a amostra e o comeco do alfabeto e nao "os primeiros que
+          // entraram no banco".
           limit: term ? CACHE_SELECT_RESULT_LIMIT : CACHE_SELECT_PREVIEW_LIMIT,
           productFiscalType,
           // O vinculo (ex.: transportadoras do cliente) e aplicado no cache, ANTES do
@@ -6097,32 +6110,8 @@ function CacheSelect({
     };
   }, [desktopApi, entityType, productFiscalType, debouncedSearch, refreshKey, filterIds]);
 
-  useEffect(() => {
-    setHighlightedIndex(0);
-  }, [open, options.length]);
-
-  function selectOption(option: CacheSelectOption): void {
-    setSelectedOption(option);
-    onChange(option.id, option.raw);
-    setOpen(false);
-    setSearch("");
-  }
-
-  // Botoes que moram DENTRO do campo, a direita. "Vazio" some junto com a selecao —
-  // nao ha o que limpar num campo ja vazio — e o espaco reservado a direita do texto
-  // cresce conforme os botoes visiveis, para o nome selecionado nao passar por baixo.
-  const showClearButton = Boolean(onClear) && Boolean(value) && !disabled;
-  const showEditButton = Boolean(onEditSelected) && Boolean(value) && !disabled;
-  const inlineActionsPadding =
-    showEditButton && showClearButton
-      ? "146px"
-      : showEditButton
-        ? "76px"
-        : showClearButton
-          ? "74px"
-          : undefined;
-
-  function getOptionMeta(option: CacheSelectOption): string | null {
+  /** Numero de parcelas na condicao de pagamento — o dado que separa "30" de "30/60/90". */
+  function optionBadge(option: CacheSelectOption): string | null {
     if (entityType !== "payment_term") return null;
     const rawCount = option.raw?.installmentCount;
     return typeof rawCount === "number" && Number.isFinite(rawCount) && rawCount > 0
@@ -6130,326 +6119,76 @@ function CacheSelect({
       : null;
   }
 
+  const pickerOptions = options.map((option) => ({
+    id: option.id,
+    label: option.label,
+    badge: optionBadge(option)
+  }));
+
+  const showEditButton = Boolean(onEditSelected) && Boolean(value) && !disabled;
+
   return (
-    <div style={{ position: "relative", marginBottom: "6px" }}>
+    <div style={{ marginBottom: "6px" }}>
       <label style={styles.fieldLabel}>
         {label}
-        {/*
-          O botao "Editar" fica dentro do campo, a direita: o operador corrige o cadastro
-          do item selecionado (documento que falta, endereco, e-mail) sem sair da entrada
-          que ja comecou a montar.
-        */}
-        <span style={{ position: "relative", display: "block" }}>
-          <input
-            type="text"
-            value={selectedLabel}
-            onChange={() => undefined}
-            onClick={() => {
-              setOpen(true);
-              setSearch("");
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                setOpen(true);
-                setSearch("");
-              }
-            }}
-            disabled={disabled}
-            placeholder={`Selecionar ${label.toLowerCase()}...`}
-            readOnly
-            style={{
-              ...styles.input,
-              // O campo acompanha a largura da coluna em vez da largura padrao de
-              // ~20 caracteres do <input>: sem isto ele vazava da coluna estreita
-              // (Placa/Motorista) e o card ganhava barra de rolagem horizontal.
-              width: "100%",
-              cursor: disabled ? "not-allowed" : "pointer",
-              paddingRight: inlineActionsPadding
-            }}
-          />
-          {showClearButton || showEditButton ? (
-            <span
+        <span style={{ display: "flex", gap: "6px", alignItems: "flex-start" }}>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <SearchPicker
+              options={pickerOptions}
+              value={value}
+              onChange={(id) => {
+                if (!id) {
+                  onClear?.();
+                  return;
+                }
+                const picked = options.find((option) => option.id === id);
+                onChange(id, picked?.raw);
+              }}
+              search={search}
+              onSearchChange={setSearch}
+              placeholder={`Buscar ${label.toLowerCase()}...`}
+              selectedLabel={selectedOption?.id === value ? selectedOption.label : null}
+              loading={loading}
+              disabled={disabled}
+              totalMatches={totalMatches}
+              inputStyle={styles.input}
+              clearable={Boolean(onClear)}
+            />
+          </span>
+          {/*
+            "Editar" corrige o cadastro do item escolhido (documento que falta, endereco,
+            e-mail) sem sair da entrada que ja comecou a montar; "+" cadastra um novo sem
+            perder o que ja foi preenchido.
+          */}
+          {showEditButton ? (
+            <button
+              type="button"
+              onClick={onEditSelected}
+              title={`Editar o cadastro de ${label.toLowerCase()}`}
+              aria-label={`Editar o cadastro de ${label.toLowerCase()}`}
+              style={cacheSelectInlineButtonStyle}
+            >
+              <OpIcon name="edit" />
+            </button>
+          ) : null}
+          {onCreateNew && !disabled ? (
+            <button
+              type="button"
+              onClick={onCreateNew}
+              title={`Cadastrar ${label.toLowerCase()}`}
+              aria-label={`Cadastrar ${label.toLowerCase()}`}
               style={{
-                position: "absolute",
-                right: "6px",
-                top: "50%",
-                transform: "translateY(-50%)",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "4px"
+                ...cacheSelectInlineButtonStyle,
+                background: "var(--kr-primary)",
+                borderColor: "var(--kr-primary)",
+                color: "white"
               }}
             >
-              {showClearButton ? (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onClear?.();
-                  }}
-                  title={`Deixar ${label.toLowerCase()} em branco`}
-                  style={cacheSelectInlineButtonStyle}
-                >
-                  <OpIcon name="close" />
-                  Vazio
-                </button>
-              ) : null}
-              {showEditButton ? (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onEditSelected?.();
-                  }}
-                  title={`Editar o cadastro de ${label.toLowerCase()}`}
-                  style={cacheSelectInlineButtonStyle}
-                >
-                  <OpIcon name="edit" />
-                  Editar
-                </button>
-              ) : null}
-            </span>
+              +
+            </button>
           ) : null}
         </span>
       </label>
-      {open ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Selecionar ${label}`}
-          onMouseDown={(event) => {
-            if (event.currentTarget === event.target) {
-              setOpen(false);
-              setSearch("");
-            }
-          }}
-          style={{
-            ...modalOverlayStyle,
-            zIndex: 900,
-            padding: "16px"
-          }}
-        >
-          <div
-            style={{
-              ...modalContentStyle,
-              maxWidth: "760px",
-              width: "min(760px, 100%)",
-              padding: "0",
-              overflow: "hidden"
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: "12px",
-                alignItems: "flex-start",
-                padding: "16px",
-                borderBottom: "1px solid var(--kr-border)"
-              }}
-            >
-              <div>
-                <h3 style={{ margin: 0, color: "var(--kr-text-strong)", fontSize: "18px" }}>
-                  Selecionar {label}
-                </h3>
-                <p style={{ margin: "4px 0 0", color: "var(--kr-muted)", fontSize: "13px" }}>
-                  Pesquise por nome e escolha um item da lista disponível.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  setSearch("");
-                }}
-                style={{
-                  border: "1px solid var(--kr-border)",
-                  borderRadius: "10px",
-                  background: "var(--kr-surface-soft)",
-                  color: "var(--kr-text)",
-                  cursor: "pointer",
-                  fontWeight: 800,
-                  padding: "8px 10px"
-                }}
-              >
-                Fechar
-              </button>
-            </div>
-
-            <div style={{ display: "flex", flexWrap: "wrap", minHeight: "360px" }}>
-              <div style={{ flex: "1 1 360px", minWidth: 0, padding: "16px" }}>
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "ArrowDown") {
-                      event.preventDefault();
-                      setHighlightedIndex((index) =>
-                        Math.min(Math.max(0, options.length - 1), index + 1)
-                      );
-                      return;
-                    }
-                    if (event.key === "ArrowUp") {
-                      event.preventDefault();
-                      setHighlightedIndex((index) => Math.max(0, index - 1));
-                      return;
-                    }
-                    if (event.key === "Enter" && options[highlightedIndex]) {
-                      event.preventDefault();
-                      selectOption(options[highlightedIndex]);
-                      return;
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      setOpen(false);
-                      setSearch("");
-                    }
-                  }}
-                  autoFocus
-                  placeholder={`Buscar ${label.toLowerCase()}...`}
-                  style={{ ...styles.input, marginBottom: "12px" }}
-                />
-
-                <div
-                  style={{
-                    border: "1px solid var(--kr-border)",
-                    borderRadius: "12px",
-                    overflowY: "auto",
-                    maxHeight: "300px",
-                    background: "var(--kr-surface-soft)"
-                  }}
-                >
-                  {loading ? (
-                    <div style={{ padding: "14px", color: "var(--kr-muted)", fontSize: "13px" }}>
-                      Carregando...
-                    </div>
-                  ) : options.length === 0 ? (
-                    <div style={{ padding: "14px", color: "var(--kr-muted)", fontSize: "13px" }}>
-                      {search.trim()
-                        ? `Nenhum resultado para "${search.trim()}".`
-                        : "Nenhum cadastro disponivel."}
-                    </div>
-                  ) : (
-                    options.map((option, index) => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        onClick={() => selectOption(option)}
-                        onMouseEnter={() => setHighlightedIndex(index)}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: "8px",
-                          width: "100%",
-                          textAlign: "left",
-                          padding: "10px 12px",
-                          border: "none",
-                          borderBottom: "1px solid var(--kr-border)",
-                          background:
-                            highlightedIndex === index ? "var(--kr-card-hover)" : "transparent",
-                          cursor: "pointer",
-                          fontSize: "13px",
-                          color: "var(--kr-text-strong)"
-                        }}
-                      >
-                        <span
-                          style={{
-                            minWidth: 0,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap"
-                          }}
-                        >
-                          {option.label}
-                        </span>
-                        {getOptionMeta(option) ? (
-                          <span
-                            style={{
-                              flexShrink: 0,
-                              borderRadius: "999px",
-                              background: "var(--kr-surface)",
-                              color: "var(--kr-muted)",
-                              fontSize: "11px",
-                              fontWeight: 800,
-                              padding: "2px 6px"
-                            }}
-                          >
-                            {getOptionMeta(option)}
-                          </span>
-                        ) : null}
-                      </button>
-                    ))
-                  )}
-                </div>
-
-                {/*
-                  A linha que conta. Sem ela o corte era invisivel: o operador via 50 linhas,
-                  nao achava o cliente e concluia que ele nao estava cadastrado — quando
-                  bastava digitar mais uma letra.
-                */}
-                <p
-                  style={{
-                    margin: "8px 2px 0",
-                    fontSize: "12px",
-                    color: "var(--kr-muted)"
-                  }}
-                >
-                  {loading
-                    ? "Procurando..."
-                    : search.trim()
-                      ? totalMatches > options.length
-                        ? `Mostrando ${options.length} de ${totalMatches} resultado(s) — escreva mais para afunilar.`
-                        : `${totalMatches} resultado(s).`
-                      : totalMatches > options.length
-                        ? `Escreva para procurar entre ${totalMatches} cadastro(s). Mostrando os ${options.length} primeiros.`
-                        : `${totalMatches} cadastro(s).`}
-                </p>
-              </div>
-
-              {onCreateNew ? (
-                <aside
-                  style={{
-                    borderLeft: "1px solid var(--kr-border)",
-                    padding: "16px",
-                    background: "var(--kr-surface-soft)",
-                    display: "flex",
-                    flex: "1 1 220px",
-                    flexDirection: "column",
-                    justifyContent: "center",
-                    gap: "10px"
-                  }}
-                >
-                  <div style={{ color: "var(--kr-text-strong)", fontWeight: 900 }}>
-                    Não encontrou?
-                  </div>
-                  <div style={{ color: "var(--kr-muted)", fontSize: "13px", lineHeight: 1.4 }}>
-                    Cadastre um novo item agora e volte para selecionar na lista atualizada.
-                  </div>
-                  <button
-                    type="button"
-                    onClick={onCreateNew}
-                    style={{
-                      border: "none",
-                      borderRadius: "12px",
-                      background: "var(--kr-primary)",
-                      color: "white",
-                      cursor: "pointer",
-                      fontWeight: 800,
-                      padding: "10px 12px"
-                    }}
-                  >
-                    + Cadastrar novo
-                  </button>
-                </aside>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -10164,20 +9903,38 @@ function ResourceCrud({
       );
     }
     if (field.type === "select") {
+      const options = field.options ?? [];
+      // Lista curta (tipo de frete, sim/nao) continua num `<select>`: um combobox para tres
+      // opcoes so atrapalha. A partir daqui e cadastro — transportadora, produto, conta —
+      // e ai o `<select>` vira a lista impossivel de rolar.
+      if (options.length <= SELECT_FIELD_PICKER_THRESHOLD) {
+        return (
+          <Field key={field.key} label={field.label} required={field.required} hint={field.helper}>
+            <select
+              value={value}
+              onChange={(event) => setFieldValue(field.key, event.target.value)}
+              style={getInputStyle(false)}
+            >
+              <option value="">{field.emptyOption ?? "Selecione..."}</option>
+              {options.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        );
+      }
       return (
         <Field key={field.key} label={field.label} required={field.required} hint={field.helper}>
-          <select
+          <OptionSearchPicker
+            options={options.map((option) => ({ id: option.value, label: option.label }))}
             value={value}
-            onChange={(event) => setFieldValue(field.key, event.target.value)}
-            style={getInputStyle(false)}
-          >
-            <option value="">{field.emptyOption ?? "Selecione..."}</option>
-            {(field.options ?? []).map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            onChange={(id) => setFieldValue(field.key, id)}
+            placeholder={`Buscar ${field.label.toLowerCase()}...`}
+            leadingOption={{ id: "", label: field.emptyOption ?? "Selecione..." }}
+            inputStyle={getInputStyle(false)}
+          />
         </Field>
       );
     }
@@ -11253,18 +11010,14 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
               label="Conta"
               hint="Conta usada no fechamento (ex.: Caixinha, OMIE Cash, GetNet)."
             >
-              <select
+              <OptionSearchPicker
+                options={accounts.map((account) => ({ id: account.id, label: account.name }))}
                 value={accountId}
-                onChange={(e) => setAccountId(e.target.value)}
-                style={getInputStyle(false)}
-              >
-                <option value="">Sem conta</option>
-                {accounts.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setAccountId}
+                placeholder="Buscar conta..."
+                leadingOption={{ id: "", label: "Sem conta" }}
+                inputStyle={getInputStyle(false)}
+              />
             </Field>
           </FormSection>
         </CrudFormShell>
@@ -12679,19 +12432,18 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           hint="Usada pelos produtos sem categoria propria. O preco e a categoria de cada produto ficam no botao editar da lista."
           style={{ flex: 1, minWidth: "320px", marginBottom: 0 }}
         >
-          <select
+          <OptionSearchPicker
+            options={categories.map((category) => ({
+              id: category.code,
+              label: `${category.code} - ${category.description}`
+            }))}
             value={defaultCategoryCode}
-            onChange={(e) => void handleChangeDefaultCategory(e.target.value)}
+            onChange={(code) => void handleChangeDefaultCategory(code)}
+            placeholder="Buscar categoria do OMIE..."
+            leadingOption={{ id: "", label: "Padrao do sistema (1.01.01)" }}
             disabled={categories.length === 0}
-            style={getInputStyle(false)}
-          >
-            <option value="">Padrao do sistema (1.01.01)</option>
-            {categories.map((category) => (
-              <option key={category.code} value={category.code}>
-                {category.code} - {category.description}
-              </option>
-            ))}
-          </select>
+            inputStyle={getInputStyle(false)}
+          />
         </Field>
 
         <Field
@@ -12699,19 +12451,18 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           hint="Titulos do OMIE nesta categoria viram saldo de adiantamento na aba Credito. Em branco, o sistema procura pela descricao (Adiantamento de Clientes)."
           style={{ flex: 1, minWidth: "320px", marginBottom: 0 }}
         >
-          <select
+          <OptionSearchPicker
+            options={categories.map((category) => ({
+              id: category.code,
+              label: `${category.code} - ${category.description}`
+            }))}
             value={advanceCategoryCode}
-            onChange={(e) => void handleChangeAdvanceCategory(e.target.value)}
+            onChange={(code) => void handleChangeAdvanceCategory(code)}
+            placeholder="Buscar categoria do OMIE..."
+            leadingOption={{ id: "", label: "Detectar pela descricao" }}
             disabled={categories.length === 0}
-            style={getInputStyle(false)}
-          >
-            <option value="">Detectar pela descricao</option>
-            {categories.map((category) => (
-              <option key={category.code} value={category.code}>
-                {category.code} - {category.description}
-              </option>
-            ))}
-          </select>
+            inputStyle={getInputStyle(false)}
+          />
         </Field>
       </div>
 
@@ -12829,18 +12580,17 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               hint="Categoria do plano gerencial em que a venda deste produto entra."
             >
               {categories.length > 0 ? (
-                <select
+                <OptionSearchPicker
+                  options={categories.map((category) => ({
+                    id: category.code,
+                    label: `${category.code} - ${category.description}`
+                  }))}
                   value={editCategoryCode}
-                  onChange={(e) => setEditCategoryCode(e.target.value)}
-                  style={getInputStyle(false)}
-                >
-                  <option value="">{defaultCategoryLabel()}</option>
-                  {categories.map((category) => (
-                    <option key={category.code} value={category.code}>
-                      {category.code} - {category.description}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setEditCategoryCode}
+                  placeholder="Buscar categoria do OMIE..."
+                  leadingOption={{ id: "", label: defaultCategoryLabel() }}
+                  inputStyle={getInputStyle(false)}
+                />
               ) : (
                 <p style={{ ...styles.helperText, margin: 0 }}>
                   Nenhuma categoria sincronizada. Rode a sincronizacao na tela Cloud para escolher a

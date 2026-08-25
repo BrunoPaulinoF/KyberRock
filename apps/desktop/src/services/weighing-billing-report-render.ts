@@ -1,3 +1,4 @@
+import { invoiceNumberText } from "./invoice-number-label.js";
 import {
   SPREADSHEET_STYLE,
   documentStyle,
@@ -185,7 +186,7 @@ function rowCells(row: WeighingBillingRow): string[] {
     formatBRL(row.totalCents),
     row.operationTypeLabel,
     row.situationLabel,
-    row.omieInvoiceNumber ?? "-",
+    invoiceNumberText(row.omieInvoiceNumber, row.operationType),
     omieReference(row)
   ];
 }

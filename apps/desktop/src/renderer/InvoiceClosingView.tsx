@@ -34,6 +34,7 @@ import { formatDbDateTime } from "./format-datetime";
 import { rankByText } from "@kyberrock/shared";
 
 import { CustomerSearchSelect } from "./CustomerSearchSelect";
+import { InvoiceNumberCell } from "./InvoiceNumberCell";
 import { useDebouncedValue } from "./use-debounced-value";
 import { useOmieInvoiceNumbers } from "./useOmieInvoiceNumbers";
 
@@ -574,7 +575,7 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
               customers={customers}
               value={customerId}
               onChange={setCustomerId}
-              leadingOptions={[{ value: ALL_CUSTOMERS, label: "Todos os clientes" }]}
+              leadingOption={{ value: ALL_CUSTOMERS, label: "Todos os clientes" }}
               inputStyle={styles.input}
               hintStyle={styles.hint}
             />
@@ -1313,7 +1314,10 @@ function InvoiceRows({
                         {formatCouponNumber(line.couponNumber)}
                       </td>
                       <td style={{ ...styles.td, textAlign: "left" }}>
-                        {line.invoiceNumber ?? "-"}
+                        <InvoiceNumberCell
+                          invoiceNumber={line.invoiceNumber}
+                          operationType={line.operationType}
+                        />
                       </td>
                       <td style={{ ...styles.td, textAlign: "left" }}>
                         {line.omieOrderNumber ?? "-"}
@@ -1391,14 +1395,8 @@ function DetailRow({ line }: { line: InvoiceClosingLine }) {
           title={line.situationDetail ?? undefined}
         />
       </td>
-      <td
-        style={{
-          ...styles.td,
-          textAlign: "left",
-          color: line.invoiceNumber ? undefined : "var(--kr-danger)"
-        }}
-      >
-        {line.invoiceNumber ?? "Sem nota"}
+      <td style={{ ...styles.td, textAlign: "left" }}>
+        <InvoiceNumberCell invoiceNumber={line.invoiceNumber} operationType={line.operationType} />
       </td>
       <td style={{ ...styles.td, textAlign: "left" }}>{omieReference(line)}</td>
       {line.closingDate === null ? (

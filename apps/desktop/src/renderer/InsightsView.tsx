@@ -15,6 +15,7 @@ import {
   YAxis
 } from "recharts";
 
+import { OptionSearchPicker } from "./OptionSearchPicker";
 import type { KyberRockDesktopApi } from "../preload/api-types";
 import type {
   DailySeriesPoint,
@@ -570,33 +571,31 @@ export function InsightsView({
             </label>
             <label style={styles.pivotLabel}>
               Cliente
-              <select
+              <OptionSearchPicker
+                options={(pivot?.customers ?? []).map((option) => ({
+                  id: option.id,
+                  label: option.name
+                }))}
                 value={pivotCustomerId}
-                onChange={(event) => setPivotCustomerId(event.target.value)}
-                style={styles.pivotSelect}
-              >
-                <option value="">Todos</option>
-                {(pivot?.customers ?? []).map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setPivotCustomerId}
+                placeholder="Buscar cliente..."
+                leadingOption={{ id: "", label: "Todos" }}
+                inputStyle={styles.pivotSelect}
+              />
             </label>
             <label style={styles.pivotLabel}>
               Produto
-              <select
+              <OptionSearchPicker
+                options={(pivot?.products ?? []).map((option) => ({
+                  id: option.id,
+                  label: option.name
+                }))}
                 value={pivotProductId}
-                onChange={(event) => setPivotProductId(event.target.value)}
-                style={styles.pivotSelect}
-              >
-                <option value="">Todos</option>
-                {(pivot?.products ?? []).map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setPivotProductId}
+                placeholder="Buscar produto..."
+                leadingOption={{ id: "", label: "Todos" }}
+                inputStyle={styles.pivotSelect}
+              />
             </label>
           </div>
           <div style={{ overflow: "auto", maxHeight: "min(420px, 48vh)" }}>

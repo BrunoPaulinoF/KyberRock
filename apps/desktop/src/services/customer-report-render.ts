@@ -1,3 +1,4 @@
+import { invoiceNumberText } from "./invoice-number-label.js";
 import {
   SPREADSHEET_STYLE,
   documentStyle,
@@ -745,7 +746,7 @@ function tripCells(operation: CustomerReportOperation): string[] {
     formatBRL(operation.productTotalCents),
     formatBRL(operation.freightTotalCents),
     formatBRL(operation.totalCents),
-    operation.omieInvoiceNumber ?? "-",
+    invoiceNumberText(operation.omieInvoiceNumber, operation.operationType),
     operation.minutesInside === null ? "-" : formatMinutes(operation.minutesInside)
   ];
 }
@@ -844,7 +845,7 @@ function operationCells(operation: CustomerReportOperation): string[] {
     formatBRL(operation.totalCents),
     operation.paymentMethodName ?? "-",
     operation.paymentTermName ?? "-",
-    operation.omieInvoiceNumber ?? "-",
+    invoiceNumberText(operation.omieInvoiceNumber, operation.operationType),
     operation.omieSalesOrderId === null ? "-" : String(operation.omieSalesOrderId),
     operation.statusLabel
   ];

@@ -4389,6 +4389,14 @@ async function checkOmieOrdersBilling(
   if (orders.length === 0) return [];
 
   const results: OrderBillingState[] = [];
+  /**
+   * Quem ja passou pela consulta individual do proprio documento.
+   *
+   * Nesses, o `ConsultarPedido` ja foi feito e o numero da nota ja foi procurado na
+   * resposta: repetir a chamada no fallback nao traria nada novo — so gastaria uma
+   * chamada de ~3s da fila, por pesagem, exatamente no caminho que ja e o caro.
+   */
+  const alreadyConsulted = new Set<string>();
   let consultBudget = CONSULT_FALLBACK_MAX;
 
   for (const orderType of ["sales", "service"] as const) {
@@ -4425,6 +4433,7 @@ async function checkOmieOrdersBilling(
       // resultado para ele e nao mexe no rodizio dele.
       if (consultBudget <= 0) continue;
       consultBudget--;
+      alreadyConsulted.add(order.operationId);
       results.push(await consultOmieOrderBilling(credentials, order));
     }
   }
@@ -4432,7 +4441,8 @@ async function checkOmieOrdersBilling(
   return await fillMissingInvoiceNumbers(
     credentials,
     results,
-    resolveInvoiceNumberBudget(payload?.invoiceNumberBudget)
+    resolveInvoiceNumberBudget(payload?.invoiceNumberBudget),
+    alreadyConsulted
   );
 }
 
@@ -4451,7 +4461,9 @@ async function checkOmieOrdersBilling(
 async function fillMissingInvoiceNumbers(
   credentials: OmieCredentials,
   results: OrderBillingState[],
-  maxChases: number = INVOICE_NUMBER_CHASE_MAX
+  maxChases: number = INVOICE_NUMBER_CHASE_MAX,
+  /** Ids que ja passaram pela consulta individual — ver `alreadyConsulted`. */
+  alreadyConsulted: ReadonlySet<string> = new Set()
 ): Promise<OrderBillingState[]> {
   let budget = maxChases;
 
@@ -4475,6 +4487,35 @@ async function fillMissingInvoiceNumbers(
         } ${result.omieOrderId}`,
         error
       );
+    }
+
+    // Segunda tentativa da venda com nota: o PROPRIO pedido.
+    //
+    // O numero da NF-e aparece em dois lugares do OMIE, e nem sempre nos dois ao mesmo
+    // tempo: nos documentos fiscais do pedido (`/produtos/dfedocs/`) e nas informacoes
+    // adicionais do pedido (`ConsultarPedido`) — este ultimo e o campo que o proprio
+    // faturamento pelo app ja lia. Parar na primeira consulta deixava a coluna "Nota
+    // fiscal" vazia justamente na venda faturada por uma pessoa dentro do OMIE, que e o
+    // caso normal. Custa uma chamada a mais, e so para quem voltou faturado SEM numero.
+    if (
+      result.invoiceNumber === null &&
+      result.orderType === "sales" &&
+      budget > 0 &&
+      // Quem ja veio da consulta individual nao repete: aquela resposta e a MESMA que este
+      // fallback pediria, e ela ja foi vasculhada atras do numero.
+      !alreadyConsulted.has(result.operationId)
+    ) {
+      budget--;
+      try {
+        const order = await consultSalesOrder(credentials, result.omieOrderId);
+        result.invoiceNumber = extractOmieInvoiceNumber(order);
+        result.documentUrl = result.documentUrl ?? extractDocumentUrl(order);
+      } catch (error) {
+        console.error(
+          `[omie] nao foi possivel obter o numero da nota pelo pedido ${result.omieOrderId}`,
+          error
+        );
+      }
     }
   }
 
