@@ -26,10 +26,16 @@ import {
   OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH,
   OMIE_ORDER_INVOICE_EMAIL_FIELD_MAX_LENGTH
 } from "@kyberrock/shared";
+import type { OperationStatus } from "@kyberrock/shared";
 import { DEFAULT_NFE_EMAIL_KEY } from "./customers.js";
 import { readStringLocalSetting } from "./local-settings.js";
 import { DEFAULT_OMIE_CATEGORY_SETTING_KEY, resolveOrderCategoryCode } from "./omie-categories.js";
 import { consumeQuotation } from "./quotations.js";
+import {
+  CLOSED_OPERATION_STATUS_SQL_LIST,
+  isClosedOperationStatus,
+  isOpenOperationStatus
+} from "./weighing-operation-status.js";
 
 /**
  * Proximo codigo sequencial da operacao na pedreira: o maior ja usado + 1, sem
@@ -51,63 +57,21 @@ export function nextOperationCode(database: DesktopDatabase, unitId: string): nu
   return (typeof current === "number" ? current : 0) + 1;
 }
 
-type OperationStatus =
-  | "draft"
-  | "entry_registered"
-  | "loading_requested"
-  | "awaiting_exit"
-  | "closed_local"
-  | "pending_cloud"
-  | "pending_omie"
-  | "synced"
-  | "sync_error"
-  | "cancelled";
-
 /**
- * Status de uma operacao ja concluida (fechada localmente), em qualquer estagio da
- * sincronizacao. Uma operacao "concluida" nasce em `closed_local` e caminha por
- * `pending_cloud`/`pending_omie` ate `synced` — ou para em `sync_error`. Em todos esses
- * estados a pesagem ja terminou (peso de saida capturado, cupom emitido), entao ela
- * continua sendo uma operacao concluida: precisa aparecer na lista de Concluidas, entrar
- * nos relatorios e permitir reimpressao/exclusao. Apenas `cancelled` sai desse conjunto.
- *
- * Antes, varias consultas filtravam so por `closed_local`, e a operacao sumia da lista de
- * Concluidas assim que a sincronizacao com a nuvem/OMIE mudava o status para `synced`.
+ * Vocabulario de status (concluida / em andamento): mora em
+ * `weighing-operation-status.ts`, um modulo puro, e e reexportado aqui para quem sempre
+ * importou daqui nao precisar mudar. A separacao existe porque `customers.ts` tambem
+ * precisa das listas (trava de exclusao) e este arquivo importa `customers.ts` — importar
+ * de volta fecharia um ciclo de modulos.
  */
-export const CLOSED_OPERATION_STATUSES = [
-  "closed_local",
-  "pending_cloud",
-  "pending_omie",
-  "synced",
-  "sync_error"
-] as const satisfies readonly OperationStatus[];
-
-/** Lista de status concluidos ja formatada para interpolar num `IN (...)` de SQL. */
-export const CLOSED_OPERATION_STATUS_SQL_LIST = CLOSED_OPERATION_STATUSES.map(
-  (status) => `'${status}'`
-).join(", ");
-
-/** True quando o status representa uma operacao concluida (fechada, em qualquer estagio de sync). */
-export function isClosedOperationStatus(status: string): boolean {
-  return (CLOSED_OPERATION_STATUSES as readonly string[]).includes(status);
-}
-
-/**
- * Status em que a operacao ainda esta EM ANDAMENTO (nasceu, mas nao fechou). Sao os
- * unicos em que os dados comerciais podem ser alterados — depois do fechamento o pedido
- * / OS ja foi montado para o OMIE e a correcao passa a ser cancelar e refazer.
- */
-export const OPEN_OPERATION_STATUSES = [
-  "draft",
-  "entry_registered",
-  "loading_requested",
-  "awaiting_exit"
-] as const satisfies readonly OperationStatus[];
-
-/** True quando a operacao ainda esta aberta (em andamento). */
-export function isOpenOperationStatus(status: string): boolean {
-  return (OPEN_OPERATION_STATUSES as readonly string[]).includes(status);
-}
+export {
+  CLOSED_OPERATION_STATUSES,
+  CLOSED_OPERATION_STATUS_SQL_LIST,
+  isClosedOperationStatus,
+  OPEN_OPERATION_STATUSES,
+  OPEN_OPERATION_STATUS_SQL_LIST,
+  isOpenOperationStatus
+} from "./weighing-operation-status.js";
 
 export type OperationType = "invoice" | "internal";
 export type FreightPayer = "customer" | "quarry" | "third_party";

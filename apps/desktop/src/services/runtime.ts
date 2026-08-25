@@ -439,9 +439,12 @@ import {
   getCustomersByCarrier,
   getDefaultNfeEmail,
   listCustomers,
+  listDeletedCustomers,
+  restoreCustomer,
   setDefaultNfeEmail,
   updateCustomer,
   type CreateCustomerInput,
+  type DeletedCustomerSummary,
   type UpdateCustomerInput
 } from "./customers.js";
 import {
@@ -3622,6 +3625,20 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     deleteCustomer(this.database, id);
+    this.cacheStore.invalidate("customer", identity.companyId);
+  }
+
+  /** Os cadastros excluidos da empresa — a lista de onde sai o Restaurar. */
+  listDeletedCustomers(): DeletedCustomerSummary[] {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    return listDeletedCustomers(this.database, identity.companyId);
+  }
+
+  restoreCustomer(id: string): void {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    restoreCustomer(this.database, id);
     this.cacheStore.invalidate("customer", identity.companyId);
   }
 
