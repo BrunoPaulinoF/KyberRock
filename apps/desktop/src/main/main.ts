@@ -1002,19 +1002,12 @@ function registerIpcHandlers(): void {
     }
   );
 
-  // "Conferir notas no OMIE": so LE o estado la e traz o numero da nota das cargas do
-  // periodo. Nao emite nada, entao nao precisa de confirmacao.
-  ipcMain.handle(
-    "desktop:reconcile-invoice-closing-notes",
-    (_event, startDate: string, endDate: string, options?: unknown) => {
-      if (!runtime) throw new Error("Desktop runtime is not ready.");
-      return runtime.reconcileInvoiceClosingNotes(
-        startDate,
-        endDate,
-        sanitizeInvoiceClosingOptions(options)
-      );
-    }
-  );
+  // Numero da nota das cargas que estao na tela: so LE o estado no OMIE. Nao fatura, nao
+  // emite e nao muda documento nenhum — por isso a tela chama sozinha, sem confirmacao.
+  ipcMain.handle("desktop:reconcile-omie-invoice-numbers", (_event, operationIds: unknown) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.reconcileOmieInvoiceNumbers(sanitizeOperationIdList(operationIds));
+  });
 
   // "Cancelar as pesagens repetidas": cancela a carga registrada duas vezes. Mexe em
   // operacao concluida, entao a tela confirma com o operador antes de chegar aqui.
@@ -2803,6 +2796,18 @@ function sanitizeInvoiceClosingOptions(options: unknown): InvoiceClosingOptions 
     search: typeof raw.search === "string" ? raw.search : null,
     periodLabel: typeof raw.periodLabel === "string" ? raw.periodLabel : null
   };
+}
+
+/** Ids de operacao vindos do renderer: so string nao vazia, sem repetido. */
+function sanitizeOperationIdList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const id = item.trim();
+    if (id) seen.add(id);
+  }
+  return [...seen];
 }
 
 async function saveReportDocuments(

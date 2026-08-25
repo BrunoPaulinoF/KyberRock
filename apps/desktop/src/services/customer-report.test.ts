@@ -1536,4 +1536,34 @@ describe("numero da nota fiscal no relatorio do cliente", () => {
       db.close();
     }
   });
+
+  it("expoe a ordem de servico junto do pedido, para a tela saber o que ainda perguntar", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+      // A venda interna vira OS no OMIE e emite NFS-e. Sem este campo, a tela nao tinha
+      // como distinguir "interna ja no OMIE, falta a nota" de "carga que nem chegou la",
+      // e o numero da NFS-e nunca era perguntado.
+      db.prepare(
+        "UPDATE weighing_operations SET operation_type = 'internal', omie_service_order_id = 11493172000 WHERE id = 'op-2'"
+      ).run();
+
+      const report = new CustomerReportService(db).getCustomerReport(
+        "cust-1",
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1"
+      );
+
+      const internal = report.operations.find((operation) => operation.id === "op-2");
+      expect(internal?.omieServiceOrderId).toBe(11493172000);
+      expect(internal?.omieInvoiceNumber).toBeNull();
+      expect(
+        report.operations.find((operation) => operation.id === "op-1")?.omieServiceOrderId
+      ).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
 });
