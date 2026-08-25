@@ -4011,9 +4011,30 @@ async function consultServiceOrder(
   });
 }
 
-// Faults do OMIE quando o registro ja nao existe (cancelamento idempotente).
+/**
+ * O texto de um fault do OMIE sem acento, para ser comparado por regex.
+ *
+ * Os faults vem ACENTUADOS ("NF nao cadastrada" chega como "NF nao cadastrada" com til), e
+ * os padroes daqui sempre foram escritos sem acento — entao nenhum deles casava. O efeito
+ * era silencioso: um fault conhecido passava por falha desconhecida, ia para o log como
+ * erro e disparava o caminho caro de recuperacao.
+ */
+function normalizeOmieFault(message: string): string {
+  return message.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
+ * Faults do OMIE quando o registro ja nao existe (cancelamento idempotente) ou quando o
+ * pedido consultado nao gerou nota.
+ *
+ * Verificado contra a resposta real do OMIE: `ConsultarNF` de um pedido sem nota devolve
+ * "ERROR: NF nao cadastrada para o pedido [...]" — com til em "nao". Sem a normalizacao
+ * acima, `nao cadastrad` nao casava com `nao cadastrada` acentuado.
+ */
 function isOmieNotFoundFault(message: string): boolean {
-  return /nao cadastrad|nao encontrad|not found|inexistente|nao existe/i.test(message);
+  return /nao cadastrad|nao encontrad|not found|inexistente|nao existe/i.test(
+    normalizeOmieFault(message)
+  );
 }
 
 // Faults que indicam que o pedido/OS nao pode ser excluido pelo estado (ja faturado,
@@ -4111,13 +4132,22 @@ const OMIE_FISCAL_CONTAINER_PATTERN = /(documento|dfe|danfe|nfe|nfse|nota_fiscal
 /** Nomes da CHAVE de acesso da NF-e (44 digitos), de onde o numero pode ser derivado. */
 const OMIE_INVOICE_KEY_KEYS = ["chave_nfe", "cChaveNFe", "chave_acesso", "cChaveAcesso"];
 
-/** Um valor de campo do OMIE que serve como numero de nota (nem vazio, nem so zeros). */
+/**
+ * Um valor de campo do OMIE que serve como numero de nota (nem vazio, nem so zeros).
+ *
+ * Os zeros a esquerda caem fora. O OMIE devolve `ide.nNF` preenchido a esquerda —
+ * "00029490" para a nota 29490 —, e o mesmo documento sai sem eles quando o numero e
+ * derivado da chave de acesso, que ja e cortada por posicao. Sem esta normalizacao a mesma
+ * nota aparecia de dois jeitos conforme o caminho que a encontrou, e o fechamento mandava
+ * ao cliente um numero que a DANFE dele nao mostra assim.
+ */
 function usableInvoiceNumber(value: string | null): string | null {
   if (value === null) return null;
   const trimmed = value.trim();
   // "0" e o vazio do OMIE em campo numerico.
   if (trimmed.length === 0 || /^0+$/.test(trimmed)) return null;
-  return trimmed;
+  // So em numero puro: serie/numero com letra ou pontuacao fica como veio.
+  return /^\d+$/.test(trimmed) ? trimmed.replace(/^0+/, "") : trimmed;
 }
 
 /**
@@ -4705,6 +4735,33 @@ async function fillMissingInvoiceNumbers(
     if (budget <= 0 || deadline.exceeded()) break;
     if (!result.found || !result.billed || result.invoiceNumber !== null) continue;
     if (result.omieOrderId <= 0) continue;
+
+    // 2a) A venda com nota pergunta primeiro ao CADASTRO DE NOTAS, pelo codigo do pedido.
+    //
+    // E o unico dos caminhos daqui que consulta o lugar onde a nota de fato mora: os dois
+    // de baixo perguntam ao PEDIDO, e o pedido nao guarda o numero da nota. Enquanto esta
+    // consulta nao existia, a carga que a listagem nao alcancava (pedido mais antigo que a
+    // janela de emissao, ou a mais paginas do que o teto da varredura, ou listagem recusada
+    // por repeticao) gastava as duas chamadas de baixo para voltar sem numero do mesmo
+    // jeito — e ficava em "Sem nota" no fechamento com a nota emitida ha semanas no OMIE.
+    if (result.orderType === "sales") {
+      budget--;
+      const lookup = await consultOmieInvoiceByOrder(credentials, result.omieOrderId);
+      if (lookup.status === "found") {
+        result.invoiceNumber = lookup.invoice.invoiceNumber;
+        result.documentUrl = result.documentUrl ?? lookup.invoice.documentUrl;
+        // Nota emitida e prova de faturamento, a mesma regra de `isOmieOrderBilled`.
+        result.billed = true;
+        continue;
+      }
+      // O cadastro de notas respondeu, e a resposta foi "nao tem nota". Ela e conclusiva:
+      // as duas chamadas de baixo perguntam ao PEDIDO, que nao guarda o numero da nota.
+      if (lookup.status === "none") continue;
+      if (budget <= 0) continue;
+    }
+
+    // 2b) O que sobrou: os documentos do pedido (e a NFS-e, que volta na propria
+    // `ConsultarOS` — a ordem de servico nao entra no cadastro de NF-e acima).
     budget--;
 
     try {
@@ -5210,6 +5267,10 @@ async function listOmieInvoicesByOrder(
       const matchesNumber = orderNumber !== null && wantedNumbers.has(orderNumber);
       if (!matchesId && !matchesNumber) continue;
 
+      // O filtro de status ja pede so as validas; esta conferencia cobre a instalacao cujo
+      // OMIE aceite o filtro e o ignore — nota cancelada nunca vira numero na tela.
+      if (isVoidedInvoice(record)) continue;
+
       const invoiceNumber = extractOmieInvoiceNumber(record);
       if (invoiceNumber === null) continue;
       const listed: ListedInvoice = {
@@ -5285,6 +5346,17 @@ async function listOmieInvoicesPage(
       apenas_importado_api: "N",
       ordenar_por: "CODIGO",
       ordem_decrescente: "S",
+      // Preenche o bloco `pedido` de cada nota. Verificado contra a API real: sem isto o
+      // bloco vem na resposta, mas VAZIO (`"pedido": {}`) — e `cNumPedido`, a chave de
+      // reserva pelo numero visivel do pedido, nao existe para ser lida. A busca por essa
+      // chave existia e nunca casava nada; com o parametro, o mesmo registro volta com
+      // `cNumPedido: "622"` ao lado de `compl.nIdPedido`.
+      cDetalhesPedido: "S",
+      // So nota valida. Nota cancelada continua listada com numero e pedido, e sem este
+      // filtro o numero de uma nota que foi cancelada ia parar na coluna "Nota fiscal" do
+      // fechamento — o pior tipo de erro aqui, porque parece certo e vai para o cliente.
+      // Na base verificada o filtro tirou 19 notas canceladas de 794.
+      filtrar_por_status: "N",
       ...(window ? { dEmiInicial: window.from, dEmiFinal: window.to } : {})
     }
   );
@@ -5312,6 +5384,97 @@ function extractInvoiceListRecords(response: unknown): unknown[] {
     }
   }
   return [];
+}
+
+/**
+ * Datas que so existem em nota que deixou de valer: cancelada ou inutilizada.
+ *
+ * Sao os nomes exatos do bloco `ide` da NF-e (`dCan`, `dInut`), e a busca por chave e
+ * exata — `dCanPedido`, do bloco do pedido, nao casa aqui de proposito: pedido cancelado
+ * depois de a nota sair nao cancela a nota.
+ */
+const OMIE_INVOICE_VOID_DATE_KEYS = ["dCan", "dInut"];
+
+/**
+ * A nota deixou de valer (cancelada, inutilizada ou denegada)?
+ *
+ * A listagem ja pede so as validas (`filtrar_por_status: "N"`), mas a consulta dirigida
+ * abaixo nao tem esse filtro — la a nota volta pelo pedido, no estado em que estiver. Sem
+ * esta conferencia o numero de uma nota cancelada entraria na coluna "Nota fiscal" do
+ * fechamento como se fosse a nota da carga.
+ */
+function isVoidedInvoice(record: unknown): boolean {
+  for (const key of OMIE_INVOICE_VOID_DATE_KEYS) {
+    const value = findStringByKey(record, key);
+    if (value !== null && !/^0+$/.test(value.replace(/\D/g, ""))) return true;
+  }
+  return findStringByKey(record, "cDeneg")?.toUpperCase() === "S";
+}
+
+/**
+ * A nota de UM pedido, perguntada direto ao cadastro de notas.
+ *
+ * `ConsultarNF` aceita o CODIGO DO PEDIDO como chave de pesquisa (`nfChave.nIdPedido`) — e
+ * e esse o caminho curto que faltava. Ate aqui, quando a listagem nao alcancava a nota (o
+ * pedido e mais antigo que a janela de emissao, ou esta a mais paginas do que o teto da
+ * varredura, ou o OMIE recusou a listagem por repeticao), a busca dirigida ia perguntar ao
+ * PEDIDO: `ObterPedVenda` nos documentos e, depois, `ConsultarPedido`. Nenhum dos dois
+ * carrega a nota emitida — e a propria funcao acima ja dizia isso —, entao esse ultimo
+ * recurso gastava duas chamadas de ~3s por carga para voltar quase sempre sem numero.
+ *
+ * Uma chamada, o numero em `ide.nNF`, e a nota vem com o bloco do pedido junto para se
+ * conferir que ela e mesmo daquele pedido.
+ *
+ * As tres respostas sao diferentes de proposito, e a do meio e a que economiza a fila:
+ *
+ *  - `found` — a nota esta ali.
+ *  - `none` — o CADASTRO DE NOTAS respondeu que este pedido nao tem nota. E a resposta de
+ *    quem sabe, e o caso normal (pedido que ninguem faturou ainda). Perguntar depois disso
+ *    ao pedido, que nao guarda o numero da nota, so tiraria da passada a carga seguinte —
+ *    que pode ter nota.
+ *  - `unavailable` — nao deu para perguntar (modulo fiscal sem acesso, instabilidade,
+ *    recusa por repeticao). Aqui nao se sabe nada sobre a nota, e os caminhos antigos
+ *    continuam valendo como rede de seguranca.
+ */
+type InvoiceLookup =
+  | { status: "found"; invoice: ListedInvoice }
+  | { status: "none" }
+  | { status: "unavailable" };
+
+async function consultOmieInvoiceByOrder(
+  credentials: OmieCredentials,
+  orderId: number
+): Promise<InvoiceLookup> {
+  let response: unknown;
+  try {
+    response = await callOmie<unknown, unknown>(
+      credentials,
+      "/produtos/nfconsultar/",
+      "ConsultarNF",
+      { nIdPedido: orderId, cDetalhesPedido: "S" }
+    );
+  } catch (error) {
+    const message = getErrorMessage(error);
+    // "Nao cadastrada" aqui e uma RESPOSTA, nao uma falha: o cadastro de notas foi
+    // consultado e disse que este pedido nao gerou nota. Nao vai para o log.
+    if (isOmieNotFoundFault(message)) return { status: "none" };
+    console.error(`[omie] consulta da nota pelo pedido ${orderId} falhou`, error);
+    return { status: "unavailable" };
+  }
+
+  // Nota cancelada e o mesmo que nao ter nota — e e conclusivo: nao adianta procurar essa
+  // nota noutro lugar, porque o que existe dela nao serve para a coluna do fechamento.
+  if (isVoidedInvoice(response)) return { status: "none" };
+
+  const invoiceNumber = extractOmieInvoiceNumber(response);
+  // Resposta sem numero nao e "nao tem nota": pode ser um envelope que esta funcao nao
+  // sabe ler. Na duvida, devolve para os caminhos antigos em vez de encerrar a busca.
+  if (invoiceNumber === null) return { status: "unavailable" };
+
+  return {
+    status: "found",
+    invoice: { invoiceNumber, documentUrl: extractDocumentUrl(response) }
+  };
 }
 
 async function getSalesOrderDocument(
