@@ -5067,3 +5067,182 @@ Deno.test("check_order_billing le o numero da NFS-e da ordem de servico", async 
   // o que dizer sobre ela, e nao chega a ser chamada.
   assertEquals(omieQueue.requests.filter((r) => r.call === "ListarNF").length, 0);
 });
+
+// O corte prematuro. A listagem de notas vem ordenada pelo codigo da NOTA, e o pedido de
+// origem NAO acompanha essa ordem: uma nota emitida hoje para um pedido antigo aparece na
+// primeira pagina com o codigo de pedido la embaixo. A varredura parava ali — "esta pagina
+// ja tem pedido mais velho que o procurado" — e as notas das outras cargas, que estavam na
+// pagina seguinte, nunca eram lidas.
+Deno.test(
+  "check_order_billing nao desiste da nota por causa de um pedido antigo na pagina",
+  async () => {
+    const { ids, fixtures } = await billingDependencies("nf-pedido-antigo");
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ListarPedidos") {
+        return {
+          pagina: 1,
+          total_de_paginas: 1,
+          pedido_venda_produto: [
+            salesListingRecord(9002, "60", "452"),
+            salesListingRecord(9001, "60", "451"),
+            salesListingRecord(9000, "60", "450"),
+            salesListingRecord(8999, "60", "449")
+          ]
+        };
+      }
+      if (input.call === "ListarNF") {
+        const page = Number(getParam(input).pagina);
+        if (page === 1) {
+          return {
+            pagina: 1,
+            total_de_paginas: 2,
+            nfCadastro: [
+              invoiceListingRecord(9002, "452", "45231"),
+              // Nota de hoje para um pedido MUITO mais antigo que todos os procurados.
+              invoiceListingRecord(1234, "77", "45230")
+            ]
+          };
+        }
+        return {
+          pagina: 2,
+          total_de_paginas: 2,
+          nfCadastro: [
+            invoiceListingRecord(9001, "451", "45229"),
+            invoiceListingRecord(9000, "450", "45228"),
+            invoiceListingRecord(8999, "449", "45227")
+          ]
+        };
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: ids.deviceId,
+        deviceToken: ids.token,
+        action: "check_order_billing",
+        payload: {
+          orders: [
+            { operationId: "op-452", orderType: "sales", omieOrderId: 9002 },
+            { operationId: "op-451", orderType: "sales", omieOrderId: 9001 },
+            { operationId: "op-450", orderType: "sales", omieOrderId: 9000 },
+            { operationId: "op-449", orderType: "sales", omieOrderId: 8999 }
+          ]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    const results = response.results as Array<Record<string, unknown>>;
+    assertEquals(
+      results.map((row) => row.invoiceNumber),
+      ["45231", "45229", "45228", "45227"]
+    );
+  }
+);
+
+// A janela de emissao chega ao OMIE como dEmiInicial/dEmiFinal. E ela que faz a pergunta
+// variar de uma leva para a outra — sem isso a chamada sai identica sempre e o OMIE a
+// recusa com "Consumo redundante detectado".
+Deno.test("check_order_billing manda a janela de emissao pedida pelo desktop", async () => {
+  const { ids, fixtures } = await billingDependencies("nf-janela");
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarPedidos") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        pedido_venda_produto: [
+          salesListingRecord(9002, "60", "452"),
+          salesListingRecord(9001, "60", "451"),
+          salesListingRecord(9000, "60", "450"),
+          salesListingRecord(8999, "60", "449")
+        ]
+      };
+    }
+    if (input.call === "ListarNF") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        nfCadastro: [invoiceListingRecord(9002, "452", "45231")]
+      };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-452", orderType: "sales", omieOrderId: 9002 },
+          { operationId: "op-451", orderType: "sales", omieOrderId: 9001 },
+          { operationId: "op-450", orderType: "sales", omieOrderId: 9000 },
+          { operationId: "op-449", orderType: "sales", omieOrderId: 8999 }
+        ],
+        invoiceSearchFrom: "01/08/2026",
+        invoiceSearchTo: "26/08/2026"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const listarNF = omieQueue.requests.find((request) => request.call === "ListarNF");
+  assertObjectMatch(listarNF?.param as Record<string, unknown>, {
+    dEmiInicial: "01/08/2026",
+    dEmiFinal: "26/08/2026"
+  });
+});
+
+// Data que o OMIE nao entende derruba a chamada INTEIRA. Melhor varrer sem janela do que
+// mandar um parametro que faz a listagem toda voltar recusada.
+Deno.test("check_order_billing ignora janela de emissao em formato invalido", async () => {
+  const { ids, fixtures } = await billingDependencies("nf-janela-invalida");
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarPedidos") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        pedido_venda_produto: [
+          salesListingRecord(9002, "60", "452"),
+          salesListingRecord(9001, "60", "451"),
+          salesListingRecord(9000, "60", "450"),
+          salesListingRecord(8999, "60", "449")
+        ]
+      };
+    }
+    if (input.call === "ListarNF") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        nfCadastro: [invoiceListingRecord(9002, "452", "45231")]
+      };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-452", orderType: "sales", omieOrderId: 9002 },
+          { operationId: "op-451", orderType: "sales", omieOrderId: 9001 },
+          { operationId: "op-450", orderType: "sales", omieOrderId: 9000 },
+          { operationId: "op-449", orderType: "sales", omieOrderId: 8999 }
+        ],
+        invoiceSearchFrom: "2026-08-01",
+        invoiceSearchTo: "2026-08-26"
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const listarNF = omieQueue.requests.find((request) => request.call === "ListarNF");
+  const param = listarNF?.param as Record<string, unknown>;
+  assertEquals(param.dEmiInicial, undefined);
+  assertEquals(param.dEmiFinal, undefined);
+});

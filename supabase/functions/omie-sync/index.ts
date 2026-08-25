@@ -4278,6 +4278,21 @@ type CheckOrderBillingPayload = {
     orderNumber?: string | null;
   }>;
   /**
+   * A janela de emissao em que as notas DESTAS cargas podem estar, em dd/mm/aaaa.
+   *
+   * Serve a duas coisas ao mesmo tempo. A primeira e obvia: procurar a nota de uma
+   * quinzena no periodo dela em vez de varrer o cadastro inteiro do mais novo para tras.
+   *
+   * A segunda e o motivo de existir. O OMIE recusa a MESMA pergunta repetida — "Consumo
+   * redundante detectado. Aguarde N segundos" —, e a listagem de notas saia byte a byte
+   * identica em toda passada: mesma pagina, mesmo tamanho, mesma ordem. A partir da
+   * segunda passada seguida ela voltava recusada, e a coluna "Nota fiscal" continuava
+   * vazia sem que nada no caminho parecesse quebrado. Com a janela, cada leva pergunta
+   * pelo periodo que e o dela, e a pergunta deixa de ser uma repeticao.
+   */
+  invoiceSearchFrom?: string | null;
+  invoiceSearchTo?: string | null;
+  /**
    * Quantas consultas dirigidas esta passada pode gastar atras do NUMERO da nota.
    *
    * O rodizio de fundo usa o padrao baixo: ele roda a cada tres minutos e divide a fila
@@ -4474,8 +4489,30 @@ async function checkOmieOrdersBilling(
     results,
     resolveInvoiceNumberBudget(payload?.invoiceNumberBudget),
     alreadyConsulted,
-    new Map(orders.map((order) => [order.operationId, order.orderNumber ?? null]))
+    new Map(orders.map((order) => [order.operationId, order.orderNumber ?? null])),
+    resolveInvoiceSearchWindow(payload)
   );
+}
+
+/** A janela de emissao pedida pelo desktop, quando as duas pontas vieram legiveis. */
+function resolveInvoiceSearchWindow(
+  payload: CheckOrderBillingPayload | undefined
+): InvoiceSearchWindow | null {
+  const from = normalizeOmieDate(payload?.invoiceSearchFrom);
+  const to = normalizeOmieDate(payload?.invoiceSearchTo);
+  return from && to ? { from, to } : null;
+}
+
+/**
+ * Data no formato que o OMIE aceita (dd/mm/aaaa), ou null.
+ *
+ * Mandar uma data que ele nao entende derruba a chamada INTEIRA, e a varredura cairia na
+ * consulta dirigida sem que ninguem soubesse por que — por isso o que nao casa aqui vira
+ * "sem janela" em vez de virar parametro.
+ */
+function normalizeOmieDate(value: string | null | undefined): string | null {
+  const trimmed = (value ?? "").trim();
+  return /^\d{2}\/\d{2}\/\d{4}$/.test(trimmed) ? trimmed : null;
 }
 
 /**
@@ -4505,7 +4542,9 @@ async function fillMissingInvoiceNumbers(
   /** Ids que ja passaram pela consulta individual — ver `alreadyConsulted`. */
   alreadyConsulted: ReadonlySet<string> = new Set(),
   /** Numero visivel do pedido que o desktop mandou, por operacao. */
-  orderNumbers: ReadonlyMap<string, string | null> = new Map()
+  orderNumbers: ReadonlyMap<string, string | null> = new Map(),
+  /** Janela de emissao das notas destas cargas. Null = varre do mais novo para tras. */
+  invoiceWindow: InvoiceSearchWindow | null = null
 ): Promise<OrderBillingState[]> {
   /** O pedido desta carga, do jeito que a listagem de notas o reencontra. */
   const lookupKey = (result: OrderBillingState): InvoiceLookupKey => ({
@@ -4525,7 +4564,11 @@ async function fillMissingInvoiceNumbers(
       result.omieOrderId > 0
   );
   if (salesMissing.length > 0) {
-    const invoices = await listOmieInvoicesByOrder(credentials, salesMissing.map(lookupKey));
+    const invoices = await listOmieInvoicesByOrder(
+      credentials,
+      salesMissing.map(lookupKey),
+      invoiceWindow
+    );
     for (const result of salesMissing) {
       const listed = resolveListedInvoice(invoices, lookupKey(result));
       if (listed === null) continue;
@@ -4971,7 +5014,8 @@ function resolveListedInvoice(index: InvoiceIndex, key: InvoiceLookupKey): Liste
  */
 async function listOmieInvoicesByOrder(
   credentials: OmieCredentials,
-  wanted: readonly InvoiceLookupKey[]
+  wanted: readonly InvoiceLookupKey[],
+  window: InvoiceSearchWindow | null = null
 ): Promise<InvoiceIndex> {
   const index: InvoiceIndex = { byOrderId: new Map(), byOrderNumber: new Map() };
 
@@ -4982,9 +5026,10 @@ async function listOmieInvoicesByOrder(
       .filter((number): number is string => number !== null)
   );
   if (wantedIds.size === 0 && wantedNumbers.size === 0) return index;
-  // Sem codigo nenhum para comparar, a varredura nao tem onde parar por idade: o teto de
-  // paginas e quem a segura.
-  const smallestWantedId = wantedIds.size > 0 ? Math.min(...wantedIds) : 0;
+
+  /** So para o log: quantas notas a varredura leu, e quantas paginas custou. */
+  let recordsSeen = 0;
+  let pagesRead = 0;
 
   // Mesma mecanica da listagem de pedidos: comeca pela ponta nova e confere na primeira
   // pagina se o OMIE de fato respondeu em ordem decrescente (ver `listOmieOrderBillingStates`).
@@ -4995,7 +5040,7 @@ async function listOmieInvoicesByOrder(
     const pageNumber = nextPage;
     let page: OrderListingPage;
     try {
-      page = await listOmieInvoicesPage(credentials, pageNumber);
+      page = await listOmieInvoicesPage(credentials, pageNumber, window);
     } catch (error) {
       // Listagem indisponivel (modulo fiscal sem acesso, campo recusado, instabilidade):
       // nao derruba a conferencia, so a devolve para a consulta dirigida.
@@ -5007,12 +5052,11 @@ async function listOmieInvoicesByOrder(
       break;
     }
     if (page.records.length === 0) break;
+    pagesRead++;
+    recordsSeen += page.records.length;
 
-    let pageSmallestOrderId = Number.POSITIVE_INFINITY;
     for (const record of page.records) {
       const orderId = extractInvoiceOrderId(record);
-      if (orderId !== null && orderId < pageSmallestOrderId) pageSmallestOrderId = orderId;
-
       const orderNumber = normalizeOrderNumber(extractInvoiceOrderNumber(record));
       const matchesId = orderId !== null && wantedIds.has(orderId);
       const matchesNumber = orderNumber !== null && wantedNumbers.has(orderNumber);
@@ -5028,7 +5072,7 @@ async function listOmieInvoicesByOrder(
       if (matchesNumber && orderNumber !== null) index.byOrderNumber.set(orderNumber, listed);
     }
 
-    if (wanted.every((key) => resolveListedInvoice(index, key) !== null)) return index;
+    if (wanted.every((key) => resolveListedInvoice(index, key) !== null)) break;
 
     // A virada, pelo mesmo motivo da listagem de pedidos: a ordem pedida pode ser aceita e
     // ignorada, e ai a pagina 1 traz o cadastro mais VELHO. Quando isso acontece a
@@ -5040,16 +5084,31 @@ async function listOmieInvoicesByOrder(
       continue;
     }
 
-    // Passou do pedido mais antigo procurado: dali para tras so tem nota de coisa ainda
-    // mais velha.
-    if (pageSmallestOrderId <= smallestWantedId) break;
-
+    // Sem parada por idade aqui, de proposito. A listagem de notas vem ordenada pelo
+    // codigo da NOTA, e o pedido de origem nao acompanha essa ordem: uma nota emitida hoje
+    // para um pedido antigo aparece na primeira pagina com o codigo de pedido la embaixo.
+    // Cortar a varredura por "esta pagina ja tem pedido mais velho que o procurado"
+    // abortava tudo por causa de UM registro assim — e as notas das outras cargas, que
+    // estavam nas paginas seguintes, nunca eram lidas. Quem limita agora e a janela de
+    // emissao (que estreita a busca ao periodo certo) e o teto de paginas.
     nextPage = pageNumber + step;
     if (nextPage < (step === -1 ? 2 : 1)) break;
   }
 
+  // Sucesso sem proveito era invisivel: so a falha ia para o log, entao uma varredura que
+  // rodava inteira e nao casava nada ficava indistinguivel de uma que nem aconteceu.
+  const matched = wanted.filter((key) => resolveListedInvoice(index, key) !== null).length;
+  console.log(
+    `[omie] listagem de notas: ${pagesRead} pagina(s), ${recordsSeen} nota(s) lida(s), ` +
+      `${matched} de ${wanted.length} carga(s) casada(s)` +
+      (window ? ` (emissao ${window.from} a ${window.to})` : " (sem janela de emissao)")
+  );
+
   return index;
 }
+
+/** O periodo de emissao em que a nota procurada pode estar, em dd/mm/aaaa. */
+type InvoiceSearchWindow = { from: string; to: string };
 
 /**
  * Uma pagina da listagem de notas fiscais.
@@ -5059,7 +5118,8 @@ async function listOmieInvoicesByOrder(
  */
 async function listOmieInvoicesPage(
   credentials: OmieCredentials,
-  page: number
+  page: number,
+  window: InvoiceSearchWindow | null
 ): Promise<OrderListingPage> {
   const response = await callOmie<unknown, unknown>(
     credentials,
@@ -5070,7 +5130,8 @@ async function listOmieInvoicesPage(
       registros_por_pagina: INVOICE_LISTING_PAGE_SIZE,
       apenas_importado_api: "N",
       ordenar_por: "CODIGO",
-      ordem_decrescente: "S"
+      ordem_decrescente: "S",
+      ...(window ? { dEmiInicial: window.from, dEmiFinal: window.to } : {})
     }
   );
   return {

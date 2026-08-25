@@ -4952,6 +4952,8 @@ interface PendingOmieBillingRow {
    * custa chamada nenhuma.
    */
   omie_order_number: string | null;
+  /** Data da carga. E dela que sai a janela de emissao mandada ao OMIE. */
+  created_at: string | null;
 }
 
 interface OmieOrderBillingState {
@@ -5001,6 +5003,60 @@ const PENDING_OMIE_BILLING_SQL = `(
   OR (omie_billing_status = 'billed'
       AND (omie_invoice_number IS NULL OR trim(omie_invoice_number) = ''))
 )`;
+
+/**
+ * Folga para tras na janela de emissao das notas.
+ *
+ * A nota sai no dia da carga ou depois, nunca antes — mas `created_at` e gravado em UTC e
+ * a nota e datada no fuso da pedreira, entao a carga da madrugada cai no dia anterior la.
+ * Tres dias cobrem isso com sobra sem alargar a busca a ponto de ela deixar de ser estreita.
+ */
+const INVOICE_SEARCH_SLACK_DAYS = 3;
+
+/** `2026-08-25` mais (ou menos) N dias, ainda em ISO. */
+function shiftIsoDay(isoDay: string, days: number): string {
+  const date = new Date(`${isoDay}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+/** `2026-08-25` no formato que o OMIE aceita. */
+function toOmieDate(isoDay: string): string {
+  const [year, month, day] = isoDay.split("-");
+  return `${day}/${month}/${year}`;
+}
+
+/**
+ * O periodo em que as notas DESTAS cargas podem ter sido emitidas.
+ *
+ * Existe por dois motivos. Estreitar a busca e o obvio: procurar a nota de uma quinzena no
+ * periodo dela, em vez de varrer o cadastro inteiro do mais novo para tras.
+ *
+ * O outro e o que fazia a coluna continuar vazia. O OMIE recusa a MESMA pergunta repetida
+ * ("Consumo redundante detectado. Aguarde N segundos"), e a listagem de notas saia
+ * identica em toda passada — mesma pagina, mesmo tamanho, mesma ordem. Da segunda leva em
+ * diante ela voltava recusada, e nada no caminho parecia quebrado. Com a janela, cada leva
+ * pergunta pelo periodo que e o dela.
+ *
+ * Sem data legivel na leva a janela nao vai: melhor varrer do mais novo para tras do que
+ * mandar um periodo errado e a nota ficar de fora dele.
+ */
+function invoiceSearchWindow(
+  rows: readonly PendingOmieBillingRow[]
+): { invoiceSearchFrom: string; invoiceSearchTo: string } | null {
+  const days = rows
+    .map((row) => (row.created_at ?? "").slice(0, 10))
+    .filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day));
+  if (days.length === 0) return null;
+
+  const oldest = days.reduce((left, right) => (left < right ? left : right));
+  return {
+    invoiceSearchFrom: toOmieDate(shiftIsoDay(oldest, -INVOICE_SEARCH_SLACK_DAYS)),
+    // Ate amanha: a nota de hoje pode estar datada adiante pelo fuso, e a ponta de cima
+    // nao custa nada — quem estreita a busca e a de baixo.
+    invoiceSearchTo: toOmieDate(shiftIsoDay(new Date().toISOString().slice(0, 10), 1))
+  };
+}
 
 export async function reconcileOmieBillingFromOmie(
   database: DesktopDatabase,
@@ -5072,7 +5128,7 @@ export async function reconcileOmieBillingFromOmie(
     ? (database
         .prepare(
           `SELECT id, operation_type, omie_sales_order_id, omie_service_order_id,
-                  omie_billing_status, omie_invoice_number, omie_order_number
+                  omie_billing_status, omie_invoice_number, omie_order_number, created_at
              FROM weighing_operations
             WHERE unit_id = ?
               AND id IN (${targeted.map(() => "?").join(", ")})
@@ -5085,7 +5141,7 @@ export async function reconcileOmieBillingFromOmie(
     : (database
         .prepare(
           `SELECT id, operation_type, omie_sales_order_id, omie_service_order_id,
-                  omie_billing_status, omie_invoice_number, omie_order_number
+                  omie_billing_status, omie_invoice_number, omie_order_number, created_at
          FROM weighing_operations
         WHERE unit_id = ?
           AND deleted_at IS NULL
@@ -5161,10 +5217,13 @@ export async function reconcileOmieBillingFromOmie(
         deviceId: settings.deviceId,
         deviceToken: settings.deviceToken,
         action: "check_order_billing",
-        payload:
-          options.invoiceNumberBudget === undefined
-            ? { orders }
-            : { orders, invoiceNumberBudget: options.invoiceNumberBudget }
+        payload: {
+          orders,
+          ...(options.invoiceNumberBudget === undefined
+            ? {}
+            : { invoiceNumberBudget: options.invoiceNumberBudget }),
+          ...(invoiceSearchWindow(pending) ?? {})
+        }
       }
     }
   );
