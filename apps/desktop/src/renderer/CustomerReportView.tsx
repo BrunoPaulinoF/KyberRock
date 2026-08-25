@@ -14,6 +14,7 @@ import {
 } from "../services/customer-report-render";
 import { IconActionButton } from "./IconActionButton";
 import { HelpTooltip } from "./Tooltip";
+import { invoiceNumberText } from "../services/invoice-number-label";
 import { CustomerSearchSelect } from "./CustomerSearchSelect";
 import { useOmieInvoiceNumbers } from "./useOmieInvoiceNumbers";
 
@@ -433,10 +434,10 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
               customers={customers}
               value={customerId}
               onChange={setCustomerId}
-              leadingOptions={[
-                { value: "", label: "Selecione um cliente" },
-                { value: ALL_CUSTOMERS, label: "Todos os clientes (resumo do periodo)" }
-              ]}
+              leadingOption={{
+                value: ALL_CUSTOMERS,
+                label: "Todos os clientes (resumo do periodo)"
+              }}
               inputStyle={styles.input}
               hintStyle={styles.hint}
             >
@@ -806,7 +807,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
                 formatBRL(operation.productTotalCents),
                 formatBRL(operation.freightTotalCents),
                 formatBRL(operation.totalCents),
-                operation.omieInvoiceNumber ?? "-",
+                invoiceNumberText(operation.omieInvoiceNumber, operation.operationType),
                 operation.minutesInside === null ? "-" : formatMinutes(operation.minutesInside)
               ])}
             />
@@ -916,7 +917,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
                     formatBRL(operation.totalCents),
                     operation.paymentMethodName ?? "-",
                     operation.paymentTermName ?? "-",
-                    operation.omieInvoiceNumber ?? "-",
+                    invoiceNumberText(operation.omieInvoiceNumber, operation.operationType),
                     operation.omieSalesOrderId === null ? "-" : String(operation.omieSalesOrderId),
                     operation.statusLabel
                   ])}

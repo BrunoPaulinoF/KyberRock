@@ -9,6 +9,7 @@ import { PAYMENT_CONDITION_FORMATS } from "./PaymentConditionLegend";
 const rendererDir = dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(resolve(rendererDir, "App.tsx"), "utf8");
 const legendSource = readFileSync(resolve(rendererDir, "PaymentConditionLegend.tsx"), "utf8");
+const searchPickerSource = readFileSync(resolve(rendererDir, "SearchPicker.tsx"), "utf8");
 
 function sliceBetween(source: string, start: string, end: string): string {
   const from = source.indexOf(start);
@@ -90,12 +91,16 @@ describe("Nova entrada compacta", () => {
     const inputStyle = sliceBetween(appSource, "\n  input: {", "\n  },");
     expect(inputStyle).toContain("minWidth: 0");
 
-    const cacheSelectInput = sliceBetween(
-      appSource,
-      "placeholder={`Selecionar ${label.toLowerCase()}...`}",
-      "{showClearButton || showEditButton ?"
-    );
-    expect(cacheSelectInput).toContain('width: "100%"');
+    // O campo de escolha de cadastro agora e o `SearchPicker`, e a garantia vale la: o
+    // input ocupa a largura toda e o container que o segura pode encolher.
+    const pickerInput = sliceBetween(searchPickerSource, 'role="combobox"', "/>");
+    expect(pickerInput).toContain('width: "100%"');
+
+    // E o CacheSelect segura o picker num container que PODE encolher: sem `minWidth: 0`
+    // o input volta a impor a largura de ~20 caracteres e estoura a coluna do card.
+    const cacheSelectSlot = sliceBetween(appSource, "function CacheSelect({", "\n}\n");
+    expect(cacheSelectSlot).toContain("<SearchPicker");
+    expect(cacheSelectSlot).toContain("style={{ flex: 1, minWidth: 0 }}");
   });
 
   it("mantem as tres colunas dentro da largura da coluna de conteudo", () => {

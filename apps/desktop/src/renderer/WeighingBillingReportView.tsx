@@ -23,6 +23,7 @@ import {
 } from "./insights-period";
 import type { InsightsPeriod } from "./insights-period";
 import { CustomerSearchSelect } from "./CustomerSearchSelect";
+import { InvoiceNumberCell } from "./InvoiceNumberCell";
 import { useDebouncedValue } from "./use-debounced-value";
 import { useOmieInvoiceNumbers } from "./useOmieInvoiceNumbers";
 
@@ -295,7 +296,7 @@ export function WeighingBillingReportView({
               customers={customers}
               value={customerId}
               onChange={setCustomerId}
-              leadingOptions={[{ value: ALL_CUSTOMERS, label: "Todos os clientes" }]}
+              leadingOption={{ value: ALL_CUSTOMERS, label: "Todos os clientes" }}
               inputStyle={styles.input}
               hintStyle={styles.hint}
             />
@@ -479,7 +480,10 @@ export function WeighingBillingReportView({
                           />
                         </td>
                         <td style={{ ...styles.td, textAlign: "left" }}>
-                          {row.omieInvoiceNumber ?? "-"}
+                          <InvoiceNumberCell
+                            invoiceNumber={row.omieInvoiceNumber}
+                            operationType={row.operationType}
+                          />
                         </td>
                         <td style={{ ...styles.td, textAlign: "left" }}>{omieReference(row)}</td>
                       </tr>

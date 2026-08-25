@@ -4476,6 +4476,28 @@ async function fillMissingInvoiceNumbers(
         error
       );
     }
+
+    // Segunda tentativa da venda com nota: o PROPRIO pedido.
+    //
+    // O numero da NF-e aparece em dois lugares do OMIE, e nem sempre nos dois ao mesmo
+    // tempo: nos documentos fiscais do pedido (`/produtos/dfedocs/`) e nas informacoes
+    // adicionais do pedido (`ConsultarPedido`) — este ultimo e o campo que o proprio
+    // faturamento pelo app ja lia. Parar na primeira consulta deixava a coluna "Nota
+    // fiscal" vazia justamente na venda faturada por uma pessoa dentro do OMIE, que e o
+    // caso normal. Custa uma chamada a mais, e so para quem voltou faturado SEM numero.
+    if (result.invoiceNumber === null && result.orderType === "sales" && budget > 0) {
+      budget--;
+      try {
+        const order = await consultSalesOrder(credentials, result.omieOrderId);
+        result.invoiceNumber = extractOmieInvoiceNumber(order);
+        result.documentUrl = result.documentUrl ?? extractDocumentUrl(order);
+      } catch (error) {
+        console.error(
+          `[omie] nao foi possivel obter o numero da nota pelo pedido ${result.omieOrderId}`,
+          error
+        );
+      }
+    }
   }
 
   return results;
