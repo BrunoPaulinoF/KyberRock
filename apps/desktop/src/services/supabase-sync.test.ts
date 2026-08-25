@@ -3003,7 +3003,12 @@ describe("supabase sync", () => {
                 orderType: "sales",
                 omieOrderId: 11489137846
               }
-            ]
+            ],
+            // A janela de emissao vai junto. As datas sao relativas a hoje (ver
+            // `RECENT_ISO`), entao aqui so o formato do OMIE e fixado; que ela de fato
+            // abrace a carga mais antiga da leva e o teste logo abaixo.
+            invoiceSearchFrom: expect.stringMatching(/^\d{2}\/\d{2}\/\d{4}$/),
+            invoiceSearchTo: expect.stringMatching(/^\d{2}\/\d{2}\/\d{4}$/)
           }
         })
       });
@@ -3668,6 +3673,68 @@ describe("supabase sync", () => {
       expect(options.body.payload.orders).toEqual([
         { operationId: "op-sem-numero", orderNumber: "452", orderType: "sales", omieOrderId: 5003 }
       ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("a janela de emissao abraca a carga mais antiga da leva", async () => {
+    // A janela existe porque o OMIE recusa a MESMA pergunta repetida ("Consumo redundante
+    // detectado"), e a listagem de notas saia identica em toda passada: da segunda leva em
+    // diante voltava recusada e a coluna "Nota fiscal" ficava vazia sem nada parecer
+    // quebrado. Ela tem de comecar ANTES da carga mais velha da leva — se a nota cair fora
+    // do periodo, estreitar a busca teria trocado um jeito de falhar por outro.
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      const antiga = new Date(Date.now() - 9 * 24 * 60 * 60 * 1000).toISOString();
+      insertSentOperation(database, { id: "op-antiga", salesOrderId: 5001, createdAt: antiga });
+      insertSentOperation(database, { id: "op-nova", salesOrderId: 5002 });
+      invokeMock.mockResolvedValue({ error: null, data: { ok: true, results: [] } });
+
+      await reconcileOmieBillingFromOmie(database, identity, {
+        operationIds: ["op-antiga", "op-nova"]
+      });
+
+      const { payload } = (
+        invokeMock.mock.calls[0][1] as { body: { payload: Record<string, string> } }
+      ).body;
+      const asDate = (br: string) => {
+        const [day, month, year] = br.split("/");
+        return new Date(`${year}-${month}-${day}T00:00:00Z`).getTime();
+      };
+
+      expect(asDate(payload.invoiceSearchFrom)).toBeLessThan(new Date(antiga).getTime());
+      // E vai ate depois de hoje: a nota de hoje pode estar datada adiante pelo fuso.
+      expect(asDate(payload.invoiceSearchTo)).toBeGreaterThan(Date.now());
+    } finally {
+      database.close();
+    }
+  });
+
+  it("sem data legivel na leva, pergunta sem janela em vez de mandar periodo errado", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-sem-data", salesOrderId: 5004 });
+      database
+        .prepare("UPDATE weighing_operations SET created_at = '' WHERE id = ?")
+        .run("op-sem-data");
+      invokeMock.mockResolvedValue({ error: null, data: { ok: true, results: [] } });
+
+      await reconcileOmieBillingFromOmie(database, identity, { operationIds: ["op-sem-data"] });
+
+      const { payload } = (
+        invokeMock.mock.calls[0][1] as { body: { payload: Record<string, unknown> } }
+      ).body;
+      // Varrer do mais novo para tras e pior que a janela, mas e correto. Mandar um periodo
+      // inventado deixaria a nota FORA dele, e ai nao ha varredura que a ache.
+      expect(payload.invoiceSearchFrom).toBeUndefined();
+      expect(payload.invoiceSearchTo).toBeUndefined();
     } finally {
       database.close();
     }
