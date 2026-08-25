@@ -4525,6 +4525,15 @@ export async function processOmieSyncQueue(
         billed?: boolean;
         billingStatusCode?: string | null;
         billingStatusMessage?: string | null;
+        /**
+         * Numero da NOTA, quando o faturamento pela propria fila ja o devolve.
+         *
+         * Nao estava declarado aqui e por isso era descartado: a pesagem faturada por ESTE
+         * caminho nascia "Faturada" com a coluna "Nota fiscal" vazia, e so ganhava o numero
+         * quando a conferencia de fundo chegasse a vez dela — dias depois, ou nunca, quando
+         * a janela de 120 dias passava antes.
+         */
+        invoiceNumber?: string | null;
         documentUrl?: string | null;
       }>("omie-sync", {
         body: {
@@ -4626,6 +4635,7 @@ export async function processOmieSyncQueue(
                omie_billing_status = CASE WHEN ? THEN 'billed' ELSE omie_billing_status END,
                omie_billing_message = CASE WHEN ? THEN ? ELSE omie_billing_message END,
                omie_billed_at = CASE WHEN ? THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE omie_billed_at END,
+               omie_invoice_number = COALESCE(?, omie_invoice_number),
                omie_document_url = COALESCE(?, omie_document_url),
                status = 'synced',
                omie_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
@@ -4654,6 +4664,7 @@ export async function processOmieSyncQueue(
             billed ? 1 : 0,
             data.billingStatusMessage ?? "Pedido faturado no OMIE.",
             billed ? 1 : 0,
+            (data.invoiceNumber ?? "").trim() || null,
             data.documentUrl ?? null,
             payload.operationId
           );
@@ -4901,6 +4912,18 @@ export interface OmieBillingReconcileResult {
   checked: number;
   /** Quantas passaram a constar como faturadas. */
   billed: number;
+  /**
+   * Quantas GANHARAM o numero da nota nesta passada.
+   *
+   * Separado de `billed` porque as duas coisas quase nunca acontecem juntas: a pesagem
+   * passa a constar faturada quando alguem move o pedido no OMIE, e o numero da nota so
+   * aparece depois, na consulta dirigida ao documento. Quem chama em leva — a tela que se
+   * preenche sozinha e o botao "Conferir notas no OMIE" — precisa deste numero para saber
+   * se vale pedir a proxima leva ou se a fila secou.
+   */
+  invoiceNumbers: number;
+  /** Quantas continuam faturadas SEM numero depois desta passada. */
+  stillWithoutInvoiceNumber: number;
   /** true quando a passada foi pulada pelo intervalo minimo (nao e erro). */
   skipped?: boolean;
   errors: string[];
@@ -4988,6 +5011,14 @@ export async function reconcileOmieBillingFromOmie(
      * da rotina de fundo.
      */
     operationIds?: readonly string[];
+    /**
+     * Quantas consultas dirigidas ao numero da nota esta passada pode pedir ao edge.
+     *
+     * O rodizio de fundo nao passa nada e fica com o teto baixo de la. Quem passa e a TELA
+     * — o relatorio que se preenche sozinho e o botao "Conferir notas no OMIE" —, porque
+     * ali existe alguem esperando o numero e a leva seguinte so sai quando esta voltar.
+     */
+    invoiceNumberBudget?: number;
   } = {}
 ): Promise<OmieBillingReconcileResult> {
   const settings = getCloudSettings(database, identity);
@@ -4997,7 +5028,7 @@ export async function reconcileOmieBillingFromOmie(
 
   const targeted = options.operationIds ?? null;
   if (targeted !== null && targeted.length === 0) {
-    return { checked: 0, billed: 0, errors: [] };
+    return { checked: 0, billed: 0, invoiceNumbers: 0, stillWithoutInvoiceNumber: 0, errors: [] };
   }
 
   if (
@@ -5005,7 +5036,14 @@ export async function reconcileOmieBillingFromOmie(
     options.force !== true &&
     !hasWindowElapsed(database, OMIE_BILLING_CHECK_LAST_RUN_KEY)
   ) {
-    return { checked: 0, billed: 0, skipped: true, errors: [] };
+    return {
+      checked: 0,
+      billed: 0,
+      invoiceNumbers: 0,
+      stillWithoutInvoiceNumber: 0,
+      skipped: true,
+      errors: []
+    };
   }
 
   // Duas cadencias. A passada CURTA (a cada 3 min) olha so o movimento recente: sao
@@ -5063,22 +5101,35 @@ export async function reconcileOmieBillingFromOmie(
           limit
         ) as PendingOmieBillingRow[]);
 
-  if (pending.length === 0) return { checked: 0, billed: 0, errors: [] };
+  if (pending.length === 0)
+    return { checked: 0, billed: 0, invoiceNumbers: 0, stillWithoutInvoiceNumber: 0, errors: [] };
 
   const orders = pending
-    .map((row) => ({
-      operationId: row.id,
+    .map((row) => {
       // A interna vira ordem de servico; a com nota, pedido de venda. Quando as duas
       // existem (reenvio que mudou o tipo), o tipo da operacao decide.
-      orderType: (row.operation_type === "invoice" ? "sales" : "service") as "sales" | "service",
-      omieOrderId:
+      const preferred =
         row.operation_type === "invoice"
-          ? (row.omie_sales_order_id ?? 0)
-          : (row.omie_service_order_id ?? 0)
-    }))
+          ? { orderType: "sales" as const, omieOrderId: row.omie_sales_order_id ?? 0 }
+          : { orderType: "service" as const, omieOrderId: row.omie_service_order_id ?? 0 };
+      if (preferred.omieOrderId > 0) return { operationId: row.id, ...preferred };
+
+      // O tipo da operacao nao bate com o documento que ela TEM no OMIE — acontece quando
+      // a operacao foi convertida (interna virou com nota, ou o contrario) depois de o
+      // documento ja existir la. Perguntar pelo documento que existe e sempre melhor que
+      // nao perguntar: descartada aqui, a pesagem ficava com `omie_billing_checked_at`
+      // parado no tempo e voltava na FRENTE do rodizio em toda passada, ocupando uma vaga
+      // do lote sem nunca ser conferida — e segurando a fila de quem vinha atras.
+      const fallback =
+        row.operation_type === "invoice"
+          ? { orderType: "service" as const, omieOrderId: row.omie_service_order_id ?? 0 }
+          : { orderType: "sales" as const, omieOrderId: row.omie_sales_order_id ?? 0 };
+      return { operationId: row.id, ...fallback };
+    })
     .filter((order) => order.omieOrderId > 0);
 
-  if (orders.length === 0) return { checked: 0, billed: 0, errors: [] };
+  if (orders.length === 0)
+    return { checked: 0, billed: 0, invoiceNumbers: 0, stillWithoutInvoiceNumber: 0, errors: [] };
 
   // Marca a passada ANTES de chamar o OMIE: mesmo que a chamada falhe, o freio vale — uma
   // instabilidade do OMIE nao pode virar uma tentativa por fechamento.
@@ -5100,13 +5151,22 @@ export async function reconcileOmieBillingFromOmie(
         deviceId: settings.deviceId,
         deviceToken: settings.deviceToken,
         action: "check_order_billing",
-        payload: { orders }
+        payload:
+          options.invoiceNumberBudget === undefined
+            ? { orders }
+            : { orders, invoiceNumberBudget: options.invoiceNumberBudget }
       }
     }
   );
 
   if (error) {
-    return { checked: 0, billed: 0, errors: [await getFunctionErrorMessage(error)] };
+    return {
+      checked: 0,
+      billed: 0,
+      invoiceNumbers: 0,
+      stillWithoutInvoiceNumber: 0,
+      errors: [await getFunctionErrorMessage(error)]
+    };
   }
 
   const results = data?.results ?? [];
@@ -5134,9 +5194,26 @@ export async function reconcileOmieBillingFromOmie(
   const alreadyBilled = new Set(
     pending.filter((row) => row.omie_billing_status === "billed").map((row) => row.id)
   );
+  /**
+   * As que entraram nesta passada SEM o numero da nota.
+   *
+   * E por elas que se mede o proveito da consulta dirigida: quem ja tinha numero nao ganha
+   * nada aqui, e contar a passada pelo total conferido faria a tela achar que avancou
+   * quando so releu o que ja sabia.
+   */
+  const withoutNumberBefore = new Set(
+    pending.filter((row) => !(row.omie_invoice_number ?? "").trim()).map((row) => row.id)
+  );
+  let invoiceNumbers = 0;
+  let stillWithoutInvoiceNumber = 0;
+  // Guarda o numero da nota mesmo quando o OMIE nao deu o documento por faturado. Um
+  // numero que veio junto e prova de que a nota existe, e jogar fora o unico dado que a
+  // tela precisa por causa da etapa do kanban nao ajuda ninguem — a situacao continua
+  // sendo decidida pelo OMIE, so o numero e aproveitado.
   const markChecked = database.prepare(
     `UPDATE weighing_operations
         SET omie_order_number = COALESCE(?, omie_order_number),
+            omie_invoice_number = COALESCE(?, omie_invoice_number),
             omie_billing_checked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
       WHERE id = ?`
   );
@@ -5150,7 +5227,7 @@ export async function reconcileOmieBillingFromOmie(
   for (const result of results) {
     if (result.error) {
       errors.push(`Faturamento OMIE ${result.omieOrderId}: ${result.error}`);
-      markChecked.run(null, result.operationId);
+      markChecked.run(null, null, result.operationId);
       continue;
     }
 
@@ -5166,7 +5243,8 @@ export async function reconcileOmieBillingFromOmie(
     }
 
     if (!result.billed) {
-      markChecked.run(result.orderNumber, result.operationId);
+      markChecked.run(result.orderNumber, result.invoiceNumber, result.operationId);
+      if (withoutNumberBefore.has(result.operationId) && result.invoiceNumber) invoiceNumbers++;
       continue;
     }
 
@@ -5178,9 +5256,13 @@ export async function reconcileOmieBillingFromOmie(
       result.operationId
     );
     if (!alreadyBilled.has(result.operationId)) billed++;
+    if (withoutNumberBefore.has(result.operationId)) {
+      if (result.invoiceNumber) invoiceNumbers++;
+      else stillWithoutInvoiceNumber++;
+    }
   }
 
-  return { checked: results.length, billed, errors };
+  return { checked: results.length, billed, invoiceNumbers, stillWithoutInvoiceNumber, errors };
 }
 
 /**

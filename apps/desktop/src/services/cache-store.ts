@@ -1,3 +1,6 @@
+import { rankSearchMatches } from "@kyberrock/shared";
+import type { SearchFieldSpec } from "@kyberrock/shared";
+
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { isSellableProduct } from "./product-classification.js";
 
@@ -179,6 +182,15 @@ export interface CacheQueryOptions {
   offset?: number;
   activeOnly?: boolean;
   productFiscalType?: "finished_goods";
+  /**
+   * Restringe a lista a ESTES ids (ex.: as transportadoras vinculadas ao cliente).
+   *
+   * O filtro por vinculo era aplicado na TELA, depois do corte de `limit` — entao uma
+   * transportadora vinculada que estivesse na linha 201 da ordem do banco simplesmente
+   * sumia do seletor, sem aviso, e o operador concluia que o vinculo nao existia. Aplicado
+   * aqui, o corte acontece sobre o que ja esta filtrado.
+   */
+  ids?: readonly string[];
 }
 
 export interface CacheQueryResult<T> {
@@ -540,45 +552,6 @@ function mapCustomerPriceTable(row: CustomerPriceTableRow): CustomerPriceTableEn
   };
 }
 
-/** Texto comparavel na busca: sem acento e em minusculas ("JOSE" acha "jose"). */
-function normalizeSearchText(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
-
-/**
- * Versao sem pontuacao nem espaco, para casar o mesmo dado escrito de formas diferentes:
- * "144.939.658-51" com "14493965851" (o documento vem mascarado do OMIE e so com digitos
- * do cadastro local) e "HJI-0517" com "HJI0517" (a placa e guardada sem o traco, mas o
- * operador a digita como esta escrita no caminhao).
- */
-function compactSearchText(value: string): string {
-  return normalizeSearchText(value).replace(/[^a-z0-9]/g, "");
-}
-
-function searchFilter<T extends { [key: string]: unknown }>(
-  rows: T[],
-  searchFields: (keyof T)[],
-  search?: string
-): T[] {
-  if (!search) return rows;
-  const term = normalizeSearchText(search.trim());
-  if (!term) return rows;
-  // Sem essa segunda comparacao, procurar pelo CPF ou pela placa nao achava o cadastro que
-  // estava bem ali — e o operador concluia que ele nao existia e cadastrava de novo.
-  const compactTerm = compactSearchText(search);
-  return rows.filter((row) =>
-    searchFields.some((field) => {
-      const value = row[field];
-      if (typeof value !== "string") return false;
-      if (normalizeSearchText(value).includes(term)) return true;
-      return compactTerm.length > 0 && compactSearchText(value).includes(compactTerm);
-    })
-  );
-}
-
 export class CacheStore {
   private customers: Map<string, CustomerCacheEntry> = new Map();
   private products: Map<string, ProductCacheEntry> = new Map();
@@ -662,6 +635,17 @@ export class CacheStore {
     this.loadAll(companyId);
   }
 
+  /**
+   * A lista de um cadastro, filtrada e ORDENADA.
+   *
+   * Com busca digitada, a ordem e a da proximidade (ver `rankSearchMatches`): o que mais se
+   * parece com o que foi digitado vem no topo. Sem busca, a ordem e a alfabetica do nome.
+   * Nenhuma das duas existia — a lista saia na ordem de insercao do SQLite, e era ela que
+   * fazia o cliente procurado aparecer na decima linha, ou fora do corte de `limit`.
+   *
+   * `total` conta o que CASOU, nao o que coube em `limit`: e assim que a tela consegue
+   * dizer "mostrando 50 de 312" em vez de esconder o corte.
+   */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   query(options: CacheQueryOptions): CacheQueryResult<any> {
     const {
@@ -670,7 +654,8 @@ export class CacheStore {
       limit = 100,
       offset = 0,
       activeOnly = true,
-      productFiscalType
+      productFiscalType,
+      ids
     } = options;
 
     let rows: unknown[] = this.getAllOfType(entityType);
@@ -689,10 +674,31 @@ export class CacheStore {
       rows = (rows as ProductCacheEntry[]).filter((product) => isFinishedGoodsProduct(product));
     }
 
-    if (search) {
-      const searchFields = this.getSearchFields(entityType);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      rows = searchFilter(rows as any[], searchFields as string[], search);
+    // Antes do corte de `limit`, sempre: o vinculo restringe QUEM pode aparecer, e cortar
+    // primeiro fazia sumir justamente o cadastro vinculado que estava no fim da lista.
+    if (ids !== undefined) {
+      const wanted = new Set(ids);
+      rows = rows.filter((r) => wanted.has((r as { id?: string }).id ?? ""));
+    }
+
+    const labelField = this.getSortLabelField(entityType);
+    const byLabel = labelField
+      ? (a: unknown, b: unknown) =>
+          String((a as Record<string, unknown>)[labelField] ?? "").localeCompare(
+            String((b as Record<string, unknown>)[labelField] ?? ""),
+            "pt-BR"
+          )
+      : undefined;
+
+    if (search && search.trim()) {
+      rows = rankSearchMatches(
+        rows as Array<Record<string, unknown>>,
+        this.getSearchFields(entityType),
+        search,
+        byLabel ? { tieBreak: byLabel } : {}
+      );
+    } else if (byLabel) {
+      rows = [...rows].sort(byLabel);
     }
 
     const total = rows.length;
@@ -764,38 +770,110 @@ export class CacheStore {
     }
   }
 
-  private getSearchFields(entityType: CacheEntityType): string[] {
+  /**
+   * Os campos pesquisaveis de cada cadastro, COM PESO.
+   *
+   * O peso nao muda quem casa — muda quem sobe. O nome pelo qual o operador procura o
+   * cadastro vale 1; o dado de apoio que so serve para separar homonimos (documento,
+   * cidade, rua) vale menos. Sem isso, procurar "Sorocaba" poe na frente o cliente cuja
+   * CIDADE e Sorocaba em vez do cliente que se CHAMA Sorocaba.
+   *
+   * Placa e motorista ganharam campos: a placa so era procuravel pelo numero dela, e a
+   * descricao do veiculo ("carreta azul", "cavalo 12") ficava de fora justamente na tela em
+   * que o operador tem o caminhao na frente; o motorista nao era achavel pelo telefone, que
+   * e o que a portaria costuma ter em maos.
+   */
+  private getSearchFields(entityType: CacheEntityType): SearchFieldSpec[] {
     switch (entityType) {
       case "customer":
         return [
-          "legalName",
-          "tradeName",
-          "document",
-          "zipcode",
-          "addressStreet",
-          "neighborhood",
-          "city"
+          { key: "tradeName", weight: 1 },
+          { key: "legalName", weight: 0.95 },
+          { key: "document", weight: 0.7 },
+          { key: "city", weight: 0.4 },
+          { key: "neighborhood", weight: 0.3 },
+          { key: "addressStreet", weight: 0.3 },
+          { key: "zipcode", weight: 0.3 }
         ];
       case "product":
-        return ["code", "description", "ncm", "ean"];
+        return [
+          { key: "description", weight: 1 },
+          { key: "code", weight: 0.8 },
+          { key: "ncm", weight: 0.4 },
+          { key: "ean", weight: 0.4 }
+        ];
       case "vehicle":
-        return ["plate"];
+        return [
+          { key: "plate", weight: 1 },
+          { key: "description", weight: 0.6 },
+          { key: "plateState", weight: 0.3 }
+        ];
       case "driver":
-        return ["name", "document"];
+        return [
+          { key: "name", weight: 1 },
+          { key: "document", weight: 0.7 },
+          { key: "phone", weight: 0.5 }
+        ];
       case "carrier":
-        return ["name", "document", "zipcode", "addressStreet", "neighborhood", "city"];
+        return [
+          { key: "name", weight: 1 },
+          { key: "document", weight: 0.7 },
+          { key: "city", weight: 0.4 },
+          { key: "neighborhood", weight: 0.3 },
+          { key: "addressStreet", weight: 0.3 },
+          { key: "zipcode", weight: 0.3 }
+        ];
       case "payment_term":
-        return ["name", "omieCode"];
+        return [
+          { key: "name", weight: 1 },
+          { key: "omieCode", weight: 0.6 }
+        ];
       case "payment_method":
-        return ["name", "code", "alias"];
+        return [
+          { key: "name", weight: 1 },
+          { key: "alias", weight: 0.8 },
+          { key: "code", weight: 0.6 }
+        ];
       case "account":
-        return ["name", "code", "omieCode"];
+        return [
+          { key: "name", weight: 1 },
+          { key: "code", weight: 0.6 },
+          { key: "omieCode", weight: 0.6 }
+        ];
       case "price_table":
-        return ["name"];
+        return [{ key: "name", weight: 1 }];
       case "price_table_item":
         return [];
       case "customer_price_table":
         return [];
+    }
+  }
+
+  /**
+   * O campo pelo qual a lista sai ORDENADA quando ninguem digitou nada ainda.
+   *
+   * Sem isto a ordem era a de insercao no SQLite — o seletor abria com "os 200 primeiros
+   * que entraram no banco", que para o operador e ordem nenhuma. Com busca digitada quem
+   * manda e a pontuacao; isto so vale para a lista em repouso e para o desempate.
+   */
+  private getSortLabelField(entityType: CacheEntityType): string | null {
+    switch (entityType) {
+      case "customer":
+        return "tradeName";
+      case "product":
+        return "description";
+      case "vehicle":
+        return "plate";
+      case "driver":
+      case "carrier":
+      case "payment_term":
+      case "payment_method":
+      case "account":
+      case "price_table":
+        return "name";
+      case "price_table_item":
+      case "customer_price_table":
+        return null;
     }
   }
 

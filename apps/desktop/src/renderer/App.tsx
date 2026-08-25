@@ -112,6 +112,7 @@ import {
   normalizePhone,
   normalizePlate,
   parseMoneyInputToCents,
+  rankSearchMatches,
   resolveDeviceColor
 } from "@kyberrock/shared";
 import type { OmieCategoryOption } from "../services/omie-categories";
@@ -121,7 +122,9 @@ import { formatDbDateTime, parseDbTimestamp } from "./format-datetime";
 import { MountainOutline } from "./MountainOutline";
 import { CrudFormModal } from "./CrudFormModal";
 import { EntityPickerDialog } from "./EntityPickerDialog";
-import { buildEntityPickerItems, loadAllCacheRows } from "./entity-picker";
+import { readAllCacheRows } from "./cache-rows";
+import { loadEntityPickerPage } from "./entity-picker";
+import { SEARCH_DEBOUNCE_MS, useDebouncedValue } from "./use-debounced-value";
 import type { EntityPickerItem } from "./entity-picker";
 import {
   CellMuted,
@@ -609,17 +612,21 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   } | null>(null);
   const [changeProductOperation, setChangeProductOperation] =
     useState<WeighingOperationSummary | null>(null);
-  const [changeProductOptions, setChangeProductOptions] = useState<
-    Array<{ id: string; description: string }>
-  >([]);
+  const [changeProductOptions, setChangeProductOptions] = useState<EntityPickerItem[]>([]);
+  const [changeProductTotal, setChangeProductTotal] = useState(0);
+  const [changeProductSearch, setChangeProductSearch] = useState("");
   const [changeProductLoading, setChangeProductLoading] = useState(false);
   const [changeCustomerOperation, setChangeCustomerOperation] =
     useState<WeighingOperationSummary | null>(null);
   const [changeCustomerOptions, setChangeCustomerOptions] = useState<EntityPickerItem[]>([]);
+  const [changeCustomerTotal, setChangeCustomerTotal] = useState(0);
+  const [changeCustomerSearch, setChangeCustomerSearch] = useState("");
   const [changeCustomerLoading, setChangeCustomerLoading] = useState(false);
   const [changeCarrierOperation, setChangeCarrierOperation] =
     useState<WeighingOperationSummary | null>(null);
   const [changeCarrierOptions, setChangeCarrierOptions] = useState<EntityPickerItem[]>([]);
+  const [changeCarrierTotal, setChangeCarrierTotal] = useState(0);
+  const [changeCarrierSearch, setChangeCarrierSearch] = useState("");
   const [changeCarrierLoading, setChangeCarrierLoading] = useState(false);
   const [fiscalCloseProgress, setFiscalCloseProgress] = useState<FiscalCloseProgress | null>(null);
   const [retryingFiscalOperationId, setRetryingFiscalOperationId] = useState<string | null>(null);
@@ -903,16 +910,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     let cancelled = false;
     void (async () => {
       try {
-        const result = await desktopApi.queryCache({
-          entityType: "payment_method",
-          activeOnly: false,
-          limit: 200
-        });
+        // A lista INTEIRA: e por ela que se sabe se a forma escolhida e "credito do cliente"
+        // (fiado), e a forma que ficasse fora da primeira pagina virava uma venda a vista
+        // sem ninguem perceber. O cadastro de formas e pequeno — a leitura completa custa
+        // uma pagina na pratica.
+        const rows = await readAllCacheRows<{ id: string; isCustomerCredit?: boolean }>(
+          desktopApi,
+          "payment_method",
+          { activeOnly: false }
+        );
         if (cancelled) return;
-        const ids = (result.rows as Array<{ id: string; isCustomerCredit?: boolean }>)
-          .filter((m) => m.isCustomerCredit)
-          .map((m) => m.id);
-        setCreditMethodIds(ids);
+        setCreditMethodIds(rows.filter((m) => m.isCustomerCredit).map((m) => m.id));
       } catch {
         /* ignore */
       }
@@ -2326,27 +2334,48 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
-  async function handleOpenChangeProduct(operation: WeighingOperationSummary): Promise<void> {
-    if (!desktopApi) return;
+  /**
+   * Abre o modal de troca de material. Como o de cliente e o de transportadora, a lista vem
+   * do efeito de busca — antes era um `<select>` com os 500 primeiros produtos do cadastro,
+   * em ordem alfabetica e sem campo de busca.
+   *
+   * O filtro de produto acabado acompanha: sem ele este modal oferecia insumo e materia
+   * prima que a Nova entrada nunca oferece, e trocar por um deles derrubava o pedido no
+   * OMIE la na frente.
+   */
+  function handleOpenChangeProduct(operation: WeighingOperationSummary): void {
     setChangeProductOperation(operation);
-    setChangeProductLoading(true);
-    try {
-      const result = await desktopApi.queryCache({
-        entityType: "product",
-        activeOnly: true,
-        limit: 500
-      });
-      setChangeProductOptions(
-        (result.rows as Array<{ id: string; description: string }>)
-          .filter((p) => p.id !== operation.id)
-          .sort((a, b) => a.description.localeCompare(b.description))
-      );
-    } catch {
-      setChangeProductOptions([]);
-    } finally {
-      setChangeProductLoading(false);
-    }
+    setChangeProductSearch("");
+    setChangeProductOptions([]);
+    setChangeProductTotal(0);
   }
+
+  const changeProductTerm = useDebouncedValue(changeProductSearch, SEARCH_DEBOUNCE_MS);
+  useEffect(() => {
+    if (!desktopApi || !changeProductOperation) return;
+    let cancelled = false;
+    setChangeProductLoading(true);
+    void loadEntityPickerPage(desktopApi, "product", changeProductTerm, {
+      activeOnly: true,
+      productFiscalType: "finished_goods"
+    })
+      .then((page) => {
+        if (cancelled) return;
+        setChangeProductOptions(page.items);
+        setChangeProductTotal(page.total);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setChangeProductOptions([]);
+        setChangeProductTotal(0);
+      })
+      .finally(() => {
+        if (!cancelled) setChangeProductLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopApi, changeProductOperation, changeProductTerm]);
 
   async function handleConfirmChangeProduct(newProductId: string): Promise<void> {
     if (!desktopApi || !changeProductOperation) return;
@@ -2361,24 +2390,76 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   }
 
   /**
-   * Carrega a lista COMPLETA de clientes (inclusive os inativos, marcados na lista)
-   * para o modal de troca. O cadastro em "Clientes" tambem lista os inativos — antes
-   * o modal so lia uma pagina de ativos e o operador via um cliente existente sumir
-   * exatamente na hora de corrigir a operacao.
+   * A lista do modal de troca: le do cache a cada busca, com a mesma espera do seletor da
+   * nova entrada.
+   *
+   * Antes o modal puxava o cadastro INTEIRO pelo IPC ao abrir — ate quarenta idas e voltas
+   * de 500 linhas — e so entao filtrava na tela. Numa pedreira com milhares de clientes era
+   * ali que o aplicativo travava, e o que aparecia depois era uma lista alfabetica em que o
+   * cliente procurado nao estava no topo.
    */
-  async function handleOpenChangeCustomer(operation: WeighingOperationSummary): Promise<void> {
-    if (!desktopApi) return;
-    setChangeCustomerOperation(operation);
+  const changeCustomerTerm = useDebouncedValue(changeCustomerSearch, SEARCH_DEBOUNCE_MS);
+  useEffect(() => {
+    if (!desktopApi || !changeCustomerOperation) return;
+    let cancelled = false;
     setChangeCustomerLoading(true);
+    void loadEntityPickerPage(desktopApi, "customer", changeCustomerTerm, { activeOnly: false })
+      .then((page) => {
+        if (cancelled) return;
+        setChangeCustomerOptions(page.items);
+        setChangeCustomerTotal(page.total);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setChangeCustomerOptions([]);
+        setChangeCustomerTotal(0);
+      })
+      .finally(() => {
+        if (!cancelled) setChangeCustomerLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopApi, changeCustomerOperation, changeCustomerTerm]);
+
+  /** Idem para a transportadora. */
+  const changeCarrierTerm = useDebouncedValue(changeCarrierSearch, SEARCH_DEBOUNCE_MS);
+  useEffect(() => {
+    if (!desktopApi || !changeCarrierOperation) return;
+    let cancelled = false;
+    setChangeCarrierLoading(true);
+    void loadEntityPickerPage(desktopApi, "carrier", changeCarrierTerm, { activeOnly: false })
+      .then((page) => {
+        if (cancelled) return;
+        setChangeCarrierOptions(page.items);
+        setChangeCarrierTotal(page.total);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setChangeCarrierOptions([]);
+        setChangeCarrierTotal(0);
+      })
+      .finally(() => {
+        if (!cancelled) setChangeCarrierLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopApi, changeCarrierOperation, changeCarrierTerm]);
+
+  /**
+   * Abre o modal de troca de cliente. A lista em si vem do efeito de busca abaixo — o
+   * modal ja abre com uma amostra e passa a mostrar resultados assim que o operador digita.
+   *
+   * Os inativos entram (marcados na lista): o cadastro em "Clientes" tambem os lista, e
+   * antes o modal so lia os ativos — o operador via um cliente existente sumir exatamente
+   * na hora de corrigir a operacao.
+   */
+  function handleOpenChangeCustomer(operation: WeighingOperationSummary): void {
+    setChangeCustomerOperation(operation);
+    setChangeCustomerSearch("");
     setChangeCustomerOptions([]);
-    try {
-      const rows = await loadAllCacheRows(desktopApi, "customer", { activeOnly: false });
-      setChangeCustomerOptions(buildEntityPickerItems("customer", rows));
-    } catch {
-      setChangeCustomerOptions([]);
-    } finally {
-      setChangeCustomerLoading(false);
-    }
+    setChangeCustomerTotal(0);
   }
 
   async function handleConfirmChangeCustomer(newCustomerId: string): Promise<void> {
@@ -2393,20 +2474,12 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
-  /** Mesma leitura completa do cadastro, para o modal de troca de transportadora. */
-  async function handleOpenChangeCarrier(operation: WeighingOperationSummary): Promise<void> {
-    if (!desktopApi) return;
+  /** Mesma abertura, para o modal de troca de transportadora. */
+  function handleOpenChangeCarrier(operation: WeighingOperationSummary): void {
     setChangeCarrierOperation(operation);
-    setChangeCarrierLoading(true);
+    setChangeCarrierSearch("");
     setChangeCarrierOptions([]);
-    try {
-      const rows = await loadAllCacheRows(desktopApi, "carrier", { activeOnly: false });
-      setChangeCarrierOptions(buildEntityPickerItems("carrier", rows));
-    } catch {
-      setChangeCarrierOptions([]);
-    } finally {
-      setChangeCarrierLoading(false);
-    }
+    setChangeCarrierTotal(0);
   }
 
   async function handleConfirmChangeCarrier(newCarrierId: string | null): Promise<void> {
@@ -3715,77 +3788,25 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             ) : null}
 
             {changeProductOperation ? (
-              <CrudFormModal onClose={() => setChangeProductOperation(null)} maxWidth={480}>
-                <div style={{ padding: "18px" }}>
-                  <h3 style={{ margin: "0 0 12px 0", fontSize: "16px", fontWeight: 700 }}>
-                    Alterar material
-                  </h3>
-                  <p style={{ margin: "0 0 12px 0", fontSize: "13px", color: "var(--kr-muted)" }}>
-                    Operacao: {changeProductOperation.plate} — {changeProductOperation.customerName}
-                    <br />
-                    Produto atual: {changeProductOperation.productDescription}
-                  </p>
-                  <label
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "6px",
-                      fontWeight: 700,
-                      fontSize: "13px"
-                    }}
-                  >
-                    Novo produto
-                    <select
-                      value={
-                        changeProductOptions.find((p) => p.id === changeProductOperation.id)?.id ??
-                        ""
-                      }
-                      onChange={(e) => {
-                        setChangeProductOperation(null);
-                        void handleConfirmChangeProduct(e.target.value);
-                      }}
-                      disabled={changeProductLoading}
-                      style={{
-                        border: "1px solid var(--kr-input-border)",
-                        borderRadius: "10px",
-                        padding: "8px 10px",
-                        fontSize: "13px",
-                        background: "var(--kr-input-bg)",
-                        color: "var(--kr-text-strong)"
-                      }}
-                    >
-                      <option value="">
-                        {changeProductLoading
-                          ? "Carregando produtos..."
-                          : "Selecione o novo produto"}
-                      </option>
-                      {changeProductOptions.map((product) => (
-                        <option key={product.id} value={product.id}>
-                          {product.description}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
-                    <button
-                      type="button"
-                      onClick={() => setChangeProductOperation(null)}
-                      style={{
-                        border: "1px solid var(--kr-border)",
-                        background: "var(--kr-surface)",
-                        color: "var(--kr-text-strong)",
-                        borderRadius: "10px",
-                        padding: "8px 12px",
-                        cursor: "pointer",
-                        fontWeight: 700,
-                        fontSize: "12px"
-                      }}
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              </CrudFormModal>
+              <EntityPickerDialog
+                title="Alterar material"
+                contextLines={[
+                  `Operacao: ${changeProductOperation.plate} — ${changeProductOperation.customerName}`,
+                  `Produto atual: ${changeProductOperation.productDescription}`
+                ]}
+                searchPlaceholder="Pesquisar produto por descricao ou codigo..."
+                items={changeProductOptions}
+                totalMatches={changeProductTotal}
+                search={changeProductSearch}
+                onSearchChange={setChangeProductSearch}
+                loading={changeProductLoading}
+                selectedId={changeProductOperation.productId ?? null}
+                onSelect={(id) => {
+                  setChangeProductOperation(null);
+                  void handleConfirmChangeProduct(id);
+                }}
+                onClose={() => setChangeProductOperation(null)}
+              />
             ) : null}
 
             {changeCustomerOperation ? (
@@ -3797,6 +3818,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 ]}
                 searchPlaceholder="Pesquisar cliente por nome ou CNPJ/CPF..."
                 items={changeCustomerOptions}
+                totalMatches={changeCustomerTotal}
+                search={changeCustomerSearch}
+                onSearchChange={setChangeCustomerSearch}
                 loading={changeCustomerLoading}
                 selectedId={changeCustomerOperation.customerId ?? null}
                 onSelect={(id) => {
@@ -3815,6 +3839,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 ]}
                 searchPlaceholder="Pesquisar transportadora por nome ou CNPJ/CPF..."
                 items={changeCarrierOptions}
+                totalMatches={changeCarrierTotal}
+                search={changeCarrierSearch}
+                onSearchChange={setChangeCarrierSearch}
                 loading={changeCarrierLoading}
                 selectedId={changeCarrierOperation.carrierId ?? null}
                 clearOption={{
@@ -5797,9 +5824,11 @@ export interface CacheSelectOption {
 }
 
 /**
- * Acha uma linha do cache pelo id. O `queryCache` so filtra por texto, entao a busca
- * varre o cache em paginas — e um clique pontual ("Editar" ao lado do seletor), nao um
- * caminho quente, e evita abrir um IPC novo so para isso.
+ * Acha uma linha do cache pelo id — uma leitura so.
+ *
+ * Antes varria o cadastro em paginas de 500 ate topar com o id, porque o `queryCache` so
+ * sabia filtrar por texto: achar um cliente do fim da lista custava vinte IPCs. Agora o
+ * proprio cache filtra por id, e o que sobe pelo IPC e a linha procurada.
  */
 export async function findCachedRowById(
   desktopApi: KyberRockDesktopApi | null,
@@ -5807,25 +5836,18 @@ export async function findCachedRowById(
   id: string
 ): Promise<Record<string, unknown> | null> {
   if (!desktopApi || !id) return null;
-  const pageSize = 500;
-  for (let offset = 0; offset < 10_000; offset += pageSize) {
-    let result;
-    try {
-      result = await desktopApi.queryCache({
-        entityType,
-        activeOnly: false,
-        limit: pageSize,
-        offset
-      });
-    } catch {
-      return null;
-    }
+  try {
+    const result = await desktopApi.queryCache({
+      entityType,
+      activeOnly: false,
+      ids: [id],
+      limit: 1
+    });
     const rows = (result.rows as Array<Record<string, unknown>>) ?? [];
-    const found = rows.find((row) => row.id === id);
-    if (found) return found;
-    if (rows.length < pageSize || offset + rows.length >= result.total) return null;
+    return rows[0] ?? null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 /**
@@ -5857,15 +5879,6 @@ export function createCacheSelectOptions(
     ]),
     raw: item
   }));
-}
-
-export function filterCacheSelectOptions(
-  options: CacheSelectOption[],
-  filterIds: string[] | undefined
-): CacheSelectOption[] {
-  return filterIds !== undefined
-    ? options.filter((option) => filterIds.includes(option.id))
-    : options;
 }
 
 /**
@@ -5935,6 +5948,24 @@ export function resolveCarrierPrefill(
   return "";
 }
 
+/**
+ * Quantos cadastros o seletor mostra ANTES de o operador digitar.
+ *
+ * Nao e um filtro: e uma amostra do comeco do alfabeto, para a pedreira com dez clientes
+ * continuar escolhendo no clique e a com dez mil nao travar. Quem procura, digita — e ai
+ * vale o teto de baixo.
+ */
+const CACHE_SELECT_PREVIEW_LIMIT = 25;
+
+/**
+ * Quantos resultados o seletor mostra COM busca digitada.
+ *
+ * Cinquenta linhas cabem numa rolagem curta e ja dizem se o termo esta bom. Quando casa
+ * mais que isso, o rodape avisa quantos ficaram de fora, para o operador refinar em vez de
+ * achar que o cadastro nao existe.
+ */
+const CACHE_SELECT_RESULT_LIMIT = 50;
+
 /** Visual dos botoes "Vazio" / "Editar" que ficam dentro do campo do CacheSelect. */
 const cacheSelectInlineButtonStyle: React.CSSProperties = {
   display: "inline-flex",
@@ -5981,6 +6012,8 @@ function CacheSelect({
 }) {
   const [search, setSearch] = useState("");
   const [options, setOptions] = useState<CacheSelectOption[]>([]);
+  /** Quantos cadastros casaram de fato — pode ser mais do que coube em `options`. */
+  const [totalMatches, setTotalMatches] = useState(0);
   const [selectedOption, setSelectedOption] = useState<CacheSelectOption | null>(null);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -5999,35 +6032,70 @@ function CacheSelect({
       return;
     }
     const option = options.find((item) => item.id === value);
-    if (option) setSelectedOption(option);
-  }, [options, value]);
+    if (option) {
+      setSelectedOption(option);
+      return;
+    }
+    if (selectedOption?.id === value) return;
+
+    // O item escolhido quase nunca esta na lista mostrada — ela agora e uma amostra, ou o
+    // resultado de outra busca. Sem esta leitura pelo id, reabrir uma operacao ja montada
+    // mostrava o campo Cliente EM BRANCO, como se ninguem tivesse sido escolhido.
+    let cancelled = false;
+    void findCachedRowById(desktopApi, entityType, value).then((row) => {
+      if (cancelled || !row) return;
+      const [resolved] = createCacheSelectOptions([row]);
+      if (resolved) setSelectedOption(resolved);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [options, value, desktopApi, entityType, selectedOption]);
+
+  // O que de fato vai ao cache. Segura o texto por um instante para uma palavra digitada
+  // depressa nao virar seis leituras seguidas — o seletor abre em cima da fila de pesagem,
+  // e cada tecla era um IPC com uma varredura do cadastro inteiro atras.
+  const debouncedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE_MS);
 
   useEffect(() => {
+    let cancelled = false;
     async function load() {
       if (!desktopApi) return;
       setLoading(true);
       try {
+        const term = debouncedSearch.trim();
         const result = await desktopApi.queryCache({
           entityType,
-          search: search.trim(),
-          // 200 linhas em vez das 20 de antes: o cadastro recem-criado quase nunca cai
-          // nas 20 primeiras (a ordem e a da base, nao alfabetica), entao a placa que o
-          // operador acabou de cadastrar sumia da lista do seletor e ele a cadastrava de
-          // novo. Le direto do cache em memoria — 200 linhas nao pesam.
-          limit: 200,
-          productFiscalType
+          search: term,
+          // Sem busca, uma AMOSTRA; com busca, o lote de resultados. A lista completa nao
+          // e mais despejada na tela ao abrir: numa pedreira com milhares de cadastros era
+          // ela que travava o seletor, e ninguem escolhe rolando milhares de linhas — o
+          // caminho e digitar. A ordem agora vem pronta do cache (alfabetica em repouso,
+          // por proximidade com busca), entao a amostra e o comeco do alfabeto e nao "os
+          // primeiros que entraram no banco".
+          limit: term ? CACHE_SELECT_RESULT_LIMIT : CACHE_SELECT_PREVIEW_LIMIT,
+          productFiscalType,
+          // O vinculo (ex.: transportadoras do cliente) e aplicado no cache, ANTES do
+          // corte: aplicado depois, um vinculado no fim da lista sumia sem aviso.
+          ids: filterIds
         });
-        const allOptions = createCacheSelectOptions(result.rows as Array<Record<string, unknown>>);
-        setOptions(filterCacheSelectOptions(allOptions, filterIds));
+        if (cancelled) return;
+        setOptions(createCacheSelectOptions(result.rows as Array<Record<string, unknown>>));
+        setTotalMatches(result.total);
       } catch {
+        if (cancelled) return;
         setOptions([]);
+        setTotalMatches(0);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
-    load();
-  }, [desktopApi, entityType, productFiscalType, search, refreshKey, filterIds]);
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopApi, entityType, productFiscalType, debouncedSearch, refreshKey, filterIds]);
 
   useEffect(() => {
     setHighlightedIndex(0);
@@ -6260,7 +6328,9 @@ function CacheSelect({
                     </div>
                   ) : options.length === 0 ? (
                     <div style={{ padding: "14px", color: "var(--kr-muted)", fontSize: "13px" }}>
-                      Nenhum resultado encontrado.
+                      {search.trim()
+                        ? `Nenhum resultado para "${search.trim()}".`
+                        : "Nenhum cadastro disponivel."}
                     </div>
                   ) : (
                     options.map((option, index) => (
@@ -6315,6 +6385,29 @@ function CacheSelect({
                     ))
                   )}
                 </div>
+
+                {/*
+                  A linha que conta. Sem ela o corte era invisivel: o operador via 50 linhas,
+                  nao achava o cliente e concluia que ele nao estava cadastrado — quando
+                  bastava digitar mais uma letra.
+                */}
+                <p
+                  style={{
+                    margin: "8px 2px 0",
+                    fontSize: "12px",
+                    color: "var(--kr-muted)"
+                  }}
+                >
+                  {loading
+                    ? "Procurando..."
+                    : search.trim()
+                      ? totalMatches > options.length
+                        ? `Mostrando ${options.length} de ${totalMatches} resultado(s) — escreva mais para afunilar.`
+                        : `${totalMatches} resultado(s).`
+                      : totalMatches > options.length
+                        ? `Escreva para procurar entre ${totalMatches} cadastro(s). Mostrando os ${options.length} primeiros.`
+                        : `${totalMatches} cadastro(s).`}
+                </p>
               </div>
 
               {onCreateNew ? (
@@ -9843,6 +9936,8 @@ function ResourceCrud({
   standaloneForm
 }: ResourceCrudProps) {
   const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
+  /** Quantos cadastros casaram — pode ser mais do que os que cabem na tabela. */
+  const [totalItems, setTotalItems] = useState(0);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(Boolean(standaloneForm));
@@ -9869,6 +9964,10 @@ function ResourceCrud({
   // identidade nova refaria a leitura do cache sem necessidade.
   const isStandalone = Boolean(standaloneForm);
 
+  // A leitura do cache espera a palavra: antes cada tecla era um IPC com uma varredura do
+  // cadastro inteiro do outro lado, e digitar "levisa" custava seis delas.
+  const debouncedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE_MS);
+
   const loadItems = useCallback(async (): Promise<void> => {
     // Modo somente-formulario nao tem tabela: nao vale pagar a leitura do cache.
     if (isStandalone) return;
@@ -9876,14 +9975,15 @@ function ResourceCrud({
     try {
       const result = await desktopApi.queryCache({
         entityType,
-        search: search || undefined,
+        search: debouncedSearch || undefined,
         limit: 200
       });
       setItems(result.rows as Array<Record<string, unknown>>);
+      setTotalItems(result.total);
     } finally {
       setLoading(false);
     }
-  }, [desktopApi, entityType, search, isStandalone]);
+  }, [desktopApi, entityType, debouncedSearch, isStandalone]);
 
   useEffect(() => {
     void loadItems();
@@ -10190,7 +10290,7 @@ function ResourceCrud({
       <CrudSectionHeader
         title={title}
         description={description}
-        count={items.length}
+        count={totalItems}
         actionLabel={`${newLabel} ${lower}`}
         onAction={openCreate}
       />
@@ -10201,6 +10301,17 @@ function ResourceCrud({
         placeholder={searchPlaceholder}
         onRefresh={() => void loadItems()}
       />
+      {/*
+        O corte de 200 linhas era invisivel: quem procurava e nao achava concluia que o
+        cadastro nao existia — e cadastrava de novo. Agora a tabela diz o que ficou de fora.
+      */}
+      {totalItems > items.length ? (
+        <p style={{ margin: "0 2px 8px", fontSize: "12px", color: "var(--kr-muted)" }}>
+          {search.trim()
+            ? `Mostrando ${items.length} de ${totalItems} resultado(s) — escreva mais para afunilar.`
+            : `Mostrando ${items.length} de ${totalItems} cadastro(s) — use a busca para achar o resto.`}
+        </p>
+      ) : null}
       <FlashBanner flash={flash} />
 
       {showForm ? formShell : null}
@@ -11044,12 +11155,16 @@ function PaymentMethodsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi })
   const loadMethods = useCallback(async () => {
     setLoading(true);
     try {
-      const [methodResult, accountResult] = await Promise.all([
-        desktopApi.queryCache({ entityType: "payment_method", activeOnly: false, limit: 200 }),
-        desktopApi.queryCache({ entityType: "account", activeOnly: false, limit: 200 })
+      const [methodRows, accountRows] = await Promise.all([
+        // Listas completas: a tela nao tem busca, e a forma (ou a conta) que ficasse fora da
+        // pagina sumia do cadastro aos olhos de quem estivesse olhando.
+        readAllCacheRows<PaymentMethodCacheEntry>(desktopApi, "payment_method", {
+          activeOnly: false
+        }),
+        readAllCacheRows<AccountCacheEntry>(desktopApi, "account", { activeOnly: false })
       ]);
-      setMethods(methodResult.rows as PaymentMethodCacheEntry[]);
-      setAccounts(accountResult.rows as AccountCacheEntry[]);
+      setMethods(methodRows);
+      setAccounts(accountRows);
     } finally {
       setLoading(false);
     }
@@ -11236,15 +11351,14 @@ function PaymentConditionsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi
   const loadTerms = useCallback(async () => {
     setLoading(true);
     try {
-      const [result, omie] = await Promise.all([
-        desktopApi.queryCache({
-          entityType: "payment_term",
-          activeOnly: false,
-          limit: 500
-        }),
+      // Lista completa: a tela de cadastro nao tem busca, entao o que ficasse fora da
+      // pagina simplesmente nao existia para quem estivesse olhando. Sao poucas dezenas de
+      // condicoes — a leitura completa custa uma pagina na pratica.
+      const [rows, omie] = await Promise.all([
+        readAllCacheRows<PaymentTermCacheEntry>(desktopApi, "payment_term", { activeOnly: false }),
         desktopApi.paymentTermsListOmie().catch(() => [])
       ]);
-      setTerms(result.rows as PaymentTermCacheEntry[]);
+      setTerms(rows);
       setOmieTerms(
         omie as Array<{ code: string; description: string; installment_count: number | null }>
       );
@@ -11468,12 +11582,11 @@ function AccountsCrud({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const loadAccounts = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await desktopApi.queryCache({
-        entityType: "account",
-        activeOnly: false,
-        limit: 200
-      });
-      setAccounts(result.rows as AccountCacheEntry[]);
+      // Lista completa, pelo mesmo motivo das condicoes: sem busca na tela, o corte de
+      // pagina escondia contas sem nada avisar.
+      setAccounts(
+        await readAllCacheRows<AccountCacheEntry>(desktopApi, "account", { activeOnly: false })
+      );
     } finally {
       setLoading(false);
     }
@@ -12520,14 +12633,24 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     closeEdit();
   }
 
-  const visibleItems = items.filter((item) => {
-    const term = search.trim().toLowerCase();
-    if (!term) return true;
-    return (
-      item.productDescription.toLowerCase().includes(term) ||
-      (item.productCode ?? "").toLowerCase().includes(term)
-    );
-  });
+  // Filtra e ORDENA: procurar "brita" tem de trazer "Brita 1" antes de "Pedrisco britado",
+  // e nao na ordem em que o produto entrou no cadastro. Sem acento e sem caixa, tambem —
+  // antes "concreto" nao achava "Concreto Usinado" digitado com acento no cadastro.
+  const visibleItems = useMemo(
+    () =>
+      rankSearchMatches(
+        items,
+        [
+          { key: "productDescription", weight: 1 },
+          { key: "productCode", weight: 0.8 }
+        ],
+        search,
+        {
+          tieBreak: (a, b) => a.productDescription.localeCompare(b.productDescription, "pt-BR")
+        }
+      ),
+    [items, search]
+  );
 
   return (
     <div>

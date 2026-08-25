@@ -15,6 +15,7 @@ import type {
   WeighingOperationSummary
 } from "../services/weighing-operations";
 import type { OmieCustomerReadiness } from "../services/omie-customer-readiness";
+import type { OmieInvoiceNumberReconcileResult } from "../services/omie-invoice-numbers";
 import type { FreightModality } from "../services/freight";
 import type { CustomerFreightRule as CustomerFreightRuleView } from "../services/customer-freight-rules";
 import type { CustomerFutureBillingInvoice as CustomerFutureBillingInvoiceView } from "../services/customer-future-billing";
@@ -340,7 +341,7 @@ export interface KyberRockDesktopApi {
    */
   reconcileOmieInvoiceNumbers: (
     operationIds: readonly string[]
-  ) => Promise<{ checked: number; billed: number; errors: string[] }>;
+  ) => Promise<OmieInvoiceNumberReconcileResult>;
   /**
    * "Cancelar as pesagens repetidas": cancela as cargas que o fechamento identificou como a
    * MESMA carga registrada duas vezes. Nao toca na que ficou valendo, e pula a repetida que
@@ -397,7 +398,7 @@ export interface KyberRockDesktopApi {
     customerId: string,
     startDate: string,
     endDate: string
-  ) => Promise<{ checked: number; billed: number; errors: string[] }>;
+  ) => Promise<OmieInvoiceNumberReconcileResult>;
   exportCustomerReport: (
     customerId: string,
     startDate: string,

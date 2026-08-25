@@ -727,6 +727,10 @@ const TRIP_HEADERS = [
   "Produto (R$)",
   "Frete (R$)",
   "Total (R$)",
+  // A nota fica na lista viagem a viagem porque e ESTA a tabela que o cliente confere: e a
+  // unica lista carga a carga do modelo simplificado — o que sai por e-mail —, e sem ela o
+  // numero da nota so aparecia no modelo completo, que quase ninguem manda.
+  "Nota fiscal",
   "Tempo"
 ];
 
@@ -741,6 +745,7 @@ function tripCells(operation: CustomerReportOperation): string[] {
     formatBRL(operation.productTotalCents),
     formatBRL(operation.freightTotalCents),
     formatBRL(operation.totalCents),
+    operation.omieInvoiceNumber ?? "-",
     operation.minutesInside === null ? "-" : formatMinutes(operation.minutesInside)
   ];
 }

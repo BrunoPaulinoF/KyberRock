@@ -14,6 +14,7 @@ import {
 } from "../services/customer-report-render";
 import { IconActionButton } from "./IconActionButton";
 import { HelpTooltip } from "./Tooltip";
+import { CustomerSearchSelect } from "./CustomerSearchSelect";
 import { useOmieInvoiceNumbers } from "./useOmieInvoiceNumbers";
 
 /**
@@ -168,10 +169,44 @@ function formatMonthLabel(iso: string): string {
  */
 const ALL_CUSTOMERS = "__all__";
 
+/**
+ * O que o botao "Conferir notas no OMIE" responde depois de rodar.
+ *
+ * O aviso fala primeiro do NUMERO DA NOTA, que e o motivo do botao — antes ele so contava
+ * cargas conferidas, e o operador apertava, lia "326 conferidas" e voltava para a tabela
+ * com a coluna "Nota fiscal" ainda em "-", sem entender o que tinha acontecido. Quando
+ * sobra carga faturada sem numero, diz isso com todas as letras: a nota ainda nao existe
+ * no OMIE, ou nao coube nesta apertada e a conferencia de fundo termina.
+ */
+export function describeNoteReconcile(result: {
+  checked: number;
+  billed: number;
+  invoiceNumbers: number;
+  stillWithoutInvoiceNumber: number;
+}): string {
+  if (result.checked === 0) return "Nao ha cargas com pedido ou OS no OMIE neste periodo.";
+
+  const parts: string[] = [];
+  if (result.invoiceNumbers > 0) {
+    parts.push(`${result.invoiceNumbers} carga(s) ganharam o numero da nota.`);
+  }
+  if (result.billed > 0) {
+    parts.push(`${result.billed} passaram a constar faturadas.`);
+  }
+  if (result.stillWithoutInvoiceNumber > 0) {
+    parts.push(
+      `${result.stillWithoutInvoiceNumber} continuam faturadas sem numero: ou a nota ainda nao foi emitida no OMIE, ou nao coube nesta apertada — deixe a tela aberta que ela continua perguntando, ou aperte de novo.`
+    );
+  }
+  if (parts.length === 0) {
+    return `${result.checked} carga(s) conferida(s) no OMIE. Nenhuma novidade: o periodo ja estava em dia.`;
+  }
+  return `${parts.join(" ")} ${result.checked} conferida(s) no OMIE.`;
+}
+
 export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDesktopApi | null }) {
   const [customers, setCustomers] = useState<CustomerReportOption[]>([]);
   const [customerId, setCustomerId] = useState("");
-  const [customerSearch, setCustomerSearch] = useState("");
   const [overview, setOverview] = useState<CustomersOverview | null>(null);
   const [period, setPeriod] = useState<PeriodPreset>("month");
   const [customStart, setCustomStart] = useState(() => toIsoDate(new Date()));
@@ -207,16 +242,6 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
     [formats]
   );
 
-  const filteredCustomers = useMemo(() => {
-    const term = customerSearch.trim().toLowerCase();
-    if (!term) return customers;
-    return customers.filter(
-      (customer) =>
-        customer.name.toLowerCase().includes(term) ||
-        (customer.document ?? "").toLowerCase().includes(term)
-    );
-  }, [customers, customerSearch]);
-
   useEffect(() => {
     if (!desktopApi) return;
     let cancelled = false;
@@ -234,15 +259,6 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
       cancelled = true;
     };
   }, [desktopApi]);
-
-  // O cliente selecionado precisa continuar visivel na lista mesmo com a busca ativa;
-  // se o filtro o esconder, a selecao e limpa para nao gerar relatorio de quem sumiu.
-  // "Todos os clientes" nao e um cliente da lista e nunca e limpo pela busca.
-  useEffect(() => {
-    if (!customerId || customerId === ALL_CUSTOMERS) return;
-    if (filteredCustomers.some((customer) => customer.id === customerId)) return;
-    setCustomerId("");
-  }, [filteredCustomers, customerId]);
 
   const loadReport = useCallback(async () => {
     if (!desktopApi || !customerId) {
@@ -312,13 +328,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
         range.end
       );
       await loadReport();
-      setExportMessage(
-        result.checked === 0
-          ? "Todas as cargas do periodo ja estavam com a nota conferida."
-          : result.billed > 0
-            ? `${result.billed} carga(s) passaram a constar faturadas. ${result.checked} conferida(s) no OMIE.`
-            : `${result.checked} carga(s) conferida(s) no OMIE.`
-      );
+      setExportMessage(describeNoteReconcile(result));
     } catch (err) {
       setExportMessage(err instanceof Error ? err.message : "Falha ao conferir as notas no OMIE.");
     } finally {
@@ -419,31 +429,24 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
         <div style={styles.filterGrid}>
           <div style={styles.filterBlock}>
             <span style={styles.filterLabel}>Cliente</span>
-            <input
-              value={customerSearch}
-              onChange={(event) => setCustomerSearch(event.target.value)}
-              placeholder="Buscar por nome ou CNPJ/CPF"
-              style={styles.input}
-            />
-            <select
+            <CustomerSearchSelect
+              customers={customers}
               value={customerId}
-              onChange={(event) => setCustomerId(event.target.value)}
-              style={styles.input}
+              onChange={setCustomerId}
+              leadingOptions={[
+                { value: "", label: "Selecione um cliente" },
+                { value: ALL_CUSTOMERS, label: "Todos os clientes (resumo do periodo)" }
+              ]}
+              inputStyle={styles.input}
+              hintStyle={styles.hint}
             >
-              <option value="">Selecione um cliente</option>
-              <option value={ALL_CUSTOMERS}>Todos os clientes (resumo do periodo)</option>
-              {filteredCustomers.map((customer) => (
-                <option key={customer.id} value={customer.id}>
-                  {customer.document ? `${customer.name} - ${customer.document}` : customer.name}
-                </option>
-              ))}
-            </select>
-            {allCustomers ? (
-              <p style={styles.hint}>
-                Uma linha por cliente com movimento no periodo, do que mais faturou para o que menos
-                faturou, mais o que cada um carregou de cada material.
-              </p>
-            ) : null}
+              {allCustomers ? (
+                <p style={styles.hint}>
+                  Uma linha por cliente com movimento no periodo, do que mais faturou para o que
+                  menos faturou, mais o que cada um carregou de cada material.
+                </p>
+              ) : null}
+            </CustomerSearchSelect>
           </div>
 
           <div style={styles.filterBlock}>
@@ -790,6 +793,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
                 "Produto (R$)",
                 "Frete (R$)",
                 "Total",
+                "Nota fiscal",
                 "Tempo"
               ]}
               rows={report.tripsByPlate.map((operation) => [
@@ -802,6 +806,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
                 formatBRL(operation.productTotalCents),
                 formatBRL(operation.freightTotalCents),
                 formatBRL(operation.totalCents),
+                operation.omieInvoiceNumber ?? "-",
                 operation.minutesInside === null ? "-" : formatMinutes(operation.minutesInside)
               ])}
             />

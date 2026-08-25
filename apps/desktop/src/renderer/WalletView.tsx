@@ -10,6 +10,7 @@ import {
 } from "../services/invoice-closing-period";
 import type { InvoiceClosingPeriodSelection } from "../services/invoice-closing-period";
 import type { WalletOperation, WalletReport, WalletStatusFilter } from "../services/wallet";
+import { useDebouncedValue } from "./use-debounced-value";
 import type { PaymentMethodCacheEntry } from "./customers.types";
 import { IconActionButton } from "./IconActionButton";
 import { HelpTooltip } from "./Tooltip";
@@ -272,6 +273,9 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
 
   const range = useMemo(() => resolveInvoiceClosingPeriod(period, new Date()), [period]);
 
+  // A carteira inteira e relida a cada busca; esperar a palavra evita uma leitura por tecla.
+  const debouncedSearch = useDebouncedValue(search);
+
   const load = useCallback(async () => {
     if (!desktopApi) return;
     setLoading(true);
@@ -279,7 +283,7 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
     try {
       const result = await desktopApi.walletReport({
         status,
-        search: search.trim() || undefined,
+        search: debouncedSearch.trim() || undefined,
         // Mesma base de data do Fechamento de faturas (data da operacao): a mesma quinzena
         // tem de devolver a mesma lista nas duas telas.
         startDate: periodEnabled ? range.start : undefined,
@@ -296,7 +300,7 @@ export function WalletView({ desktopApi }: { desktopApi: KyberRockDesktopApi | n
     } finally {
       setLoading(false);
     }
-  }, [desktopApi, status, search, periodEnabled, range.start, range.end]);
+  }, [desktopApi, status, debouncedSearch, periodEnabled, range.start, range.end]);
 
   useEffect(() => {
     void load();

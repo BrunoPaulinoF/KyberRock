@@ -195,8 +195,11 @@ import {
 } from "./invoice-closing-run.js";
 import {
   OMIE_INVOICE_NUMBER_ASK_LIMIT,
+  OMIE_INVOICE_NUMBER_ASK_ROUNDS,
+  selectInvoiceNumbersToAsk,
   selectOperationsMissingInvoiceNumber
 } from "./omie-invoice-numbers.js";
+import type { OmieInvoiceNumberReconcileResult } from "./omie-invoice-numbers.js";
 import type { InvoiceClosingRunProgress, InvoiceClosingRunResult } from "./invoice-closing-run.js";
 import {
   invoiceClosingFileBaseName,
@@ -1067,7 +1070,14 @@ export class DesktopRuntime {
    * ultima coisa do sistema que pode derrubar um envio de fechamento.
    */
   private async runOmieBillingCheck(): Promise<OmieBillingReconcileResult> {
-    const idle = { checked: 0, billed: 0, skipped: true, errors: [] };
+    const idle: OmieBillingReconcileResult = {
+      checked: 0,
+      billed: 0,
+      invoiceNumbers: 0,
+      stillWithoutInvoiceNumber: 0,
+      skipped: true,
+      errors: []
+    };
     if (!this.hasCloudCredentials()) return idle;
     initializeSupabaseFromSettings(this.database);
     if (!isSupabaseInitialized()) return idle;
@@ -2329,15 +2339,66 @@ export class DesktopRuntime {
     customerId: string,
     startDate: string,
     endDate: string
-  ): Promise<{ checked: number; billed: number; errors: string[] }> {
+  ): Promise<OmieInvoiceNumberReconcileResult> {
     this.assertDesktopAccess();
+    const empty: OmieInvoiceNumberReconcileResult = {
+      checked: 0,
+      billed: 0,
+      invoiceNumbers: 0,
+      stillWithoutInvoiceNumber: 0,
+      errors: []
+    };
     const report = this.getCustomerReport(customerId, startDate, endDate);
-    const operationIds = report.operations.map((operation) => operation.id);
-    if (operationIds.length === 0) return { checked: 0, billed: 0, errors: [] };
-    const result = await reconcileOmieBillingFromOmie(this.database, this.ensureIdentity(), {
-      operationIds
-    });
-    return { checked: result.checked, billed: result.billed, errors: result.errors };
+    if (report.operations.length === 0) return empty;
+
+    // Em LEVAS, e nao numa pergunta so: o edge tem teto de consultas dirigidas por passada
+    // (o numero da nota custa uma chamada cada), entao mandar o periodo inteiro devolvia o
+    // teto e deixava o resto sem numero. Aqui existe alguem esperando para gerar o arquivo,
+    // entao o botao insiste ate a fila secar — sempre pelas cargas que AINDA estao sem
+    // numero, relidas a cada leva.
+    const totals = { ...empty };
+    const asked = new Set<string>();
+
+    for (let round = 0; round < OMIE_INVOICE_NUMBER_ASK_ROUNDS; round += 1) {
+      const rows = this.getCustomerReport(customerId, startDate, endDate).operations.map(
+        (operation) => ({
+          operationId: operation.id,
+          invoiceNumber: operation.omieInvoiceNumber,
+          omieSalesOrderId: operation.omieSalesOrderId,
+          omieServiceOrderId: operation.omieServiceOrderId
+        })
+      );
+      const operationIds = selectInvoiceNumbersToAsk(rows, asked);
+      // Primeira volta sem nenhuma carga a perguntar: o periodo ja esta todo com numero (ou
+      // nao tem documento no OMIE). Confere mesmo assim, para o botao continuar servindo
+      // para descobrir faturamento feito la — e e o unico caso em que isso acontece.
+      if (operationIds.length === 0) {
+        if (round > 0) break;
+        const only = await reconcileOmieBillingFromOmie(this.database, this.ensureIdentity(), {
+          operationIds: report.operations.map((operation) => operation.id)
+        });
+        return {
+          checked: only.checked,
+          billed: only.billed,
+          invoiceNumbers: only.invoiceNumbers,
+          stillWithoutInvoiceNumber: only.stillWithoutInvoiceNumber,
+          errors: only.errors
+        };
+      }
+
+      for (const operationId of operationIds) asked.add(operationId);
+      const result = await reconcileOmieBillingFromOmie(this.database, this.ensureIdentity(), {
+        operationIds,
+        invoiceNumberBudget: operationIds.length
+      });
+      totals.checked += result.checked;
+      totals.billed += result.billed;
+      totals.invoiceNumbers += result.invoiceNumbers;
+      totals.stillWithoutInvoiceNumber += result.stillWithoutInvoiceNumber;
+      totals.errors.push(...result.errors);
+    }
+
+    return totals;
   }
 
   /**
@@ -2572,14 +2633,25 @@ export class DesktopRuntime {
    */
   async reconcileOmieInvoiceNumbers(
     operationIds: readonly string[]
-  ): Promise<{ checked: number; billed: number; errors: string[] }> {
+  ): Promise<OmieInvoiceNumberReconcileResult> {
     this.assertDesktopAccess();
     const wanted = operationIds.slice(0, OMIE_INVOICE_NUMBER_ASK_LIMIT);
-    if (wanted.length === 0) return { checked: 0, billed: 0, errors: [] };
+    if (wanted.length === 0) {
+      return { checked: 0, billed: 0, invoiceNumbers: 0, stillWithoutInvoiceNumber: 0, errors: [] };
+    }
     const result = await reconcileOmieBillingFromOmie(this.database, this.ensureIdentity(), {
-      operationIds: wanted
+      operationIds: wanted,
+      // A tela mandou uma leva do tamanho do teto do edge: pedir o teto e o que faz TODA
+      // ela voltar consultada, em vez de so os dez primeiros.
+      invoiceNumberBudget: wanted.length
     });
-    return { checked: result.checked, billed: result.billed, errors: result.errors };
+    return {
+      checked: result.checked,
+      billed: result.billed,
+      invoiceNumbers: result.invoiceNumbers,
+      stillWithoutInvoiceNumber: result.stillWithoutInvoiceNumber,
+      errors: result.errors
+    };
   }
 
   /** As cargas do periodo que ja tem documento no OMIE e ainda estao sem numero de nota. */

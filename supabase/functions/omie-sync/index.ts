@@ -4024,39 +4024,167 @@ function isOmieBlockedCancelFault(message: string): boolean {
 /**
  * O registro ja foi FATURADO no OMIE?
  *
- * Duas evidencias, nesta ordem: a etapa do kanban (o KyberRock cria tudo na "50 -
- * Faturar"; faturar empurra para 60 ou alem) e, quando o OMIE nao devolve etapa, o
- * numero/chave do documento fiscal emitido. Vale para o pedido de venda (NF-e) e para a
- * ordem de servico (NFS-e), que usam nomes de campo diferentes para a mesma coisa.
+ * Duas evidencias, e a NOTA vem primeiro: documento fiscal emitido e faturamento, ponto —
+ * nao existe NF-e de venda que nao saiu. Depois vem a etapa do kanban (o KyberRock cria
+ * tudo na "50 - Faturar"; faturar empurra para 60 ou alem).
  *
- * Serve a dois usos: barrar o cancelamento do que ja virou nota e, agora, virar a
- * situacao da pesagem para "Faturada" quando quem faturou foi uma pessoa dentro do OMIE.
+ * A ordem era a inversa, e a etapa mandava sozinha: uma venda com nota emitida cuja etapa
+ * nao tivesse sido movida (ou que o OMIE devolvesse como numero abaixo de 60) voltava como
+ * NAO faturada — e o `markChecked` do desktop jogava fora o numero que tinha vindo junto.
+ * A pesagem continuava em "No OMIE, falta faturar" com a nota ja na mao do cliente.
+ *
+ * Vale para o pedido de venda (NF-e) e para a ordem de servico (NFS-e), que usam nomes de
+ * campo diferentes para a mesma coisa. Serve a dois usos: barrar o cancelamento do que ja
+ * virou nota e virar a situacao da pesagem para "Faturada" quando quem faturou foi uma
+ * pessoa dentro do OMIE.
  */
 function isOmieOrderBilled(consult: unknown): boolean {
+  if (extractOmieInvoiceNumber(consult) !== null) return true;
   const etapa = findStringByKey(consult, "etapa") ?? findStringByKey(consult, "cEtapa");
   if (etapa && /^\d+$/.test(etapa.trim())) {
     return Number(etapa.trim()) >= 60;
   }
-  return extractOmieInvoiceNumber(consult) !== null;
+  return false;
+}
+
+/**
+ * Nomes que o OMIE usa para o NUMERO da nota, em ordem de preferencia.
+ *
+ * A mesma informacao tem nome diferente em cada modulo — e ate dentro do mesmo modulo,
+ * conforme a estrutura consultada (pedido, documento fiscal, ordem de servico). Quem
+ * listava so meia duzia deles deixava a coluna "Nota fiscal" vazia em cadastro que tinha
+ * a nota ali, com o numero num campo de nome vizinho. A busca e por chave, em profundidade
+ * (`findStringByKey`), entao ampliar a lista nao custa chamada nenhuma: custa so tentar
+ * mais um nome no objeto que ja esta na memoria.
+ *
+ * A NFS-e vem primeiro porque a venda interna vira ordem de servico, e a consulta da OS
+ * tambem carrega dados do pedido de origem: procurar a NF-e antes acharia o numero errado.
+ *
+ * Todos aqui carregam "nfe"/"nfse"/"nf" no proprio nome — e o que permite procura-los em
+ * QUALQUER profundidade da resposta sem risco de pegar outro numero pelo caminho.
+ */
+const OMIE_INVOICE_NUMBER_KEYS = [
+  // NFS-e (ordem de servico / venda interna)
+  "numero_nfse",
+  "cNumNFSe",
+  "nNumNFSe",
+  "nNumeroNFSe",
+  "numero_nfs",
+  // NF-e (pedido de venda)
+  "numero_nfe",
+  "nNumeroNFe",
+  "nf_numero",
+  "numero_nf",
+  "nNF"
+];
+
+/**
+ * Nomes GENERICOS de numero — so valem dentro de um bloco de documento fiscal.
+ *
+ * `cNumero` e `nNumero` sao os nomes que os documentos fiscais do pedido
+ * (`/produtos/dfedocs/`) usam para o numero da nota, mas o OMIE tambem os usa para numero
+ * de endereco, de parcela e de item. Procura-los solto na resposta inteira gravaria um
+ * numero qualquer na coluna "Nota fiscal" — e, pior, faria `isOmieOrderBilled` dar por
+ * faturada uma venda que nao saiu. Por isso eles so sao procurados DENTRO de um bloco cujo
+ * nome ja diz que ali mora documento fiscal.
+ */
+const OMIE_INVOICE_NUMBER_SCOPED_KEYS = [
+  "cNumero",
+  "nNumero",
+  "numero",
+  "cNumeroDocumento",
+  "numero_documento"
+];
+
+/** Nomes de bloco que so guardam documento fiscal. */
+const OMIE_FISCAL_CONTAINER_PATTERN = /(documento|dfe|danfe|nfe|nfse|nota_fiscal|notafiscal)/i;
+
+/** Nomes da CHAVE de acesso da NF-e (44 digitos), de onde o numero pode ser derivado. */
+const OMIE_INVOICE_KEY_KEYS = ["chave_nfe", "cChaveNFe", "chave_acesso", "cChaveAcesso"];
+
+/** Um valor de campo do OMIE que serve como numero de nota (nem vazio, nem so zeros). */
+function usableInvoiceNumber(value: string | null): string | null {
+  if (value === null) return null;
+  const trimmed = value.trim();
+  // "0" e o vazio do OMIE em campo numerico.
+  if (trimmed.length === 0 || /^0+$/.test(trimmed)) return null;
+  return trimmed;
+}
+
+/**
+ * Procura os nomes genericos apenas dentro dos blocos de documento fiscal da resposta.
+ *
+ * Desce a arvore inteira atras de um bloco cujo NOME case com
+ * `OMIE_FISCAL_CONTAINER_PATTERN` e, dentro dele, aceita os nomes genericos de numero.
+ */
+function findInvoiceNumberInFiscalBlock(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findInvoiceNumberInFiscalBlock(item);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (!nested || typeof nested !== "object") continue;
+    if (OMIE_FISCAL_CONTAINER_PATTERN.test(key)) {
+      for (const numberKey of OMIE_INVOICE_NUMBER_SCOPED_KEYS) {
+        const found = usableInvoiceNumber(findStringByKey(nested, numberKey));
+        if (found !== null) return found;
+      }
+    }
+    const deeper = findInvoiceNumberInFiscalBlock(nested);
+    if (deeper !== null) return deeper;
+  }
+
+  return null;
+}
+
+/**
+ * O numero da NF-e escondido dentro da chave de acesso.
+ *
+ * A chave tem 44 digitos com posicoes fixas: cUF(2) + AAMM(4) + CNPJ(14) + modelo(2) +
+ * serie(3) + **numero(9)** + tpEmis(1) + codigo(8) + DV(1). Quando o OMIE devolve so a
+ * chave — acontece em documento consultado por um caminho e nao por outro —, guardar a
+ * chave inteira na coluna "Nota fiscal" nao serve para ninguem: o cliente e o contador
+ * dele pedem o numero, e e ele que esta impresso na DANFE. Daqui sai esse numero.
+ */
+function invoiceNumberFromAccessKey(key: string): string | null {
+  const digits = key.replace(/\D/g, "");
+  if (digits.length !== 44) return null;
+  const number = digits.slice(25, 34).replace(/^0+/, "");
+  return number.length > 0 ? number : null;
 }
 
 /**
  * Numero do documento fiscal emitido no faturamento, quando ha. NF-e no pedido de venda,
  * NFS-e na ordem de servico — o OMIE nomeia o campo de um jeito em cada modulo. Alimenta
  * tanto a deteccao do faturamento quanto a mensagem que a conferencia mostra na linha.
+ *
+ * Tres passadas, da mais segura para a mais ampla: nomes que ja dizem "nota fiscal" em
+ * qualquer profundidade; nomes genericos, so dentro de bloco de documento fiscal; e, por
+ * fim, a chave de acesso, de onde o numero sai por posicao.
  */
 function extractOmieInvoiceNumber(consult: unknown): string | null {
-  const number =
-    findStringByKey(consult, "numero_nfse") ??
-    findStringByKey(consult, "cNumNFSe") ??
-    findStringByKey(consult, "nNumNFSe") ??
-    findStringByKey(consult, "numero_nfe") ??
-    findStringByKey(consult, "nNF") ??
-    findStringByKey(consult, "chave_nfe") ??
-    findStringByKey(consult, "cChaveNFe");
-  if (number === null) return null;
-  const trimmed = number.trim();
-  return trimmed.length > 0 && trimmed !== "0" ? trimmed : null;
+  for (const key of OMIE_INVOICE_NUMBER_KEYS) {
+    const found = usableInvoiceNumber(findStringByKey(consult, key));
+    if (found !== null) return found;
+  }
+
+  const scoped = findInvoiceNumberInFiscalBlock(consult);
+  if (scoped !== null) return scoped;
+
+  for (const key of OMIE_INVOICE_KEY_KEYS) {
+    const found = findStringByKey(consult, key);
+    if (found === null) continue;
+    const fromKey = invoiceNumberFromAccessKey(found);
+    if (fromKey !== null) return fromKey;
+  }
+
+  return null;
 }
 
 type CancelOrderPayload = {
@@ -4134,6 +4262,15 @@ type CheckOrderBillingPayload = {
     orderType: "sales" | "service";
     omieOrderId: number;
   }>;
+  /**
+   * Quantas consultas dirigidas esta passada pode gastar atras do NUMERO da nota.
+   *
+   * O rodizio de fundo usa o padrao baixo: ele roda a cada tres minutos e divide a fila
+   * com o envio dos fechamentos. Quando quem pediu foi a TELA (o relatorio aberto, o botao
+   * "Conferir notas no OMIE"), o desktop pede um teto maior — ali existe alguem esperando
+   * o numero, e a passada seguinte so vem quando esta terminar.
+   */
+  invoiceNumberBudget?: number;
 };
 
 /**
@@ -4205,6 +4342,25 @@ const CONSULT_FALLBACK_MAX = 25;
  */
 const INVOICE_NUMBER_CHASE_MAX = 10;
 
+/**
+ * Teto do teto: o maximo que uma passada pedida pela TELA pode gastar atras do numero.
+ *
+ * Cada consulta e uma chamada de ~3s na fila serializada (`OMIE_REQUEST_DELAY_MS`), entao
+ * 20 sao ~60s — junto com a listagem, cabe folgado no tempo de vida da funcao e devolve a
+ * fila para o faturamento logo em seguida. O que nao couber nao se perde: o desktop pede a
+ * proxima leva assim que esta volta, e a tela vai se preenchendo enquanto o operador
+ * trabalha, em vez de parar nos dez primeiros para sempre.
+ */
+const INVOICE_NUMBER_CHASE_CEILING = 20;
+
+/** O teto desta passada: o pedido da tela, limitado; sem pedido, o do rodizio de fundo. */
+function resolveInvoiceNumberBudget(requested: number | undefined): number {
+  if (typeof requested !== "number" || !Number.isFinite(requested) || requested <= 0) {
+    return INVOICE_NUMBER_CHASE_MAX;
+  }
+  return Math.min(Math.floor(requested), INVOICE_NUMBER_CHASE_CEILING);
+}
+
 /** O que a listagem sabe dizer sobre um documento, sem a consulta individual. */
 type ListedBillingState = {
   billed: boolean;
@@ -4273,7 +4429,11 @@ async function checkOmieOrdersBilling(
     }
   }
 
-  return await fillMissingInvoiceNumbers(credentials, results);
+  return await fillMissingInvoiceNumbers(
+    credentials,
+    results,
+    resolveInvoiceNumberBudget(payload?.invoiceNumberBudget)
+  );
 }
 
 /**
@@ -4290,9 +4450,10 @@ async function checkOmieOrdersBilling(
  */
 async function fillMissingInvoiceNumbers(
   credentials: OmieCredentials,
-  results: OrderBillingState[]
+  results: OrderBillingState[],
+  maxChases: number = INVOICE_NUMBER_CHASE_MAX
 ): Promise<OrderBillingState[]> {
-  let budget = INVOICE_NUMBER_CHASE_MAX;
+  let budget = maxChases;
 
   for (const result of results) {
     if (budget <= 0) break;

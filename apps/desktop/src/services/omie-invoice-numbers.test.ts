@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  OMIE_INVOICE_NUMBER_ASK_LIMIT,
+  OMIE_INVOICE_NUMBER_ASK_CHUNK,
   selectInvoiceNumbersToAsk,
   selectOperationsMissingInvoiceNumber
 } from "./omie-invoice-numbers";
@@ -106,19 +106,35 @@ describe("selectInvoiceNumbersToAsk", () => {
     expect(selectInvoiceNumbersToAsk(rows, new Set())).toEqual(["a", "b"]);
   });
 
-  it("corta no teto do lote em vez de mandar o periodo inteiro de uma vez", () => {
-    // Um relatorio anual tem milhares de cargas. A pergunta usa a MESMA fila do envio dos
-    // pedidos: sem teto, abrir o relatorio atrasaria o faturamento de quem esta ao lado.
-    const rows = Array.from({ length: OMIE_INVOICE_NUMBER_ASK_LIMIT + 25 }, (_, index) =>
+  it("corta na LEVA em vez de mandar o periodo inteiro de uma vez", () => {
+    // Um relatorio anual tem milhares de cargas, e cada numero de nota custa uma consulta
+    // dirigida na MESMA fila do envio dos pedidos. A leva e do tamanho do teto do edge:
+    // assim tudo que vai numa pergunta e de fato consultado — mandar mais so devolveria o
+    // teto e marcaria o resto como perguntado sem nunca ter perguntado.
+    const rows = Array.from({ length: OMIE_INVOICE_NUMBER_ASK_CHUNK + 25 }, (_, index) =>
       line({ operationId: `op-${index}`, omieSalesOrderId: 1_000 + index })
     );
 
     const asked = selectInvoiceNumbersToAsk(rows, new Set());
 
-    expect(asked).toHaveLength(OMIE_INVOICE_NUMBER_ASK_LIMIT);
-    // O que sobra nao se perde: cai na proxima abertura da tela e na conferencia de fundo.
+    expect(asked).toHaveLength(OMIE_INVOICE_NUMBER_ASK_CHUNK);
     expect(asked[0]).toBe("op-0");
-    expect(asked.at(-1)).toBe(`op-${OMIE_INVOICE_NUMBER_ASK_LIMIT - 1}`);
+    expect(asked.at(-1)).toBe(`op-${OMIE_INVOICE_NUMBER_ASK_CHUNK - 1}`);
+  });
+
+  it("a leva seguinte continua de onde a anterior parou", () => {
+    // E isto que faz a tela de centenas de cargas se preencher inteira: a memoria da sessao
+    // nao serve so para nao repetir, ela e o cursor da drenagem.
+    const rows = Array.from({ length: OMIE_INVOICE_NUMBER_ASK_CHUNK * 2 }, (_, index) =>
+      line({ operationId: `op-${index}`, omieSalesOrderId: 1_000 + index })
+    );
+
+    const first = selectInvoiceNumbersToAsk(rows, new Set());
+    const second = selectInvoiceNumbersToAsk(rows, new Set(first));
+
+    expect(second).toHaveLength(OMIE_INVOICE_NUMBER_ASK_CHUNK);
+    expect(second[0]).toBe(`op-${OMIE_INVOICE_NUMBER_ASK_CHUNK}`);
+    expect(second.some((operationId) => first.includes(operationId))).toBe(false);
   });
 
   it("tela vazia nao gera pergunta alguma", () => {

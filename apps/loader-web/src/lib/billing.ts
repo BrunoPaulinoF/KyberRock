@@ -11,6 +11,8 @@
 // workspace), e criar essa dependencia por causa de dois formatadores custaria
 // mais que os poucos que estao aqui.
 
+import { rankBySearch } from "./search-ranking";
+
 export type InvoiceStatus = "draft" | "open" | "paid" | "overdue" | "canceled";
 
 export interface BillingPeriodView {
@@ -260,25 +262,33 @@ export interface InvoiceFilter {
 
 /**
  * Filtro da lista de faturas. A busca cobre numero, referencia e nome da
- * pedreira — os tres jeitos de alguem procurar "aquela fatura".
+ * pedreira — os tres jeitos de alguem procurar "aquela fatura" — e ORDENA o resultado
+ * pela proximidade com o que foi digitado.
+ *
+ * Sem a ordem, procurar "0042" trazia a fatura 0042 no meio da lista, atras de qualquer
+ * "1000425" que tivesse sido emitida antes. Sem busca, a ordem da lista nao e tocada: ela
+ * ja vem cronologica da consulta, que e como o financeiro le.
  */
 export function filterInvoices(
   invoices: BillingInvoice[],
   companiesById: Map<string, string>,
   filter: InvoiceFilter
 ): BillingInvoice[] {
-  const search = (filter.search ?? "").trim().toLowerCase();
-  return invoices.filter((invoice) => {
+  const scoped = invoices.filter((invoice) => {
     if (filter.companyId && invoice.company_id !== filter.companyId) return false;
     if (filter.status && invoice.status !== filter.status) return false;
-    if (!search) return true;
-    const companyName = (companiesById.get(invoice.company_id) ?? "").toLowerCase();
-    return (
-      invoice.number.toLowerCase().includes(search) ||
-      invoice.reference_label.toLowerCase().includes(search) ||
-      companyName.includes(search)
-    );
+    return true;
   });
+
+  return rankBySearch(
+    scoped,
+    (invoice) => [
+      invoice.number,
+      invoice.reference_label,
+      companiesById.get(invoice.company_id) ?? ""
+    ],
+    filter.search ?? ""
+  );
 }
 
 /** Totais da lista JA FILTRADA — o rodape precisa refletir o que esta na tela. */

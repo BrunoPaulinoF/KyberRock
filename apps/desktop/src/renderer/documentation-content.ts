@@ -172,7 +172,8 @@ export const documentationSections: DocumentationSection[] = [
       "Duplo clique na linha (ou o botao de ficha) abre a operacao inteira. Com a operacao em andamento, Editar operacao libera cliente, produto, preco por tonelada, frete, placa, motorista, transportadora, forma e condicao de pagamento e o tipo de fechamento.",
       "Alterar o preco pede a senha de 4 digitos definida pela empresa. Depois de fechada, a ficha continua abrindo, mas so para consulta.",
       "Cancelar exige motivo. O cancelamento e auditado, estorna credito quando aplicavel e cancela o pedido no OMIE se ele ja tiver subido — desde que ainda nao esteja faturado.",
-      "A busca das operacoes concluidas aceita cliente, CNPJ/CPF com ou sem pontuacao, produto, placa ou motorista."
+      "A busca das operacoes concluidas aceita cliente, CNPJ/CPF com ou sem pontuacao, produto, placa ou motorista.",
+      "Toda lista de escolha do aplicativo — cliente, produto, placa, motorista, transportadora — funciona ESCREVENDO. Ao abrir, a lista mostra so os primeiros cadastros em ordem alfabetica; escreva o nome, o nome fantasia, o CNPJ/CPF ou a placa e a lista passa a mostrar so o que corresponde, com o mais parecido no topo. O rodape diz quantos cadastros casaram, entao quando aparecer 'mostrando 50 de 312' e so escrever mais uma letra em vez de rolar."
     ],
     keywords: [
       "pesagem",
@@ -613,7 +614,9 @@ export const documentationSections: DocumentationSection[] = [
       "Use Insights (F5) para peso por dia, top produtos, mix de operacoes e exportacao em PDF ou Excel do periodo.",
       "Use Controle de caminhoes para acompanhar as viagens do periodo e baixar a lista em PDF ou Excel.",
       "Use Relatorio por cliente para gerar o relatorio simplificado e/ou completo de um cliente em PDF e/ou Excel.",
-      'No Relatorio por cliente, se a coluna "Nota fiscal" vier com "-" em cargas que ja foram faturadas, clique em "Conferir notas no OMIE" antes de gerar o arquivo: ele pergunta la o numero da nota de cada carga do periodo e grava na pesagem. Depois disso, gere o relatorio.',
+      'A coluna "Nota fiscal" se preenche sozinha: com a tela aberta, o aplicativo vai perguntando ao OMIE o numero da nota das cargas que ainda estao sem ele, em levas, ate acabar. Um periodo grande leva alguns minutos — deixe a tela aberta e os numeros vao aparecendo.',
+      'No Relatorio por cliente, para nao esperar, clique em "Conferir notas no OMIE" antes de gerar o arquivo: ele insiste ate a fila secar e responde quantas cargas ganharam numero e quantas continuam sem. Carga que continua sem numero e carga cuja nota ainda nao foi emitida no OMIE.',
+      'O numero da nota sai nos dois modelos do Relatorio por cliente — no simplificado ele fica na lista "Viagens por placa e motorista", que e a lista que o cliente confere.',
       "Use Conferencia de faturamento para ver o periodo pesagem a pesagem — cliente, data, produto, peso, frete e total de cada carregamento — e conferir contra o faturamento do OMIE.",
       "Use Fechamento de faturas para puxar de uma vez a fatura de todos os clientes de um ciclo (quinzenal ou mensal), com nota fiscal, vale, placa e transportador carga a carga.",
       "Em Relatorios, cadastre quem recebe o fechamento diario por e-mail e, no card do relatorio financeiro (OMIE), quem recebe o resumo financeiro e em que horario.",
@@ -896,6 +899,23 @@ export const documentationFaqs: DocumentationFaq[] = [
       "diferenca",
       "ordem de servico",
       "pedido de venda"
+    ]
+  },
+  {
+    question: "A lista de clientes nao abre inteira. Como acho o cliente?",
+    answer:
+      "Escrevendo. Ao clicar no campo, a lista mostra so os primeiros cadastros em ordem alfabetica — nao o cadastro inteiro. Escreva o nome, o nome fantasia, o CNPJ/CPF (com ou sem pontuacao) ou a placa, e a lista passa a mostrar so o que corresponde, com o mais parecido no topo. Vale para cliente, produto, placa, motorista e transportadora, na nova entrada e nos modais de alterar. O rodape da lista diz quantos cadastros casaram com o que voce escreveu: quando ele disser que ha mais do que cabe na tela, escreva mais uma letra em vez de rolar. A lista deixou de abrir inteira de proposito — numa pedreira com milhares de cadastros era isso que travava a tela.",
+    category: "operacao",
+    sectionId: "weighing",
+    keywords: [
+      "lista de clientes",
+      "nao acho o cliente",
+      "buscar cliente",
+      "procurar produto",
+      "seletor",
+      "lista nao abre",
+      "travando",
+      "lento"
     ]
   },
   {
