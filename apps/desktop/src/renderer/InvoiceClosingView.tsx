@@ -11,7 +11,6 @@ import type { InvoiceClosingCycle } from "../services/invoice-closing-cycle";
 import type {
   InvoiceClosingBasis,
   InvoiceClosingInvoice,
-  InvoiceClosingLine,
   InvoiceClosingReport
 } from "../services/invoice-closing";
 import {
@@ -28,13 +27,22 @@ import type {
   InvoiceClosingRunResult
 } from "../services/invoice-closing-run";
 import { IconActionButton } from "./IconActionButton";
-import { SituationPill } from "./SituationPill";
 import { HelpTooltip } from "./Tooltip";
-import { formatDbDateTime } from "./format-datetime";
 import { rankByText } from "@kyberrock/shared";
 
 import { CustomerSearchSelect } from "./CustomerSearchSelect";
 import { InvoiceNumberCell } from "./InvoiceNumberCell";
+import { Kpi } from "./Kpi";
+import { WeighingLinesTable } from "./WeighingLinesTable";
+import type { WeighingLineCells } from "./WeighingLinesTable";
+import {
+  formatBRL,
+  formatCount,
+  formatKg,
+  formatTons,
+  omieReference,
+  unitPriceLabel
+} from "./weighing-line-format";
 import { useDebouncedValue } from "./use-debounced-value";
 import { useOmieInvoiceNumbers } from "./useOmieInvoiceNumbers";
 
@@ -80,49 +88,6 @@ import { useOmieInvoiceNumbers } from "./useOmieInvoiceNumbers";
  */
 
 const ALL_CUSTOMERS = "";
-
-function formatBRL(cents: number): string {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
-}
-
-function formatTons(kg: number): string {
-  return `${(kg / 1000).toLocaleString("pt-BR", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1
-  })} t`;
-}
-
-// Peso em quilos, so o numero: a coluna ja diz "Peso" e repetir "kg" em cada linha
-// so atrapalhava a leitura das tabelas.
-function formatKg(kg: number): string {
-  return kg.toLocaleString("pt-BR", { maximumFractionDigits: 0 });
-}
-
-function formatCount(value: number): string {
-  return value.toLocaleString("pt-BR");
-}
-
-/**
- * Numero pelo qual a pesagem e procurada no OMIE — o elo entre os dois sistemas. O numero
- * VISIVEL do documento vem entre parenteses quando ja e conhecido: o codigo grande e o da
- * integracao, e digitar ele na busca do OMIE nao acha nada.
- */
-function omieReference(line: InvoiceClosingLine): string {
-  const visible = line.omieOrderNumber ? ` (nº ${line.omieOrderNumber})` : "";
-  if (line.omieSalesOrderId) return `Pedido ${line.omieSalesOrderId}${visible}`;
-  if (line.omieServiceOrderId) return `OS ${line.omieServiceOrderId}${visible}`;
-  return "-";
-}
-
-/**
- * O preco unitario com a unidade em que ele foi aplicado. Sem o "/t" ou "/kg" o numero
- * sozinho nao da para conferir: R$ 42,00 por tonelada e por quilo sao contas mil vezes
- * diferentes.
- */
-function unitPriceLabel(line: InvoiceClosingLine): string {
-  if (line.unitPriceCents === null) return "-";
-  return `${formatBRL(line.unitPriceCents)}/${line.priceUnit === "kg" ? "kg" : "t"}`;
-}
 
 export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDesktopApi | null }) {
   const [customers, setCustomers] = useState<CustomerReportOption[]>([]);
@@ -222,6 +187,68 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
   // alguma volta com nota. Sem botao — quem fecha a quinzena nao tem por que saber que
   // existe uma conferencia.
   useOmieInvoiceNumbers(desktopApi, report?.rows, loadReport);
+
+  /**
+   * As linhas do jeito que a tabela compartilhada as le.
+   *
+   * O que e so desta tela fica aqui: a coluna "Op." mostra o numero do cupom cru e a "Vale"
+   * o mesmo numero formatado; o produto sai com o codigo na frente quando ha; e as colunas
+   * de fechamento viram um aviso unico quando a carga nao caiu em fatura nenhuma.
+   *
+   * As duas razoes para essa coluna vazia sao separadas de proposito. Sem isso a carga
+   * repetida vinha explicada como "falta cadastro do cliente", e a atendente ia mexer no
+   * cadastro certo por um problema que nao era dele.
+   */
+  const tableLines = useMemo<WeighingLineCells[]>(
+    () =>
+      (report?.rows ?? []).map((line) => ({
+        key: line.operationId,
+        operationLabel: line.couponNumber === null ? "-" : String(line.couponNumber),
+        couponLabel: formatCouponNumber(line.couponNumber),
+        dateLabel: formatDayLabel(line.date),
+        closedAt: line.closedAt,
+        customerName: line.customerName,
+        customerDocument: line.customerDocument,
+        productLabel: line.productCode
+          ? `${line.productCode} - ${line.productDescription}`
+          : line.productDescription,
+        productTitle: line.productDescription,
+        plate: line.plate,
+        carrierName: line.carrierName,
+        driverName: line.driverName,
+        netWeightKg: line.netWeightKg,
+        unitPriceLabel: unitPriceLabel(line),
+        productTotalCents: line.productTotalCents,
+        freightTotalCents: line.freightTotalCents,
+        totalCents: line.totalCents,
+        operationTypeLabel: line.operationTypeLabel,
+        situation: line.situation,
+        situationLabel: line.situationLabel,
+        situationDetail: line.situationDetail,
+        invoiceNumber: line.invoiceNumber,
+        operationType: line.operationType,
+        omieReference: omieReference(line),
+        closing:
+          line.closingDate === null
+            ? {
+                kind: "warning" as const,
+                text: line.isDuplicate
+                  ? `Repetida do vale ${formatCouponNumber(line.duplicateOfCouponNumber)}`
+                  : "Fora do fechamento",
+                title: line.isDuplicate
+                  ? "Esta carga ja esta no fechamento em outro vale: a mesma pesagem foi " +
+                    "registrada duas vezes. Cobrar as duas seria cobrar a carga duas vezes."
+                  : "Esta carga nao entrou em fatura nenhuma: o cliente nao tem credito e " +
+                    "periodicidade do fechamento no cadastro."
+              }
+            : {
+                kind: "dates" as const,
+                closingLabel: formatDayLabel(line.closingDate),
+                dueLabel: line.dueDate ? formatDayLabel(line.dueDate) : "-"
+              }
+      })),
+    [report]
+  );
 
   // Andamento do fechamento, para a tela nao ficar num spinner mudo enquanto vinte notas
   // sao emitidas uma a uma.
@@ -911,50 +938,12 @@ export function InvoiceClosingView({ desktopApi }: { desktopApi: KyberRockDeskto
               <p style={styles.hint}>Nenhuma pesagem no periodo e nos filtros escolhidos.</p>
             ) : (
               <div style={styles.tableScrollTall}>
-                <table style={styles.table}>
-                  <thead>
-                    <tr>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Op.</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Vale</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Data</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Cliente</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>CNPJ/CPF</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Produto</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Placa</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Transportador</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Motorista</th>
-                      <th style={styles.th}>Peso</th>
-                      <th style={styles.th}>Preco unit.</th>
-                      <th style={styles.th}>Produto</th>
-                      <th style={styles.th}>Frete</th>
-                      <th style={styles.th}>Total</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Tipo</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Situacao</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Nota fiscal</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Pedido/OS OMIE</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Fechamento</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Vencimento</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.rows.map((line) => (
-                      <DetailRow key={line.operationId} line={line} />
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <td style={{ ...styles.tdTotal, textAlign: "left" }} colSpan={9}>
-                        TOTAL DO PERIODO
-                      </td>
-                      <td style={styles.tdTotal}>{formatKg(report.rowTotals.netWeightKg)}</td>
-                      <td style={styles.tdTotal} />
-                      <td style={styles.tdTotal}>{formatBRL(report.rowTotals.productCents)}</td>
-                      <td style={styles.tdTotal}>{formatBRL(report.rowTotals.freightCents)}</td>
-                      <td style={styles.tdTotal}>{formatBRL(report.rowTotals.totalCents)}</td>
-                      <td style={styles.tdTotal} colSpan={6} />
-                    </tr>
-                  </tfoot>
-                </table>
+                <WeighingLinesTable
+                  lines={tableLines}
+                  columns={{ coupon: true, document: true, carrier: true, closing: true }}
+                  totals={report.rowTotals}
+                  totalLabel="TOTAL DO PERIODO"
+                />
               </div>
             )}
           </div>
@@ -1352,116 +1341,11 @@ function InvoiceRows({
 }
 
 /**
- * Uma pesagem na lista "pesagem a pesagem".
- *
- * Separada em componente pelo mesmo motivo de `InvoiceRows`: sao doze celulas, e deixa-las
- * embutidas na tela esconderia o desenho da tabela no meio do JSX.
- */
-function DetailRow({ line }: { line: InvoiceClosingLine }) {
-  return (
-    <tr>
-      <td style={{ ...styles.td, textAlign: "left" }}>{line.couponNumber ?? "-"}</td>
-      <td style={{ ...styles.td, textAlign: "left" }}>{formatCouponNumber(line.couponNumber)}</td>
-      <td
-        style={{ ...styles.td, textAlign: "left" }}
-        title={line.closedAt ? `Saida: ${formatDbDateTime(line.closedAt)}` : ""}
-      >
-        {formatDayLabel(line.date)}
-      </td>
-      <td style={{ ...styles.td, textAlign: "left" }} title={line.customerName}>
-        {line.customerName}
-      </td>
-      <td style={{ ...styles.td, textAlign: "left" }}>{line.customerDocument ?? "-"}</td>
-      <td style={{ ...styles.td, textAlign: "left" }} title={line.productDescription}>
-        {line.productCode
-          ? `${line.productCode} - ${line.productDescription}`
-          : line.productDescription}
-      </td>
-      <td style={{ ...styles.td, textAlign: "left" }}>{line.plate}</td>
-      <td style={{ ...styles.td, textAlign: "left" }} title={line.carrierName}>
-        {line.carrierName}
-      </td>
-      <td style={{ ...styles.td, textAlign: "left" }}>{line.driverName}</td>
-      <td style={styles.td}>{formatKg(line.netWeightKg)}</td>
-      <td style={styles.td}>{unitPriceLabel(line)}</td>
-      <td style={styles.td}>{formatBRL(line.productTotalCents)}</td>
-      <td style={styles.td}>{formatBRL(line.freightTotalCents)}</td>
-      <td style={{ ...styles.td, fontWeight: 700 }}>{formatBRL(line.totalCents)}</td>
-      <td style={{ ...styles.td, textAlign: "left" }}>{line.operationTypeLabel}</td>
-      <td style={{ ...styles.td, textAlign: "left" }}>
-        <SituationPill
-          situation={line.situation}
-          label={line.situationLabel}
-          title={line.situationDetail ?? undefined}
-        />
-      </td>
-      <td style={{ ...styles.td, textAlign: "left" }}>
-        <InvoiceNumberCell invoiceNumber={line.invoiceNumber} operationType={line.operationType} />
-      </td>
-      <td style={{ ...styles.td, textAlign: "left" }}>{omieReference(line)}</td>
-      {line.closingDate === null ? (
-        <td
-          style={{ ...styles.td, textAlign: "left", color: "var(--kr-warning)", fontWeight: 700 }}
-          colSpan={2}
-          title={
-            // Duas razoes muito diferentes para a mesma coluna vazia. Sem separar, a carga
-            // repetida vinha explicada como "falta cadastro do cliente" e a atendente ia
-            // mexer no cadastro certo por um problema que nao era dele.
-            line.isDuplicate
-              ? "Esta carga ja esta no fechamento em outro vale: a mesma pesagem foi " +
-                "registrada duas vezes. Cobrar as duas seria cobrar a carga duas vezes."
-              : "Esta carga nao entrou em fatura nenhuma: o cliente nao tem credito e " +
-                "periodicidade do fechamento no cadastro."
-          }
-        >
-          {line.isDuplicate
-            ? `Repetida do vale ${formatCouponNumber(line.duplicateOfCouponNumber)}`
-            : "Fora do fechamento"}
-        </td>
-      ) : (
-        <>
-          <td style={{ ...styles.td, textAlign: "left" }}>{formatDayLabel(line.closingDate)}</td>
-          <td style={{ ...styles.td, textAlign: "left" }}>
-            {line.dueDate ? formatDayLabel(line.dueDate) : "-"}
-          </td>
-        </>
-      )}
-    </tr>
-  );
-}
-
-/**
  * A chave da fatura na tela. Inclui a PLACA porque, com o filtro de placas em uso, o mesmo
  * cliente tem varias faturas no mesmo fechamento — sem ela, abrir uma abriria todas.
  */
 function invoiceKey(invoice: InvoiceClosingInvoice): string {
   return `${invoice.customerId}|${invoice.closingDate}|${invoice.plate ?? ""}`;
-}
-
-function Kpi({
-  label,
-  value,
-  hint,
-  tone
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  tone?: "danger" | "success";
-}) {
-  const valueStyle =
-    tone === "danger"
-      ? { ...styles.kpiValue, color: "var(--kr-danger)" }
-      : tone === "success"
-        ? { ...styles.kpiValue, color: "var(--kr-success)" }
-        : styles.kpiValue;
-  return (
-    <div style={styles.card}>
-      <p style={styles.kpiLabel}>{label}</p>
-      <p style={valueStyle}>{value}</p>
-      {hint ? <p style={styles.hint}>{hint}</p> : null}
-    </div>
-  );
 }
 
 const styles: Record<string, React.CSSProperties> = {

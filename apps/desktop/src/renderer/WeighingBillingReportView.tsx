@@ -7,14 +7,10 @@ import {
   WEIGHING_BILLING_SITUATION_LABEL
 } from "../services/weighing-billing-situation";
 import type { WeighingBillingSituation } from "../services/weighing-billing-situation";
-import type {
-  WeighingBillingReport,
-  WeighingBillingRow
-} from "../services/weighing-billing-report";
+import type { WeighingBillingReport } from "../services/weighing-billing-report";
 import { IconActionButton } from "./IconActionButton";
 import { SituationPill } from "./SituationPill";
 import { HelpTooltip } from "./Tooltip";
-import { formatDbDateTime } from "./format-datetime";
 import {
   INSIGHTS_PERIOD_OPTIONS,
   formatDayLabel,
@@ -23,7 +19,17 @@ import {
 } from "./insights-period";
 import type { InsightsPeriod } from "./insights-period";
 import { CustomerSearchSelect } from "./CustomerSearchSelect";
-import { InvoiceNumberCell } from "./InvoiceNumberCell";
+import { Kpi } from "./Kpi";
+import { WeighingLinesTable } from "./WeighingLinesTable";
+import type { WeighingLineCells } from "./WeighingLinesTable";
+import {
+  formatBRL,
+  formatCount,
+  formatKg,
+  formatTons,
+  omieReference,
+  unitPriceLabel
+} from "./weighing-line-format";
 import { useDebouncedValue } from "./use-debounced-value";
 import { useOmieInvoiceNumbers } from "./useOmieInvoiceNumbers";
 
@@ -37,44 +43,6 @@ import { useOmieInvoiceNumbers } from "./useOmieInvoiceNumbers";
  * comparando linha a linha com o relatorio do OMIE. O PDF e a planilha saem com
  * exatamente as pesagens que estao na tela.
  */
-
-function formatBRL(cents: number): string {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
-}
-
-function formatTons(kg: number): string {
-  return `${(kg / 1000).toLocaleString("pt-BR", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1
-  })} t`;
-}
-
-// Peso em quilos, so o numero: a coluna ja diz "Peso" e repetir "kg" em cada linha
-// so atrapalhava a leitura das tabelas.
-function formatKg(kg: number): string {
-  return kg.toLocaleString("pt-BR", { maximumFractionDigits: 0 });
-}
-
-function formatCount(value: number): string {
-  return value.toLocaleString("pt-BR");
-}
-
-function unitPriceLabel(row: WeighingBillingRow): string {
-  if (row.unitPriceCents === null) return "-";
-  return `${formatBRL(row.unitPriceCents)}/${row.priceUnit === "kg" ? "kg" : "t"}`;
-}
-
-/**
- * Numero pelo qual a pesagem e procurada no OMIE. Quando o numero VISIVEL do documento ja
- * foi conferido la, ele vem junto entre parenteses: o codigo grande e o da integracao, e
- * digitar ele na busca do OMIE nao acha nada.
- */
-function omieReference(row: WeighingBillingRow): string {
-  const visible = row.omieOrderNumber ? ` (nº ${row.omieOrderNumber})` : "";
-  if (row.omieSalesOrderId) return `Pedido ${row.omieSalesOrderId}${visible}`;
-  if (row.omieServiceOrderId) return `OS ${row.omieServiceOrderId}${visible}`;
-  return "-";
-}
 
 const ALL_CUSTOMERS = "";
 
@@ -178,6 +146,41 @@ export function WeighingBillingReportView({
     [report]
   );
   useOmieInvoiceNumbers(desktopApi, invoiceNumberRows, loadReport);
+
+  /**
+   * As linhas do jeito que a tabela compartilhada as le.
+   *
+   * O que e so desta tela fica aqui: a coluna "Op." mostra o `operationCode` (o Fechamento
+   * mostra o vale no mesmo lugar), e o produto sai so com a descricao, sem o codigo na
+   * frente. As colunas de vale, CNPJ/CPF, transportador, motorista e fechamento nao sao
+   * pedidas — esta tela nao as tem.
+   */
+  const tableLines = useMemo<WeighingLineCells[]>(
+    () =>
+      (report?.rows ?? []).map((row) => ({
+        key: row.operationId,
+        operationLabel: row.operationCode === null ? "-" : String(row.operationCode),
+        dateLabel: formatDayLabel(row.date),
+        closedAt: row.closedAt,
+        customerName: row.customerName,
+        productLabel: row.productDescription,
+        productTitle: row.productDescription,
+        plate: row.plate,
+        netWeightKg: row.netWeightKg,
+        unitPriceLabel: unitPriceLabel(row),
+        productTotalCents: row.productTotalCents,
+        freightTotalCents: row.freightTotalCents,
+        totalCents: row.totalCents,
+        operationTypeLabel: row.operationTypeLabel,
+        situation: row.situation,
+        situationLabel: row.situationLabel,
+        situationDetail: row.situationDetail,
+        invoiceNumber: row.omieInvoiceNumber,
+        operationType: row.operationType,
+        omieReference: omieReference(row)
+      })),
+    [report]
+  );
 
   function toggleSituation(situation: WeighingBillingSituation): void {
     setSituations((current) =>
@@ -421,121 +424,13 @@ export function WeighingBillingReportView({
               <p style={styles.hint}>Nenhuma pesagem com os filtros escolhidos.</p>
             ) : (
               <div style={styles.tableScrollTall}>
-                <table style={styles.table}>
-                  <thead>
-                    <tr>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Op.</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Data</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Cliente</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Produto</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Placa</th>
-                      <th style={styles.th}>Peso</th>
-                      <th style={styles.th}>Preco unit.</th>
-                      <th style={styles.th}>Produto</th>
-                      <th style={styles.th}>Frete</th>
-                      <th style={styles.th}>Total</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Tipo</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Situacao</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Nota fiscal</th>
-                      <th style={{ ...styles.th, textAlign: "left" }}>Pedido/OS OMIE</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.rows.map((row) => (
-                      <tr key={row.operationId}>
-                        <td style={{ ...styles.td, textAlign: "left" }}>
-                          {row.operationCode ?? "-"}
-                        </td>
-                        <td
-                          style={{ ...styles.td, textAlign: "left" }}
-                          title={row.closedAt ? `Saida: ${formatDbDateTime(row.closedAt)}` : ""}
-                        >
-                          {formatDayLabel(row.date)}
-                        </td>
-                        <td style={{ ...styles.td, textAlign: "left" }} title={row.customerName}>
-                          {row.customerName}
-                        </td>
-                        <td
-                          style={{ ...styles.td, textAlign: "left" }}
-                          title={row.productDescription}
-                        >
-                          {row.productDescription}
-                        </td>
-                        <td style={{ ...styles.td, textAlign: "left" }}>{row.plate}</td>
-                        <td style={styles.td}>{formatKg(row.netWeightKg)}</td>
-                        <td style={styles.td}>{unitPriceLabel(row)}</td>
-                        <td style={styles.td}>{formatBRL(row.productTotalCents)}</td>
-                        <td style={styles.td}>{formatBRL(row.freightTotalCents)}</td>
-                        <td style={{ ...styles.td, fontWeight: 700 }}>
-                          {formatBRL(row.totalCents)}
-                        </td>
-                        <td style={{ ...styles.td, textAlign: "left" }}>
-                          {row.operationTypeLabel}
-                        </td>
-                        <td style={{ ...styles.td, textAlign: "left" }}>
-                          <SituationPill
-                            situation={row.situation}
-                            label={row.situationLabel}
-                            title={row.situationDetail ?? undefined}
-                          />
-                        </td>
-                        <td style={{ ...styles.td, textAlign: "left" }}>
-                          <InvoiceNumberCell
-                            invoiceNumber={row.omieInvoiceNumber}
-                            operationType={row.operationType}
-                          />
-                        </td>
-                        <td style={{ ...styles.td, textAlign: "left" }}>{omieReference(row)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <td style={{ ...styles.tdTotal, textAlign: "left" }} colSpan={5}>
-                        TOTAL
-                      </td>
-                      <td style={styles.tdTotal}>{formatKg(totals.netWeightKg)}</td>
-                      <td style={styles.tdTotal} />
-                      <td style={styles.tdTotal}>{formatBRL(totals.productCents)}</td>
-                      <td style={styles.tdTotal}>{formatBRL(totals.freightCents)}</td>
-                      <td style={styles.tdTotal}>{formatBRL(totals.totalCents)}</td>
-                      {/* Tipo, Situacao, Nota fiscal e Pedido/OS: quatro colunas sem total. */}
-                      <td style={styles.tdTotal} colSpan={4} />
-                    </tr>
-                  </tfoot>
-                </table>
+                <WeighingLinesTable lines={tableLines} totals={totals} totalLabel="TOTAL" />
               </div>
             )}
           </div>
         </>
       ) : null}
     </section>
-  );
-}
-
-function Kpi({
-  label,
-  value,
-  hint,
-  tone
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  tone?: "danger" | "success";
-}) {
-  const valueStyle =
-    tone === "danger"
-      ? { ...styles.kpiValue, color: "var(--kr-danger)" }
-      : tone === "success"
-        ? { ...styles.kpiValue, color: "var(--kr-success)" }
-        : styles.kpiValue;
-  return (
-    <div style={styles.card}>
-      <p style={styles.kpiLabel}>{label}</p>
-      <p style={valueStyle}>{value}</p>
-      {hint ? <p style={styles.hint}>{hint}</p> : null}
-    </div>
   );
 }
 
