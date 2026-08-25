@@ -5,6 +5,10 @@ import { invalidEmailsInList, normalizeEmailList } from "@kyberrock/shared";
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
 import { DOCUMENT_DIGITS_SQL, documentDigits } from "./customer-identity.js";
+import {
+  CLOSED_OPERATION_STATUS_SQL_LIST,
+  OPEN_OPERATION_STATUS_SQL_LIST
+} from "./weighing-operation-status.js";
 
 /** Key do e-mail padrao de NF-e (usado quando o cliente nao tem e-mail proprio). */
 export const DEFAULT_NFE_EMAIL_KEY = "default_nfe_email";
@@ -479,6 +483,84 @@ export function updateCustomer(
   return database.prepare("SELECT * FROM customers WHERE id = ?").get(id) as CustomerRow;
 }
 
+/** O que impede a exclusao de um cliente: dinheiro ainda presos nas pesagens dele. */
+export interface CustomerDeletionBlock {
+  /** Pesagens que ainda nao fecharam (`draft` ... `awaiting_exit`). */
+  openCount: number;
+  /** Pesagens ja concluidas que ninguem faturou ainda. */
+  unbilledCount: number;
+}
+
+/**
+ * O que trava a exclusao deste cliente — ou null quando nao ha nada travando.
+ *
+ * Duas perguntas, e as duas sao sobre dinheiro:
+ *
+ *  - Tem carga EM ANDAMENTO? Excluir no meio da operacao deixa um caminhao na balanca sem
+ *    cliente na tela.
+ *  - Tem carga CONCLUIDA e nao faturada? E exatamente o caso que motivou esta trava: a
+ *    exclusao esconde o cadastro de todas as telas (o cache so carrega
+ *    `deleted_at IS NULL`), e com ele some o filtro por onde o Fechamento chega naquelas
+ *    pesagens. As cargas continuam no banco, mas ninguem as cobra.
+ *
+ * `billed` e a UNICA situacao que conta como faturada, igual a `resolveSituation` em
+ * `weighing-billing-situation.ts` — la o retorno `billed` sai so de
+ * `omie_billing_status === "billed"`, e e por isso que a comparacao aqui pode ser feita
+ * direto em SQL. Se aquela regra ganhar outro caminho para `billed`, esta consulta tem de
+ * acompanhar.
+ *
+ * `cancelled` fica de fora das duas contas de proposito (nao esta em nenhuma das duas
+ * listas de status): carga cancelada nao vira nota e nao pode segurar um cadastro para
+ * sempre. Pesagem ja excluida tambem nao conta.
+ */
+export function findCustomerDeletionBlock(
+  database: DesktopDatabase,
+  customerId: string
+): CustomerDeletionBlock | null {
+  const row = database
+    .prepare(
+      `SELECT
+         SUM(CASE WHEN status IN (${OPEN_OPERATION_STATUS_SQL_LIST}) THEN 1 ELSE 0 END) AS open_count,
+         SUM(CASE WHEN status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
+                   AND COALESCE(omie_billing_status, '') <> 'billed' THEN 1 ELSE 0 END) AS unbilled_count
+       FROM weighing_operations
+       WHERE customer_id = ? AND deleted_at IS NULL`
+    )
+    .get(customerId) as { open_count: number | null; unbilled_count: number | null } | undefined;
+
+  const openCount = row?.open_count ?? 0;
+  const unbilledCount = row?.unbilled_count ?? 0;
+  if (openCount === 0 && unbilledCount === 0) return null;
+  return { openCount, unbilledCount };
+}
+
+/** "3 pesagens em aberto e 12 concluidas sem faturar" — so as partes que existem. */
+function describeDeletionBlock(block: CustomerDeletionBlock): string {
+  const parts: string[] = [];
+  if (block.openCount > 0) {
+    parts.push(
+      block.openCount === 1 ? "1 pesagem em aberto" : `${block.openCount} pesagens em aberto`
+    );
+  }
+  if (block.unbilledCount > 0) {
+    parts.push(
+      block.unbilledCount === 1
+        ? "1 pesagem concluida sem faturar"
+        : `${block.unbilledCount} pesagens concluidas sem faturar`
+    );
+  }
+  return parts.join(" e ");
+}
+
+/**
+ * Exclui (logicamente) um cliente — se ele nao tiver pesagem pendente.
+ *
+ * A exclusao nunca apaga pesagem: ela so marca `deleted_at` no cadastro. O problema e que
+ * o cadastro excluido some de todas as telas, e junto com ele some o caminho ate as cargas
+ * dele no Fechamento. Por isso a trava: enquanto houver carga em aberto ou por faturar, a
+ * saida certa e Inativar (o cadastro continua visivel e o CNPJ/CPF continua ocupado), nao
+ * excluir.
+ */
 export function deleteCustomer(
   database: DesktopDatabase,
   id: string,
@@ -492,6 +574,15 @@ export function deleteCustomer(
     throw new Error("Cliente nao encontrado.");
   }
 
+  const block = findCustomerDeletionBlock(database, id);
+  if (block) {
+    throw new Error(
+      `Este cliente tem ${describeDeletionBlock(block)}. ` +
+        "Feche ou cancele as pesagens em aberto e fature as concluidas antes de excluir — " +
+        "ou use Inativar, que tira o cliente do dia a dia sem esconder as cargas dele."
+    );
+  }
+
   const nowIso = now.toISOString();
 
   database
@@ -499,6 +590,109 @@ export function deleteCustomer(
       `UPDATE customers SET deleted_at = ?, updated_at = ?, needs_push = 1, local_updated_at = ? WHERE id = ?`
     )
     .run(nowIso, nowIso, nowIso, id);
+}
+
+/** Um cadastro excluido, do jeito que a tela de clientes lista para oferecer o Restaurar. */
+export interface DeletedCustomerSummary {
+  id: string;
+  tradeName: string;
+  legalName: string;
+  document: string | null;
+  source: "omie" | "local" | "hybrid";
+  deletedAt: string;
+}
+
+/**
+ * Os cadastros excluidos da empresa, do mais recente para o mais antigo.
+ *
+ * Le direto do SQLite em vez de passar pelo cache das telas de proposito: o cache existe
+ * para alimentar os seletores do dia a dia, e cliente excluido nao pode reaparecer numa
+ * lista de escolha — so nesta lista, que existe justamente para desfazer a exclusao.
+ */
+export function listDeletedCustomers(
+  database: DesktopDatabase,
+  companyId: string,
+  limit = 100
+): DeletedCustomerSummary[] {
+  const rows = database
+    .prepare(
+      `SELECT id, trade_name, legal_name, document, source, deleted_at
+       FROM customers
+       WHERE company_id = ? AND deleted_at IS NOT NULL
+       ORDER BY deleted_at DESC, trade_name ASC
+       LIMIT ?`
+    )
+    .all(companyId, limit) as {
+    id: string;
+    trade_name: string;
+    legal_name: string;
+    document: string | null;
+    source: "omie" | "local" | "hybrid";
+    deleted_at: string;
+  }[];
+
+  return rows.map((row) => ({
+    id: row.id,
+    tradeName: row.trade_name,
+    legalName: row.legal_name,
+    document: row.document,
+    source: row.source,
+    deletedAt: row.deleted_at
+  }));
+}
+
+/**
+ * Desfaz a exclusao de um cliente — o cadastro volta a aparecer nas telas, com as pesagens
+ * dele alcancaveis de novo pelo filtro do Fechamento.
+ *
+ * Nada precisa ser reconstruido: as pesagens nunca sairam do banco e continuam apontando
+ * para este `customers.id`. Restaurar e so limpar o `deleted_at`.
+ */
+export function restoreCustomer(
+  database: DesktopDatabase,
+  id: string,
+  now: Date = new Date()
+): CustomerRow {
+  const existing = database
+    .prepare(
+      "SELECT id, company_id, document, source FROM customers WHERE id = ? AND deleted_at IS NOT NULL"
+    )
+    .get(id) as
+    | { id: string; company_id: string; document: string | null; source: string }
+    | undefined;
+
+  if (!existing) {
+    throw new Error("Cliente nao encontrado ou nao esta excluido.");
+  }
+
+  // Enquanto esteve excluido, o CNPJ/CPF ficou livre (`findCustomerByDocument` ignora
+  // excluidos) e alguem pode ter cadastrado o mesmo cliente de novo. Restaurar por cima
+  // deixaria dois cadastros ativos com o mesmo documento — o duplicado que o OMIE recusa.
+  assertDocumentIsFree(database, existing.company_id, existing.document, id);
+
+  /*
+   * `deleteCustomer` deixou `needs_push = 1`, mas essa marca nunca foi consumida: o envio
+   * ao OMIE pula quem tem `deleted_at` preenchido. Para o cadastro que veio do OMIE ela
+   * ainda por cima congela a linha — o push so olha `source IN ('local','hybrid')` e o
+   * pull so reescreve quem esta com `needs_push = 0` —, entao a restauracao devolve esse
+   * caso ao espelho da nuvem. Quem nasceu aqui continua pendente de envio, como era antes.
+   */
+  const needsPush = existing.source === "omie" ? 0 : 1;
+  const nowIso = now.toISOString();
+
+  database
+    .prepare(
+      `UPDATE customers
+          SET deleted_at = NULL,
+              needs_push = ?,
+              sync_status = ?,
+              updated_at = ?,
+              local_updated_at = ?
+        WHERE id = ?`
+    )
+    .run(needsPush, needsPush === 0 ? "synced" : "pending", nowIso, nowIso, id);
+
+  return database.prepare("SELECT * FROM customers WHERE id = ?").get(id) as CustomerRow;
 }
 
 /** Le o e-mail padrao de NF-e configurado (ou null). */

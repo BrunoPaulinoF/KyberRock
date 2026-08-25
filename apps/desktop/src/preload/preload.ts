@@ -271,6 +271,8 @@ const desktopApi = {
   customersUpdate: (id: string, input: unknown, options?: { overrideOmieFields?: boolean }) =>
     ipcRenderer.invoke("desktop:customers-update", id, input, options),
   customersDelete: (id: string) => ipcRenderer.invoke("desktop:customers-delete", id),
+  customersListDeleted: () => ipcRenderer.invoke("desktop:customers-list-deleted"),
+  customersRestore: (id: string) => ipcRenderer.invoke("desktop:customers-restore", id),
   getDefaultNfeEmail: () => ipcRenderer.invoke("desktop:get-default-nfe-email"),
   setDefaultNfeEmail: (email: string) => ipcRenderer.invoke("desktop:set-default-nfe-email", email),
   applyDefaultNfeEmailToAll: (email: string) =>

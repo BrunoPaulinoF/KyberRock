@@ -64,7 +64,11 @@ import type {
   InvoiceClosingRunProgress,
   InvoiceClosingRunResult
 } from "../services/invoice-closing-run";
-import type { CreateCustomerInput, UpdateCustomerInput } from "../services/customers";
+import type {
+  CreateCustomerInput,
+  DeletedCustomerSummary,
+  UpdateCustomerInput
+} from "../services/customers";
 import type { UpdatePaymentMethodInput } from "../services/payment-methods";
 import type { SettleWalletInput, WalletQuery, WalletReport } from "../services/wallet";
 import type { UpdateAccountInput } from "../services/accounts";
@@ -550,6 +554,9 @@ export interface KyberRockDesktopApi {
     options?: { overrideOmieFields?: boolean }
   ) => Promise<unknown>;
   customersDelete: (id: string) => Promise<void>;
+  /** Os cadastros excluidos da empresa, para a secao "Excluidos" da tela de clientes. */
+  customersListDeleted: () => Promise<DeletedCustomerSummary[]>;
+  customersRestore: (id: string) => Promise<void>;
   getDefaultNfeEmail: () => Promise<string | null>;
   setDefaultNfeEmail: (email: string) => Promise<string | null>;
   applyDefaultNfeEmailToAll: (email: string) => Promise<number>;

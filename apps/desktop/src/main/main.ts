@@ -1459,6 +1459,22 @@ function registerIpcHandlers(): void {
     runtime.deleteCustomer(id);
   });
 
+  ipcMain.handle("desktop:customers-list-deleted", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.listDeletedCustomers();
+  });
+
+  ipcMain.handle("desktop:customers-restore", (_event, id: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    runtime.restoreCustomer(id);
+  });
+
   // Meios de pagamento e contas vem do OMIE (sincronizacao) — nao ha handlers de
   // criacao/exclusao no desktop, apenas atualizacao restrita.
   ipcMain.handle(

@@ -20,6 +20,7 @@ import { FREIGHT_MODALITIES, getFreightModalityInfo } from "../services/freight"
 import type { FreightModality } from "../services/freight";
 import type { CustomerFreightRule as CustomerFreightRuleView } from "../services/customer-freight-rules";
 import type { CustomerFutureBillingInvoice } from "../services/customer-future-billing";
+import type { DeletedCustomerSummary } from "../services/customers";
 import {
   CepInput,
   DocumentInput,
@@ -518,6 +519,16 @@ export function CustomersView({
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [togglingBlockId, setTogglingBlockId] = useState<string | null>(null);
+  /*
+   * Cadastros excluidos. Ficam FORA da lista principal de proposito: ela sai do cache que
+   * tambem alimenta os seletores do dia a dia, e cliente excluido nao pode reaparecer numa
+   * lista de escolha. Esta secao existe so para desfazer a exclusao — sem ela, excluir era
+   * o unico caminho da tela sem volta, e as pesagens do cliente ficavam sem como chegar ao
+   * Fechamento.
+   */
+  const [deletedCustomers, setDeletedCustomers] = useState<DeletedCustomerSummary[]>([]);
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
   // Visualizacao do cliente (duplo clique na linha) com botao "Editar".
   const [viewingCustomer, setViewingCustomer] = useState<CustomerCacheEntry | null>(null);
   const [viewingCredit, setViewingCredit] = useState<CustomerCreditSummary | null>(null);
@@ -635,9 +646,23 @@ export function CustomersView({
     }
   }, [desktopApi, page, debouncedSearch, isStandalone]);
 
+  const loadDeletedCustomers = useCallback(async () => {
+    if (!desktopApi || isStandalone) return;
+    try {
+      setDeletedCustomers(await desktopApi.customersListDeleted());
+    } catch {
+      // Secao auxiliar: falhar ao lista-la nao pode derrubar a tela de cadastro.
+      setDeletedCustomers([]);
+    }
+  }, [desktopApi, isStandalone]);
+
   useEffect(() => {
     void loadOptions();
   }, [loadOptions]);
+
+  useEffect(() => {
+    void loadDeletedCustomers();
+  }, [loadDeletedCustomers]);
 
   useEffect(() => {
     setPage(0);
@@ -1368,6 +1393,24 @@ export function CustomersView({
     }
   }
 
+  /**
+   * Desfaz a exclusao. As pesagens nunca sairam do banco — elas continuam apontando para
+   * este cadastro —, entao restaurar devolve junto o caminho ate elas no Fechamento.
+   */
+  async function handleRestore(customer: DeletedCustomerSummary): Promise<void> {
+    if (!desktopApi || restoringId) return;
+    setRestoringId(customer.id);
+    try {
+      await desktopApi.customersRestore(customer.id);
+      await Promise.all([loadCustomers(), loadDeletedCustomers()]);
+      showFlash("success", "Cliente restaurado. As pesagens dele voltam ao Fechamento.");
+    } catch (err) {
+      showFlash("error", err instanceof Error ? err.message : "Erro ao restaurar o cliente.");
+    } finally {
+      setRestoringId(null);
+    }
+  }
+
   async function handleConfirmDelete(): Promise<void> {
     if (!desktopApi || !pendingDeleteId) return;
     setDeleting(true);
@@ -1378,8 +1421,8 @@ export function CustomersView({
         resetForm();
       }
       setPendingDeleteId(null);
-      await loadCustomers();
-      showFlash("success", "Cliente excluido.");
+      await Promise.all([loadCustomers(), loadDeletedCustomers()]);
+      showFlash("success", "Cliente excluido. Da para restaurar em Excluidos.");
     } catch (err) {
       setPendingDeleteId(null);
       showFlash("error", err instanceof Error ? err.message : "Erro ao excluir cliente.");
@@ -2702,7 +2745,7 @@ export function CustomersView({
       {pendingDeleteId ? (
         <ConfirmDialog
           title="Excluir cliente"
-          description="O cliente sera removido dos cadastros locais. Operacoes ja registradas nao sao afetadas."
+          description="O cadastro sai das telas, inclusive do filtro por cliente do Fechamento. As pesagens dele nao sao apagadas, e da para restaurar depois na secao Excluidos. Cliente com pesagem em aberto ou por faturar nao pode ser excluido."
           busy={deleting}
           onCancel={() => setPendingDeleteId(null)}
           onConfirm={() => void handleConfirmDelete()}
@@ -2908,6 +2951,86 @@ export function CustomersView({
             </div>
           }
         />
+      )}
+      {standaloneForm || deletedCustomers.length === 0 ? null : (
+        <div
+          style={{
+            marginTop: "16px",
+            border: "1px solid var(--kr-border)",
+            borderRadius: "12px",
+            background: "var(--kr-surface)",
+            overflow: "hidden"
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setShowDeleted((visible) => !visible)}
+            aria-expanded={showDeleted}
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "8px",
+              border: "none",
+              background: "transparent",
+              color: "var(--kr-text-strong)",
+              padding: "12px 14px",
+              cursor: "pointer",
+              fontWeight: 800,
+              fontSize: "13px"
+            }}
+          >
+            <span>Excluidos ({deletedCustomers.length})</span>
+            <span style={{ ...styles.cellMuted, fontWeight: 700 }}>
+              {showDeleted ? "Ocultar" : "Mostrar"}
+            </span>
+          </button>
+
+          {showDeleted ? (
+            <div style={{ borderTop: "1px solid var(--kr-border)" }}>
+              <p style={{ ...styles.cellMuted, margin: 0, padding: "10px 14px" }}>
+                Excluir nunca apaga pesagem: o cadastro so sai das telas e, com ele, o filtro por
+                onde o Fechamento chega as cargas dele. Restaurar devolve os dois.
+              </p>
+
+              {deletedCustomers.map((customer) => (
+                <div
+                  key={customer.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: "12px",
+                    padding: "10px 14px",
+                    borderTop: "1px solid var(--kr-border)"
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: "13px" }}>{customer.tradeName}</div>
+                    <div style={styles.cellMuted}>
+                      {formatDocument(customer.document ?? "") || "sem CNPJ/CPF"} · excluido em{" "}
+                      {formatDbDateTime(customer.deletedAt)}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleRestore(customer)}
+                    disabled={restoringId !== null}
+                    style={{
+                      ...styles.secondaryButton,
+                      cursor: restoringId ? "wait" : "pointer",
+                      flexShrink: 0
+                    }}
+                  >
+                    {restoringId === customer.id ? "Restaurando..." : "Restaurar"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
       )}
     </div>
   );
