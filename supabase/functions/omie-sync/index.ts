@@ -447,6 +447,8 @@ type CreateSupabaseClient = (url: string, serviceRoleKey: string) => SupabaseCli
 export type OmieSyncHandlerDependencies = {
   createClient?: CreateSupabaseClient;
   omieQueue?: OmieRequester;
+  /** Relogio da conferencia de faturamento. So os testes o trocam. */
+  nowFn?: () => number;
 };
 
 type PushItemSuccess = {
@@ -650,7 +652,8 @@ export async function handleOmieSyncRequest(
     if (action === "check_order_billing") {
       const results = await checkOmieOrdersBilling(
         credentials,
-        body.payload as CheckOrderBillingPayload | undefined
+        body.payload as CheckOrderBillingPayload | undefined,
+        makeDeadline(dependencies.nowFn ?? Date.now, CHECK_ORDER_BILLING_TIME_BUDGET_MS)
       );
       return jsonResponse({ ok: true, results });
     }
@@ -4335,6 +4338,36 @@ type OrderBillingState = {
  */
 const CHECK_ORDER_BILLING_MAX = 300;
 
+/**
+ * Orcamento de TEMPO de uma passada da conferencia.
+ *
+ * O gateway do Supabase corta a requisicao lenta com 504, e a resposta — que carrega os
+ * numeros de nota que a balanca vai gravar — morre no caminho depois de o trabalho todo
+ * ter sido feito: o log desta funcao mostrava "52 de 53 cargas casadas" e o desktop
+ * recebia timeout. Era o elo silencioso: a fila local nunca drenava, a mesma leva voltava
+ * a cada passada, e a coluna "Nota fiscal" continuava vazia com tudo aparentemente
+ * funcionando. Trinta 504 em vinte minutos, todos nas passadas grandes.
+ *
+ * O pior caso de uma passada soma varreduras de pedidos e de OS, ate 25 consultas
+ * individuais, a varredura de notas e as consultas dirigidas — com a fila serializada a
+ * ~3s por chamada e esperas de ate um minuto quando o OMIE pede, passa de 200s. O prazo
+ * poe o teto ANTES do gateway: o que nao couber nao e feito nesta passada, e a resposta
+ * sai com o que ja esta pronto. Resultado parcial que chega vale mais que resultado
+ * completo que morre no caminho — o resto volta na passada seguinte, como sempre voltou.
+ */
+const CHECK_ORDER_BILLING_TIME_BUDGET_MS = 50_000;
+
+/** O prazo de uma passada. `exceeded()` e consultado ENTRE chamadas ao OMIE. */
+type Deadline = { exceeded(): boolean };
+
+function makeDeadline(nowFn: () => number, budgetMs: number): Deadline {
+  const startedAt = nowFn();
+  return { exceeded: () => nowFn() - startedAt > budgetMs };
+}
+
+/** Prazo que nunca vence — dos caminhos que nao passam pelo handler (testes antigos). */
+const NO_DEADLINE: Deadline = { exceeded: () => false };
+
 /** Registros por pagina na listagem de pedidos/OS (o maximo que o OMIE aceita). */
 const ORDER_LISTING_PAGE_SIZE = 100;
 
@@ -4454,10 +4487,32 @@ type ListedBillingState = {
  */
 async function checkOmieOrdersBilling(
   credentials: OmieCredentials,
-  payload: CheckOrderBillingPayload | undefined
+  payload: CheckOrderBillingPayload | undefined,
+  deadline: Deadline = NO_DEADLINE
 ): Promise<OrderBillingState[]> {
   const orders = (payload?.orders ?? []).slice(0, CHECK_ORDER_BILLING_MAX);
   if (orders.length === 0) return [];
+
+  // A varredura de NOTAS vem primeiro, de proposito. O numero da nota e o que a tela
+  // esta esperando, e uma passada apertada de tempo corta o que vem por ultimo: quando a
+  // varredura ficava no fim, era exatamente o numero que morria no corte. Ela tambem e a
+  // parte mais barata da passada — com a janela de emissao, uma pagina resolve a leva
+  // inteira — entao vir primeiro nao atrasa ninguem.
+  const salesWanted = orders.filter(
+    (order) => order.orderType === "sales" && order.omieOrderId > 0
+  );
+  const invoiceIndex =
+    salesWanted.length > 0
+      ? await listOmieInvoicesByOrder(
+          credentials,
+          salesWanted.map((order) => ({
+            omieOrderId: order.omieOrderId,
+            orderNumber: order.orderNumber ?? null
+          })),
+          resolveInvoiceSearchWindow(payload),
+          deadline
+        )
+      : { byOrderId: new Map(), byOrderNumber: new Map() };
 
   const results: OrderBillingState[] = [];
   /**
@@ -4477,11 +4532,12 @@ async function checkOmieOrdersBilling(
     // Listagem primeiro: uma chamada resolve ate 100 documentos. So vale a pena a partir
     // de um punhado deles — abaixo disso a consulta individual custa menos chamadas.
     const listed =
-      group.length >= ORDER_LISTING_MIN_BATCH
+      group.length >= ORDER_LISTING_MIN_BATCH && !deadline.exceeded()
         ? await listOmieOrderBillingStates(
             credentials,
             orderType,
-            group.map((order) => order.omieOrderId)
+            group.map((order) => order.omieOrderId),
+            deadline
           )
         : new Map<number, ListedBillingState>();
 
@@ -4500,9 +4556,9 @@ async function checkOmieOrdersBilling(
 
       // Nao apareceu na listagem. Pode ser documento antigo demais (a listagem para
       // quando passa do procurado), pode ser excluido no OMIE — a consulta individual
-      // separa os dois. Sem orcamento, fica para a proxima passada: o desktop nao recebe
-      // resultado para ele e nao mexe no rodizio dele.
-      if (consultBudget <= 0) continue;
+      // separa os dois. Sem orcamento (de chamadas ou de tempo), fica para a proxima
+      // passada: o desktop nao recebe resultado para ele e nao mexe no rodizio dele.
+      if (consultBudget <= 0 || deadline.exceeded()) continue;
       consultBudget--;
       alreadyConsulted.add(order.operationId);
       results.push(await consultOmieOrderBilling(credentials, order));
@@ -4515,7 +4571,8 @@ async function checkOmieOrdersBilling(
     resolveInvoiceNumberBudget(payload?.invoiceNumberBudget),
     alreadyConsulted,
     orders,
-    resolveInvoiceSearchWindow(payload)
+    invoiceIndex,
+    deadline
   );
 }
 
@@ -4568,8 +4625,9 @@ async function fillMissingInvoiceNumbers(
   alreadyConsulted: ReadonlySet<string> = new Set(),
   /** Os pedidos que o desktop mandou nesta passada. */
   orders: readonly CheckOrderBillingOrder[] = [],
-  /** Janela de emissao das notas destas cargas. Null = varre do mais novo para tras. */
-  invoiceWindow: InvoiceSearchWindow | null = null
+  /** As notas ja varridas no comeco da passada (ver `checkOmieOrdersBilling`). */
+  invoiceIndex: InvoiceIndex = { byOrderId: new Map(), byOrderNumber: new Map() },
+  deadline: Deadline = NO_DEADLINE
 ): Promise<OrderBillingState[]> {
   const resultByOperation = new Map(results.map((result) => [result.operationId, result]));
 
@@ -4596,7 +4654,7 @@ async function fillMissingInvoiceNumbers(
     .map((order) => ({ order, result: resultByOperation.get(order.operationId) ?? null }))
     .filter(({ result }) => result === null || (result.found && result.invoiceNumber === null));
 
-  if (salesWanted.length > 0) {
+  {
     /** O pedido desta carga, do jeito que a listagem de notas o reencontra. */
     const lookupKey = ({
       order,
@@ -4611,14 +4669,8 @@ async function fillMissingInvoiceNumbers(
       orderNumber: result?.orderNumber ?? order.orderNumber ?? null
     });
 
-    const invoices = await listOmieInvoicesByOrder(
-      credentials,
-      salesWanted.map(lookupKey),
-      invoiceWindow
-    );
-
     for (const entry of salesWanted) {
-      const listed = resolveListedInvoice(invoices, lookupKey(entry));
+      const listed = resolveListedInvoice(invoiceIndex, lookupKey(entry));
       if (listed === null) continue;
       const { order, result } = entry;
 
@@ -4650,7 +4702,7 @@ async function fillMissingInvoiceNumbers(
   let budget = maxChases;
 
   for (const result of results) {
-    if (budget <= 0) break;
+    if (budget <= 0 || deadline.exceeded()) break;
     if (!result.found || !result.billed || result.invoiceNumber !== null) continue;
     if (result.omieOrderId <= 0) continue;
     budget--;
@@ -4761,7 +4813,8 @@ async function consultOmieOrderBilling(
 async function listOmieOrderBillingStates(
   credentials: OmieCredentials,
   orderType: "sales" | "service",
-  wantedIds: number[]
+  wantedIds: number[],
+  deadline: Deadline = NO_DEADLINE
 ): Promise<Map<number, ListedBillingState>> {
   const wanted = new Set(wantedIds);
   const smallestWanted = Math.min(...wantedIds);
@@ -4774,6 +4827,7 @@ async function listOmieOrderBillingStates(
   let step = 1;
 
   for (let visited = 0; visited < ORDER_LISTING_MAX_PAGES; visited++) {
+    if (deadline.exceeded()) break;
     const pageNumber = nextPage;
     let page: OrderListingPage;
     try {
@@ -5084,7 +5138,8 @@ function resolveListedInvoice(index: InvoiceIndex, key: InvoiceLookupKey): Liste
 async function listOmieInvoicesByOrder(
   credentials: OmieCredentials,
   wanted: readonly InvoiceLookupKey[],
-  window: InvoiceSearchWindow | null = null
+  window: InvoiceSearchWindow | null = null,
+  deadline: Deadline = NO_DEADLINE
 ): Promise<InvoiceIndex> {
   const index: InvoiceIndex = { byOrderId: new Map(), byOrderNumber: new Map() };
 
@@ -5108,6 +5163,7 @@ async function listOmieInvoicesByOrder(
   let step = 1;
 
   for (let visited = 0; visited < INVOICE_LISTING_MAX_PAGES; visited++) {
+    if (deadline.exceeded()) break;
     const pageNumber = nextPage;
     let page: OrderListingPage;
     try {

@@ -5414,3 +5414,127 @@ Deno.test("check_order_billing nao repergunta a listagem de notas por falha comu
 
   assertEquals(omieQueue.requests.filter((request) => request.call === "ListarNF").length, 1);
 });
+
+// O orcamento de TEMPO da passada. O gateway corta a requisicao lenta com 504 e a
+// resposta — que carrega os numeros que a balanca vai gravar — morre DEPOIS de o trabalho
+// todo ter sido feito: o log mostrava "52 de 53 casadas" e o desktop recebia timeout, a
+// fila local nunca drenava e a coluna seguia vazia com tudo aparentemente funcionando.
+// O prazo poe o teto antes do gateway: devolve o que ja esta pronto e deixa o resto para
+// a passada seguinte.
+Deno.test("check_order_billing devolve resultado parcial quando o tempo aperta", async () => {
+  const { ids, fixtures } = await billingDependencies("nf-orcamento-tempo");
+  // Cada chamada ao OMIE "gasta" 20s no relogio injetado: a varredura de notas (1a
+  // chamada) cabe no orcamento de 50s; a listagem de pedidos (2a) tambem; dali em diante
+  // o prazo esta vencido e nenhuma consulta individual ou cacada dirigida acontece.
+  let clock = 0;
+  const nowFn = () => clock;
+  const omieQueue = createOmieQueueStub((input) => {
+    clock += 20_000;
+    if (input.call === "ListarNF") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        nfCadastro: [
+          invoiceListingRecord(9002, "452", "45231"),
+          invoiceListingRecord(9001, "451", "45230")
+        ]
+      };
+    }
+    if (input.call === "ListarPedidos") {
+      return {
+        pagina: 1,
+        total_de_paginas: 2,
+        pedido_venda_produto: [
+          salesListingRecord(9002, "60", "452"),
+          salesListingRecord(9001, "60", "451")
+        ]
+      };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-452", orderType: "sales", omieOrderId: 9002 },
+          { operationId: "op-451", orderType: "sales", omieOrderId: 9001 },
+          // Estes dois nao aparecem na listagem: cairiam na consulta individual, que o
+          // prazo vencido pula — ficam sem resultado NESTA passada, e voltam na proxima.
+          { operationId: "op-450", orderType: "sales", omieOrderId: 9000 },
+          { operationId: "op-449", orderType: "sales", omieOrderId: 8999 }
+        ]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue, nowFn }
+  );
+
+  const results = response.results as Array<Record<string, unknown>>;
+  const byOperation = new Map(results.map((row) => [row.operationId, row]));
+
+  // O que coube chegou INTEIRO — inclusive os numeros, que vieram da primeira chamada.
+  assertObjectMatch(byOperation.get("op-452") as Record<string, unknown>, {
+    billed: true,
+    invoiceNumber: "45231"
+  });
+  assertObjectMatch(byOperation.get("op-451") as Record<string, unknown>, {
+    billed: true,
+    invoiceNumber: "45230"
+  });
+
+  // O prazo vencido nao gastou nenhuma chamada cara: nada de consulta individual.
+  assertEquals(omieQueue.requests.filter((r) => r.call === "ConsultarPedido").length, 0);
+  assertEquals(omieQueue.requests.filter((r) => r.call === "ObterPedVenda").length, 0);
+});
+
+// A varredura de notas roda PRIMEIRO. O numero e o que a tela espera, e uma passada
+// apertada corta o que vem por ultimo: quando a varredura ficava no fim, era exatamente o
+// numero que morria no corte.
+Deno.test("check_order_billing busca as notas antes de conferir os pedidos", async () => {
+  const { ids, fixtures } = await billingDependencies("nf-notas-primeiro");
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarNF") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        nfCadastro: [invoiceListingRecord(9002, "452", "45231")]
+      };
+    }
+    if (input.call === "ListarPedidos") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        pedido_venda_produto: [
+          salesListingRecord(9002, "60", "452"),
+          salesListingRecord(9001, "50", "451"),
+          salesListingRecord(9000, "50", "450"),
+          salesListingRecord(8999, "50", "449")
+        ]
+      };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-452", orderType: "sales", omieOrderId: 9002 },
+          { operationId: "op-451", orderType: "sales", omieOrderId: 9001 },
+          { operationId: "op-450", orderType: "sales", omieOrderId: 9000 },
+          { operationId: "op-449", orderType: "sales", omieOrderId: 8999 }
+        ]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const calls = omieQueue.requests.map((request) => request.call);
+  assertEquals(calls.indexOf("ListarNF") < calls.indexOf("ListarPedidos"), true);
+});
