@@ -174,6 +174,198 @@ describe("OmieSyncService", () => {
     }
   });
 
+  it("completes the documentless local cadastro instead of twinning it on the OMIE pull", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+
+        -- O cadastro da correria: caminhao na fila, salvo so com o nome. Sem CNPJ ele nao
+        -- casa por documento nem por codigo OMIE, e era assim que o pull criava o gemeo.
+        INSERT INTO customers (id, company_id, source, legal_name, trade_name, document, omie_customer_id, needs_push, is_active, created_at, updated_at)
+        VALUES ('local-uuid', 'company-1', 'local', 'Pedra Forte Mineracao LTDA', 'Pedra Forte', NULL, NULL, 1, 1, datetime('now'), datetime('now'));
+      `);
+
+      const service = new OmieSyncService(createMockClient(), db);
+      vi.spyOn(
+        (service as unknown as Record<string, unknown>).customersService as {
+          listAll: () => Promise<unknown[]>;
+        },
+        "listAll"
+      ).mockResolvedValue([
+        {
+          id: 777,
+          name: "PEDRA FORTE MINERACAO LTDA",
+          tradeName: "PEDRA FORTE",
+          document: "26.463.463/0001-83",
+          isActive: true,
+          tags: { tags: ["Cliente"] }
+        }
+      ]);
+
+      await service.rebuildCustomersAndCarriersFromOmie("company-1");
+
+      expect(
+        db.prepare("SELECT COUNT(*) FROM customers WHERE deleted_at IS NULL").pluck().get()
+      ).toBe(1);
+      // A linha que sobra e a local, agora amarrada ao codigo do OMIE.
+      expect(db.prepare("SELECT id FROM customers WHERE deleted_at IS NULL").pluck().get()).toBe(
+        "local-uuid"
+      );
+      expect(
+        db.prepare("SELECT omie_customer_id FROM customers WHERE id = 'local-uuid'").pluck().get()
+      ).toBe(777);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("never merges by name a cadastro that already has a different document", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+
+        -- Mesmo nome, CNPJ diferente: matriz e filial sao clientes diferentes.
+        INSERT INTO customers (id, company_id, source, legal_name, trade_name, document, omie_customer_id, is_active, created_at, updated_at)
+        VALUES ('matriz', 'company-1', 'local', 'Pedra Forte Mineracao LTDA', 'Pedra Forte', '11222333000144', NULL, 1, datetime('now'), datetime('now'));
+      `);
+
+      const service = new OmieSyncService(createMockClient(), db);
+      vi.spyOn(
+        (service as unknown as Record<string, unknown>).customersService as {
+          listAll: () => Promise<unknown[]>;
+        },
+        "listAll"
+      ).mockResolvedValue([
+        {
+          id: 777,
+          name: "Pedra Forte Mineracao LTDA",
+          tradeName: "Pedra Forte",
+          document: "26463463000183",
+          isActive: true,
+          tags: { tags: ["Cliente"] }
+        }
+      ]);
+
+      await service.rebuildCustomersAndCarriersFromOmie("company-1");
+
+      const ids = db
+        .prepare("SELECT id FROM customers WHERE deleted_at IS NULL ORDER BY id")
+        .pluck()
+        .all();
+      expect(ids).toEqual(["matriz", "omie_777"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("does not guess when two documentless cadastros share the name", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+
+        INSERT INTO customers (id, company_id, source, legal_name, trade_name, document, omie_customer_id, is_active, created_at, updated_at)
+        VALUES ('local-a', 'company-1', 'local', 'Transportes Silva', 'Transportes Silva', NULL, NULL, 1, datetime('now'), datetime('now')),
+               ('local-b', 'company-1', 'local', 'Transportes Silva', 'Transportes Silva', NULL, NULL, 1, datetime('now'), datetime('now'));
+      `);
+
+      const service = new OmieSyncService(createMockClient(), db);
+      vi.spyOn(
+        (service as unknown as Record<string, unknown>).customersService as {
+          listAll: () => Promise<unknown[]>;
+        },
+        "listAll"
+      ).mockResolvedValue([
+        {
+          id: 777,
+          name: "Transportes Silva",
+          tradeName: "Transportes Silva",
+          document: "26463463000183",
+          isActive: true,
+          tags: { tags: ["Cliente"] }
+        }
+      ]);
+
+      await service.rebuildCustomersAndCarriersFromOmie("company-1");
+
+      // Escolher um dos dois seria juntar clientes que podem nao ter nada a ver: o
+      // cadastro do OMIE entra como linha propria e quem desempata e o operador.
+      const ids = db
+        .prepare("SELECT id FROM customers WHERE deleted_at IS NULL ORDER BY id")
+        .pluck()
+        .all();
+      expect(ids).toEqual(["local-a", "local-b", "omie_777"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("lets only one OMIE cadastro adopt the same documentless local row", async () => {
+    const db = openDesktopDatabase({ databasePath: ":memory:" });
+
+    try {
+      runDesktopMigrations(db);
+      db.exec(`
+        INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+        VALUES ('company-1', 'Empresa Teste', 'Empresa', datetime('now'), datetime('now'));
+
+        INSERT INTO customers (id, company_id, source, legal_name, trade_name, document, omie_customer_id, is_active, created_at, updated_at)
+        VALUES ('local-uuid', 'company-1', 'local', 'Pedra Forte', 'Pedra Forte', NULL, NULL, 1, datetime('now'), datetime('now'));
+      `);
+
+      const service = new OmieSyncService(createMockClient(), db);
+      vi.spyOn(
+        (service as unknown as Record<string, unknown>).customersService as {
+          listAll: () => Promise<unknown[]>;
+        },
+        "listAll"
+      ).mockResolvedValue([
+        {
+          id: 777,
+          name: "Pedra Forte",
+          tradeName: "Pedra Forte",
+          document: "26463463000183",
+          isActive: true,
+          tags: { tags: ["Cliente"] }
+        },
+        {
+          id: 888,
+          name: "Pedra Forte",
+          tradeName: "Pedra Forte",
+          document: "99888777000166",
+          isActive: true,
+          tags: { tags: ["Cliente"] }
+        }
+      ]);
+
+      await service.rebuildCustomersAndCarriersFromOmie("company-1");
+
+      // Os dois cadastros do OMIE precisam sobreviver: se ambos adotassem a mesma linha
+      // local, o segundo sobrescreveria o primeiro e um cliente sumia da base.
+      const ids = db
+        .prepare("SELECT id FROM customers WHERE deleted_at IS NULL ORDER BY id")
+        .pluck()
+        .all();
+      expect(ids).toEqual(["local-uuid", "omie_888"]);
+      expect(
+        db.prepare("SELECT omie_customer_id FROM customers WHERE id = 'local-uuid'").pluck().get()
+      ).toBe(777);
+    } finally {
+      db.close();
+    }
+  });
+
   it("removes suppliers that were registered as customers, matching by OMIE id or document", async () => {
     const db = openDesktopDatabase({ databasePath: ":memory:" });
 

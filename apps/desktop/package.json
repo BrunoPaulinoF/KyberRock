@@ -13,7 +13,8 @@
     "dist:win:ci": "npm run build && npm run rebuild:native:electron && node -e \"const fs=require('fs'); fs.rmSync('release/win-unpacked',{recursive:true,force:true}); fs.rmSync('release/builder-debug.yml',{force:true});\" && electron-builder --win --publish never",
     "dev": "vite --config vite.config.ts --host 0.0.0.0 --port 5174",
     "start": "npm run build && electron .",
-    "clientes": "node dist/scripts/import-customers.js"
+    "clientes": "node dist/scripts/import-customers.js",
+    "clientes:duplicados": "node dist/scripts/clientes-duplicados.js"
   },
   "dependencies": {
     "@kyberrock/print-templates": "0.1.0",

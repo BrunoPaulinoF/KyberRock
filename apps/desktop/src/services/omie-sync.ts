@@ -20,6 +20,8 @@ import {
 } from "@kyberrock/omie-client";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
+import { DOCUMENT_DIGITS_SQL } from "./customer-identity.js";
+import { normalizeMatchKey } from "./customer-import-sheet.js";
 import { isSellableProduct } from "./product-classification.js";
 import {
   resolveOmieLocalId,
@@ -258,9 +260,12 @@ export class OmieSyncService {
         updated_at = datetime('now')
     `);
 
+    const documentlessIndex = this.buildDocumentlessLocalIndex("customers", companyId);
+    const adopted = new Set<string>();
+
     for (const customer of customers) {
       upsert.run(
-        this.resolveExistingCustomerId(companyId, customer),
+        this.resolveExistingCustomerId(companyId, customer, documentlessIndex, adopted),
         companyId,
         customer.id,
         customer.name,
@@ -1061,9 +1066,12 @@ export class OmieSyncService {
         updated_at = datetime('now')
     `);
 
+    const documentlessIndex = this.buildDocumentlessLocalIndex("carriers", companyId);
+    const adopted = new Set<string>();
+
     for (const supplier of carriers) {
       upsert.run(
-        this.resolveExistingCarrierId(companyId, supplier),
+        this.resolveExistingCarrierId(companyId, supplier, documentlessIndex, adopted),
         companyId,
         supplier.id,
         supplier.integrationCode || null,
@@ -1084,15 +1092,92 @@ export class OmieSyncService {
   }
 
   /**
+   * Cadastros locais SEM CNPJ/CPF e sem codigo OMIE, agrupados pelo nome normalizado.
+   *
+   * Sao os "cadastros da correria": caminhao na fila, o operador salva o cliente so com o
+   * nome para nao segurar a balanca. Enquanto estao assim, nenhuma das travas por documento
+   * consegue reconhece-los — e e por isso que precisam de um indice proprio.
+   *
+   * O indice e montado UMA vez por passada e nao e reconsultado a cada cadastro do OMIE:
+   * quem adota uma linha risca ela do jogo pelo conjunto `adopted`, e uma consulta nova
+   * traria de volta a linha que a iteracao anterior ja levou.
+   */
+  private buildDocumentlessLocalIndex(
+    table: "customers" | "carriers",
+    companyId: string
+  ): Map<string, string[]> {
+    const nameColumns = table === "customers" ? ["legal_name", "trade_name"] : ["name"];
+    const rows = this.db
+      .prepare(
+        `SELECT id, ${nameColumns.join(", ")} FROM ${table}
+         WHERE company_id = ?
+           AND deleted_at IS NULL
+           AND omie_customer_id IS NULL
+           AND ${DOCUMENT_DIGITS_SQL} = ''`
+      )
+      .all(companyId) as Array<Record<string, string | null>>;
+
+    const index = new Map<string, string[]>();
+    for (const row of rows) {
+      const id = row.id as string;
+      for (const column of nameColumns) {
+        const key = normalizeMatchKey(row[column] ?? "");
+        if (!key) continue;
+        const ids = index.get(key);
+        if (!ids) index.set(key, [id]);
+        else if (!ids.includes(id)) ids.push(id);
+      }
+    }
+    return index;
+  }
+
+  /**
+   * O cadastro da correria que este cadastro do OMIE vem completar — ou nada.
+   *
+   * Mesma regra que a importacao por planilha ja aplica (`customer-import.ts`): um cadastro
+   * local SEM documento pode ser o mesmo cliente que chega com CNPJ/CPF, porque nao ha
+   * documento local para contradizer. Cadastro que ja TEM documento nunca casa por nome —
+   * matriz e filial, ou o CPF do dono e o CNPJ da empresa, dividem o nome e sao clientes
+   * diferentes.
+   *
+   * Empate nao vira palpite: dois cadastros locais sem documento com o mesmo nome deixam a
+   * decisao para o operador, e o cadastro do OMIE entra como linha propria (aqui a passada
+   * nao pode abortar como a planilha aborta — ela sincroniza a base inteira).
+   */
+  private adoptDocumentlessLocalCadastro(
+    index: Map<string, string[]>,
+    adopted: Set<string>,
+    names: Array<string | null | undefined>
+  ): string | null {
+    const candidates = new Set<string>();
+    for (const name of names) {
+      const key = normalizeMatchKey(name ?? "");
+      if (!key) continue;
+      for (const id of index.get(key) ?? []) {
+        if (!adopted.has(id)) candidates.add(id);
+      }
+    }
+    if (candidates.size !== 1) return null;
+    const [id] = [...candidates];
+    adopted.add(id);
+    return id;
+  }
+
+  /**
    * Id local a usar para um cliente vindo do OMIE. Adota o cadastro que ja existe
-   * aqui — primeiro pelo codigo OMIE, depois pelo CNPJ/CPF — antes de cair no id
-   * derivado `omie_<id>`.
+   * aqui — primeiro pelo codigo OMIE, depois pelo CNPJ/CPF, por fim pelo nome quando o
+   * cadastro local ainda esta sem documento — antes de cair no id derivado `omie_<id>`.
    *
    * Sem isso, um cliente criado localmente e depois enviado ao OMIE voltava no pull
    * seguinte como uma LINHA NOVA (o upsert so casa por id, e o local tem uuid): a
    * lista ficava com dois cadastros identicos do mesmo cliente.
    */
-  private resolveExistingCustomerId(companyId: string, customer: Customer): string {
+  private resolveExistingCustomerId(
+    companyId: string,
+    customer: Customer,
+    documentlessIndex: Map<string, string[]>,
+    adopted: Set<string>
+  ): string {
     const byOmieId = this.db
       .prepare(
         "SELECT id FROM customers WHERE company_id = ? AND omie_customer_id = ? AND deleted_at IS NULL LIMIT 1"
@@ -1114,11 +1199,22 @@ export class OmieSyncService {
       if (byDocument) return byDocument.id;
     }
 
+    const byName = this.adoptDocumentlessLocalCadastro(documentlessIndex, adopted, [
+      customer.tradeName,
+      customer.name
+    ]);
+    if (byName) return byName;
+
     return resolveOmieLocalId(this.db, "customers", companyId, `omie_${customer.id}`);
   }
 
   /** Mesma adocao do cliente, para a transportadora (ver resolveExistingCustomerId). */
-  private resolveExistingCarrierId(companyId: string, carrier: Customer): string {
+  private resolveExistingCarrierId(
+    companyId: string,
+    carrier: Customer,
+    documentlessIndex: Map<string, string[]>,
+    adopted: Set<string>
+  ): string {
     const byOmieId = this.db
       .prepare(
         "SELECT id FROM carriers WHERE company_id = ? AND omie_customer_id = ? AND deleted_at IS NULL LIMIT 1"
@@ -1139,6 +1235,12 @@ export class OmieSyncService {
         .get(companyId, digits) as { id: string } | undefined;
       if (byDocument) return byDocument.id;
     }
+
+    const byName = this.adoptDocumentlessLocalCadastro(documentlessIndex, adopted, [
+      carrier.tradeName,
+      carrier.name
+    ]);
+    if (byName) return byName;
 
     return resolveOmieLocalId(this.db, "carriers", companyId, `omie_supplier_${carrier.id}`);
   }
