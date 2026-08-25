@@ -4262,21 +4262,24 @@ async function cancelOmieOrder(
   }
 }
 
+/** Um pedido/OS que o desktop quer conferir. */
+type CheckOrderBillingOrder = {
+  operationId: string;
+  orderType: "sales" | "service";
+  omieOrderId: number;
+  /**
+   * Numero visivel do pedido/OS que o desktop ja tem guardado.
+   *
+   * A listagem de notas casa a nota com o pedido pelo codigo interno, mas nem todo
+   * registro do OMIE devolve esse codigo — alguns so trazem o numero impresso no
+   * documento. Mandar o que a balanca ja sabe da a segunda chave de graca, sem chamada
+   * nenhuma: e o mesmo numero que a coluna "Pedido/OS OMIE" ja mostra na tela.
+   */
+  orderNumber?: string | null;
+};
+
 type CheckOrderBillingPayload = {
-  orders?: Array<{
-    operationId: string;
-    orderType: "sales" | "service";
-    omieOrderId: number;
-    /**
-     * Numero visivel do pedido/OS que o desktop ja tem guardado.
-     *
-     * A listagem de notas casa a nota com o pedido pelo codigo interno, mas nem todo
-     * registro do OMIE devolve esse codigo — alguns so trazem o numero impresso no
-     * documento. Mandar o que a balanca ja sabe da a segunda chave de graca, sem chamada
-     * nenhuma: e o mesmo numero que a coluna "Pedido/OS OMIE" ja mostra na tela.
-     */
-    orderNumber?: string | null;
-  }>;
+  orders?: CheckOrderBillingOrder[];
   /**
    * A janela de emissao em que as notas DESTAS cargas podem estar, em dd/mm/aaaa.
    *
@@ -4407,6 +4410,28 @@ const INVOICE_LISTING_PAGE_SIZE = 100;
  */
 const INVOICE_LISTING_MAX_PAGES = 8;
 
+/**
+ * Tamanho de pagina de RESERVA, para quando o OMIE recusa a varredura por repeticao.
+ *
+ * "Consumo redundante detectado" nao e instabilidade nem limite de uso: e o OMIE dizendo
+ * que esta pergunta e igual a anterior. A fila ja reenvia depois do tempo que ele pede,
+ * mas reenvia a MESMA pergunta — que e exatamente o que ele recusou. Perguntar com a
+ * pagina de outro tamanho cobre os mesmos registros e deixa de ser uma repeticao.
+ *
+ * O tamanho vale para a varredura INTEIRA, nunca so para a pagina que falhou: metade de
+ * uma pagina de cem e o que a pagina de cinquenta ja tinha trazido, e alternar no meio do
+ * caminho pularia registros.
+ *
+ * Enquanto o desktop nao manda a janela de emissao (versao antiga), este e o unico jeito
+ * de a varredura nao sair identica em toda passada. Com a janela, ela ja varia sozinha.
+ */
+const INVOICE_LISTING_RETRY_PAGE_SIZE = 50;
+
+/** O OMIE recusou porque a pergunta e igual a anterior — nao por instabilidade. */
+function isOmieRedundantFault(message: string): boolean {
+  return /REDUNDANT|Consumo redundante/i.test(message);
+}
+
 /** O que a listagem sabe dizer sobre um documento, sem a consulta individual. */
 type ListedBillingState = {
   billed: boolean;
@@ -4489,7 +4514,7 @@ async function checkOmieOrdersBilling(
     results,
     resolveInvoiceNumberBudget(payload?.invoiceNumberBudget),
     alreadyConsulted,
-    new Map(orders.map((order) => [order.operationId, order.orderNumber ?? null])),
+    orders,
     resolveInvoiceSearchWindow(payload)
   );
 }
@@ -4541,39 +4566,83 @@ async function fillMissingInvoiceNumbers(
   maxChases: number = INVOICE_NUMBER_CHASE_MAX,
   /** Ids que ja passaram pela consulta individual — ver `alreadyConsulted`. */
   alreadyConsulted: ReadonlySet<string> = new Set(),
-  /** Numero visivel do pedido que o desktop mandou, por operacao. */
-  orderNumbers: ReadonlyMap<string, string | null> = new Map(),
+  /** Os pedidos que o desktop mandou nesta passada. */
+  orders: readonly CheckOrderBillingOrder[] = [],
   /** Janela de emissao das notas destas cargas. Null = varre do mais novo para tras. */
   invoiceWindow: InvoiceSearchWindow | null = null
 ): Promise<OrderBillingState[]> {
-  /** O pedido desta carga, do jeito que a listagem de notas o reencontra. */
-  const lookupKey = (result: OrderBillingState): InvoiceLookupKey => ({
-    omieOrderId: result.omieOrderId,
-    // O numero que a propria conferencia acabou de ler vem na frente do que o desktop
-    // guardava: se o pedido foi renumerado no OMIE, o de la e o certo.
-    orderNumber: result.orderNumber ?? orderNumbers.get(result.operationId) ?? null
-  });
+  const resultByOperation = new Map(results.map((result) => [result.operationId, result]));
 
-  // 1) A listagem de notas, para as vendas com nota. Uma chamada resolve ate cem cargas.
-  const salesMissing = results.filter(
-    (result) =>
-      result.orderType === "sales" &&
-      result.found &&
-      result.billed &&
-      result.invoiceNumber === null &&
-      result.omieOrderId > 0
-  );
-  if (salesMissing.length > 0) {
+  /**
+   * 1) A listagem de notas — para TODA venda com nota que ainda esta sem numero.
+   *
+   * Sem exigir que esta passada tenha confirmado o faturamento, e essa e a correcao.
+   * Antes a varredura so acontecia para quem voltasse `billed` daqui, e quem decide isso
+   * e a listagem de PEDIDOS (ou a consulta individual). Essas duas vivem recusadas pelo
+   * OMIE com "Consumo redundante", e o efeito era silencioso e total: sem ninguem
+   * confirmado faturado, a lista saia vazia e a listagem de notas nao chegava a ser
+   * chamada uma vez sequer. O log mostrava `ListarPedidos` recusado e nenhum `ListarNF`.
+   *
+   * Nao custa nada perguntar demais: a varredura e uma listagem, e o preco dela e o mesmo
+   * para quatro cargas ou para trezentas. Pedido que ainda nao virou nota simplesmente nao
+   * aparece nela.
+   *
+   * E vale tambem para quem esta passada nem chegou a conferir (o teto de consultas
+   * individuais deixa gente de fora sem devolver resultado): achar a nota de uma carga e
+   * prova de que ela existe e foi faturada, entao ela entra no resultado por aqui mesmo.
+   */
+  const salesWanted = orders
+    .filter((order) => order.orderType === "sales" && order.omieOrderId > 0)
+    .map((order) => ({ order, result: resultByOperation.get(order.operationId) ?? null }))
+    .filter(({ result }) => result === null || (result.found && result.invoiceNumber === null));
+
+  if (salesWanted.length > 0) {
+    /** O pedido desta carga, do jeito que a listagem de notas o reencontra. */
+    const lookupKey = ({
+      order,
+      result
+    }: {
+      order: CheckOrderBillingOrder;
+      result: OrderBillingState | null;
+    }): InvoiceLookupKey => ({
+      omieOrderId: order.omieOrderId,
+      // O numero que a propria conferencia acabou de ler vem na frente do que o desktop
+      // guardava: se o pedido foi renumerado no OMIE, o de la e o certo.
+      orderNumber: result?.orderNumber ?? order.orderNumber ?? null
+    });
+
     const invoices = await listOmieInvoicesByOrder(
       credentials,
-      salesMissing.map(lookupKey),
+      salesWanted.map(lookupKey),
       invoiceWindow
     );
-    for (const result of salesMissing) {
-      const listed = resolveListedInvoice(invoices, lookupKey(result));
+
+    for (const entry of salesWanted) {
+      const listed = resolveListedInvoice(invoices, lookupKey(entry));
       if (listed === null) continue;
-      result.invoiceNumber = listed.invoiceNumber;
-      result.documentUrl = result.documentUrl ?? listed.documentUrl;
+      const { order, result } = entry;
+
+      if (result) {
+        result.invoiceNumber = listed.invoiceNumber;
+        result.documentUrl = result.documentUrl ?? listed.documentUrl;
+        // Nota emitida e prova de faturamento — e a mesma regra que `isOmieOrderBilled`
+        // ja aplica. Deixar em `false` faria o desktop guardar o numero e continuar
+        // mostrando "No OMIE, falta faturar" na linha ao lado dele.
+        result.billed = true;
+        continue;
+      }
+
+      results.push({
+        operationId: order.operationId,
+        orderType: "sales",
+        omieOrderId: order.omieOrderId,
+        found: true,
+        billed: true,
+        orderNumber: order.orderNumber ?? null,
+        invoiceNumber: listed.invoiceNumber,
+        documentUrl: listed.documentUrl,
+        error: null
+      });
     }
   }
 
@@ -5030,6 +5099,8 @@ async function listOmieInvoicesByOrder(
   /** So para o log: quantas notas a varredura leu, e quantas paginas custou. */
   let recordsSeen = 0;
   let pagesRead = 0;
+  /** Vale para a varredura inteira; so muda na primeira pagina (ver a constante). */
+  let pageSize = INVOICE_LISTING_PAGE_SIZE;
 
   // Mesma mecanica da listagem de pedidos: comeca pela ponta nova e confere na primeira
   // pagina se o OMIE de fato respondeu em ordem decrescente (ver `listOmieOrderBillingStates`).
@@ -5040,16 +5111,37 @@ async function listOmieInvoicesByOrder(
     const pageNumber = nextPage;
     let page: OrderListingPage;
     try {
-      page = await listOmieInvoicesPage(credentials, pageNumber, window);
+      page = await listOmieInvoicesPage(credentials, pageNumber, window, pageSize);
     } catch (error) {
-      // Listagem indisponivel (modulo fiscal sem acesso, campo recusado, instabilidade):
-      // nao derruba a conferencia, so a devolve para a consulta dirigida.
-      console.error(
-        `[omie] listagem de notas fiscais falhou na pagina ${pageNumber}; ` +
-          "buscando o numero da nota por consulta dirigida",
-        error
-      );
-      break;
+      // Recusada por REPETICAO, e ainda na primeira pagina: da para reperguntar de um
+      // jeito que nao e uma repeticao. Da segunda pagina em diante nao — trocar o tamanho
+      // no meio da varredura pularia registros.
+      if (
+        isOmieRedundantFault(getErrorMessage(error)) &&
+        pageSize === INVOICE_LISTING_PAGE_SIZE &&
+        pagesRead === 0
+      ) {
+        pageSize = INVOICE_LISTING_RETRY_PAGE_SIZE;
+        try {
+          page = await listOmieInvoicesPage(credentials, pageNumber, window, pageSize);
+        } catch (retryError) {
+          console.error(
+            `[omie] listagem de notas fiscais recusada duas vezes na pagina ${pageNumber}; ` +
+              "buscando o numero da nota por consulta dirigida",
+            retryError
+          );
+          break;
+        }
+      } else {
+        // Listagem indisponivel (modulo fiscal sem acesso, campo recusado, instabilidade):
+        // nao derruba a conferencia, so a devolve para a consulta dirigida.
+        console.error(
+          `[omie] listagem de notas fiscais falhou na pagina ${pageNumber}; ` +
+            "buscando o numero da nota por consulta dirigida",
+          error
+        );
+        break;
+      }
     }
     if (page.records.length === 0) break;
     pagesRead++;
@@ -5090,8 +5182,13 @@ async function listOmieInvoicesByOrder(
     // Cortar a varredura por "esta pagina ja tem pedido mais velho que o procurado"
     // abortava tudo por causa de UM registro assim — e as notas das outras cargas, que
     // estavam nas paginas seguintes, nunca eram lidas. Quem limita agora e a janela de
-    // emissao (que estreita a busca ao periodo certo) e o teto de paginas.
+    // emissao (que estreita a busca ao periodo certo), o fim da listagem e o teto de paginas.
+
+    // O fim da listagem, que o proprio envelope informa. Sem isto a varredura seguia
+    // pedindo pagina que nao existe ate bater no teto — sete chamadas de ~3s a toa por
+    // passada, cada uma delas mais uma chance de o OMIE recusar por repeticao.
     nextPage = pageNumber + step;
+    if (step === 1 && page.totalPages !== null && pageNumber >= page.totalPages) break;
     if (nextPage < (step === -1 ? 2 : 1)) break;
   }
 
@@ -5119,7 +5216,8 @@ type InvoiceSearchWindow = { from: string; to: string };
 async function listOmieInvoicesPage(
   credentials: OmieCredentials,
   page: number,
-  window: InvoiceSearchWindow | null
+  window: InvoiceSearchWindow | null,
+  pageSize: number = INVOICE_LISTING_PAGE_SIZE
 ): Promise<OrderListingPage> {
   const response = await callOmie<unknown, unknown>(
     credentials,
@@ -5127,7 +5225,7 @@ async function listOmieInvoicesPage(
     "ListarNF",
     {
       pagina: page,
-      registros_por_pagina: INVOICE_LISTING_PAGE_SIZE,
+      registros_por_pagina: pageSize,
       apenas_importado_api: "N",
       ordenar_por: "CODIGO",
       ordem_decrescente: "S",

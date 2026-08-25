@@ -5246,3 +5246,171 @@ Deno.test("check_order_billing ignora janela de emissao em formato invalido", as
   assertEquals(param.dEmiInicial, undefined);
   assertEquals(param.dEmiFinal, undefined);
 });
+
+// O gate que fazia a varredura nunca acontecer. Ela so rodava para quem voltasse `billed`
+// desta passada — e quem decide isso e a listagem de PEDIDOS, que o OMIE recusa por
+// "Consumo redundante". Sem ninguem confirmado faturado, a lista saia vazia e `ListarNF`
+// nao chegava a ser chamado uma vez: o log mostrava pedido recusado e nenhuma nota.
+Deno.test("check_order_billing busca a nota mesmo com a listagem de pedidos recusada", async () => {
+  const { ids, fixtures } = await billingDependencies("nf-sem-listagem-pedidos");
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarPedidos") {
+      throw new Error(
+        "HTTP 500: ERROR: Consumo redundante detectado. Aguarde 28 segundos (REDUNDANT)."
+      );
+    }
+    if (input.call === "ConsultarPedido") {
+      throw new Error(
+        "HTTP 500: ERROR: Consumo redundante detectado. Aguarde 43 segundos (REDUNDANT)."
+      );
+    }
+    if (input.call === "ListarNF") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        nfCadastro: [
+          invoiceListingRecord(9002, "452", "45231"),
+          invoiceListingRecord(9001, "451", "45230")
+        ]
+      };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-452", orderType: "sales", omieOrderId: 9002 },
+          { operationId: "op-451", orderType: "sales", omieOrderId: 9001 },
+          { operationId: "op-450", orderType: "sales", omieOrderId: 9000 },
+          { operationId: "op-449", orderType: "sales", omieOrderId: 8999 }
+        ]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const results = response.results as Array<Record<string, unknown>>;
+  const byOperation = new Map(results.map((row) => [row.operationId, row]));
+
+  // As duas que tem nota voltam com o numero E dadas por faturadas: nota emitida e prova
+  // de faturamento, e sem isso a linha mostraria o numero ao lado de "falta faturar".
+  assertObjectMatch(byOperation.get("op-452") as Record<string, unknown>, {
+    invoiceNumber: "45231",
+    billed: true,
+    found: true
+  });
+  assertObjectMatch(byOperation.get("op-451") as Record<string, unknown>, {
+    invoiceNumber: "45230",
+    billed: true
+  });
+});
+
+// "Consumo redundante" nao e instabilidade: e o OMIE dizendo que a pergunta e igual a
+// anterior. Reenviar a MESMA pergunta e o que ele acabou de recusar — a varredura
+// repergunta com a pagina de outro tamanho, que cobre os mesmos registros.
+Deno.test("check_order_billing repergunta a listagem de notas recusada por repeticao", async () => {
+  const { ids, fixtures } = await billingDependencies("nf-repeticao");
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarPedidos") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        pedido_venda_produto: [
+          salesListingRecord(9002, "60", "452"),
+          salesListingRecord(9001, "60", "451"),
+          salesListingRecord(9000, "60", "450"),
+          salesListingRecord(8999, "60", "449")
+        ]
+      };
+    }
+    if (input.call === "ListarNF") {
+      const param = getParam(input);
+      if (Number(param.registros_por_pagina) === 100) {
+        throw new Error(
+          "HTTP 500: ERROR: Consumo redundante detectado. Aguarde 24 segundos (REDUNDANT)."
+        );
+      }
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        nfCadastro: [invoiceListingRecord(9002, "452", "45231")]
+      };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-452", orderType: "sales", omieOrderId: 9002 },
+          { operationId: "op-451", orderType: "sales", omieOrderId: 9001 },
+          { operationId: "op-450", orderType: "sales", omieOrderId: 9000 },
+          { operationId: "op-449", orderType: "sales", omieOrderId: 8999 }
+        ]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  const results = response.results as Array<Record<string, unknown>>;
+  const encontrada = results.find((row) => row.operationId === "op-452");
+  assertObjectMatch(encontrada as Record<string, unknown>, { invoiceNumber: "45231" });
+
+  const tamanhos = omieQueue.requests
+    .filter((request) => request.call === "ListarNF")
+    .map((request) => Number((request.param as Record<string, unknown>).registros_por_pagina));
+  assertEquals(tamanhos, [100, 50]);
+});
+
+// Recusa que NAO e repeticao nao ganha a repergunta: nao ha o que reformular, e insistir
+// so gastaria mais uma chamada da fila que tambem envia os fechamentos.
+Deno.test("check_order_billing nao repergunta a listagem de notas por falha comum", async () => {
+  const { ids, fixtures } = await billingDependencies("nf-falha-comum");
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarPedidos") {
+      return {
+        pagina: 1,
+        total_de_paginas: 1,
+        pedido_venda_produto: [
+          salesListingRecord(9002, "60", "452"),
+          salesListingRecord(9001, "60", "451"),
+          salesListingRecord(9000, "60", "450"),
+          salesListingRecord(8999, "60", "449")
+        ]
+      };
+    }
+    if (input.call === "ListarNF") {
+      throw new Error("HTTP 500: ERROR: Acesso negado ao modulo de notas fiscais");
+    }
+    if (input.call === "ObterPedVenda") return { nIdPed: 9002 };
+    return defaultOmieListResponse(input);
+  });
+
+  await postOmieSync(
+    {
+      deviceId: ids.deviceId,
+      deviceToken: ids.token,
+      action: "check_order_billing",
+      payload: {
+        orders: [
+          { operationId: "op-452", orderType: "sales", omieOrderId: 9002 },
+          { operationId: "op-451", orderType: "sales", omieOrderId: 9001 },
+          { operationId: "op-450", orderType: "sales", omieOrderId: 9000 },
+          { operationId: "op-449", orderType: "sales", omieOrderId: 8999 }
+        ]
+      }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertEquals(omieQueue.requests.filter((request) => request.call === "ListarNF").length, 1);
+});
