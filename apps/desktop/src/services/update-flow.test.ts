@@ -6,6 +6,9 @@ import {
   createInitialUpdateState,
   getManualUpdateButtonLabel,
   hasUpdateRingChoice,
+  isUpdateActionBusy,
+  isUpdateInstallable,
+  shouldAnnounceUpdate,
   updateRingLabel
 } from "./update-flow";
 
@@ -59,5 +62,36 @@ describe("escolha de anel na balanca de teste", () => {
   it("traduz o anel para o vocabulario do operador", () => {
     expect(updateRingLabel("beta")).toBe("teste");
     expect(updateRingLabel("latest")).toBe("producao");
+  });
+});
+
+describe("o aviso de versao nova nao volta sozinho", () => {
+  it("o clique em 'Atualizar agora' instala em vez de verificar de novo", () => {
+    // O processo principal aceita instalar nestes tres estados. Enquanto
+    // "baixando" caia na verificacao, cada clique reanunciava a mesma versao e
+    // reabria o aviso segundos depois — o loop que so parava em "Mais tarde".
+    expect(isUpdateInstallable("available")).toBe(true);
+    expect(isUpdateInstallable("downloading")).toBe(true);
+    expect(isUpdateInstallable("downloaded")).toBe(true);
+    expect(isUpdateInstallable("idle")).toBe(false);
+    expect(isUpdateInstallable("checking")).toBe(false);
+    expect(isUpdateInstallable("error")).toBe(false);
+  });
+
+  it("verificando ou baixando, o botao do menu so conta o que acontece", () => {
+    expect(isUpdateActionBusy("checking")).toBe(true);
+    expect(isUpdateActionBusy("downloading")).toBe(true);
+    expect(isUpdateActionBusy("idle")).toBe(false);
+    expect(isUpdateActionBusy("available")).toBe(false);
+    expect(isUpdateActionBusy("downloaded")).toBe(false);
+    expect(isUpdateActionBusy("error")).toBe(false);
+  });
+
+  it("a versao ja respondida nao volta a interromper a pesagem", () => {
+    expect(shouldAnnounceUpdate("0.8.202", null)).toBe(true);
+    expect(shouldAnnounceUpdate("0.8.202", "0.8.202")).toBe(false);
+    // Versao diferente e noticia nova: o aviso sobe.
+    expect(shouldAnnounceUpdate("0.8.203", "0.8.202")).toBe(true);
+    expect(shouldAnnounceUpdate("", "0.8.202")).toBe(false);
   });
 });

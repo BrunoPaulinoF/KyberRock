@@ -64,6 +64,9 @@ import {
   createInitialUpdateState,
   getManualUpdateButtonLabel,
   hasUpdateRingChoice,
+  isUpdateActionBusy,
+  isUpdateInstallable,
+  shouldAnnounceUpdate,
   updateRingLabel,
   type UpdateState
 } from "../services/update-flow";
@@ -583,6 +586,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [showUpdateChoiceModal, setShowUpdateChoiceModal] = useState(false);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
+  // A versao que o operador ja respondeu no aviso — ver `shouldAnnounceUpdate`.
+  const answeredUpdateVersionRef = useRef<string | null>(null);
   const updateReady = updateState.status === "available" || updateState.status === "downloaded";
   // So na balanca marcada como teste, e so quando o anel de teste e o de
   // producao tem versoes diferentes para instalar: ai quem decide e o operador.
@@ -1146,6 +1151,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
 
     function handleUpdateAvailable(_event: unknown, version: string): void {
+      // O processo principal reanuncia a MESMA versao a cada verificacao. Sem
+      // esta guarda o aviso voltava a subir depois de o operador ja ter
+      // respondido, no meio da pesagem.
+      if (!shouldAnnounceUpdate(version, answeredUpdateVersionRef.current)) {
+        return;
+      }
+
       setAvailableVersion(version);
       setShowUpdateModal(true);
     }
@@ -1706,32 +1718,75 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     setPhase("locked");
   }
 
+  /**
+   * Fecha o aviso de versao nova anotando que o operador ja respondeu.
+   *
+   * Vale para as duas respostas: quem clicou em "Atualizar agora" nao precisa
+   * do aviso de novo, e quem clicou em "Mais tarde" disse exatamente isso.
+   */
+  function dismissUpdateNotice(): void {
+    answeredUpdateVersionRef.current = availableVersion;
+    setShowUpdateModal(false);
+  }
+
+  /** O botao do menu: verifica quando nao ha versao em maos, instala quando ha. */
   async function handleUpdateAction(): Promise<void> {
     if (!desktopApi) {
+      return;
+    }
+
+    // Verificando ou baixando nao ha o que fazer no clique — e verificar de
+    // novo aqui reabriria o aviso de versao nova em cima do download em curso.
+    if (isUpdateActionBusy(updateState.status) && !updateRingChoice) {
       return;
     }
 
     // Balanca de teste com versao nova nos DOIS aneis nao baixa no clique: ela
     // pergunta. Instalar a versao errada aqui custa uma reinstalacao.
     if (updateRingChoice) {
-      setShowUpdateModal(false);
+      dismissUpdateNotice();
       setShowUpdateChoiceModal(true);
       return;
     }
 
-    const nextState =
-      updateState.status === "available" || updateState.status === "downloaded"
-        ? await desktopApi.downloadAndInstallUpdate()
-        : await desktopApi.checkForUpdates();
+    const nextState = isUpdateInstallable(updateState.status)
+      ? await desktopApi.downloadAndInstallUpdate()
+      : await desktopApi.checkForUpdates();
 
     setUpdateState(nextState);
     setMessage(nextState.errorMessage ?? describeUpdateState(nextState));
 
     // A verificacao pode ter descoberto agora que ha dois aneis para escolher.
     if (hasUpdateRingChoice(nextState)) {
-      setShowUpdateModal(false);
+      dismissUpdateNotice();
       setShowUpdateChoiceModal(true);
     }
+  }
+
+  /**
+   * "Atualizar agora" do aviso de versao nova.
+   *
+   * Aqui NUNCA se verifica: o aviso so existe porque o processo principal ja
+   * anunciou uma versao, e cada verificacao reanuncia a mesma versao para a
+   * tela. Era esse caminho — o estado da tela ainda nao dizia "available"
+   * quando o operador clicava — que fechava o aviso e o reabria segundos
+   * depois, em loop, ate ele desistir e clicar em "Mais tarde".
+   */
+  async function handleInstallAnnouncedUpdate(): Promise<void> {
+    dismissUpdateNotice();
+
+    if (!desktopApi) {
+      return;
+    }
+
+    if (updateRingChoice) {
+      setShowUpdateChoiceModal(true);
+      return;
+    }
+
+    const nextState = await desktopApi.downloadAndInstallUpdate();
+    setUpdateState(nextState);
+    setMessage(nextState.errorMessage ?? describeUpdateState(nextState));
   }
 
   /** Instala a versao do anel escolhido pelo operador (so na balanca de teste). */
@@ -2792,6 +2847,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         void handleUpdateAction();
                         setShowSettings(false);
                       }}
+                      // Enquanto verifica ou baixa o rotulo so conta o que esta
+                      // acontecendo — clicar ali nao tem o que fazer.
+                      disabled={isUpdateActionBusy(updateState.status) && !updateRingChoice}
                       style={{
                         ...styles.settingsItem,
                         color: updateReady ? "#16a34a" : styles.settingsItem.color,
@@ -2895,8 +2953,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     <button
                       type="button"
                       onClick={() => {
-                        void handleUpdateAction();
-                        setShowUpdateModal(false);
+                        void handleInstallAnnouncedUpdate();
                       }}
                       style={styles.primaryButton}
                     >
@@ -2904,7 +2961,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                     </button>
                     <button
                       type="button"
-                      onClick={() => setShowUpdateModal(false)}
+                      onClick={dismissUpdateNotice}
                       style={styles.secondaryButton}
                     >
                       Mais tarde
