@@ -336,6 +336,24 @@ como o pedido de venda, e o faturamento (NFS-e) e feito dentro do OMIE.
   infinito) e gravar `omie_billing_status = 'cancel_blocked'` com a mensagem visivel.
 - Sucesso grava `omie_billing_status = 'cancelled_in_omie'`.
 
+## Conferencia De Faturamento (`check_order_billing`)
+
+- A conferencia pergunta ao OMIE, por rodizio, quais pedidos/OS ja foram faturados la — e o
+  unico jeito de o KyberRock saber de um faturamento feito a mao dentro do OMIE.
+- **"Nao cadastrado" e resposta definitiva, nao falha a repetir.** O OMIE nao reaproveita o
+  codigo interno de um registro excluido, entao o documento que sumiu de la nunca volta com
+  o mesmo numero. A operacao recebe `omie_billing_status = 'missing_in_omie'` e sai da fila
+  de conferencia; a situacao na tela continua "falta faturar" (porque e verdade), com a
+  frase explicando que o documento nao existe mais no OMIE. Reenviar o fechamento cria um
+  documento novo e limpa o marcador, devolvendo a pesagem a fila.
+- **A nuvem tambem lembra** (`public.omie_missing_documents`): a Edge Function anota o
+  documento que o OMIE deu por inexistente e passa a responder da memoria, sem chamada. E o
+  freio que vale para a balanca que ainda nao atualizou.
+- **HTTP 425 "API bloqueada por consumo indevido" para a passada inteira.** Nao e limite de
+  pico nem consumo redundante: o OMIE fecha a API da app_key por dezenas de minutos, e cada
+  tentativa a mais alimenta o mesmo bloqueio. A fila (`OmieQueueManager`) guarda o horario
+  da liberacao e recusa localmente o que sobrou da passada, sem sair para a rede.
+
 ## Conflitos
 
 | Caso                                     | Resolucao                                        |

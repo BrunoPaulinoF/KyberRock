@@ -1,4 +1,4 @@
-import { assertEquals, assertObjectMatch } from "jsr:@std/assert";
+import { assertEquals, assertExists, assertObjectMatch } from "jsr:@std/assert";
 
 import {
   STALE_CUSTOMER_CODE_FAULT_PREFIX,
@@ -41,11 +41,18 @@ type CreditMovementFixture = {
   omie_title_id: number | null;
 };
 
+type MissingDocumentFixture = {
+  company_id: string;
+  order_type: "sales" | "service";
+  omie_order_id: number;
+};
+
 type SupabaseFixtures = {
   devices: Record<string, DeviceFixture>;
   companies: Record<string, CompanyFixture>;
   customers?: CustomerFixture[];
   creditMovements?: CreditMovementFixture[];
+  missingDocuments?: MissingDocumentFixture[];
 };
 
 type SupabaseUpdate = {
@@ -149,6 +156,15 @@ class SupabaseQueryStub {
         (movement) =>
           movement.company_id === this.filters.company_id &&
           (ids.length === 0 || ids.includes(movement.customer_id))
+      );
+    }
+
+    if (this.table === "omie_missing_documents") {
+      const ids = this.inFilters.omie_order_id ?? [];
+      return (this.fixtures.missingDocuments ?? []).filter(
+        (document) =>
+          document.company_id === this.filters.company_id &&
+          (ids.length === 0 || ids.includes(document.omie_order_id))
       );
     }
 
@@ -5710,3 +5726,116 @@ Deno.test("check_order_billing normaliza os zeros a esquerda do numero da nota",
   const results = response.results as Array<Record<string, unknown>>;
   assertEquals(results.find((row) => row.operationId === "op-452")?.invoiceNumber, "29490");
 });
+
+Deno.test(
+  "check_order_billing anota o documento excluido no OMIE em vez de perguntar de novo",
+  async () => {
+    const deviceToken = "token-missing-doc";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-missing-doc": {
+          id: "device-missing-doc",
+          company_id: "company-missing-doc",
+          unit_id: "unit-missing-doc",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-missing-doc": {
+          id: "company-missing-doc",
+          is_active: true,
+          omie_app_key: "missing-doc",
+          omie_app_secret: "secret-missing-doc"
+        }
+      }
+    });
+    const omieQueue = createOmieQueueStub((input) => {
+      if (input.call === "ConsultarOS") {
+        // A recusa real do OMIE para uma OS excluida la.
+        throw new Error(
+          "OMIE HTTP 500 em ConsultarOS - ERROR: OS nao cadastrada para o Codigo [11495303005] !"
+        );
+      }
+      return defaultOmieListResponse(input);
+    });
+
+    const response = await postOmieSync(
+      {
+        deviceId: "device-missing-doc",
+        deviceToken,
+        action: "check_order_billing",
+        payload: {
+          orders: [{ operationId: "op-sumida", orderType: "service", omieOrderId: 11495303005 }]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    const results = response.results as Array<Record<string, unknown>>;
+    assertObjectMatch(results[0], { operationId: "op-sumida", found: false, error: null });
+
+    const remembered = fixtures.upserts.find((upsert) => upsert.table === "omie_missing_documents");
+    assertExists(remembered, "o documento inexistente precisa ficar anotado na nuvem");
+    assertObjectMatch(remembered.rows[0], {
+      company_id: "company-missing-doc",
+      order_type: "service",
+      omie_order_id: 11495303005,
+      operation_id: "op-sumida"
+    });
+  }
+);
+
+Deno.test(
+  "check_order_billing responde da memoria e nao gasta chamada com documento ja excluido",
+  async () => {
+    const deviceToken = "token-missing-known";
+    const token_hash = await sha256Hex(deviceToken);
+    const fixtures = createSupabaseDependencies({
+      devices: {
+        "device-missing-known": {
+          id: "device-missing-known",
+          company_id: "company-missing-known",
+          unit_id: "unit-missing-known",
+          token_hash,
+          is_active: true
+        }
+      },
+      companies: {
+        "company-missing-known": {
+          id: "company-missing-known",
+          is_active: true,
+          omie_app_key: "missing-known",
+          omie_app_secret: "secret-missing-known"
+        }
+      },
+      missingDocuments: [
+        {
+          company_id: "company-missing-known",
+          order_type: "service",
+          omie_order_id: 11495303005
+        }
+      ]
+    });
+    const omieQueue = createOmieQueueStub((input) => defaultOmieListResponse(input));
+
+    const response = await postOmieSync(
+      {
+        deviceId: "device-missing-known",
+        deviceToken,
+        action: "check_order_billing",
+        payload: {
+          orders: [{ operationId: "op-sumida", orderType: "service", omieOrderId: 11495303005 }]
+        }
+      },
+      { createClient: fixtures.createClient, omieQueue }
+    );
+
+    const results = response.results as Array<Record<string, unknown>>;
+    assertEquals(results.length, 1);
+    assertObjectMatch(results[0], { operationId: "op-sumida", found: false, error: null });
+    // Era esta chamada, repetida a cada passada por 24 documentos, que bloqueava a API.
+    assertEquals(omieQueue.requests.filter((request) => request.call === "ConsultarOS").length, 0);
+  }
+);

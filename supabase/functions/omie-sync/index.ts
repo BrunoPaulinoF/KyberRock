@@ -9,6 +9,7 @@ import {
   buildCustomerUpdateBody,
   customerRegistrationFaultMessage,
   formatOmieOrderInvoiceEmailList,
+  isOmieNotFoundFault,
   pushCarrierToOmie as pushCarrierToOmieCore,
   resolveDuplicateCustomerId,
   syncCustomerInvoiceEmails as syncCustomerInvoiceEmailsCore,
@@ -650,7 +651,13 @@ export async function handleOmieSyncRequest(
     if (action === "check_order_billing") {
       const results = await checkOmieOrdersBilling(
         credentials,
-        body.payload as CheckOrderBillingPayload | undefined
+        body.payload as CheckOrderBillingPayload | undefined,
+        // Mesmo motivo do espelho de adiantamentos acima: o tipo minimo do client no
+        // handler nao cobre `select().eq().in()` nem `upsert()`.
+        createMissingDocumentMemory(
+          supabase as unknown as AdvanceProjectionClient,
+          typedDevice.company_id
+        )
       );
       return jsonResponse({ ok: true, results });
     }
@@ -4008,32 +4015,6 @@ async function consultServiceOrder(
   });
 }
 
-/**
- * O texto de um fault do OMIE sem acento, para ser comparado por regex.
- *
- * Os faults vem ACENTUADOS ("NF nao cadastrada" chega como "NF nao cadastrada" com til), e
- * os padroes daqui sempre foram escritos sem acento — entao nenhum deles casava. O efeito
- * era silencioso: um fault conhecido passava por falha desconhecida, ia para o log como
- * erro e disparava o caminho caro de recuperacao.
- */
-function normalizeOmieFault(message: string): string {
-  return message.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-}
-
-/**
- * Faults do OMIE quando o registro ja nao existe (cancelamento idempotente) ou quando o
- * pedido consultado nao gerou nota.
- *
- * Verificado contra a resposta real do OMIE: `ConsultarNF` de um pedido sem nota devolve
- * "ERROR: NF nao cadastrada para o pedido [...]" — com til em "nao". Sem a normalizacao
- * acima, `nao cadastrad` nao casava com `nao cadastrada` acentuado.
- */
-function isOmieNotFoundFault(message: string): boolean {
-  return /nao cadastrad|nao encontrad|not found|inexistente|nao existe/i.test(
-    normalizeOmieFault(message)
-  );
-}
-
 // Faults que indicam que o pedido/OS nao pode ser excluido pelo estado (ja faturado,
 // etapa avancada, NF emitida) — nao devem virar retry infinito.
 function isOmieBlockedCancelFault(message: string): boolean {
@@ -4482,12 +4463,98 @@ type ListedBillingState = {
  * Uma falha isolada nao derruba a passada: o registro volta com `error` preenchido e a
  * proxima sincronizacao tenta de novo.
  */
+/** A chave de um documento na memoria de excluidos. */
+function missingDocumentKey(orderType: "sales" | "service", omieOrderId: number): string {
+  return `${orderType}:${omieOrderId}`;
+}
+
+/**
+ * O que a nuvem ja sabe sobre documentos que sumiram do OMIE.
+ *
+ * `recall` responde de graca ao que ja foi dado por inexistente; `remember` anota o que a
+ * consulta acabou de descobrir. As duas sao best-effort de proposito: uma falha de banco
+ * aqui volta a conferencia ao comportamento antigo (perguntar ao OMIE), nunca a derruba.
+ */
+type MissingDocumentMemory = {
+  recall(orders: readonly CheckOrderBillingOrder[]): Promise<ReadonlySet<string>>;
+  remember(order: CheckOrderBillingOrder): Promise<void>;
+};
+
+const noMissingDocumentMemory: MissingDocumentMemory = {
+  recall: () => Promise.resolve(new Set<string>()),
+  remember: () => Promise.resolve()
+};
+
+/**
+ * O freio que nao depende da versao instalada na balanca.
+ *
+ * O desktop corrigido para de perguntar sozinho pelo documento excluido, mas a balanca que
+ * ainda nao atualizou continua mandando os mesmos codigos em toda passada — e era esse
+ * volume que bloqueava a API do OMIE por consumo indevido. Com a memoria, a pergunta
+ * repetida custa uma leitura de tabela em vez de uma chamada ao OMIE: a resposta e a mesma
+ * (`found: false`) e o desktop antigo segue funcionando como sempre funcionou.
+ */
+function createMissingDocumentMemory(
+  supabase: AdvanceProjectionClient,
+  companyId: string
+): MissingDocumentMemory {
+  return {
+    async recall(orders) {
+      if (orders.length === 0) return new Set<string>();
+      try {
+        const { data, error } = await supabase
+          .from("omie_missing_documents")
+          .select("order_type, omie_order_id")
+          .eq("company_id", companyId)
+          .in(
+            "omie_order_id",
+            orders.map((order) => order.omieOrderId)
+          );
+        if (error || !Array.isArray(data)) return new Set<string>();
+        return new Set(
+          (data as Array<{ order_type?: unknown; omie_order_id?: unknown }>).map((row) =>
+            missingDocumentKey(
+              row.order_type === "sales" ? "sales" : "service",
+              Number(row.omie_order_id)
+            )
+          )
+        );
+      } catch {
+        return new Set<string>();
+      }
+    },
+    async remember(order) {
+      const now = new Date().toISOString();
+      try {
+        await supabase.from("omie_missing_documents").upsert(
+          [
+            {
+              company_id: companyId,
+              order_type: order.orderType,
+              omie_order_id: order.omieOrderId,
+              operation_id: order.operationId,
+              last_seen_at: now
+            }
+          ],
+          { onConflict: "company_id,order_type,omie_order_id" }
+        );
+      } catch {
+        /* memoria e otimizacao: sem ela a conferencia so volta a perguntar ao OMIE */
+      }
+    }
+  };
+}
+
 async function checkOmieOrdersBilling(
   credentials: OmieCredentials,
-  payload: CheckOrderBillingPayload | undefined
+  payload: CheckOrderBillingPayload | undefined,
+  missingMemory: MissingDocumentMemory = noMissingDocumentMemory
 ): Promise<OrderBillingState[]> {
   const orders = (payload?.orders ?? []).slice(0, CHECK_ORDER_BILLING_MAX);
   if (orders.length === 0) return [];
+
+  // Os que a nuvem ja deu por inexistentes nao chegam a virar chamada ao OMIE.
+  const knownMissing = await missingMemory.recall(orders);
 
   const results: OrderBillingState[] = [];
   /**
@@ -4501,7 +4568,11 @@ async function checkOmieOrdersBilling(
   let consultBudget = CONSULT_FALLBACK_MAX;
 
   for (const orderType of ["sales", "service"] as const) {
-    const group = orders.filter((order) => order.orderType === orderType);
+    const group = orders.filter(
+      (order) =>
+        order.orderType === orderType &&
+        !knownMissing.has(missingDocumentKey(orderType, order.omieOrderId))
+    );
     if (group.length === 0) continue;
 
     // Listagem primeiro: uma chamada resolve ate 100 documentos. So vale a pena a partir
@@ -4535,8 +4606,29 @@ async function checkOmieOrdersBilling(
       if (consultBudget <= 0) continue;
       consultBudget--;
       alreadyConsulted.add(order.operationId);
-      results.push(await consultOmieOrderBilling(credentials, order));
+      const consulted = await consultOmieOrderBilling(credentials, order);
+      // Excluido no OMIE: anota, para a proxima passada nao gastar chamada nenhuma com
+      // ele — nem a desta balanca, nem a de uma que ainda nao tenha atualizado.
+      if (!consulted.found && consulted.error === null) await missingMemory.remember(order);
+      results.push(consulted);
     }
+  }
+
+  // Os lembrados nunca entraram nos grupos acima: a resposta deles sai da memoria, com o
+  // mesmo formato que a consulta devolveria.
+  for (const order of orders) {
+    if (!knownMissing.has(missingDocumentKey(order.orderType, order.omieOrderId))) continue;
+    results.push({
+      operationId: order.operationId,
+      orderType: order.orderType,
+      omieOrderId: order.omieOrderId,
+      found: false,
+      billed: false,
+      orderNumber: null,
+      invoiceNumber: null,
+      documentUrl: null,
+      error: null
+    });
   }
 
   return await fillMissingInvoiceNumbers(

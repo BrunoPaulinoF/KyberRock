@@ -5,6 +5,17 @@ export const OMIE_BASE_BACKOFF_MS = 5_000;
 export const OMIE_DEFAULT_LIMIT_WAIT_MS = 60_000;
 export const OMIE_MAX_BACKOFF_MS = 120_000;
 
+/**
+ * Acima disto a espera NAO cabe dentro de uma passada — e o bloqueio de consumo do OMIE,
+ * que vem em dezenas de minutos ("Tente novamente em 1797 segundos"), nao em segundos.
+ *
+ * Insistir nesse caso e o pior dos mundos: cada tentativa e mais uma chamada recusada que
+ * conta para o mesmo bloqueio que a causou, e a passada gasta o tempo de vida da funcao
+ * inteiro para voltar sem nada. Quando a espera pedida passa daqui, a fila desiste da
+ * passada e guarda o horario da liberacao (ver `blockedUntil`).
+ */
+export const OMIE_BLOCK_WAIT_THRESHOLD_MS = OMIE_MAX_BACKOFF_MS;
+
 export type OmieCredentials = {
   appKey: string;
   appSecret: string;
@@ -83,6 +94,16 @@ export class OmieQueueManager {
   private readonly baseBackoffMs: number;
   private gate: Promise<void> = Promise.resolve();
   private lastFinishedAt = 0;
+  /**
+   * Ate quando o OMIE fechou a API desta fila (0 = aberta).
+   *
+   * O bloqueio por consumo indevido nao vale para a chamada que o levou: ele vale para a
+   * app_key inteira, por meia hora. Sem esta memoria, cada uma das chamadas restantes da
+   * passada saia assim mesmo, era recusada igual e ainda contava para o mesmo bloqueio —
+   * o log ficava cheio de 425 e a passada voltava sem nada.
+   */
+  private blockedUntil = 0;
+  private blockedDetail: string | null = null;
 
   constructor(options: OmieQueueManagerOptions = {}) {
     this.fetchFn = options.fetchFn ?? fetch;
@@ -95,13 +116,22 @@ export class OmieQueueManager {
 
   async request<TParam, TResponse>(input: OmieRequestInput<TParam>): Promise<TResponse> {
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      const blocked = this.blockedError(input);
+      if (blocked) throw blocked;
+
       try {
         return await this.requestOnce<TParam, TResponse>(input);
       } catch (error) {
+        if (isOmieApiBlockedError(error) && error instanceof OmieHttpError) {
+          this.openBreaker(error);
+        }
         if (
           !isOmieLimitError(error) ||
           !(error instanceof OmieHttpError) ||
-          attempt >= this.maxRetries
+          attempt >= this.maxRetries ||
+          // Espera que nao cabe na passada: repetir aqui so gastaria o tempo de vida da
+          // funcao em chamadas que o OMIE ja avisou que vai recusar.
+          (error.retryAfterMs ?? 0) > OMIE_BLOCK_WAIT_THRESHOLD_MS
         ) {
           throw error;
         }
@@ -111,6 +141,30 @@ export class OmieQueueManager {
     }
 
     throw new Error(`OMIE retry esgotado em ${input.call} (${input.endpoint})`);
+  }
+
+  /** O bloqueio ainda de pe, como o erro que a chamada teria recebido do OMIE. */
+  private blockedError<TParam>(input: OmieRequestInput<TParam>): OmieHttpError | null {
+    if (this.blockedUntil === 0) return null;
+    const remainingMs = this.blockedUntil - this.nowFn();
+    if (remainingMs <= 0) {
+      this.blockedUntil = 0;
+      this.blockedDetail = null;
+      return null;
+    }
+    const detail = this.blockedDetail ?? "API bloqueada por consumo indevido";
+    return new OmieHttpError(
+      `OMIE bloqueou a API em ${input.call} (${input.endpoint}) - ${detail}`,
+      425,
+      detail,
+      remainingMs
+    );
+  }
+
+  private openBreaker(error: OmieHttpError): void {
+    const waitMs = error.retryAfterMs ?? OMIE_DEFAULT_LIMIT_WAIT_MS;
+    this.blockedUntil = Math.max(this.blockedUntil, this.nowFn() + waitMs);
+    this.blockedDetail = error.detail ?? error.message;
   }
 
   private async requestOnce<TParam, TResponse>(
@@ -145,10 +199,17 @@ export class OmieQueueManager {
       const statusText = response.ok ? "faultstring" : `HTTP ${response.status}`;
       // Diagnostico: registra a chamada, o erro e o corpo enviado (sem credenciais) para
       // depurar rejeicoes de campo obrigatorio do OMIE (ex: "tag [valor] obrigatorio").
+      //
+      // "Nao cadastrado" sai como LOG, nao como erro: e uma resposta, nao uma falha. O
+      // OMIE usa o mesmo HTTP 500 para "o registro nao existe" e para "a chamada esta
+      // errada", e quem pergunta aqui ja trata o primeiro caso como fato (ver
+      // `isOmieNotFoundFault`). Registrado como erro, ele inflava o painel de erros do
+      // projeto com o resultado esperado de uma consulta que funcionou.
+      const expected = detail !== null && isOmieNotFoundFault(detail);
       try {
-        console.error(
-          `[omie] falha em ${input.call} (${input.endpoint}) ${statusText}: ${detail ?? "sem detalhe"} | param=${JSON.stringify(input.param)}`
-        );
+        const line = `[omie] falha em ${input.call} (${input.endpoint}) ${statusText}: ${detail ?? "sem detalhe"} | param=${JSON.stringify(input.param)}`;
+        if (expected) console.log(line);
+        else console.error(line);
       } catch {
         /* logging best-effort */
       }
@@ -692,13 +753,77 @@ export function forceOmieTag(tags: string[] | undefined, requiredTag: string): s
   return [...unique.values()];
 }
 
+/**
+ * O texto de um fault do OMIE sem acento, para ser comparado por regex.
+ *
+ * Os faults vem ACENTUADOS ("NF nao cadastrada" chega como "NF nao cadastrada" com til), e
+ * os padroes daqui sempre foram escritos sem acento — entao nenhum deles casava. O efeito
+ * era silencioso: um fault conhecido passava por falha desconhecida, ia para o log como
+ * erro e disparava o caminho caro de recuperacao.
+ */
+export function normalizeOmieFault(message: string): string {
+  return message.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
+ * Faults do OMIE quando o registro ja nao existe (cancelamento idempotente) ou quando o
+ * pedido consultado nao gerou nota.
+ *
+ * Verificado contra a resposta real do OMIE: `ConsultarNF` de um pedido sem nota devolve
+ * "ERROR: NF nao cadastrada para o pedido [...]" — com til em "nao". Sem a normalizacao
+ * acima, `nao cadastrad` nao casava com `nao cadastrada` acentuado.
+ */
+export function isOmieNotFoundFault(message: string): boolean {
+  return /nao cadastrad|nao encontrad|not found|inexistente|nao existe/i.test(
+    normalizeOmieFault(message)
+  );
+}
+
+/**
+ * O OMIE fechou a API INTEIRA desta credencial por excesso de chamadas.
+ *
+ * E diferente do "Consumo redundante" (a mesma pergunta repetida) e do 429 de pico: aqui
+ * ele para de atender QUALQUER chamada da app_key por meia hora — "HTTP 425: ERROR: API
+ * bloqueada por consumo indevido. Tente novamente em 1797 segundos.".
+ *
+ * Precisa de nome proprio porque a reacao e outra. Nos outros dois vale esperar e repetir
+ * dentro da mesma passada; neste nao existe espera que caiba, e cada tentativa a mais so
+ * alimenta o bloqueio. Quem detectava so `limite|limit|rate|Aguarde N segundos` nao casava
+ * com nenhuma palavra desta frase: o 425 saia como falha comum, sem backoff nenhum, e a
+ * passada seguia chamando o OMIE ate o fim do lote — foram ~628 recusas em 24h assim.
+ */
+export function isOmieApiBlockedError(error: unknown): boolean {
+  if (!(error instanceof OmieHttpError)) return false;
+  if (error.status === 425) return true;
+  return /API\s+bloqueada|consumo\s+indevido/i.test(error.detail ?? error.message);
+}
+
 export function isOmieLimitError(error: unknown): boolean {
   if (!(error instanceof OmieHttpError)) return false;
   if (error.status === 429) return true;
+  if (isOmieApiBlockedError(error)) return true;
   return /REDUNDANT|Consumo redundante|limite|limit|rate|Aguarde\s+\d+\s+segundos?/i.test(
     error.detail ?? error.message
   );
 }
+
+/**
+ * Quanto o OMIE mandou esperar, SEM teto.
+ *
+ * O teto e de quem espera (`getRetryDelayMs` limita ao `OMIE_MAX_BACKOFF_MS`), nao de quem
+ * le: cortar aqui apagava a informacao que decide a passada inteira — "1797 segundos" e
+ * "120 segundos" chegavam ao disjuntor como o mesmo numero, e ele reabriria a fila cedo
+ * demais, em cima de uma API ainda bloqueada.
+ *
+ * Duas grafias, porque sao dois casos diferentes do OMIE: "Aguarde N segundos" vem do
+ * consumo redundante e "Tente novamente em N segundos" vem do bloqueio por consumo
+ * indevido. So a primeira estava aqui, e por isso o bloqueio de meia hora era lido como
+ * "sem tempo informado".
+ */
+const OMIE_RETRY_DELAY_PATTERNS = [
+  /Aguarde\s+(\d+)\s+segundos?/i,
+  /Tente\s+novamente\s+em\s+(\d+)\s+segundos?/i
+];
 
 export function parseOmieRetryDelayMs(
   message: string | null | undefined,
@@ -706,13 +831,14 @@ export function parseOmieRetryDelayMs(
 ): number | null {
   const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : NaN;
   if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
-    return Math.min(retryAfterSeconds * 1000, OMIE_MAX_BACKOFF_MS);
+    return retryAfterSeconds * 1000;
   }
 
-  const match = /Aguarde\s+(\d+)\s+segundos?/i.exec(message ?? "");
-  const seconds = match ? Number(match[1]) : NaN;
-  if (Number.isFinite(seconds) && seconds > 0) {
-    return Math.min(seconds * 1000 + 1000, OMIE_MAX_BACKOFF_MS);
+  for (const pattern of OMIE_RETRY_DELAY_PATTERNS) {
+    const match = pattern.exec(message ?? "");
+    const seconds = match ? Number(match[1]) : NaN;
+    // Um segundo a mais do que ele pediu: a borda exata costuma voltar recusada.
+    if (Number.isFinite(seconds) && seconds > 0) return seconds * 1000 + 1000;
   }
 
   return null;

@@ -4688,7 +4688,8 @@ export async function processOmieSyncQueue(
              SET omie_billing_status = NULL, omie_billing_message = NULL,
                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
            WHERE id = ?
-             AND omie_billing_status IN ('failed', 'cadastro_incompleto', 'service_order_failed')`
+             AND omie_billing_status IN ('failed', 'cadastro_incompleto', 'service_order_failed',
+                                         '${OMIE_BILLING_STATUS_MISSING}')`
         )
         .run(payload.operationId);
       markSyncJobDone(database, job.id);
@@ -4999,10 +5000,29 @@ interface OmieOrderBillingState {
  */
 const PENDING_OMIE_BILLING_SQL = `(
   omie_billing_status IS NULL
-  OR omie_billing_status NOT IN ('billed', 'cancelled_in_omie')
+  OR omie_billing_status NOT IN ('billed', 'cancelled_in_omie', 'missing_in_omie')
   OR (omie_billing_status = 'billed'
       AND (omie_invoice_number IS NULL OR trim(omie_invoice_number) = ''))
 )`;
+
+/**
+ * O documento nao existe mais no OMIE — e a conferencia PARA de perguntar por ele.
+ *
+ * A resposta "OS nao cadastrada para o Codigo [...]" e definitiva: o codigo interno do
+ * OMIE nao e reaproveitado, entao o que foi excluido la nao volta com o mesmo numero.
+ * Ainda assim a pesagem so ganhava a FRASE (`omie_billing_message`) e continuava sem
+ * `omie_billing_status`, o que a mantinha dentro do predicado acima — e o rodizio, que
+ * ordena por `omie_billing_checked_at ASC`, devolvia a mesma pesagem para o comeco da fila
+ * a cada passada. Vinte e quatro documentos excluidos rendiam ~3.100 consultas recusadas
+ * por dia, e foi esse volume que fez o OMIE bloquear a integracao inteira por consumo
+ * indevido.
+ *
+ * Nao e um beco sem saida: reenviar o fechamento cria um documento novo, e a criacao
+ * limpa este marcador (ver o UPDATE depois de `markSyncJobDone`) devolvendo a pesagem a
+ * fila. A situacao na tela continua sendo "falta faturar" — porque e verdade — com a
+ * frase explicando que o documento sumiu de la.
+ */
+const OMIE_BILLING_STATUS_MISSING = "missing_in_omie";
 
 /**
  * Folga para tras na janela de emissao das notas.
@@ -5288,7 +5308,8 @@ export async function reconcileOmieBillingFromOmie(
   );
   const markMissing = database.prepare(
     `UPDATE weighing_operations
-        SET omie_billing_message = ?,
+        SET omie_billing_status = '${OMIE_BILLING_STATUS_MISSING}',
+            omie_billing_message = ?,
             omie_billing_checked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
       WHERE id = ?`
   );

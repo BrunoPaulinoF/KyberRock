@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "jsr:@std/assert";
+import { assert, assertEquals, assertRejects } from "jsr:@std/assert";
 
 import {
   CUSTOMER_REGISTRATION_FAULT_PREFIX,
@@ -13,6 +13,10 @@ import {
   formatOmieEmailList,
   formatOmieInvoiceEmailList,
   formatOmieOrderInvoiceEmailList,
+  isOmieApiBlockedError,
+  isOmieNotFoundFault,
+  OmieHttpError,
+  parseOmieRetryDelayMs,
   mergeOmieCustomerTags,
   OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH,
   OMIE_ORDER_INVOICE_EMAIL_FIELD_MAX_LENGTH,
@@ -424,4 +428,83 @@ Deno.test("buildCustomerPayload mantem a UF da cidade dentro do limite do campo"
   const cidade = longa.cidade as string;
   assert(cidade.length <= 40);
   assert(cidade.endsWith(" (SP)"));
+});
+
+Deno.test("parseOmieRetryDelayMs le o tempo das duas recusas do OMIE, sem teto", () => {
+  // Consumo redundante: "Aguarde N segundos".
+  assertEquals(parseOmieRetryDelayMs("Consumo redundante. Aguarde 3 segundos"), 4_000);
+  // Bloqueio por consumo indevido: "Tente novamente em N segundos". Nao era lido, e o
+  // bloqueio de meia hora chegava a fila como "sem tempo informado".
+  assertEquals(
+    parseOmieRetryDelayMs("API bloqueada por consumo indevido. Tente novamente em 1797 segundos."),
+    1_798_000
+  );
+  assertEquals(parseOmieRetryDelayMs("erro qualquer"), null);
+});
+
+Deno.test("isOmieApiBlockedError reconhece o 425 do OMIE pelo status e pela frase", () => {
+  assert(isOmieApiBlockedError(new OmieHttpError("bloqueio", 425, null, null)));
+  assert(
+    isOmieApiBlockedError(
+      new OmieHttpError("bloqueio", 500, "ERROR: API bloqueada por consumo indevido.", null)
+    )
+  );
+  assert(!isOmieApiBlockedError(new OmieHttpError("outra coisa", 500, "OS nao cadastrada", null)));
+});
+
+Deno.test(
+  "OmieQueueManager para de chamar o OMIE enquanto o bloqueio por consumo indevido durar",
+  async () => {
+    let callCount = 0;
+    const fetchFn: typeof fetch = async () => {
+      callCount++;
+      return jsonResponse(
+        {
+          faultstring:
+            "ERROR: API bloqueada por consumo indevido. Tente novamente em 1797 segundos."
+        },
+        { status: 425 }
+      );
+    };
+    let now = 0;
+    const sleeps: number[] = [];
+    const queue = new OmieQueueManager({
+      fetchFn,
+      minDelayMs: 0,
+      nowFn: () => now,
+      sleepFn: async (ms) => {
+        sleeps.push(ms);
+      }
+    });
+
+    const consult = () =>
+      queue.request({
+        credentials,
+        endpoint: "/servicos/os/",
+        call: "ConsultarOS",
+        param: { nCodOS: 11495303005 }
+      });
+
+    await assertRejects(consult);
+    // Espera de meia hora nao cabe na passada: uma chamada, sem repeticao e sem dormir.
+    assertEquals(callCount, 1);
+    assertEquals(sleeps, []);
+
+    // As chamadas seguintes da passada nem saem — era este o volume que virava HTTP 425
+    // no log e alimentava o proprio bloqueio.
+    await assertRejects(consult);
+    await assertRejects(consult);
+    assertEquals(callCount, 1);
+
+    // Passado o tempo que o OMIE pediu, a fila volta a perguntar.
+    now = 1_798_001;
+    await assertRejects(consult);
+    assertEquals(callCount, 2);
+  }
+);
+
+Deno.test("isOmieNotFoundFault casa com a recusa acentuada do OMIE", () => {
+  assert(isOmieNotFoundFault("ERROR: OS nao cadastrada para o Codigo [11495303005] !"));
+  assert(isOmieNotFoundFault("ERROR: OS n\u00e3o cadastrada para o C\u00f3digo [11495303005] !"));
+  assert(!isOmieNotFoundFault("ERROR: API bloqueada por consumo indevido."));
 });
