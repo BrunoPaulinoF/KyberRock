@@ -1,6 +1,9 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 
+import { shouldOpenOnGesture } from "./search-picker-echo";
+import type { PickerGesture } from "./search-picker-echo";
+
 /** Uma linha da lista. `sublabel` e o dado de apoio que separa homonimos (CNPJ, cidade). */
 export interface SearchPickerOption {
   id: string;
@@ -101,6 +104,10 @@ export function SearchPicker({
   const [highlighted, setHighlighted] = useState(0);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  // Ligado enquanto o ciclo de eventos da escolha nao terminou — ver
+  // `search-picker-echo`.
+  const justPickedRef = useRef(false);
+  const echoTimerRef = useRef<number | null>(null);
   const listId = useId();
 
   const rows = leadingOption ? [leadingOption, ...options] : options;
@@ -133,7 +140,30 @@ export function SearchPicker({
     row?.scrollIntoView({ block: "nearest" });
   }, [highlighted, open]);
 
+  // O `setTimeout` da trava do eco pode ficar pendente se o campo sair da tela
+  // junto com a escolha (o "+" que abre o cadastro, por exemplo).
+  useEffect(() => {
+    return () => {
+      if (echoTimerRef.current !== null) window.clearTimeout(echoTimerRef.current);
+    };
+  }, []);
+
+  /** Abre a lista quando o gesto e do operador, e nao o eco da escolha. */
+  function openFor(gesture: PickerGesture): void {
+    if (!shouldOpenOnGesture(gesture, justPickedRef.current)) return;
+    setOpen(true);
+  }
+
   function pick(option: SearchPickerOption): void {
+    // O foco e o clique que o `<label>` devolve chegam ainda neste ciclo de
+    // eventos; a trava cai no proximo, sem atrapalhar o clique seguinte.
+    justPickedRef.current = true;
+    if (echoTimerRef.current !== null) window.clearTimeout(echoTimerRef.current);
+    echoTimerRef.current = window.setTimeout(() => {
+      justPickedRef.current = false;
+      echoTimerRef.current = null;
+    }, 0);
+
     onChange(option.id);
     setOpen(false);
     onSearchChange("");
@@ -143,7 +173,7 @@ export function SearchPicker({
     if (event.key === "ArrowDown") {
       event.preventDefault();
       if (!open) {
-        setOpen(true);
+        openFor("arrow-down");
         return;
       }
       setHighlighted((index) => Math.min(Math.max(0, rows.length - 1), index + 1));
@@ -186,10 +216,14 @@ export function SearchPicker({
         disabled={disabled}
         autoFocus={autoFocus}
         onChange={(event) => {
-          if (!open) setOpen(true);
+          if (!open) openFor("type");
           onSearchChange(event.target.value);
         }}
-        onFocus={() => setOpen(true)}
+        onFocus={() => openFor("focus")}
+        // O campo continua com o foco depois de uma escolha (o `<label>` o
+        // devolve), entao so o `onFocus` deixaria o seletor mudo no clique
+        // seguinte — quem ja esta focado nao recebe foco de novo.
+        onClick={() => openFor("click")}
         onKeyDown={handleKeyDown}
         style={{
           ...inputStyle,

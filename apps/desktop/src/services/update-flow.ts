@@ -89,3 +89,34 @@ export function getManualUpdateButtonLabel(status: UpdateStatus, hasChoice = fal
 
   return "Verificar atualizacao";
 }
+
+/**
+ * O clique em "Atualizar agora" nao pode virar uma VERIFICACAO.
+ *
+ * O aviso de versao nova so aparece porque o processo principal ja anunciou uma
+ * versao — e cada verificacao reanuncia a mesma versao para a tela. Enquanto o
+ * botao caia na verificacao (o estado da tela chega pelo ciclo de refresh, e
+ * dentro dele "baixando" nao contava como versao em maos), o aviso fechava no
+ * clique e reabria segundos depois, em loop, ate o operador clicar em "Mais
+ * tarde". Estes tres estados sao os que o processo principal aceita instalar.
+ */
+export function isUpdateInstallable(status: UpdateStatus): boolean {
+  return status === "available" || status === "downloading" || status === "downloaded";
+}
+
+/** Verificando ou baixando: o botao so conta o que esta acontecendo, nao age. */
+export function isUpdateActionBusy(status: UpdateStatus): boolean {
+  return status === "checking" || status === "downloading";
+}
+
+/**
+ * Se o aviso de versao nova deve subir para esta versao anunciada.
+ *
+ * O processo principal reanuncia a versao a CADA verificacao — inclusive nas do
+ * ciclo automatico. Uma versao que o operador ja respondeu ("Atualizar agora"
+ * ou "Mais tarde") nao volta a interromper a pesagem; uma versao diferente,
+ * sim.
+ */
+export function shouldAnnounceUpdate(version: string, answeredVersion: string | null): boolean {
+  return version.length > 0 && version !== answeredVersion;
+}
