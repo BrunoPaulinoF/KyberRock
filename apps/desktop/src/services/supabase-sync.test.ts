@@ -3086,7 +3086,7 @@ describe("supabase sync", () => {
     }
   });
 
-  it("explica na operacao o pedido que sumiu do OMIE sem dar por faturado", async () => {
+  it("para de perguntar pelo pedido que sumiu do OMIE, sem dar por faturado", async () => {
     const database = createDatabase();
 
     try {
@@ -3121,9 +3121,64 @@ describe("supabase sync", () => {
           "SELECT omie_billing_status, omie_billing_message FROM weighing_operations WHERE id = 'op-sumida'"
         )
         .get() as Record<string, string | null>;
-      // A pesagem REALMENTE nao foi faturada, e agora nem pedido tem: continua pendente.
-      expect(row.omie_billing_status).toBeNull();
+      // A pesagem REALMENTE nao foi faturada, e agora nem pedido tem — mas o "nao existe"
+      // do OMIE e definitivo (ele nao reaproveita o codigo interno de um registro
+      // excluido), entao a conferencia guarda o fato em vez de so escrever a frase.
+      expect(row.omie_billing_status).toBe("missing_in_omie");
       expect(row.omie_billing_message).toBe("Pedido 555 nao existe mais no OMIE.");
+
+      // E a passada seguinte nao pergunta de novo. Sem isto, o rodizio (que ordena por
+      // `omie_billing_checked_at ASC`) devolvia a mesma pesagem para a frente da fila a
+      // cada passada: 24 documentos excluidos renderam 3.133 consultas recusadas em 24h,
+      // e foi esse volume que fez o OMIE bloquear a integracao por consumo indevido.
+      invokeMock.mockClear();
+      const again = await reconcileOmieBillingFromOmie(database, identity, { force: true });
+
+      expect(invokeMock).not.toHaveBeenCalled();
+      expect(again).toMatchObject({ checked: 0, billed: 0 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("volta a conferir a pesagem cujo documento sumiu depois de um documento novo", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-refeita", salesOrderId: 555 });
+      // Estado deixado pela conferencia anterior: o documento tinha sumido do OMIE.
+      database
+        .prepare(
+          `UPDATE weighing_operations
+              SET omie_billing_status = 'missing_in_omie',
+                  omie_billing_message = 'Pedido 555 nao existe mais no OMIE.'
+            WHERE id = 'op-refeita'`
+        )
+        .run();
+
+      // Reenviar o fechamento cria um documento NOVO no OMIE, e a criacao limpa o
+      // marcador — senao a pesagem ficaria fora da conferencia para sempre.
+      database
+        .prepare(
+          `UPDATE weighing_operations
+             SET omie_billing_status = NULL, omie_billing_message = NULL
+           WHERE id = ?
+             AND omie_billing_status IN ('failed', 'cadastro_incompleto', 'service_order_failed',
+                                         'missing_in_omie')`
+        )
+        .run("op-refeita");
+
+      invokeMock.mockResolvedValueOnce({ error: null, data: { ok: true, results: [] } });
+      await reconcileOmieBillingFromOmie(database, identity);
+
+      expect(invokeMock).toHaveBeenCalledWith(
+        "omie-sync",
+        expect.objectContaining({
+          body: expect.objectContaining({ action: "check_order_billing" })
+        })
+      );
     } finally {
       database.close();
     }
