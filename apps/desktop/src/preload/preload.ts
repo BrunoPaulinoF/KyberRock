@@ -345,6 +345,18 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:unlink-customer-carrier", customerId, carrierId),
   listCarriersByCustomer: (customerId: string) =>
     ipcRenderer.invoke("desktop:list-carriers-by-customer", customerId),
+  customerTransportGet: (customerId: string) =>
+    ipcRenderer.invoke("desktop:customer-transport-get", customerId),
+  customerTransportSetFreight: (customerId: string, modality: string | null) =>
+    ipcRenderer.invoke("desktop:customer-transport-set-freight", customerId, modality),
+  customerTransportSetOwnCarrier: (customerId: string, enabled: boolean) =>
+    ipcRenderer.invoke("desktop:customer-transport-own-carrier", customerId, enabled),
+  customerTransportAddPlate: (customerId: string, plate: string) =>
+    ipcRenderer.invoke("desktop:customer-transport-add-plate", customerId, plate),
+  customerTransportRemovePlate: (customerId: string, vehicleId: string) =>
+    ipcRenderer.invoke("desktop:customer-transport-remove-plate", customerId, vehicleId),
+  listVehiclesByCustomer: (customerId: string) =>
+    ipcRenderer.invoke("desktop:list-vehicles-by-customer", customerId),
   listCustomersByCarrier: (carrierId: string) =>
     ipcRenderer.invoke("desktop:list-customers-by-carrier", carrierId),
   linkDriverCarrier: (driverId: string, carrierId: string) =>

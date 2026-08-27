@@ -297,6 +297,33 @@ nunca está ali.
   `connected_at` e o desktop apaga o registro local). Gerar um novo revoga os anteriores da mesma
   pedreira — dois links vivos são duas janelas de pareamento abertas.
 
+## Aba Transporte do cliente
+
+O que se repete em toda entrada daquele cliente fica no cadastro dele:
+`customer-transport.ts` (servico) e a aba **Transporte** da ficha do cliente.
+
+- **Placas do cliente** (`customer_vehicles`, migracao local 56 e
+  `202608270002_customer_transport.sql`): o campo Placa da nova entrada abre com elas
+  (`filterIds` do `CacheSelect`) e volta a procurar em TODAS assim que o operador digita
+  (`relaxFilterOnSearch`). O filtro e atalho, nunca trava: caminhao emprestado e frete
+  contratado na hora sao a rotina, e uma lista curta com o caminhao em cima da balanca
+  pararia a operacao. Cliente sem placa cadastrada nao filtra nada (lista vazia vira
+  `undefined`).
+- **Transporte proprio**: usa a transportadora com o NOME e o CNPJ/CPF do proprio cliente,
+  criando-a se nao existir, e a promove a padrao dele. A busca e por DOCUMENTO — o mesmo
+  criterio do OMIE (find-or-create por CNPJ/CPF) —, senao duas linhas aqui virariam o mesmo
+  cadastro la. Cliente sem documento cai na busca por nome.
+- **Tipo de frete padrao** (`customers.default_freight_modality`): PREENCHE a nova entrada
+  quando o cliente e escolhido (`customerFreightModalityPatch`), junto com `chargeFreight` e
+  `freightShowOnReceipt` — sao a mesma escolha vista de outro angulo. Nao e trava: o
+  operador troca na tela, e o preenchimento por (cliente, produto) que ja existia — a
+  memoria da ultima venda — continua tendo a ultima palavra quando ha valor de frete de
+  verdade. Nao mexa naquele efeito para "fazer o padrao vencer": ele e o que impede o
+  preenchimento automatico de desfazer o "sem frete" escolhido a mao.
+- A lista de transportadoras da aba virou busca (`OptionSearchPicker`) em vez do checkbox
+  sobre o cadastro inteiro. `linkedCarrierIds` continua alimentando o seletor de
+  transportadora padrao da aba Comercial — nao o remova junto.
+
 ## Balanca principal de precos
 
 Uma balanca por pedreira e a **dona do cadastro de preco**; as demais espelham o que ela publica.

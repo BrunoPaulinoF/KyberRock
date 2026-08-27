@@ -125,6 +125,20 @@ export function getCustomerDefaultCarrierId(
   return row?.default_carrier_id ?? null;
 }
 
+/**
+ * Fixa a transportadora padrao do cliente por escolha EXPLICITA (a "transportadora
+ * propria" da aba Transporte). Diferente de `promoteDefaultCarrier`, que so entra quando
+ * ainda nao ha padrao de verdade: aqui alguem decidiu, e a decisao vale.
+ */
+export function setCustomerDefaultCarrier(
+  database: DesktopDatabase,
+  customerId: string,
+  carrierId: string | null,
+  now: Date = new Date()
+): void {
+  setDefaultCarrier(database, customerId, carrierId, now.toISOString());
+}
+
 function setDefaultCarrier(
   database: DesktopDatabase,
   customerId: string,

@@ -27,6 +27,8 @@ import type {
 } from "../services/supabase-sync";
 import type { PriceDetails } from "../services/pricing";
 import type { PriceAuthority as PriceAuthorityView } from "../services/price-authority";
+import type { CustomerTransport as CustomerTransportView } from "../services/customer-transport";
+import type { CustomerVehicleSummary } from "../services/customer-vehicles";
 import type {
   CustomerSpecialPriceSummary,
   ProductDefaultPriceSummary
@@ -643,6 +645,20 @@ export interface KyberRockDesktopApi {
   listCarriersByCustomer: (
     customerId: string
   ) => Promise<Array<{ id: string; name: string; document: string | null }>>;
+  /** Aba Transporte do cadastro do cliente: frete padrao, transporte proprio e placas. */
+  customerTransportGet: (customerId: string) => Promise<CustomerTransportView>;
+  customerTransportSetFreight: (
+    customerId: string,
+    modality: string | null
+  ) => Promise<CustomerTransportView>;
+  customerTransportSetOwnCarrier: (
+    customerId: string,
+    enabled: boolean
+  ) => Promise<CustomerTransportView>;
+  customerTransportAddPlate: (customerId: string, plate: string) => Promise<CustomerVehicleSummary>;
+  customerTransportRemovePlate: (customerId: string, vehicleId: string) => Promise<void>;
+  /** Placas do cliente — o filtro do campo Placa da nova entrada. */
+  listVehiclesByCustomer: (customerId: string) => Promise<CustomerVehicleSummary[]>;
   listCustomersByCarrier: (
     carrierId: string
   ) => Promise<Array<{ id: string; trade_name: string; legal_name: string }>>;

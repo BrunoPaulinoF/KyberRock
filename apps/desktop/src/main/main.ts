@@ -1727,6 +1727,51 @@ function registerIpcHandlers(): void {
     return runtime.listCarriersByCustomer(customerId);
   });
 
+  // Aba Transporte do cadastro do cliente.
+  ipcMain.handle("desktop:customer-transport-get", (_event, customerId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getCustomerTransport(customerId);
+  });
+
+  ipcMain.handle(
+    "desktop:customer-transport-set-freight",
+    (_event, customerId: string, modality: string | null) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.setCustomerFreightModality(customerId, modality);
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:customer-transport-own-carrier",
+    (_event, customerId: string, enabled: boolean) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return enabled
+        ? runtime.useCustomerOwnCarrier(customerId)
+        : runtime.clearCustomerOwnCarrier(customerId);
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:customer-transport-add-plate",
+    (_event, customerId: string, plate: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.addCustomerPlate(customerId, plate);
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:customer-transport-remove-plate",
+    (_event, customerId: string, vehicleId: string) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      runtime.removeCustomerPlate(customerId, vehicleId);
+    }
+  );
+
+  ipcMain.handle("desktop:list-vehicles-by-customer", (_event, customerId: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listVehiclesByCustomer(customerId);
+  });
+
   ipcMain.handle("desktop:list-customers-by-carrier", (_event, carrierId: string) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.listCustomersByCarrier(carrierId);

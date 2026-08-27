@@ -8,11 +8,11 @@ import {
   normalizeDocument,
   normalizeEmailList,
   normalizePhone,
-  parseMoneyInputToCents,
-  rankByText
+  parseMoneyInputToCents
 } from "@kyberrock/shared";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
+import type { CustomerTransport as CustomerTransportView } from "../services/customer-transport";
 import { readAllCacheRows } from "./cache-rows";
 import { OptionSearchPicker } from "./OptionSearchPicker";
 import { useDebouncedValue } from "./use-debounced-value";
@@ -115,6 +115,16 @@ const initialForm: CustomerFormData = {
   city: "",
   state: ""
 };
+
+/** Linha "nome + remover" das listas da aba Transporte. */
+const transportRowStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: "8px",
+  borderTop: "1px solid var(--kr-border)",
+  paddingTop: "8px"
+} as const;
 
 const styles = {
   primaryButton: {
@@ -336,23 +346,6 @@ export function creditMovementSignedCents(movement: {
     : movement.amount_cents;
 }
 
-/**
- * Busca de transportadoras dentro da ficha do cliente: ignora acentos e caixa ("sao" acha
- * "São") e poe no topo quem mais se parece com o que foi digitado.
- *
- * A ordenacao importa aqui tanto quanto o filtro: a lista de transportadoras de uma
- * pedreira grande tem dezenas de nomes parecidos ("Transportes Alfa", "Alfa Transportes",
- * "Alfa Log"), e antes o desempate era a ordem do cadastro no banco.
- */
-export function filterCarriersBySearch<T extends { name: string }>(
-  carriers: T[],
-  search: string
-): T[] {
-  return rankByText(carriers, (carrier) => carrier.name, search, {
-    tieBreak: (a, b) => a.name.localeCompare(b.name, "pt-BR")
-  });
-}
-
 export interface CustomerFreightEntry {
   ruleId: string;
   /** Ausente na regra unica antiga, que vale para qualquer tipo de frete. */
@@ -440,7 +433,7 @@ const CUSTOMER_FORM_SECTIONS = [
   { key: "endereco", label: "Endereco" },
   { key: "comercial", label: "Comercial" },
   { key: "credito", label: "Credito" },
-  { key: "transportadoras", label: "Transportadoras" },
+  { key: "transporte", label: "Transporte" },
   { key: "frete", label: "Frete" },
   { key: "precos", label: "Precos" }
 ] as const;
@@ -558,9 +551,14 @@ export function CustomersView({
   const [pricePasswordError, setPricePasswordError] = useState<string | null>(null);
   const [savingSpecialPrice, setSavingSpecialPrice] = useState(false);
   const [linkedCarrierIds, setLinkedCarrierIds] = useState<string[]>([]);
-  // Busca da aba "Transportadoras": a lista cresce com o cadastro e rolar ate
-  // achar a transportadora certa ficava inviavel.
-  const [carrierSearch, setCarrierSearch] = useState("");
+  // Aba Transporte: frete padrao, transporte proprio e as placas do cliente.
+  const [transport, setTransport] = useState<CustomerTransportView | null>(null);
+  const [transportBusy, setTransportBusy] = useState(false);
+  const [plateInput, setPlateInput] = useState("");
+  /** Placas ja cadastradas que casam com o que esta sendo digitado (busca do cache). */
+  const [plateSuggestions, setPlateSuggestions] = useState<Array<{ id: string; plate: string }>>(
+    []
+  );
   const [creditSummary, setCreditSummary] = useState<CustomerCreditSummary | null>(null);
   const [creditMovements, setCreditMovements] = useState<CreditMovementRow[]>([]);
   const [creditBusy, setCreditBusy] = useState(false);
@@ -758,7 +756,9 @@ export function CustomersView({
     setSpecialProductId("");
     setSpecialPriceReais("");
     setLinkedCarrierIds([]);
-    setCarrierSearch("");
+    setTransport(null);
+    setPlateInput("");
+    setPlateSuggestions([]);
     setCreditSummary(null);
     setCreditMovements([]);
     setCustomerFreightRules([]);
@@ -849,7 +849,8 @@ export function CustomersView({
     // volta para a lista, nao para a visualizacao desatualizada.
     setViewingCustomer(null);
     setActiveFormSection("identificacao");
-    setCarrierSearch("");
+    setPlateInput("");
+    setPlateSuggestions([]);
     setEditingId(customer.id);
     setEditingSource(customer.source);
     setFormError(null);
@@ -860,6 +861,7 @@ export function CustomersView({
     void loadOptions();
     void loadSpecialPrices(customer.id);
     void loadLinkedCarriers(customer.id);
+    void loadTransport(customer.id);
     void loadCustomerCredit(customer.id);
     void loadCustomerFreightRules(customer.id);
     void loadFutureBillingInvoices(customer.id);
@@ -893,6 +895,107 @@ export function CustomersView({
       setLinkedCarrierIds(rows.map((r) => r.id));
     } catch {
       setLinkedCarrierIds([]);
+    }
+  }
+
+  async function loadTransport(customerId: string): Promise<void> {
+    if (!desktopApi?.customerTransportGet) {
+      setTransport(null);
+      return;
+    }
+    try {
+      setTransport(await desktopApi.customerTransportGet(customerId));
+    } catch {
+      setTransport(null);
+    }
+  }
+
+  /**
+   * Aplica uma mudanca da aba Transporte e reflete o resultado que o backend devolveu.
+   *
+   * A resposta e sempre o cadastro inteiro depois da mudanca (e nao o que a tela supos):
+   * vincular a transportadora propria, por exemplo, tambem promove ela a padrao do
+   * cliente, e a tela precisa mostrar isso sem uma segunda ida ao banco.
+   */
+  async function applyTransport(
+    run: () => Promise<CustomerTransportView>,
+    customerId: string
+  ): Promise<void> {
+    if (transportBusy) return;
+    setTransportBusy(true);
+    try {
+      const next = await run();
+      setTransport(next);
+      setLinkedCarrierIds(next.carriers.map((carrier: { id: string }) => carrier.id));
+      // O padrao pode ter mudado no backend: sem isto, salvar o cadastro em seguida
+      // regravaria a transportadora antiga por cima.
+      setForm((prev) => ({ ...prev, defaultCarrierId: next.defaultCarrierId ?? "" }));
+      setFormError(null);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erro ao atualizar o transporte.");
+      void loadTransport(customerId);
+    } finally {
+      setTransportBusy(false);
+    }
+  }
+
+  /**
+   * Placas ja cadastradas que casam com o que esta sendo digitado.
+   *
+   * Sai do mesmo cache do seletor da nova entrada, e nao de uma lista carregada inteira: a
+   * pedreira tem milhares de placas, e o que interessa aqui sao as poucas que o operador
+   * esta procurando. Falha de leitura simplesmente nao sugere nada — o campo continua
+   * aceitando a placa digitada.
+   */
+  async function loadPlateSuggestions(term: string): Promise<void> {
+    if (!desktopApi || term.trim().length < 2) {
+      setPlateSuggestions([]);
+      return;
+    }
+    try {
+      const result = await desktopApi.queryCache({
+        entityType: "vehicle",
+        search: term.trim(),
+        limit: 6
+      });
+      setPlateSuggestions(
+        (result.rows as Array<{ id?: unknown; plate?: unknown }>)
+          .map((row) => ({ id: String(row.id ?? ""), plate: String(row.plate ?? "") }))
+          .filter((row) => row.id && row.plate)
+      );
+    } catch {
+      setPlateSuggestions([]);
+    }
+  }
+
+  async function handleAddPlate(customerId: string): Promise<void> {
+    if (!desktopApi || transportBusy) return;
+    const plate = plateInput.trim();
+    if (!plate) return;
+    setTransportBusy(true);
+    try {
+      await desktopApi.customerTransportAddPlate(customerId, plate);
+      setPlateInput("");
+      setPlateSuggestions([]);
+      await loadTransport(customerId);
+      setFormError(null);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erro ao vincular a placa.");
+    } finally {
+      setTransportBusy(false);
+    }
+  }
+
+  async function handleRemovePlate(customerId: string, vehicleId: string): Promise<void> {
+    if (!desktopApi || transportBusy) return;
+    setTransportBusy(true);
+    try {
+      await desktopApi.customerTransportRemovePlate(customerId, vehicleId);
+      await loadTransport(customerId);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erro ao retirar a placa.");
+    } finally {
+      setTransportBusy(false);
     }
   }
 
@@ -1503,11 +1606,6 @@ export function CustomersView({
   }
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total]);
-
-  const visibleCarriers = useMemo(
-    () => filterCarriersBySearch(carriers, carrierSearch),
-    [carriers, carrierSearch]
-  );
 
   // Vinculadas primeiro no seletor de transportadora padrao: sao as que a Nova
   // entrada realmente oferece para este cliente.
@@ -2408,46 +2506,187 @@ export function CustomersView({
                 </section>
               ) : null}
 
-              {activeFormSection === "transportadoras" ? (
+              {activeFormSection === "transporte" ? (
                 <section style={styles.formSection}>
-                  <div style={{ display: "grid", gap: "8px" }}>
-                    <h4 style={styles.formSectionTitle}>Transportadoras vinculadas</h4>
+                  <div style={{ display: "grid", gap: "10px" }}>
+                    <h4 style={styles.formSectionTitle}>Transporte</h4>
                     {editingId ? (
                       <>
-                        <Field label="Pesquisar transportadora">
-                          <input
-                            type="text"
-                            value={carrierSearch}
-                            onChange={(e) => setCarrierSearch(e.target.value)}
-                            placeholder="Nome da transportadora"
+                        <Field
+                          label="Tipo de frete"
+                          hint="Preenche a nova entrada quando este cliente e escolhido. O operador ainda pode trocar na operacao."
+                        >
+                          <select
+                            value={transport?.defaultFreightModality ?? ""}
+                            disabled={transportBusy || !desktopApi}
+                            onChange={(event) => {
+                              const value = event.target.value || null;
+                              void applyTransport(
+                                () => desktopApi!.customerTransportSetFreight(editingId, value),
+                                editingId
+                              );
+                            }}
                             style={getInputStyle(false)}
-                          />
+                          >
+                            <option value="">Sem padrao (escolher na entrada)</option>
+                            <optgroup label="Com frete">
+                              {FREIGHT_MODALITIES.filter(
+                                (modality) => modality.group === "with_freight"
+                              ).map((modality) => (
+                                <option key={modality.key} value={modality.key}>
+                                  {modality.label}
+                                </option>
+                              ))}
+                            </optgroup>
+                            <optgroup label="Sem frete">
+                              {FREIGHT_MODALITIES.filter(
+                                (modality) => modality.group === "without_freight"
+                              ).map((modality) => (
+                                <option key={modality.key} value={modality.key}>
+                                  {modality.label}
+                                </option>
+                              ))}
+                            </optgroup>
+                          </select>
                         </Field>
-                        <div style={styles.compactScrollList}>
-                          {carriers.length === 0 ? (
-                            <p style={styles.cellMuted}>Nenhuma transportadora cadastrada.</p>
-                          ) : visibleCarriers.length === 0 ? (
+
+                        <label style={styles.checkbox}>
+                          <input
+                            type="checkbox"
+                            checked={transport?.isOwnTransport ?? false}
+                            disabled={transportBusy || !desktopApi}
+                            onChange={(event) => {
+                              const enabled = event.target.checked;
+                              void applyTransport(
+                                () =>
+                                  desktopApi!.customerTransportSetOwnCarrier(editingId, enabled),
+                                editingId
+                              );
+                            }}
+                          />
+                          Transporte proprio (o cliente carrega no proprio caminhao)
+                        </label>
+                        <p style={styles.cellMuted}>
+                          Usa a transportadora com o nome e o CNPJ/CPF deste cliente. Se ela ainda
+                          nao existir, e criada e passa a ser a transportadora padrao dele.
+                        </p>
+
+                        <div style={{ display: "grid", gap: "6px" }}>
+                          <Field label="Transportadoras">
+                            <OptionSearchPicker
+                              options={carriers
+                                .filter((carrier) => !linkedCarrierIds.includes(carrier.id))
+                                .map((carrier) => ({ id: carrier.id, label: carrier.name }))}
+                              value=""
+                              onChange={(id) => {
+                                if (!id) return;
+                                void handleToggleCarrier(id);
+                              }}
+                              placeholder="Buscar transportadora para vincular..."
+                              inputStyle={getInputStyle(false)}
+                            />
+                          </Field>
+                          {linkedCarrierIds.length === 0 ? (
+                            <p style={styles.cellMuted}>Nenhuma transportadora vinculada.</p>
+                          ) : (
+                            (transport?.carriers ?? []).map((carrier) => (
+                              <div key={carrier.id} style={transportRowStyle}>
+                                <span style={styles.cellMuted}>
+                                  <strong>{carrier.name}</strong>
+                                  {carrier.id === transport?.defaultCarrierId ? " (padrao)" : ""}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleToggleCarrier(carrier.id)}
+                                  style={styles.dangerButton}
+                                >
+                                  Remover
+                                </button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        <div style={{ display: "grid", gap: "6px" }}>
+                          <Field
+                            label="Placas deste cliente"
+                            hint="A nova entrada abre o campo Placa ja com estas. Digitando, ela volta a mostrar todas."
+                          >
+                            <div style={{ display: "flex", gap: "6px" }}>
+                              <input
+                                type="text"
+                                value={plateInput}
+                                onChange={(event) => {
+                                  const value = event.target.value.toUpperCase();
+                                  setPlateInput(value);
+                                  void loadPlateSuggestions(value);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key !== "Enter") return;
+                                  // Enter num formulario submeteria o cadastro inteiro.
+                                  event.preventDefault();
+                                  void handleAddPlate(editingId);
+                                }}
+                                placeholder="ABC1D23"
+                                style={{ ...getInputStyle(false), flex: 1 }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => void handleAddPlate(editingId)}
+                                disabled={transportBusy || !plateInput.trim()}
+                                style={{
+                                  ...styles.secondaryButton,
+                                  opacity: transportBusy || !plateInput.trim() ? 0.5 : 1
+                                }}
+                              >
+                                Adicionar
+                              </button>
+                            </div>
+                          </Field>
+                          {plateSuggestions.length > 0 ? (
+                            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                              {plateSuggestions.map((suggestion) => (
+                                <button
+                                  key={suggestion.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setPlateInput(suggestion.plate);
+                                    setPlateSuggestions([]);
+                                  }}
+                                  style={styles.secondaryButton}
+                                >
+                                  {suggestion.plate}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                          {(transport?.plates.length ?? 0) === 0 ? (
                             <p style={styles.cellMuted}>
-                              Nenhuma transportadora encontrada para &quot;{carrierSearch.trim()}
-                              &quot;.
+                              Nenhuma placa vinculada &mdash; a nova entrada segue oferecendo todas
+                              as placas da pedreira.
                             </p>
                           ) : (
-                            visibleCarriers.map((carrier) => (
-                              <label key={carrier.id} style={styles.checkbox}>
-                                <input
-                                  type="checkbox"
-                                  checked={linkedCarrierIds.includes(carrier.id)}
-                                  onChange={() => void handleToggleCarrier(carrier.id)}
-                                />
-                                {carrier.name}
-                              </label>
+                            (transport?.plates ?? []).map((plate) => (
+                              <div key={plate.id} style={transportRowStyle}>
+                                <span style={styles.cellMuted}>
+                                  <strong>{plate.plate}</strong>
+                                  {plate.description ? ` - ${plate.description}` : ""}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleRemovePlate(editingId, plate.id)}
+                                  style={styles.dangerButton}
+                                >
+                                  Remover
+                                </button>
+                              </div>
                             ))
                           )}
                         </div>
                       </>
                     ) : (
                       <p style={styles.cellMuted}>
-                        Salve o cliente antes de vincular transportadoras.
+                        Salve o cliente antes de cadastrar o transporte dele.
                       </p>
                     )}
                   </div>

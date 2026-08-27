@@ -147,6 +147,7 @@ interface DesktopPullResponse {
   drivers?: Array<Record<string, unknown>>;
   vehicles?: Array<Record<string, unknown>>;
   customerCarriers?: Array<Record<string, unknown>>;
+  customerVehicles?: Array<Record<string, unknown>>;
   driverCarriers?: Array<Record<string, unknown>>;
   vehicleCarriers?: Array<Record<string, unknown>>;
   productDefaultPrices?: Array<Record<string, unknown>>;
@@ -868,6 +869,11 @@ function upsertCloudCadastro(
           "customer_id",
           payload.customerCarriers ?? []
         )
+    ],
+    [
+      // Placas do cliente (aba Transporte). Depois de `vehicles`, que ela referencia.
+      "customer_vehicles",
+      () => upsertCloudCustomerVehicles(database, payload.customerVehicles ?? [])
     ],
     [
       "driver_carriers",
@@ -1770,6 +1776,62 @@ function upsertCloudJunction(
   return count;
 }
 
+/**
+ * Placas do cliente. Junta cliente e veiculo, e por isso nao cabe em `upsertCloudJunction`,
+ * que amarra sempre em `carrier_id`.
+ *
+ * O indice unico local e por (cliente, placa) entre os nao excluidos: o mesmo par vindo com
+ * outro id (as duas balancas vincularam a mesma placa antes do primeiro sync) mantem a
+ * linha local e ignora a copia — gravar as duas derrubaria o pull inteiro. Vinculo nao tem
+ * valor a disputar, entao qual das duas fica e indiferente.
+ */
+function upsertCloudCustomerVehicles(
+  database: DesktopDatabase,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO customer_vehicles (
+      id, customer_id, vehicle_id, is_active, created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      customer_id = excluded.customer_id,
+      vehicle_id = excluded.vehicle_id,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = excluded.deleted_at
+  `);
+  const findConflict = database.prepare(
+    `SELECT id FROM customer_vehicles
+     WHERE customer_id = ? AND vehicle_id = ? AND deleted_at IS NULL LIMIT 1`
+  );
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    // Ponta que ainda nao existe localmente: o proximo pull, ja com o cadastro pai, grava.
+    const customerId = existingId(database, "customers", row.customer_id);
+    const vehicleId = existingId(database, "vehicles", row.vehicle_id);
+    if (!id || !customerId || !vehicleId) continue;
+    const deletedAt = isoStringValue(row.deleted_at);
+    if (!deletedAt) {
+      const conflict = findConflict.get(customerId, vehicleId) as { id: string } | undefined;
+      if (conflict && conflict.id !== id) continue;
+    }
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      customerId,
+      vehicleId,
+      booleanToSql(row.is_active, true),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt,
+      deletedAt
+    );
+    count++;
+  }
+  return count;
+}
+
 function upsertCloudProductDefaultPrices(
   database: DesktopDatabase,
   companyId: string,
@@ -2071,9 +2133,9 @@ function upsertCloudCustomers(
   const upsert = database.prepare(`
     INSERT INTO customers (
       id, company_id, omie_customer_id, source, legal_name, trade_name, document, phone, email,
-      credit_limit_cents, open_receivables_cents, sync_status, is_active, created_at, updated_at,
-      deleted_at, last_synced_at, needs_push
-    ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, NULL, ?, 0)
+      credit_limit_cents, open_receivables_cents, default_freight_modality, sync_status, is_active,
+      created_at, updated_at, deleted_at, last_synced_at, needs_push
+    ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, NULL, ?, 0)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       -- Nunca apagar o codigo do OMIE que ja temos: sem ele o proximo push tenta um
@@ -2093,6 +2155,9 @@ function upsertCloudCustomers(
       credit_limit_cents = CASE WHEN customers.needs_push = 0 THEN excluded.credit_limit_cents ELSE customers.credit_limit_cents END,
       -- Saldo em aberto e projecao da nuvem (nunca editado aqui): sempre o valor de la.
       open_receivables_cents = excluded.open_receivables_cents,
+      -- Tipo de frete padrao da aba Transporte. Segue a mesma guarda dos demais campos do
+      -- cadastro: edicao local ainda nao enviada ao OMIE nunca e sobrescrita pela nuvem.
+      default_freight_modality = CASE WHEN customers.needs_push = 0 THEN excluded.default_freight_modality ELSE customers.default_freight_modality END,
       sync_status = CASE WHEN customers.needs_push = 0 THEN 'synced' ELSE customers.sync_status END,
       is_active = CASE WHEN customers.needs_push = 0 THEN excluded.is_active ELSE customers.is_active END,
       updated_at = CASE WHEN customers.needs_push = 0 THEN excluded.updated_at ELSE customers.updated_at END,
@@ -2131,6 +2196,7 @@ function upsertCloudCustomers(
       nullableStringValue(row.email),
       integerValue(row.credit_limit_cents),
       integerValue(row.open_receivables_cents) ?? 0,
+      nullableStringValue(row.default_freight_modality),
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
       updatedAt,
@@ -6787,7 +6853,7 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
       table: "customers",
       alias: "c",
       columns:
-        "c.id, c.omie_customer_id, c.legal_name, c.trade_name, c.document, c.phone, c.email, c.credit_limit_cents, c.open_receivables_cents, c.is_active, c.created_at, c.updated_at, c.deleted_at",
+        "c.id, c.omie_customer_id, c.legal_name, c.trade_name, c.document, c.phone, c.email, c.credit_limit_cents, c.open_receivables_cents, c.default_freight_modality, c.is_active, c.created_at, c.updated_at, c.deleted_at",
       where: "c.company_id = @companyId"
     }),
     map: (row, companyId) => {
@@ -6804,6 +6870,10 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         email: nullableStringValue(row.email),
         credit_limit_cents: integerValue(row.credit_limit_cents),
         open_receivables_cents: integerValue(row.open_receivables_cents) ?? 0,
+        // Tipo de frete padrao da aba Transporte. Coluna nova na nuvem: enquanto a
+        // migracao nao for aplicada o `desktop-sync` a descarta do payload e regrava o
+        // resto (ver `_shared/unknown-column.ts`), entao o cadastro nao para por causa dela.
+        default_freight_modality: nullableStringValue(row.default_freight_modality),
         is_active: cloudActive(row),
         created_at: cloudTimestamp(row.created_at, updatedAt),
         updated_at: updatedAt
@@ -6930,6 +7000,31 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         is_active: cloudActive(row),
         created_at: cloudTimestamp(row.created_at, updatedAt),
         updated_at: updatedAt
+      };
+    }
+  },
+  {
+    key: "customerVehicles",
+    label: "placas do cliente",
+    sql: buildCadastroSelect({
+      table: "customer_vehicles",
+      alias: "cv",
+      columns:
+        "cv.id, cv.customer_id, cv.vehicle_id, cv.is_active, cv.created_at, cv.updated_at, cv.deleted_at",
+      joins: "JOIN customers cvc ON cvc.id = cv.customer_id",
+      where: "cvc.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        customer_id: stringValue(row.customer_id),
+        vehicle_id: stringValue(row.vehicle_id),
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt,
+        deleted_at: row.deleted_at ? cloudTimestamp(row.deleted_at, updatedAt) : null
       };
     }
   },

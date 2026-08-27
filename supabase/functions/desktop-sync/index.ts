@@ -28,6 +28,7 @@ type CloudPayload = {
   drivers?: Record<string, unknown>[];
   vehicles?: Record<string, unknown>[];
   customerCarriers?: Record<string, unknown>[];
+  customerVehicles?: Record<string, unknown>[];
   driverCarriers?: Record<string, unknown>[];
   vehicleCarriers?: Record<string, unknown>[];
   productDefaultPrices?: Record<string, unknown>[];
@@ -54,6 +55,8 @@ const CADASTRO_TABLES = [
   { key: "drivers", table: "drivers" },
   { key: "vehicles", table: "vehicles" },
   { key: "customerCarriers", table: "customer_carriers" },
+  // Placas do cliente: depois de vehicles, que ela referencia.
+  { key: "customerVehicles", table: "customer_vehicles" },
   { key: "driverCarriers", table: "driver_carriers" },
   { key: "vehicleCarriers", table: "vehicle_carriers" },
   { key: "productDefaultPrices", table: "product_default_prices" },

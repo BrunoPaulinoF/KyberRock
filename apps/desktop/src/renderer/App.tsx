@@ -100,6 +100,7 @@ import {
   freightCarrierGoesToInvoice,
   freightValueGoesToInvoice,
   getFreightModalityInfo,
+  isFreightModality,
   isFreightModalityWithFreight,
   normalizeFreightModality,
   resolveFreightModality,
@@ -5974,6 +5975,27 @@ export function carrierSelectorFilterIds(
  * placa". Escolher uma placa ainda sem vinculo com a transportadora da entrada cria o
  * vinculo aqui, entao a lista vai aprendendo quem roda para quem sem nunca barrar.
  */
+/**
+ * O trecho do formulario que o tipo de frete padrao do cliente preenche.
+ *
+ * Devolve vazio quando o cadastro nao tem padrao (ou traz um valor que a tela nao sabe
+ * desenhar): ai o campo fica como estava, que e o comportamento de sempre. `chargeFreight`
+ * e `freightShowOnReceipt` acompanham a modalidade — sao a mesma escolha vista de outro
+ * angulo, e deixa-los fora produziria uma entrada "sem frete" com a caixa de cobrar frete
+ * marcada.
+ */
+export function customerFreightModalityPatch(
+  item?: Record<string, unknown>
+): Partial<Pick<WeighingFormState, "freightModality" | "chargeFreight" | "freightShowOnReceipt">> {
+  const modality = item?.defaultFreightModality;
+  if (!isFreightModality(modality)) return {};
+  return {
+    freightModality: modality,
+    chargeFreight: isFreightModalityWithFreight(modality),
+    freightShowOnReceipt: freightValueGoesToInvoice(modality)
+  };
+}
+
 export function carrierToLinkForPickedVehicle(
   form: Pick<WeighingFormState, "carrierId" | "freightModality">,
   vehicleId: string,
@@ -6073,7 +6095,8 @@ function CacheSelect({
   disabled = false,
   refreshKey = 0,
   productFiscalType,
-  filterIds
+  filterIds,
+  relaxFilterOnSearch = false
 }: {
   label: string;
   entityType: CacheEntityType;
@@ -6089,6 +6112,15 @@ function CacheSelect({
   refreshKey?: number;
   productFiscalType?: "finished_goods";
   filterIds?: string[];
+  /**
+   * Solta o filtro assim que o operador DIGITA.
+   *
+   * As placas do cliente sao um atalho, nao uma regra: caminhao emprestado, frete
+   * contratado na hora e placa que ninguem cadastrou ainda sao a rotina da pedreira. Com o
+   * campo em repouso ele mostra as placas do cliente; escrevendo, volta a procurar em
+   * todas — senao a lista curta viraria uma trava com o caminhao em cima da balanca.
+   */
+  relaxFilterOnSearch?: boolean;
 }) {
   const [search, setSearch] = useState("");
   const [options, setOptions] = useState<CacheSelectOption[]>([]);
@@ -6148,7 +6180,7 @@ function CacheSelect({
           productFiscalType,
           // O vinculo (ex.: transportadoras do cliente) e aplicado no cache, ANTES do
           // corte: aplicado depois, um vinculado no fim da lista sumia sem aviso.
-          ids: filterIds
+          ids: relaxFilterOnSearch && term ? undefined : filterIds
         });
         if (cancelled) return;
         setOptions(createCacheSelectOptions(result.rows as Array<Record<string, unknown>>));
@@ -6166,7 +6198,15 @@ function CacheSelect({
     return () => {
       cancelled = true;
     };
-  }, [desktopApi, entityType, productFiscalType, debouncedSearch, refreshKey, filterIds]);
+  }, [
+    desktopApi,
+    entityType,
+    productFiscalType,
+    debouncedSearch,
+    refreshKey,
+    filterIds,
+    relaxFilterOnSearch
+  ]);
 
   /** Numero de parcelas na condicao de pagamento — o dado que separa "30" de "30/60/90". */
   function optionBadge(option: CacheSelectOption): string | null {
@@ -6383,6 +6423,11 @@ function WeighingForm({
   const [carrierRefreshKey, setCarrierRefreshKey] = useState(0);
   const [availableCarrierIds, setAvailableCarrierIds] = useState<string[] | undefined>(undefined);
   const [availableVehicleIds, setAvailableVehicleIds] = useState<string[] | undefined>(undefined);
+  /**
+   * Placas cadastradas para o cliente escolhido (aba Transporte). `undefined` = sem
+   * filtro: cliente sem placa cadastrada continua vendo todas, como sempre viu.
+   */
+  const [customerVehicleIds, setCustomerVehicleIds] = useState<string[] | undefined>(undefined);
   const [availableDriverIds, setAvailableDriverIds] = useState<string[] | undefined>(undefined);
   const [isWalletMethod, setIsWalletMethod] = useState(false);
   // Adiantamento do cliente ainda livre para abater uma compra (centavos). null = ainda
@@ -6493,6 +6538,30 @@ function WeighingForm({
     // carrierRefreshKey: recarrega os vinculos apos criar/vincular transportadora
     // pelo modal rapido, senao a lista filtrada esconderia a recem-criada.
   }, [desktopApi, form.customerId, carrierRefreshKey]);
+
+  // Placas do cliente: o campo Placa abre com elas e volta a mostrar todas ao digitar.
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (!desktopApi?.listVehiclesByCustomer || !form.customerId) {
+        setCustomerVehicleIds(undefined);
+        return;
+      }
+      try {
+        const plates = await desktopApi.listVehiclesByCustomer(form.customerId);
+        if (cancelled) return;
+        // Lista vazia vira "sem filtro": filtrar por nada esconderia todas as placas do
+        // cliente que ainda nao teve o transporte cadastrado.
+        setCustomerVehicleIds(plates.length > 0 ? plates.map((plate) => plate.id) : undefined);
+      } catch {
+        if (!cancelled) setCustomerVehicleIds(undefined);
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopApi, form.customerId, vehicleRefreshKey]);
 
   useEffect(() => {
     async function load() {
@@ -7102,7 +7171,12 @@ function WeighingForm({
                     : prev.paymentMethodId,
                 // A condicao padrao chega como texto (async abaixo); limpa a anterior.
                 paymentTermId: "",
-                customConditionText: ""
+                customConditionText: "",
+                // Tipo de frete padrao do cadastro (aba Transporte). E so o preenchimento
+                // inicial: o operador troca na tela, e a memoria da ultima venda deste
+                // cliente com este produto continua tendo a ultima palavra quando existe —
+                // um valor de frete de verdade vale mais que um padrao generico.
+                ...customerFreightModalityPatch(item)
               }));
               // O que vale e o que foi feito da ULTIMA vez para este cliente: a pedreira
               // repete o mesmo arranjo (mesma transportadora, mesma condicao, mesma forma
@@ -7402,10 +7476,13 @@ function WeighingForm({
               label="Placa"
               entityType="vehicle"
               value={form.vehicleId}
+              filterIds={customerVehicleIds}
+              relaxFilterOnSearch
               onChange={(id) => {
                 setForm((prev) => ({ ...prev, vehicleId: id }));
-                // Qualquer placa serve para qualquer operacao: a lista nao e filtrada e o
-                // vinculo com a transportadora da entrada nasce da propria escolha.
+                // O filtro por cliente e so um atalho ao abrir a lista: qualquer placa
+                // continua servindo para qualquer operacao, e o vinculo com a
+                // transportadora da entrada nasce da propria escolha.
                 const carrierId = carrierToLinkForPickedVehicle(form, id, availableVehicleIds);
                 if (!carrierId || !desktopApi) return;
                 void desktopApi

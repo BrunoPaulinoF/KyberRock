@@ -13,6 +13,7 @@ import {
   buildFreightInput,
   carrierSelectorFilterIds,
   carrierToLinkForPickedVehicle,
+  customerFreightModalityPatch,
   createCacheSelectOptions,
   formatElapsedSince,
   getDriverFilterIds,
@@ -252,6 +253,33 @@ describe("App", () => {
     ).toBeNull();
     // Placa limpa: nada a vincular.
     expect(carrierToLinkForPickedVehicle(form, "", undefined)).toBeNull();
+  });
+
+  /**
+   * Tipo de frete padrao do cadastro (aba Transporte do cliente). E preenchimento inicial,
+   * nao trava: o operador troca na tela, e a memoria da ultima venda deste cliente com
+   * este produto continua tendo a ultima palavra quando existe.
+   */
+  it("preenche o tipo de frete com o padrao do cadastro do cliente", () => {
+    expect(customerFreightModalityPatch({ defaultFreightModality: "fob" })).toEqual({
+      freightModality: "fob",
+      chargeFreight: true,
+      freightShowOnReceipt: true
+    });
+    // Sem frete: a caixa de cobrar frete acompanha, senao a entrada nasceria contraditoria.
+    expect(customerFreightModalityPatch({ defaultFreightModality: "none" })).toEqual({
+      freightModality: "none",
+      chargeFreight: false,
+      freightShowOnReceipt: false
+    });
+  });
+
+  it("cliente sem padrao de frete nao mexe no que esta na tela", () => {
+    expect(customerFreightModalityPatch(undefined)).toEqual({});
+    expect(customerFreightModalityPatch({})).toEqual({});
+    expect(customerFreightModalityPatch({ defaultFreightModality: null })).toEqual({});
+    // Valor que a tela nao sabe desenhar vale como "sem padrao".
+    expect(customerFreightModalityPatch({ defaultFreightModality: "qualquer-coisa" })).toEqual({});
   });
 
   it("prefers the carrier linked to the customer over the registered default", () => {
