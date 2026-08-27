@@ -700,4 +700,33 @@ describe("ReportService com operacoes excluidas", () => {
       db.close();
     }
   });
+
+  /**
+   * O comercial fecha a fatura conferindo quanto deu a tonelada. O valor sai derivado do
+   * total da propria carga, entao vale tambem para frete fixo e para preco digitado a mao.
+   */
+  it("o relatorio do periodo traz o valor por tonelada do material e do frete", () => {
+    const db = createDatabase();
+
+    try {
+      setupBaseData(db);
+      insertOperations(db);
+
+      const service = new ReportService(db);
+      const html = service.exportRangeToHtml("2026-06-01", "2026-06-30", "unit-1");
+
+      expect(html).toContain("<th>Produto R$/t</th>");
+      expect(html).toContain("<th>Frete R$/t</th>");
+      expect(html).toContain("/t</td>");
+      // Cabecalho e rodape precisam ter a mesma largura, senao a planilha inteira desloca.
+      // O rodape abre com um `colspan="3"`, entao ele tem duas celulas a menos.
+      const headerCells = (html.match(/<thead><tr>([\s\S]*?)<\/tr>/)?.[1].match(/<th/g) ?? [])
+        .length;
+      const footerCells =
+        (html.match(/<tfoot><tr>([\s\S]*?)<\/tr>/)?.[1].match(/<td/g) ?? []).length + 2;
+      expect(footerCells).toBe(headerCells);
+    } finally {
+      db.close();
+    }
+  });
 });
