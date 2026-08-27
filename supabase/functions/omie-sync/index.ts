@@ -391,6 +391,15 @@ type PushCustomerPayload = {
   city?: string;
   state?: string;
   defaultPaymentTermId?: string;
+  /**
+   * Observacoes internas do cadastro (campo `observacao` do cliente no OMIE).
+   *
+   * O KyberRock gerencia este campo, e por isso a string vazia LIMPA a observacao la, em
+   * vez de preservar como fazem os demais campos: sem isso a operadora nao conseguiria
+   * apagar o que escreveu. `undefined` (chamador que nao gerencia o campo, como o push de
+   * transportadora) nao mexe nele.
+   */
+  observations?: string;
   /** Bloqueia/libera o faturamento do cliente no OMIE (bloquear_faturamento S/N). */
   billingBlocked?: boolean;
   tags?: string[];

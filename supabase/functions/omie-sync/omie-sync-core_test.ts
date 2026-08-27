@@ -508,3 +508,46 @@ Deno.test("isOmieNotFoundFault casa com a recusa acentuada do OMIE", () => {
   assert(isOmieNotFoundFault("ERROR: OS n\u00e3o cadastrada para o C\u00f3digo [11495303005] !"));
   assert(!isOmieNotFoundFault("ERROR: API bloqueada por consumo indevido."));
 });
+
+/**
+ * Observacoes internas do cadastro.
+ *
+ * O campo era so LIDO do OMIE e nunca enviado: o que a operadora digitava sumia na leitura
+ * seguinte do cadastro de referencia — na propria maquina, antes mesmo de chegar as outras.
+ * Enviando, ele passa a ser o mesmo em todas as balancas da pedreira.
+ */
+Deno.test("buildCustomerPayload envia a observacao, e a string vazia limpa o campo", () => {
+  const comObservacao = buildCustomerPayload({
+    localCustomerId: "cliente-obs",
+    razaoSocial: "Cliente Com Observacao",
+    observations: "Cliente so carrega de manha."
+  });
+  assertEquals(comObservacao.observacao, "Cliente so carrega de manha.");
+
+  // String vazia LIMPA no OMIE: o dropEmptyFields descartaria, e sem isso a operadora nao
+  // conseguiria apagar o que escreveu.
+  const semObservacao = buildCustomerPayload({
+    localCustomerId: "cliente-obs-vazia",
+    razaoSocial: "Cliente Sem Observacao",
+    observations: ""
+  });
+  assertEquals(semObservacao.observacao, "");
+
+  // Campo ausente (push de transportadora) nao mexe na observacao configurada no OMIE.
+  const omitido = buildCustomerPayload({
+    localCustomerId: "cliente-obs-ausente",
+    razaoSocial: "Cliente Sem Flag"
+  });
+  assertEquals(omitido.observacao, undefined);
+});
+
+// A observacao e um campo de VARIAS LINHAS. O clampOmieText normaliza espaco em branco, o
+// que reescreveria o texto da operadora a cada ida e volta ao OMIE.
+Deno.test("buildCustomerPayload preserva as quebras de linha da observacao", () => {
+  const payload = buildCustomerPayload({
+    localCustomerId: "cliente-obs-linhas",
+    razaoSocial: "Cliente Multilinha",
+    observations: "Portao dos fundos.\nFalar com o Joao.\n\nSo ate as 16h."
+  });
+  assertEquals(payload.observacao, "Portao dos fundos.\nFalar com o Joao.\n\nSo ate as 16h.");
+});

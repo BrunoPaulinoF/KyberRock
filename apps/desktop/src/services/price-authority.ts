@@ -60,6 +60,79 @@ export function isPriceMasteredCadastroKey(key: string): boolean {
   return PRICE_MASTERED_KEY_SET.has(key);
 }
 
+/**
+ * Colunas de `customers` cujo dono tambem sao as balancas principais: o cadastro COMERCIAL
+ * e as regras de CREDITO do cliente.
+ *
+ * Elas seguem o mesmo combinado do preco, mas por um caminho diferente. Preco e uma
+ * ENTIDADE inteira, e a secundaria simplesmente deixa de publica-la. Aqui o dono e de parte
+ * de uma linha: o cliente continua sendo publicado por qualquer balanca (nome, documento,
+ * telefone e endereco nao tem dono), e o que a secundaria tira do payload sao apenas estas
+ * colunas. Coluna ausente no upsert preserva o valor que a nuvem ja tem — e por isso a
+ * secundaria pode publicar o cliente sem derrubar o bloco das principais.
+ *
+ * Com mais de uma principal o desempate e o mesmo do preco (`cloudRowWins` com a politica
+ * `newest`): quem editou o cliente por ultimo manda. Sem isso, duas principais voltariam a
+ * ficar cada uma com a configuracao que ela mesma digitou — o empate original.
+ *
+ * `default_payment_term_id` fica de fora: a condicao de pagamento padrao ja viaja pelo
+ * OMIE (sobe no `push_customer`, volta no cadastro de referencia), entao ela ja e a mesma
+ * em todas as maquinas e nao precisa de dono aqui. `observations` idem, pelo mesmo caminho.
+ */
+export const MASTERED_CUSTOMER_COLUMNS = [
+  "default_payment_method_id",
+  "default_carrier_id",
+  "nf_required",
+  "credit_mode",
+  "credit_account_enabled",
+  "credit_periodicity",
+  "credit_closing_day",
+  "credit_second_closing_day",
+  "credit_boleto_days",
+  "credit_second_boleto_days",
+  "credit_closing_weekday"
+] as const;
+
+export type MasteredCustomerColumn = (typeof MASTERED_CUSTOMER_COLUMNS)[number];
+
+/**
+ * Marca de "alguem ja publicou o bloco comercial desta linha".
+ *
+ * Ela viaja junto das colunas acima e existe para desfazer a ambiguidade do nulo: sem ela,
+ * a secundaria nao consegue distinguir "a principal limpou a transportadora padrao" de "a
+ * nuvem ainda nao sabe nada sobre este bloco" (migracao pendente, ou principal que ainda
+ * nao republicou). O primeiro caso precisa chegar; o segundo precisa ser ignorado, senao a
+ * configuracao boa da secundaria seria apagada por um nulo que nao quer dizer nada.
+ */
+export const CUSTOMER_COMMERCIAL_PUBLISHED_AT_COLUMN = "commercial_published_at";
+
+/** As colunas com dono mais a marca de publicacao: o que sai do payload da secundaria. */
+export const MASTERED_CUSTOMER_PAYLOAD_COLUMNS: readonly string[] = [
+  ...MASTERED_CUSTOMER_COLUMNS,
+  CUSTOMER_COMMERCIAL_PUBLISHED_AT_COLUMN
+];
+
+/**
+ * Esta maquina virou principal (ou a versao trouxe o bloco comercial pela primeira vez): o
+ * proximo push tem de reenviar TODOS os clientes para o bloco comercial chegar a nuvem.
+ *
+ * Diferente do `PRICE_MASTER_REPUBLISH_KEY`, esta marca tambem vale para a pedreira SEM
+ * principal eleita: la o bloco comercial continua sendo compartilhado (ultima escrita
+ * vence, como o resto do cadastro), e sem republicar ele so chegaria nos clientes que
+ * alguem editasse depois da atualizacao.
+ */
+export const CUSTOMER_COMMERCIAL_REPUBLISH_KEY = "customer_commercial_republish_pending";
+
+export function isCustomerCommercialRepublishPending(database: DesktopDatabase): boolean {
+  return readLocalSetting(database, CUSTOMER_COMMERCIAL_REPUBLISH_KEY) === true;
+}
+
+export function clearCustomerCommercialRepublishPending(database: DesktopDatabase): void {
+  database
+    .prepare("DELETE FROM local_settings WHERE key = ?")
+    .run(CUSTOMER_COMMERCIAL_REPUBLISH_KEY);
+}
+
 export const PRICE_MASTER_DEVICE_IDS_KEY = "price_master_device_ids";
 export const PRICE_MASTER_DEVICE_NAMES_KEY = "price_master_device_names";
 /**
@@ -260,4 +333,13 @@ export function priceMasterWhere(masterDeviceNames: readonly string[]): string {
  */
 export function priceEditBlockedMessage(masterDeviceNames: readonly string[]): string {
   return `Os precos desta pedreira sao definidos ${priceMasterWhere(masterDeviceNames)}. Altere o preco la: em segundos ele chega a este computador.`;
+}
+
+/**
+ * Mesma recusa, para o cadastro comercial e de credito do cliente. O texto muda porque a
+ * frase do preco mandaria a operadora procurar uma tela de preco que nao e a que ela esta
+ * vendo — ela esta na aba Comercial do cadastro.
+ */
+export function commercialEditBlockedMessage(masterDeviceNames: readonly string[]): string {
+  return `Os dados comerciais e de credito do cliente sao definidos ${priceMasterWhere(masterDeviceNames)}. Altere la: em segundos a mudanca chega a este computador.`;
 }

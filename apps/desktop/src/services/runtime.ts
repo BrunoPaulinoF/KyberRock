@@ -187,7 +187,9 @@ import {
   type CustomerTransport
 } from "./customer-transport.js";
 import { listVehiclesByCustomer, type CustomerVehicleSummary } from "./customer-vehicles.js";
+import { findChangedMasteredCustomerFields } from "./customer-commercial-master.js";
 import {
+  commercialEditBlockedMessage,
   priceEditBlockedMessage,
   readActiveCloudDeviceId,
   readPriceAuthority,
@@ -3484,6 +3486,7 @@ export class DesktopRuntime {
     options?: { overrideOmieFields?: boolean }
   ): unknown {
     this.assertDesktopAccess();
+    this.assertCustomerCommercialAuthority(id, input);
     const identity = this.ensureIdentity();
     const result = updateCustomer(this.database, id, input, new Date(), {
       overrideOmieFields: options?.overrideOmieFields
@@ -3989,6 +3992,10 @@ export class DesktopRuntime {
 
   useCustomerOwnCarrier(customerId: string): CustomerTransport {
     this.assertDesktopAccess();
+    // "Transporte proprio" grava a TRANSPORTADORA PADRAO do cliente, que e um campo com
+    // dono. A trava tem de estar aqui tambem: sem ela a aba Transporte seria a porta dos
+    // fundos para mudar na secundaria o que a aba Comercial recusa.
+    this.assertCommercialAuthority();
     const identity = this.ensureIdentity();
     useCustomerOwnCarrier(this.database, identity.companyId, customerId);
     // A transportadora pode ter acabado de nascer: sem invalidar, o seletor da nova
@@ -4000,6 +4007,7 @@ export class DesktopRuntime {
 
   clearCustomerOwnCarrier(customerId: string): CustomerTransport {
     this.assertDesktopAccess();
+    this.assertCommercialAuthority();
     const identity = this.ensureIdentity();
     clearCustomerOwnCarrier(this.database, identity.companyId, customerId);
     this.cacheStore.invalidate("customer", identity.companyId);
@@ -4675,6 +4683,43 @@ export class DesktopRuntime {
     const authority = this.getPriceAuthority();
     if (authority.mode !== "follower") return;
     throw new Error(priceEditBlockedMessage(authority.masterDeviceNames));
+  }
+
+  /**
+   * Recusa, na balanca secundaria, a alteracao do cadastro COMERCIAL e de CREDITO do
+   * cliente — a irma da trava de preco, e pelo mesmo motivo: estes campos nao sao
+   * publicados por esta maquina, entao o que fosse digitado aqui valeria ate o proximo pull
+   * e sumiria depois. Pior que preco, inclusive: "exige nota fiscal" e a conta de credito
+   * decidem o fechamento, e um valor que muda sozinho no meio do mes e invisivel ate a
+   * conferencia.
+   */
+  private assertCommercialAuthority(): void {
+    const authority = this.getPriceAuthority();
+    if (authority.mode !== "follower") return;
+    throw new Error(commercialEditBlockedMessage(authority.masterDeviceNames));
+  }
+
+  /**
+   * A mesma recusa, mas so quando a edicao MUDA algum campo com dono.
+   *
+   * A tela de clientes salva o formulario inteiro numa chamada so: recusar por mencao
+   * deixaria a secundaria sem conseguir corrigir nem o telefone de um cliente. Ver
+   * `findChangedMasteredCustomerFields`.
+   */
+  private assertCustomerCommercialAuthority(id: string, input: UpdateCustomerInput): void {
+    const authority = this.getPriceAuthority();
+    if (authority.mode !== "follower") return;
+    const existing = this.database.prepare("SELECT * FROM customers WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    // Cadastro que nem existe: deixa `updateCustomer` dar o erro dele, que e mais preciso.
+    if (!existing) return;
+    if (
+      findChangedMasteredCustomerFields(existing, input as Record<string, unknown>).length === 0
+    ) {
+      return;
+    }
+    throw new Error(commercialEditBlockedMessage(authority.masterDeviceNames));
   }
 
   /**

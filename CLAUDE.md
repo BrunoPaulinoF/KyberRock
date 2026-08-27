@@ -102,6 +102,22 @@ These recur across the codebase and are easy to violate accidentally:
   pull **não apaga** preço: quem tira o par disputado é aquele tombstone, que chega junto com o preço
   novo. Sem principal, nada muda. A memória de frete da última venda (`source: "last_used"`) é da
   máquina e sobrevive ao espelhamento.
+  A **mesma eleição** também dá dono ao bloco comercial/crédito do cliente
+  (`MASTERED_CUSTOMER_COLUMNS`: forma de pagamento e transportadora padrão, exige NF, uso de crédito
+  OMIE e toda a configuração da conta de crédito). Esse caso é diferente: não havia empate, essas
+  colunas simplesmente **nunca saíam do SQLite** — o mesmo cliente tinha crédito habilitado numa
+  balança e não na outra. Como o dono é de **parte** da linha (nome, documento e endereço não têm
+  dono), a secundária continua publicando o cliente, só que **sem** essas colunas
+  (`masteredColumns`); coluna ausente do payload preserva o que a nuvem tem. O desempate é a mesma
+  `priceConflictPolicy`, e o `newest` importa tanto quanto no preço: "a principal nunca adota o que
+  vem da nuvem" funcionaria com uma só e, com duas, devolveria o problema de origem. E como coluna
+  não pode "não existir", `customers.commercial_published_at` é o que separa "a principal limpou o
+  padrão" de "ninguém publicou ainda" — sem essa marca o nulo da migração pendente apagaria a
+  configuração boa da secundária. O bloco carrega dois ids que precisam de tradutor (a forma de
+  pagamento do sistema nasce com id sorteado em cada máquina), e é por isso que o pull grava
+  `carriers` e `payment_methods` **antes** de `customers`. Fora do bloco: condição de pagamento
+  padrão e observações internas, que viajam pelo OMIE (as observações passaram a ser **enviadas** no
+  `push_customer` — antes eram só lidas, e o que o operador digitava se perdia).
 - **Backoffice financeiro** (`docs/financeiro.md`): é a cobrança **da plataforma** — a Kybernan
   fatura cada pedreira (`public.companies`) pela mensalidade acertada caso a caso. Nada a ver com
   o financeiro das operações da balança, que vive no OMIE; por isso a aba **Financeiro** do painel
