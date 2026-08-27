@@ -1,40 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  creditMovementSignedCents,
-  filterCarriersBySearch,
-  toCustomerFreightEntries
-} from "./CustomersView";
+import { creditMovementSignedCents, toCustomerFreightEntries } from "./CustomersView";
 import type { CustomerFreightRule } from "../services/customer-freight-rules";
-
-describe("customer carrier search", () => {
-  const carriers = [
-    { id: "1", name: "Transportadora São João" },
-    { id: "2", name: "TRANSPORTES ALFA" },
-    { id: "3", name: "Cliente Teste (padrão)" }
-  ];
-
-  it("returns every carrier when the search is empty", () => {
-    expect(filterCarriersBySearch(carriers, "")).toHaveLength(3);
-    expect(filterCarriersBySearch(carriers, "   ")).toHaveLength(3);
-  });
-
-  it("matches ignoring case and accents", () => {
-    expect(filterCarriersBySearch(carriers, "sao joao").map((c) => c.id)).toEqual(["1"]);
-    expect(filterCarriersBySearch(carriers, "alfa").map((c) => c.id)).toEqual(["2"]);
-  });
-
-  it("poe no topo quem mais se aproxima do que foi digitado", () => {
-    // As duas comecam por "transport", mas em "TRANSPORTES ALFA" o trecho digitado cobre
-    // mais do nome — e o que o operador quer ver primeiro. Antes o desempate era a ordem
-    // do cadastro no banco, que para ele e ordem nenhuma.
-    expect(filterCarriersBySearch(carriers, "transport").map((c) => c.id)).toEqual(["2", "1"]);
-  });
-
-  it("returns nothing when no carrier matches", () => {
-    expect(filterCarriersBySearch(carriers, "inexistente")).toEqual([]);
-  });
-});
 
 describe("credit statement amounts", () => {
   it("shows sales as negative and payments as positive", () => {

@@ -90,8 +90,12 @@ These recur across the codebase and are easy to violate accidentally:
   pull de cada lado descartava a linha da outra por causa do índice único local, então cada
   computador ficava com o preço que ele mesmo digitou. Com principal definida a linha local cede
   (`authoritative` nos `upsertCloud*`), a secundária não publica preço (`PRICE_MASTERED_CADASTRO_KEYS`)
-  e a edição é recusada no **runtime**, não só na tela. Sem principal, nada muda. A memória de frete
-  da última venda (`source: "last_used"`) é da máquina e sobrevive ao espelhamento.
+  e a edição é recusada no **runtime**, não só na tela. O empate se repetia na nuvem — mesmo índice
+  único, e o `desktop-sync` grava por `id` —, então quando quem publica é a principal a linha
+  concorrente cede antes do upsert (`_shared/price-master-conflicts.ts`); sem isso o preço dela era
+  justamente o recusado. O pull **não apaga** preço: quem tira o par disputado é aquele tombstone,
+  que chega junto com o preço novo. Sem principal, nada muda. A memória de frete da última venda
+  (`source: "last_used"`) é da máquina e sobrevive ao espelhamento.
 - **Backoffice financeiro** (`docs/financeiro.md`): é a cobrança **da plataforma** — a Kybernan
   fatura cada pedreira (`public.companies`) pela mensalidade acertada caso a caso. Nada a ver com
   o financeiro das operações da balança, que vive no OMIE; por isso a aba **Financeiro** do painel

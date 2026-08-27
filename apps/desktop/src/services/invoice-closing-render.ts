@@ -14,6 +14,7 @@ import {
   table
 } from "./report-document.js";
 import { renderTotalBar } from "./report-total-bar.js";
+import { perTonLabel } from "./report-unit-price.js";
 import { INVOICE_CLOSING_CYCLE_LABEL, formatCouponNumber } from "./invoice-closing-cycle.js";
 import type {
   InvoiceClosingCarrierRow,
@@ -53,6 +54,12 @@ export const INVOICE_CLOSING_NOTE =
   "periodo inteiro, incluindo as cargas dos clientes que ficaram fora do fechamento — por " +
   "isso o total dela pode ser maior que o total a faturar das faturas.";
 
+/**
+ * As colunas por tonelada saem ao lado do total de cada bloco porque o fechamento e
+ * conferido por elas: o comercial olha o total e pergunta "quanto deu a tonelada". Sao
+ * derivadas do total da propria linha (ver `report-unit-price.ts`), entao valem tambem
+ * para frete fixo e para preco digitado a mao na operacao.
+ */
 const LINE_HEADERS = [
   "Data",
   "Vale",
@@ -63,7 +70,9 @@ const LINE_HEADERS = [
   "Motorista",
   "Produto",
   "Peso (kg)",
+  "Produto (R$/t)",
   "Produto (R$)",
+  "Frete (R$/t)",
   "Frete (R$)",
   "Total (R$)",
   "Situacao"
@@ -183,7 +192,9 @@ const DETAIL_HEADERS = [
   "Motorista",
   "Peso (kg)",
   "Preco unit.",
+  "Produto (R$/t)",
   "Produto (R$)",
+  "Frete (R$/t)",
   "Frete (R$)",
   "Total (R$)",
   "Tipo",
@@ -450,8 +461,14 @@ function detailCells(line: InvoiceClosingLine): string[] {
     line.carrierName,
     line.driverName,
     num(line.netWeightKg),
+    // "Preco unit." e o preco APLICADO (cadastro, tabela ou digitado na operacao);
+    // "Produto (R$/t)" e o que a carga de fato deu por tonelada. Os dois so divergem
+    // quando houve arredondamento ou desconto na linha — e e essa diferenca que se
+    // procura na conferencia.
     unitPriceLabel(line),
+    perTonLabel(line.productTotalCents, line.netWeightKg),
     formatBRL(line.productTotalCents),
+    perTonLabel(line.freightTotalCents, line.netWeightKg),
     formatBRL(line.freightTotalCents),
     formatBRL(line.totalCents),
     line.operationTypeLabel,
@@ -492,8 +509,12 @@ function detailFooterCells(report: InvoiceClosingReport): string[] | null {
     "",
     "",
     num(totals.netWeightKg),
+    // "Preco unit." nao tem total: e o preco de cada linha, e a media dele esta na coluna
+    // por tonelada ao lado.
     "",
+    perTonLabel(totals.productCents, totals.netWeightKg),
     formatBRL(totals.productCents),
+    perTonLabel(totals.freightCents, totals.netWeightKg),
     formatBRL(totals.freightCents),
     formatBRL(totals.totalCents),
     "",
@@ -570,7 +591,9 @@ function lineCells(line: InvoiceClosingLine): string[] {
     line.driverName,
     line.productDescription,
     num(line.netWeightKg),
+    perTonLabel(line.productTotalCents, line.netWeightKg),
     formatBRL(line.productTotalCents),
+    perTonLabel(line.freightTotalCents, line.netWeightKg),
     formatBRL(line.freightTotalCents),
     formatBRL(line.totalCents),
     line.situationLabel
@@ -591,7 +614,11 @@ function lineFooterCells(invoice: InvoiceClosingInvoice): string[] | null {
     "",
     "",
     num(totals.netWeightKg),
+    // A media da fatura inteira, e nao a soma das linhas: somar preco por tonelada nao
+    // significa nada.
+    perTonLabel(totals.productCents, totals.netWeightKg),
     formatBRL(totals.productCents),
+    perTonLabel(totals.freightCents, totals.netWeightKg),
     formatBRL(totals.freightCents),
     formatBRL(totals.totalCents),
     ""

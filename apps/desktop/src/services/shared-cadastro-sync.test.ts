@@ -871,6 +871,106 @@ describe("cadastro compartilhado da pedreira", () => {
       database.close();
     }
   });
+  it("publica as placas do cliente depois do cliente e do veiculo que elas ligam", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      seedLocalCadastro(database);
+      seedCustomerVehicle(database);
+
+      await pushSharedCadastroToCloud(database, identity);
+
+      const pushedKeys = invokeMock.mock.calls.map(
+        ([, options]) =>
+          Object.keys(options.body).find((key) => Array.isArray(options.body[key])) ?? ""
+      );
+      expect(pushedKeys.indexOf("customers")).toBeLessThan(pushedKeys.indexOf("customerVehicles"));
+      expect(pushedKeys.indexOf("vehicles")).toBeLessThan(pushedKeys.indexOf("customerVehicles"));
+      expect(payloadFor("customerVehicles")).toMatchObject([
+        { id: "cv-1", customer_id: "cust-1", vehicle_id: "veh-1", is_active: true }
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("recebe da nuvem a placa vinculada em outra balanca", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      seedLocalCadastro(database);
+      database
+        .prepare(
+          `INSERT INTO vehicles (id, company_id, plate, is_active, created_at, updated_at)
+           VALUES ('veh-1', 'company-1', 'HJI-0517', 1, ?, ?)`
+        )
+        .run("2026-08-27T10:00:00.000Z", "2026-08-27T10:00:00.000Z");
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          customerVehicles: [
+            {
+              id: "cv-remoto",
+              customer_id: "cust-1",
+              vehicle_id: "veh-1",
+              is_active: true,
+              updated_at: "2026-08-27T11:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(
+        database
+          .prepare("SELECT vehicle_id FROM customer_vehicles WHERE deleted_at IS NULL")
+          .pluck()
+          .all()
+      ).toEqual(["veh-1"]);
+    } finally {
+      database.close();
+    }
+  });
+
+  // O vinculo nao tem valor a disputar: o que nao pode e a segunda copia derrubar o pull
+  // inteiro no indice unico (cliente, placa).
+  it("o mesmo vinculo vindo com outro id nao duplica nem derruba o pull", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      seedLocalCadastro(database);
+      seedCustomerVehicle(database);
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          customerVehicles: [
+            {
+              id: "cv-gemeo",
+              customer_id: "cust-1",
+              vehicle_id: "veh-1",
+              is_active: true,
+              updated_at: "2026-08-27T11:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      const pulled = await pullDesktopDataFromCloud(database, identity);
+
+      expect(pulled.warnings).toEqual([]);
+      expect(
+        database.prepare("SELECT id FROM customer_vehicles WHERE deleted_at IS NULL").pluck().all()
+      ).toEqual(["cv-1"]);
+    } finally {
+      database.close();
+    }
+  });
 });
 
 function payloadFor(key: string): Array<Record<string, unknown>> {
@@ -957,6 +1057,26 @@ function seedLocalCadastro(database: DesktopDatabase): void {
     .prepare(
       `INSERT INTO customer_future_billing_invoices (id, customer_id, product_id, nfe_number, total_weight_kg, is_active, created_at, updated_at)
        VALUES ('fb-1', 'cust-1', 'prod-1', '12345', 500000, 1, ?, ?)`
+    )
+    .run(now, now);
+}
+
+/**
+ * As placas do cliente (aba Transporte) sao cadastro compartilhado como qualquer outro: a
+ * balanca que nao recebesse o vinculo filtraria o campo Placa por uma lista vazia.
+ */
+function seedCustomerVehicle(database: DesktopDatabase): void {
+  const now = "2026-08-27T10:00:00.000Z";
+  database
+    .prepare(
+      `INSERT INTO vehicles (id, company_id, plate, is_active, created_at, updated_at)
+       VALUES ('veh-1', 'company-1', 'HJI-0517', 1, ?, ?)`
+    )
+    .run(now, now);
+  database
+    .prepare(
+      `INSERT INTO customer_vehicles (id, customer_id, vehicle_id, is_active, created_at, updated_at)
+       VALUES ('cv-1', 'cust-1', 'veh-1', 1, ?, ?)`
     )
     .run(now, now);
 }

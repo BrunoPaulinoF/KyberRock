@@ -178,6 +178,16 @@ import { CacheStore, type CacheQueryOptions, type CacheQueryResult } from "./cac
 import { readOmiePullState, writeOmiePullState, SETUP_COMPANY_ID } from "./supabase-sync.js";
 import { listUnitDevices, type UnitDeviceInfo } from "./unit-devices.js";
 import {
+  addCustomerPlate,
+  clearCustomerOwnCarrier,
+  getCustomerTransport,
+  removeCustomerPlate,
+  setCustomerDefaultFreightModality,
+  useCustomerOwnCarrier,
+  type CustomerTransport
+} from "./customer-transport.js";
+import { listVehiclesByCustomer, type CustomerVehicleSummary } from "./customer-vehicles.js";
+import {
   priceEditBlockedMessage,
   readActiveCloudDeviceId,
   readPriceAuthority,
@@ -3958,6 +3968,61 @@ export class DesktopRuntime {
     customerId: string
   ): Array<{ id: string; name: string; document: string | null }> {
     return listCarriersByCustomer(this.database, customerId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Aba Transporte do cadastro do cliente (ver `customer-transport.ts`).
+  // ---------------------------------------------------------------------------
+
+  getCustomerTransport(customerId: string): CustomerTransport {
+    this.assertDesktopAccess();
+    return getCustomerTransport(this.database, this.ensureIdentity().companyId, customerId);
+  }
+
+  setCustomerFreightModality(customerId: string, modality: string | null): CustomerTransport {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    setCustomerDefaultFreightModality(this.database, customerId, modality);
+    this.cacheStore.invalidate("customer", identity.companyId);
+    return getCustomerTransport(this.database, identity.companyId, customerId);
+  }
+
+  useCustomerOwnCarrier(customerId: string): CustomerTransport {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    useCustomerOwnCarrier(this.database, identity.companyId, customerId);
+    // A transportadora pode ter acabado de nascer: sem invalidar, o seletor da nova
+    // entrada so a enxergaria no proximo carregamento da tela.
+    this.cacheStore.invalidate("carrier", identity.companyId);
+    this.cacheStore.invalidate("customer", identity.companyId);
+    return getCustomerTransport(this.database, identity.companyId, customerId);
+  }
+
+  clearCustomerOwnCarrier(customerId: string): CustomerTransport {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    clearCustomerOwnCarrier(this.database, identity.companyId, customerId);
+    this.cacheStore.invalidate("customer", identity.companyId);
+    return getCustomerTransport(this.database, identity.companyId, customerId);
+  }
+
+  addCustomerPlate(customerId: string, plate: string): CustomerVehicleSummary {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = addCustomerPlate(this.database, identity.companyId, customerId, plate);
+    this.cacheStore.invalidate("vehicle", identity.companyId);
+    return result;
+  }
+
+  removeCustomerPlate(customerId: string, vehicleId: string): void {
+    this.assertDesktopAccess();
+    removeCustomerPlate(this.database, customerId, vehicleId);
+  }
+
+  /** Placas do cliente — o filtro do campo Placa da nova entrada. */
+  listVehiclesByCustomer(customerId: string): CustomerVehicleSummary[] {
+    this.assertDesktopAccess();
+    return listVehiclesByCustomer(this.database, customerId);
   }
 
   listCustomersByCarrier(

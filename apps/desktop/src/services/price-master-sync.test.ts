@@ -158,19 +158,14 @@ describe("balanca principal de precos (sincronizacao)", () => {
     }
   });
 
-  it("a secundaria recem-criada puxa o cadastro inteiro e retira o preco que so existe aqui", async () => {
+  it("a secundaria recem-criada puxa o cadastro INTEIRO, mesmo no ciclo incremental", async () => {
     const database = createMachine("desktop-b");
 
     try {
       const identity = readIdentity(database);
       seedCustomerAndProduct(database);
       insertSpecialPrice(database, { id: "local-price", unitPriceCents: 9000 });
-      insertSpecialPrice(database, {
-        id: "so-daqui",
-        productId: "prod-2",
-        unitPriceCents: 7000
-      });
-      // Marca do pull incremental ja gravada: o realinhamento tem de ignora-la.
+      // Marca do pull incremental ja gravada: a passada da eleicao tem de ignora-la.
       writeLocalSetting(database, "cloud_cadastro_last_pull_at", "2026-08-27T09:00:00.000Z");
       electMaster(database, "desktop-a");
 
@@ -194,29 +189,35 @@ describe("balanca principal de precos (sincronizacao)", () => {
 
       await pullDesktopDataFromCloud(database, identity, { incremental: true });
 
-      // O pull veio COMPLETO mesmo tendo sido pedido incremental.
+      // O pull veio COMPLETO mesmo tendo sido pedido incremental...
       expect(invokeMock.mock.calls[0][1].body.cadastroSince).toBeUndefined();
-      // Sobra so o que a principal publicou: o gemeo cedeu e o preco solto saiu de cena.
+      // ...o par disputado cedeu para a principal...
       expect(livePrices(database)).toEqual([{ id: "master-price", unit_price_cents: 12000 }]);
+      // ...e a marca da eleicao foi consumida (o proximo ciclo volta a ser incremental).
       expect(isPriceMasterResyncPending(database)).toBe(false);
     } finally {
       database.close();
     }
   });
 
-  // `price_table_items` nao tem coluna `is_active`: um UPDATE fixo com ela estouraria a
-  // passada e o realinhamento pararia no meio, sem apagar nada dali para frente.
-  it("realinha tambem as tabelas de preco, itens e vinculos", async () => {
+  /**
+   * O preco que so existe NESTA maquina nao e apagado no pull.
+   *
+   * Apagar aqui abria uma janela de balanca sem preco: a secundaria descobre o papel em
+   * segundos (heartbeat de 5 s) e puxa logo em seguida, enquanto a principal so republica
+   * na proxima sincronizacao completa — ate 30 minutos depois. Quem resolve o par disputado
+   * e o `desktop-sync`, derrubando a linha concorrente quando a PRINCIPAL publica a dela: o
+   * tombstone chega junto com o preco novo, nunca antes dele.
+   */
+  it("nao apaga o preco local que a principal ainda nao publicou", async () => {
     const database = createMachine("desktop-b");
 
     try {
       const identity = readIdentity(database);
       seedCustomerAndProduct(database);
-      seedPriceTable(database);
+      insertSpecialPrice(database, { id: "so-daqui", productId: "prod-2", unitPriceCents: 7000 });
       electMaster(database, "desktop-a");
 
-      // A principal publicou preco especial (para a limpeza sair do lugar) e NENHUMA
-      // tabela de preco: as locais tem de sair de cena.
       invokeMock.mockResolvedValueOnce({
         data: {
           serverTime: "2026-08-27T10:00:00.000Z",
@@ -235,39 +236,49 @@ describe("balanca principal de precos (sincronizacao)", () => {
         error: null
       });
 
-      const pulled = await pullDesktopDataFromCloud(database, identity);
+      await pullDesktopDataFromCloud(database, identity);
 
-      expect(pulled.warnings).toEqual([]);
-      for (const table of ["price_tables", "price_table_items", "customer_price_tables"]) {
-        expect(
-          database.prepare(`SELECT id FROM ${table} WHERE deleted_at IS NULL`).pluck().all()
-        ).toEqual([]);
-      }
+      expect(livePrices(database)).toEqual([
+        { id: "master-price", unit_price_cents: 12000 },
+        { id: "so-daqui", unit_price_cents: 7000 }
+      ]);
     } finally {
       database.close();
     }
   });
 
-  // Preco em branco na balanca vale menos que preco divergente: enquanto a principal nao
-  // publicou nada, a limpeza espera.
-  it("nao apaga o preco local enquanto a principal nao publicou nada", async () => {
+  // Tirar de cena um preco continua sendo gesto do operador NA PRINCIPAL: a exclusao viaja
+  // como tombstone e apaga a linha nas demais maquinas.
+  it("aceita da principal a exclusao de um preco", async () => {
     const database = createMachine("desktop-b");
 
     try {
       const identity = readIdentity(database);
       seedCustomerAndProduct(database);
-      insertSpecialPrice(database, { id: "local-price", unitPriceCents: 9000 });
+      insertSpecialPrice(database, { id: "master-price", unitPriceCents: 12000 });
       electMaster(database, "desktop-a");
 
       invokeMock.mockResolvedValueOnce({
-        data: { serverTime: "2026-08-27T10:00:00.000Z" },
+        data: {
+          customerSpecialPrices: [
+            {
+              id: "master-price",
+              customer_id: "cust-1",
+              product_id: "prod-1",
+              unit_price_cents: 12000,
+              unit: "ton",
+              is_active: false,
+              deleted_at: "2026-08-27T11:00:00.000Z",
+              updated_at: "2026-08-27T11:00:00.000Z"
+            }
+          ]
+        },
         error: null
       });
+
       await pullDesktopDataFromCloud(database, identity);
 
-      expect(livePrices(database)).toEqual([{ id: "local-price", unit_price_cents: 9000 }]);
-      // O realinhamento continua armado para a proxima passada completa.
-      expect(isPriceMasterResyncPending(database)).toBe(true);
+      expect(livePrices(database)).toEqual([]);
     } finally {
       database.close();
     }
@@ -402,28 +413,6 @@ function seedCustomerAndProduct(database: DesktopDatabase): void {
       )
       .run(productId, productId.toUpperCase(), `Brita ${productId}`, now, now);
   }
-}
-
-function seedPriceTable(database: DesktopDatabase): void {
-  const now = "2026-08-20T10:00:00.000Z";
-  database
-    .prepare(
-      `INSERT INTO price_tables (id, company_id, name, is_active, created_at, updated_at)
-       VALUES ('tabela-1', 'company-1', 'Tabela local', 1, ?, ?)`
-    )
-    .run(now, now);
-  database
-    .prepare(
-      `INSERT INTO price_table_items (id, price_table_id, product_id, unit_price_cents, unit, created_at, updated_at)
-       VALUES ('item-1', 'tabela-1', 'prod-1', 8000, 'ton', ?, ?)`
-    )
-    .run(now, now);
-  database
-    .prepare(
-      `INSERT INTO customer_price_tables (id, customer_id, price_table_id, is_active, created_at, updated_at)
-       VALUES ('vinculo-1', 'cust-1', 'tabela-1', 1, ?, ?)`
-    )
-    .run(now, now);
 }
 
 function insertSpecialPrice(

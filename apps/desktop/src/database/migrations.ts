@@ -2049,5 +2049,46 @@ UPDATE weighing_operations
  WHERE omie_invoice_number IS NULL
    AND omie_billing_message LIKE '%NFS-e %';
 `
+  },
+  {
+    version: 56,
+    name: "customer_transport",
+    sql: `
+-- Aba TRANSPORTE do cadastro do cliente: as placas que sao daquele cliente e como o frete
+-- dele costuma sair.
+--
+-- Placa era cadastro solto: a nova entrada oferecia TODAS as placas da pedreira, e quem
+-- registra a entrada com o caminhao em cima da balanca escolhia numa lista de milhares.
+-- Errar a placa nao para a operacao na hora — ela sai no cupom e vai para a nota, e o erro
+-- so aparece na conferencia do fechamento.
+--
+-- O vinculo e por CLIENTE (e nao por transportadora, que ja existe em vehicle_carriers):
+-- quem chega para carregar e o caminhao do cliente, e e o nome dele que a balanca digita
+-- primeiro. O indice unico e parcial em deleted_at para o mesmo par poder ser desvinculado
+-- e vinculado de novo sem colidir com o tombstone antigo.
+CREATE TABLE IF NOT EXISTS customer_vehicles (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  vehicle_id TEXT NOT NULL REFERENCES vehicles(id),
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  sync_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_vehicles_pair
+  ON customer_vehicles(customer_id, vehicle_id)
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_customer_vehicles_customer
+  ON customer_vehicles(customer_id, is_active, deleted_at);
+
+-- Como o frete deste cliente costuma sair (uma das chaves de FREIGHT_MODALITIES). E so um
+-- PADRAO: preenche a nova entrada quando o cliente e escolhido e o operador ainda nao
+-- mexeu no campo, e nunca sobrepoe o que ele escolheu na operacao. Nulo = sem padrao, que
+-- e o comportamento de sempre.
+ALTER TABLE customers ADD COLUMN default_freight_modality TEXT;
+`
   }
 ];

@@ -10,8 +10,7 @@ import {
   mergeFollowerFreightRuleJson,
   rememberCustomerFreightValue,
   removeCustomerFreightModality,
-  setCustomerFreightRule,
-  stripManualFreightValues
+  setCustomerFreightRule
 } from "./customer-freight-rules";
 import type { FreightRule } from "./freight";
 
@@ -419,29 +418,6 @@ describe("frete do cliente por tipo de frete", () => {
 
       expect(merged.modalities.fob).toMatchObject({ baseValueCents: 9000, source: "manual" });
       expect(merged.modalities.cif).toMatchObject({ baseValueCents: 3000, source: "last_used" });
-    });
-
-    it("tira o cadastro da regra que a principal nao tem e mantem so a memoria", () => {
-      const stripped = stripManualFreightValues(
-        ruleJson({
-          cif: { baseValueCents: 3000, source: "last_used" },
-          fob: { baseValueCents: 9000, source: "manual" }
-        })
-      );
-
-      expect(stripped).not.toBeNull();
-      const parsed = JSON.parse(stripped!) as {
-        baseValueCents: number;
-        modalities: Record<string, unknown>;
-      };
-      expect(Object.keys(parsed.modalities)).toEqual(["cif"]);
-      expect(parsed.baseValueCents).toBe(0);
-    });
-
-    it("devolve null quando a regra era so cadastro (a linha inteira sai de cena)", () => {
-      expect(
-        stripManualFreightValues(ruleJson({ fob: { baseValueCents: 9000, source: "manual" } }))
-      ).toBeNull();
     });
   });
 });

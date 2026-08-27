@@ -297,6 +297,33 @@ nunca está ali.
   `connected_at` e o desktop apaga o registro local). Gerar um novo revoga os anteriores da mesma
   pedreira — dois links vivos são duas janelas de pareamento abertas.
 
+## Aba Transporte do cliente
+
+O que se repete em toda entrada daquele cliente fica no cadastro dele:
+`customer-transport.ts` (servico) e a aba **Transporte** da ficha do cliente.
+
+- **Placas do cliente** (`customer_vehicles`, migracao local 56 e
+  `202608270002_customer_transport.sql`): o campo Placa da nova entrada abre com elas
+  (`filterIds` do `CacheSelect`) e volta a procurar em TODAS assim que o operador digita
+  (`relaxFilterOnSearch`). O filtro e atalho, nunca trava: caminhao emprestado e frete
+  contratado na hora sao a rotina, e uma lista curta com o caminhao em cima da balanca
+  pararia a operacao. Cliente sem placa cadastrada nao filtra nada (lista vazia vira
+  `undefined`).
+- **Transporte proprio**: usa a transportadora com o NOME e o CNPJ/CPF do proprio cliente,
+  criando-a se nao existir, e a promove a padrao dele. A busca e por DOCUMENTO — o mesmo
+  criterio do OMIE (find-or-create por CNPJ/CPF) —, senao duas linhas aqui virariam o mesmo
+  cadastro la. Cliente sem documento cai na busca por nome.
+- **Tipo de frete padrao** (`customers.default_freight_modality`): PREENCHE a nova entrada
+  quando o cliente e escolhido (`customerFreightModalityPatch`), junto com `chargeFreight` e
+  `freightShowOnReceipt` — sao a mesma escolha vista de outro angulo. Nao e trava: o
+  operador troca na tela, e o preenchimento por (cliente, produto) que ja existia — a
+  memoria da ultima venda — continua tendo a ultima palavra quando ha valor de frete de
+  verdade. Nao mexa naquele efeito para "fazer o padrao vencer": ele e o que impede o
+  preenchimento automatico de desfazer o "sem frete" escolhido a mao.
+- A lista de transportadoras da aba virou busca (`OptionSearchPicker`) em vez do checkbox
+  sobre o cadastro inteiro. `linkedCarrierIds` continua alimentando o seletor de
+  transportadora padrao da aba Comercial — nao o remova junto.
+
 ## Balanca principal de precos
 
 Uma balanca por pedreira e a **dona do cadastro de preco**; as demais espelham o que ela publica.
@@ -322,18 +349,31 @@ deleted_at is null`). Cada computador ficava com o preco que ele mesmo digitou, 
   cada validacao de acesso (5 s). Campo **ausente** = nuvem antiga ou migracao pendente e NAO e
   confundido com `null` (= pedreira sem principal): confundir devolveria ao empate quem ja espelha.
   Mesma disciplina do `updateChannel`.
+- **A nuvem tambem precisa ceder** (`_shared/price-master-conflicts.ts`): as tabelas de preco tem
+  indice unico pela chave natural (`(customer_id, product_id)` no preco especial,
+  `(product_id, is_active)` no padrao) e o `desktop-sync` grava com `onConflict: "id"`. Com dois ids
+  para o mesmo par, quem publicou primeiro ocupa a nuvem e o upsert do outro e **recusado (23505)** —
+  ou seja, sem isto o preco da principal era exatamente o que nao entrava. Quando quem envia e a
+  principal, a linha concorrente e excluida logicamente ANTES do upsert; o tombstone viaja no pull
+  seguinte e e o que faz a secundaria largar a copia local. `customer_freight_rules` entra na lista
+  mesmo sem indice unico na nuvem: ela TEM indice unico local, e duas linhas do mesmo par chegando
+  juntas fariam o vencedor depender da ordem do lote.
 - Troca de papel arma **uma** passada: a principal recem-eleita zera os cursores de preco do push
   (`PRICE_MASTER_REPUBLISH_KEY`) para republicar o que ja tinha; a secundaria recem-criada forca um
-  pull COMPLETO (`PRICE_MASTER_RESYNC_KEY`) e retira o preco que so existe nela. O realinhamento
-  **espera** enquanto a nuvem nao tem preco nenhum publicado (`hasPriceCadastroRows`): preco em
-  branco na balanca custa mais caro que preco divergente.
+  pull COMPLETO (`PRICE_MASTER_RESYNC_KEY`).
+- **O pull nao apaga preco.** Uma versao anterior deste fluxo retirava da secundaria o preco que a
+  principal nao tivesse publicado, e isso abria uma janela de balanca **sem preco**: a secundaria
+  descobre o papel em 5 s e puxa em 20 s, enquanto a principal so republica na proxima varredura
+  completa — ate 30 minutos depois. O par disputado e resolvido pelo tombstone acima, que chega
+  junto com o preco novo e nunca antes dele. Preco que so existe numa maquina converge para as duas
+  (a principal tambem o recebe) e sai de cena quando o operador o exclui NA PRINCIPAL.
 - A trava de edicao esta no **runtime** (`assertPriceAuthority`), nao so na tela: preco digitado
   numa secundaria valeria ate o proximo pull e sumiria depois. `rememberCustomerFreightValue` fica
   **fora** da trava — a memoria da ultima venda e desta maquina, nao e cadastro.
 - Frete e o caso delicado: a MESMA linha guarda o valor do cadastro (`source: "manual"`, da
   principal) e a memoria da ultima venda (`source: "last_used"`, local). `mergeFollowerFreightRuleJson`
-  e `stripManualFreightValues` (`customer-freight-rules.ts`, puras e testadas) separam os dois — sem
-  elas, ou o pull apagava a memoria da maquina a cada ciclo, ou o frete continuava divergente.
+  (`customer-freight-rules.ts`, pura e testada) separa os dois — sem ela, ou o pull apagava a memoria
+  da maquina a cada ciclo, ou o frete continuava divergente.
 
 ## OMIE idempotency
 

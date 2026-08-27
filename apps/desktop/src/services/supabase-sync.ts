@@ -23,10 +23,7 @@ import {
   type ReportRecipientRow
 } from "./report-recipients.js";
 import { getFreightModalityInfo } from "./freight.js";
-import {
-  mergeFollowerFreightRuleJson,
-  stripManualFreightValues
-} from "./customer-freight-rules.js";
+import { mergeFollowerFreightRuleJson } from "./customer-freight-rules.js";
 import {
   clearPriceMasterRepublishPending,
   clearPriceMasterResyncPending,
@@ -150,6 +147,7 @@ interface DesktopPullResponse {
   drivers?: Array<Record<string, unknown>>;
   vehicles?: Array<Record<string, unknown>>;
   customerCarriers?: Array<Record<string, unknown>>;
+  customerVehicles?: Array<Record<string, unknown>>;
   driverCarriers?: Array<Record<string, unknown>>;
   vehicleCarriers?: Array<Record<string, unknown>>;
   productDefaultPrices?: Array<Record<string, unknown>>;
@@ -782,15 +780,11 @@ export async function pullDesktopDataFromCloud(
       warnings,
       authority.mode === "follower"
     );
-    // Realinhamento de UMA vez, quando esta maquina passa a ser secundaria. So no pull
-    // completo: e o unico que traz o conjunto inteiro da principal, entao e o unico em que
-    // "nao veio" significa "a principal nao tem". Com a nuvem ainda sem preco nenhum a
-    // limpeza fica para depois — apagar ali deixaria a balanca sem preco ate a principal
-    // publicar, e preco em branco para a balanca vale menos que preco divergente.
-    if (priceResyncPending && !since && hasPriceCadastroRows(payload)) {
-      applySection(warnings, "price_master_reconcile", () =>
-        reconcileFollowerPriceCadastro(database, settings.companyId, payload)
-      );
+    // A passada completa pedida pela eleicao da principal ja aconteceu: o cadastro de
+    // preco desta maquina esta alinhado com o que a nuvem tem. Nada e apagado aqui — quem
+    // resolve o par disputado e o `desktop-sync`, que derruba a linha concorrente quando a
+    // PRINCIPAL publica a dela, e o tombstone chega neste mesmo pull.
+    if (priceResyncPending && !since) {
       clearPriceMasterResyncPending(database);
     }
     const operations = applySection(warnings, "weighing_operations", () =>
@@ -877,6 +871,11 @@ function upsertCloudCadastro(
         )
     ],
     [
+      // Placas do cliente (aba Transporte). Depois de `vehicles`, que ela referencia.
+      "customer_vehicles",
+      () => upsertCloudCustomerVehicles(database, payload.customerVehicles ?? [])
+    ],
+    [
       "driver_carriers",
       () =>
         upsertCloudJunction(database, "driver_carriers", "driver_id", payload.driverCarriers ?? [])
@@ -961,122 +960,6 @@ function upsertCloudCadastro(
     count += applySection(warnings, table, run);
   }
   return count;
-}
-
-/** A nuvem ja tem cadastro de preco publicado? Ver o realinhamento da secundaria. */
-function hasPriceCadastroRows(payload: DesktopPullResponse): boolean {
-  return [
-    payload.productDefaultPrices,
-    payload.customerSpecialPrices,
-    payload.priceTables,
-    payload.priceTableItems,
-    payload.customerPriceTables,
-    payload.customerFreightRules
-  ].some((rows) => (rows?.length ?? 0) > 0);
-}
-
-/**
- * Tira de cena o cadastro de preco que so existe NESTA maquina, depois que ela passou a
- * ser secundaria: o que a balanca principal nao publicou deixa de valer.
- *
- * Roda uma unica vez por eleicao de principal, e sempre sobre o pull completo — que e o
- * unico que devolve o conjunto inteiro da pedreira. O que a principal tem com OUTRO id nao
- * chega aqui: o par duplicado ja cedeu na propria gravacao (`authoritative`).
- *
- * A regra de frete e a excecao: a mesma linha guarda o valor do cadastro (da principal) e
- * a memoria da ultima venda desta maquina. Dela sai so a parte do cadastro; a linha inteira
- * so cai quando nao sobra memoria nenhuma.
- */
-function reconcileFollowerPriceCadastro(
-  database: DesktopDatabase,
-  companyId: string,
-  payload: DesktopPullResponse
-): number {
-  const cloudIds = (rows: Array<Record<string, unknown>> | undefined): Set<string> =>
-    new Set((rows ?? []).map((row) => stringValue(row.id)).filter(Boolean));
-
-  let changed = 0;
-
-  // `price_table_items` nao tem `is_active` (so exclusao logica), entao a coluna entra no
-  // UPDATE apenas onde ela existe — um SET fixo estouraria a passada inteira ali.
-  const retire = (
-    table: string,
-    selectSql: string,
-    keep: Set<string>,
-    options: { hasIsActive?: boolean } = {}
-  ): void => {
-    const rows = database.prepare(selectSql).all(companyId) as Array<{ id: string }>;
-    const nowIso = new Date().toISOString();
-    const update = database.prepare(
-      `UPDATE ${table} SET deleted_at = ?, updated_at = ?${
-        options.hasIsActive === false ? "" : ", is_active = 0"
-      } WHERE id = ?`
-    );
-    for (const row of rows) {
-      if (keep.has(row.id)) continue;
-      update.run(nowIso, nowIso, row.id);
-      changed++;
-    }
-  };
-
-  retire(
-    "product_default_prices",
-    "SELECT id FROM product_default_prices WHERE company_id = ? AND deleted_at IS NULL",
-    cloudIds(payload.productDefaultPrices)
-  );
-  retire(
-    "customer_special_prices",
-    "SELECT id FROM customer_special_prices WHERE company_id = ? AND deleted_at IS NULL",
-    cloudIds(payload.customerSpecialPrices)
-  );
-  retire(
-    "price_table_items",
-    `SELECT pti.id FROM price_table_items pti
-     JOIN price_tables pt ON pt.id = pti.price_table_id
-     WHERE pt.company_id = ? AND pti.deleted_at IS NULL`,
-    cloudIds(payload.priceTableItems),
-    { hasIsActive: false }
-  );
-  retire(
-    "customer_price_tables",
-    `SELECT cpt.id FROM customer_price_tables cpt
-     JOIN customers c ON c.id = cpt.customer_id
-     WHERE c.company_id = ? AND cpt.deleted_at IS NULL`,
-    cloudIds(payload.customerPriceTables)
-  );
-  retire(
-    "price_tables",
-    "SELECT id FROM price_tables WHERE company_id = ? AND deleted_at IS NULL",
-    cloudIds(payload.priceTables)
-  );
-
-  const freightKeep = cloudIds(payload.customerFreightRules);
-  const freightRows = database
-    .prepare(
-      `SELECT fr.id, fr.rule_json FROM customer_freight_rules fr
-       JOIN customers c ON c.id = fr.customer_id
-       WHERE c.company_id = ? AND fr.deleted_at IS NULL`
-    )
-    .all(companyId) as Array<{ id: string; rule_json: string | null }>;
-  const nowIso = new Date().toISOString();
-  const dropFreight = database.prepare(
-    "UPDATE customer_freight_rules SET deleted_at = ?, updated_at = ?, is_active = 0 WHERE id = ?"
-  );
-  const keepMemory = database.prepare(
-    "UPDATE customer_freight_rules SET rule_json = ?, updated_at = ? WHERE id = ?"
-  );
-  for (const row of freightRows) {
-    if (freightKeep.has(row.id)) continue;
-    const memoryOnly = stripManualFreightValues(row.rule_json ?? "{}");
-    if (memoryOnly === null) {
-      dropFreight.run(nowIso, nowIso, row.id);
-    } else {
-      keepMemory.run(memoryOnly, nowIso, row.id);
-    }
-    changed++;
-  }
-
-  return changed;
 }
 
 function upsertCloudPriceTables(
@@ -1893,6 +1776,62 @@ function upsertCloudJunction(
   return count;
 }
 
+/**
+ * Placas do cliente. Junta cliente e veiculo, e por isso nao cabe em `upsertCloudJunction`,
+ * que amarra sempre em `carrier_id`.
+ *
+ * O indice unico local e por (cliente, placa) entre os nao excluidos: o mesmo par vindo com
+ * outro id (as duas balancas vincularam a mesma placa antes do primeiro sync) mantem a
+ * linha local e ignora a copia — gravar as duas derrubaria o pull inteiro. Vinculo nao tem
+ * valor a disputar, entao qual das duas fica e indiferente.
+ */
+function upsertCloudCustomerVehicles(
+  database: DesktopDatabase,
+  rows: Array<Record<string, unknown>>
+): number {
+  const upsert = database.prepare(`
+    INSERT INTO customer_vehicles (
+      id, customer_id, vehicle_id, is_active, created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      customer_id = excluded.customer_id,
+      vehicle_id = excluded.vehicle_id,
+      is_active = excluded.is_active,
+      updated_at = excluded.updated_at,
+      deleted_at = excluded.deleted_at
+  `);
+  const findConflict = database.prepare(
+    `SELECT id FROM customer_vehicles
+     WHERE customer_id = ? AND vehicle_id = ? AND deleted_at IS NULL LIMIT 1`
+  );
+
+  let count = 0;
+  for (const row of rows) {
+    const id = stringValue(row.id);
+    // Ponta que ainda nao existe localmente: o proximo pull, ja com o cadastro pai, grava.
+    const customerId = existingId(database, "customers", row.customer_id);
+    const vehicleId = existingId(database, "vehicles", row.vehicle_id);
+    if (!id || !customerId || !vehicleId) continue;
+    const deletedAt = isoStringValue(row.deleted_at);
+    if (!deletedAt) {
+      const conflict = findConflict.get(customerId, vehicleId) as { id: string } | undefined;
+      if (conflict && conflict.id !== id) continue;
+    }
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    upsert.run(
+      id,
+      customerId,
+      vehicleId,
+      booleanToSql(row.is_active, true),
+      isoStringValue(row.created_at) || updatedAt,
+      updatedAt,
+      deletedAt
+    );
+    count++;
+  }
+  return count;
+}
+
 function upsertCloudProductDefaultPrices(
   database: DesktopDatabase,
   companyId: string,
@@ -2194,9 +2133,9 @@ function upsertCloudCustomers(
   const upsert = database.prepare(`
     INSERT INTO customers (
       id, company_id, omie_customer_id, source, legal_name, trade_name, document, phone, email,
-      credit_limit_cents, open_receivables_cents, sync_status, is_active, created_at, updated_at,
-      deleted_at, last_synced_at, needs_push
-    ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, NULL, ?, 0)
+      credit_limit_cents, open_receivables_cents, default_freight_modality, sync_status, is_active,
+      created_at, updated_at, deleted_at, last_synced_at, needs_push
+    ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, NULL, ?, 0)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       -- Nunca apagar o codigo do OMIE que ja temos: sem ele o proximo push tenta um
@@ -2216,6 +2155,9 @@ function upsertCloudCustomers(
       credit_limit_cents = CASE WHEN customers.needs_push = 0 THEN excluded.credit_limit_cents ELSE customers.credit_limit_cents END,
       -- Saldo em aberto e projecao da nuvem (nunca editado aqui): sempre o valor de la.
       open_receivables_cents = excluded.open_receivables_cents,
+      -- Tipo de frete padrao da aba Transporte. Segue a mesma guarda dos demais campos do
+      -- cadastro: edicao local ainda nao enviada ao OMIE nunca e sobrescrita pela nuvem.
+      default_freight_modality = CASE WHEN customers.needs_push = 0 THEN excluded.default_freight_modality ELSE customers.default_freight_modality END,
       sync_status = CASE WHEN customers.needs_push = 0 THEN 'synced' ELSE customers.sync_status END,
       is_active = CASE WHEN customers.needs_push = 0 THEN excluded.is_active ELSE customers.is_active END,
       updated_at = CASE WHEN customers.needs_push = 0 THEN excluded.updated_at ELSE customers.updated_at END,
@@ -2254,6 +2196,7 @@ function upsertCloudCustomers(
       nullableStringValue(row.email),
       integerValue(row.credit_limit_cents),
       integerValue(row.open_receivables_cents) ?? 0,
+      nullableStringValue(row.default_freight_modality),
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
       updatedAt,
@@ -6910,7 +6853,7 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
       table: "customers",
       alias: "c",
       columns:
-        "c.id, c.omie_customer_id, c.legal_name, c.trade_name, c.document, c.phone, c.email, c.credit_limit_cents, c.open_receivables_cents, c.is_active, c.created_at, c.updated_at, c.deleted_at",
+        "c.id, c.omie_customer_id, c.legal_name, c.trade_name, c.document, c.phone, c.email, c.credit_limit_cents, c.open_receivables_cents, c.default_freight_modality, c.is_active, c.created_at, c.updated_at, c.deleted_at",
       where: "c.company_id = @companyId"
     }),
     map: (row, companyId) => {
@@ -6927,6 +6870,10 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         email: nullableStringValue(row.email),
         credit_limit_cents: integerValue(row.credit_limit_cents),
         open_receivables_cents: integerValue(row.open_receivables_cents) ?? 0,
+        // Tipo de frete padrao da aba Transporte. Coluna nova na nuvem: enquanto a
+        // migracao nao for aplicada o `desktop-sync` a descarta do payload e regrava o
+        // resto (ver `_shared/unknown-column.ts`), entao o cadastro nao para por causa dela.
+        default_freight_modality: nullableStringValue(row.default_freight_modality),
         is_active: cloudActive(row),
         created_at: cloudTimestamp(row.created_at, updatedAt),
         updated_at: updatedAt
@@ -7053,6 +7000,31 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         is_active: cloudActive(row),
         created_at: cloudTimestamp(row.created_at, updatedAt),
         updated_at: updatedAt
+      };
+    }
+  },
+  {
+    key: "customerVehicles",
+    label: "placas do cliente",
+    sql: buildCadastroSelect({
+      table: "customer_vehicles",
+      alias: "cv",
+      columns:
+        "cv.id, cv.customer_id, cv.vehicle_id, cv.is_active, cv.created_at, cv.updated_at, cv.deleted_at",
+      joins: "JOIN customers cvc ON cvc.id = cv.customer_id",
+      where: "cvc.company_id = @companyId"
+    }),
+    map: (row, companyId) => {
+      const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
+      return {
+        id: stringValue(row.id),
+        company_id: companyId,
+        customer_id: stringValue(row.customer_id),
+        vehicle_id: stringValue(row.vehicle_id),
+        is_active: cloudActive(row),
+        created_at: cloudTimestamp(row.created_at, updatedAt),
+        updated_at: updatedAt,
+        deleted_at: row.deleted_at ? cloudTimestamp(row.deleted_at, updatedAt) : null
       };
     }
   },

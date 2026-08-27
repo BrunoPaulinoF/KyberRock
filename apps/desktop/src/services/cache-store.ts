@@ -24,6 +24,8 @@ export interface CustomerCacheEntry {
   lastSyncedAt: string | null;
   observations: string | null;
   defaultCarrierId: string | null;
+  /** Tipo de frete padrao (aba Transporte): preenche a nova entrada ao escolher o cliente. */
+  defaultFreightModality: string | null;
   defaultPaymentTermId: string | null;
   defaultPaymentMethodId: string | null;
   creditAccountEnabled: boolean;
@@ -217,6 +219,7 @@ interface CustomerRow {
   last_synced_at: string | null;
   observations: string | null;
   default_carrier_id: string | null;
+  default_freight_modality: string | null;
   default_payment_term_id: string | null;
   default_payment_method_id: string | null;
   credit_account_enabled: number;
@@ -369,6 +372,7 @@ function mapCustomer(row: CustomerRow): CustomerCacheEntry {
     lastSyncedAt: row.last_synced_at,
     observations: row.observations,
     defaultCarrierId: row.default_carrier_id,
+    defaultFreightModality: row.default_freight_modality,
     defaultPaymentTermId: row.default_payment_term_id,
     defaultPaymentMethodId: row.default_payment_method_id,
     creditAccountEnabled: row.credit_account_enabled === 1,
@@ -882,7 +886,8 @@ export class CacheStore {
       .prepare(
         `SELECT id, omie_customer_id, legal_name, trade_name, document, phone, email, fiscal_emails,
                 credit_limit_cents, credit_mode, open_receivables_cents, omie_billing_blocked,
-                source, sync_status, needs_push, last_synced_at, observations, default_carrier_id, default_payment_term_id,
+                source, sync_status, needs_push, last_synced_at, observations, default_carrier_id,
+                default_freight_modality, default_payment_term_id,
                 default_payment_method_id, credit_account_enabled, credit_closing_day, credit_boleto_days, nf_required,
                 credit_periodicity, credit_second_closing_day, credit_second_boleto_days, credit_closing_weekday,
                 zipcode, address_street, address_number, address_complement, neighborhood, city, state, is_active

@@ -396,6 +396,41 @@ describe("invoice-closing-render", () => {
     expect(renderInvoiceClosingSpreadsheet(source)).toContain("Fechamento de faturas");
   });
 
+  /**
+   * O comercial fecha a fatura conferindo quanto deu a tonelada — do material e do frete.
+   * O valor e derivado do total da propria linha, entao vale tambem para frete fixo e para
+   * preco digitado a mao na operacao.
+   */
+  it("cada carga diz quanto deu a tonelada, no material e no frete", () => {
+    const sheet = renderInvoiceClosingSpreadsheet(report());
+
+    expect(sheet).toContain("Produto (R$/t)");
+    expect(sheet).toContain("Frete (R$/t)");
+    // 31 t por R$ 1.500,00 de material -> R$ 48,39/t; R$ 161,94 de frete -> R$ 5,22/t.
+    expect(sheet).toContain("48,39/t");
+    expect(sheet).toContain("5,22/t");
+  });
+
+  /**
+   * Cabecalho e celula fora de sincronia deslocam a planilha inteira, e o erro so aparece
+   * quando alguem soma a coluna errada no fechamento. Este teste conta as colunas de cada
+   * tabela do arquivo — inclusive o rodape, que e escrito a parte.
+   */
+  it("toda tabela da planilha tem cabecalho, linha e rodape com o mesmo numero de colunas", () => {
+    const sheet = renderInvoiceClosingSpreadsheet(report());
+
+    const tables = sheet.split("<table").slice(1);
+    expect(tables.length).toBeGreaterThan(0);
+    for (const chunk of tables) {
+      const rows = [...chunk.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)].map(
+        (match) => (match[1].match(/<t[hd][^>]*>/g) ?? []).length
+      );
+      const cells = rows.filter((count) => count > 1);
+      // Linhas de uma celula so (o "Sem dados no periodo", que usa colspan) ficam de fora.
+      expect(new Set(cells).size).toBe(1);
+    }
+  });
+
   it("o vale sai com os mesmos seis digitos do cupom", () => {
     expect(formatCouponNumber(123)).toBe("000123");
     expect(formatCouponNumber(1_234_567)).toBe("1234567");
