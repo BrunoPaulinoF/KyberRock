@@ -9,6 +9,12 @@ import {
   stripColumn,
   unknownColumnFromError
 } from "../_shared/unknown-column.ts";
+import {
+  findRowsToRetire,
+  isLiveRow,
+  naturalKeyOf,
+  PRICE_MASTER_TABLES
+} from "../_shared/price-master-conflicts.ts";
 
 type CloudPayload = {
   deviceId?: string;
@@ -67,6 +73,125 @@ const CADASTRO_TABLES = [
   { key: "customerCreditMovements", table: "customer_credit_movements" }
 ] as const;
 
+type SyncDeviceRow = {
+  id: string;
+  token_hash: string;
+  is_active: boolean;
+  unit_id: string;
+  company_id: string;
+  /** Ausente na leitura de emergencia (migracao ainda nao aplicada). */
+  is_price_master?: boolean | null;
+};
+
+const DEVICE_SYNC_COLUMNS = "id, token_hash, is_active, unit_id, company_id";
+
+/**
+ * Le o registro da balanca tolerando `is_price_master` ainda nao existir (o CI implanta a
+ * funcao a cada push, e as migracoes SQL sao aplicadas a parte). Sem a coluna a balanca
+ * simplesmente nao e principal, que e o comportamento anterior a ela.
+ */
+async function selectDeviceForSync(
+  supabase: ReturnType<typeof createClient>,
+  deviceId: string
+): Promise<{ data: Record<string, unknown> | null; error: unknown }> {
+  const withMaster = await supabase
+    .from("device_registrations")
+    .select(`${DEVICE_SYNC_COLUMNS}, is_price_master`)
+    .eq("id", deviceId)
+    .single();
+  if (!withMaster.error) {
+    return { data: withMaster.data as Record<string, unknown> | null, error: null };
+  }
+
+  const fallback = await supabase
+    .from("device_registrations")
+    .select(DEVICE_SYNC_COLUMNS)
+    .eq("id", deviceId)
+    .single();
+  return { data: fallback.data as Record<string, unknown> | null, error: fallback.error };
+}
+
+/**
+ * Tira da frente a linha de outra balanca que ocupa a chave natural que a PRINCIPAL esta
+ * enviando — ver `_shared/price-master-conflicts.ts` para o porque.
+ *
+ * Duas consultas por tabela, nao uma por linha: uma leitura das linhas vivas da empresa
+ * restrita a primeira coluna da chave, e um unico UPDATE nos ids que precisam ceder.
+ *
+ * Falha aqui entra em `stepErrors` como qualquer outra: sem a liberacao o upsert seguinte
+ * seria recusado pelo indice unico de qualquer jeito, entao a passada precisa mesmo ser
+ * refeita — e o motivo verdadeiro fica registrado em vez de so o 23505 que ele causa.
+ */
+async function clearPriceMasterConflicts(
+  supabase: ReturnType<typeof createClient>,
+  companyId: string,
+  payload: CloudPayload
+): Promise<string[]> {
+  const warnings: string[] = [];
+
+  for (const entry of PRICE_MASTER_TABLES) {
+    const rows = payload[entry.payloadKey as keyof CloudPayload] as
+      | Record<string, unknown>[]
+      | undefined;
+    if (!rows?.length) continue;
+
+    // Linha enviada como excluida nao vai ocupar o indice: nao derruba ninguem.
+    const incoming = rows
+      .filter(isLiveRow)
+      .map((row) => ({ id: String(row.id ?? ""), key: naturalKeyOf(row, entry.naturalKey) }))
+      .filter((row) => row.id);
+    if (incoming.length === 0) continue;
+
+    const [firstColumn] = entry.naturalKey;
+    const firstValues = [
+      ...new Set(
+        incoming
+          .map((row) => row.key[0])
+          .filter((value): value is string => typeof value === "string")
+      )
+    ];
+    if (firstValues.length === 0) continue;
+
+    const { data, error } = await supabase
+      .from(entry.table)
+      .select(`id, ${entry.naturalKey.join(", ")}`)
+      .eq("company_id", companyId)
+      .is("deleted_at", null)
+      .in(firstColumn, firstValues);
+    if (error) {
+      warnings.push(`${entry.table}: ${error.message} (code=${error.code ?? "n/a"})`);
+      continue;
+    }
+
+    const existing = ((data ?? []) as Record<string, unknown>[])
+      .map((row) => ({ id: String(row.id ?? ""), key: naturalKeyOf(row, entry.naturalKey) }))
+      .filter((row) => row.id);
+    const retire = findRowsToRetire(incoming, existing);
+    if (retire.length === 0) continue;
+
+    const retiredAt = new Date().toISOString();
+    const { error: updateError } = await supabase
+      .from(entry.table)
+      .update({
+        deleted_at: retiredAt,
+        updated_at: retiredAt,
+        ...(entry.hasIsActive ? { is_active: false } : {})
+      })
+      .in("id", retire);
+    if (updateError) {
+      warnings.push(`${entry.table}: ${updateError.message} (code=${updateError.code ?? "n/a"})`);
+      continue;
+    }
+
+    console.info("desktop-sync: cadastro de preco cedeu para a balanca principal", {
+      table: entry.table,
+      retired: retire.length
+    });
+  }
+
+  return warnings;
+}
+
 Deno.serve(async (req) => {
   try {
     if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -89,11 +214,8 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "deviceId e deviceToken sao obrigatorios" }, 400);
     }
 
-    const { data: device, error: deviceError } = await supabase
-      .from("device_registrations")
-      .select("id, token_hash, is_active, unit_id, company_id")
-      .eq("id", deviceId)
-      .single();
+    const { data: deviceRow, error: deviceError } = await selectDeviceForSync(supabase, deviceId);
+    const device = deviceRow as SyncDeviceRow | null;
     if (deviceError || !device?.is_active) {
       return jsonResponse({ error: "Dispositivo nao autorizado" }, 401);
     }
@@ -140,6 +262,13 @@ Deno.serve(async (req) => {
         counts.products = body.products.length;
       }
     }
+    // Quem envia e a balanca principal de precos: a linha de outra maquina que disputa a
+    // mesma chave natural cede ANTES do upsert, senao o indice unico da nuvem recusa
+    // justamente o preco que deveria valer para a pedreira inteira.
+    if (device.is_price_master === true) {
+      stepErrors.push(...(await clearPriceMasterConflicts(supabase, device.company_id, body)));
+    }
+
     for (const { key, table } of CADASTRO_TABLES) {
       const rows = body[key];
       if (!rows?.length) continue;

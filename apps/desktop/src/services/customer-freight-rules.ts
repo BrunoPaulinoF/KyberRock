@@ -496,27 +496,6 @@ export function mergeFollowerFreightRuleJson(localJson: string | null, cloudJson
   return JSON.stringify({ ...stripModalities(cloud), modalities: merged });
 }
 
-/**
- * Tira da regra os valores que pertencem ao cadastro (a principal e quem os define),
- * preservando a memoria da ultima venda. Devolve `null` quando nao sobra nada — a linha
- * inteira era cadastro e deve sair.
- *
- * E o que a balanca secundaria aplica no realinhamento completo, para uma regra que a
- * principal nao tem parar de valer sem levar junto o pre-preenchimento da tela.
- */
-export function stripManualFreightValues(ruleJson: string): string | null {
-  const payload = parseRulePayload(ruleJson);
-  const modalities = readModalities(payload);
-  const remaining: CustomerFreightModalityValues = {};
-  for (const [key, value] of Object.entries(modalities)) {
-    if (!isFreightModality(key) || !value || value.source !== "last_used") continue;
-    remaining[key] = value;
-  }
-
-  if (Object.keys(remaining).length === 0) return null;
-  return JSON.stringify({ ...stripModalities(payload), baseValueCents: 0, modalities: remaining });
-}
-
 /** A regra unica (compatibilidade) sem o mapa de valores por tipo de frete. */
 function stripModalities(payload: RuleJsonPayload): FreightRule {
   const rule = { ...payload };

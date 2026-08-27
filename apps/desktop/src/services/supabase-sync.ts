@@ -23,10 +23,7 @@ import {
   type ReportRecipientRow
 } from "./report-recipients.js";
 import { getFreightModalityInfo } from "./freight.js";
-import {
-  mergeFollowerFreightRuleJson,
-  stripManualFreightValues
-} from "./customer-freight-rules.js";
+import { mergeFollowerFreightRuleJson } from "./customer-freight-rules.js";
 import {
   clearPriceMasterRepublishPending,
   clearPriceMasterResyncPending,
@@ -782,15 +779,11 @@ export async function pullDesktopDataFromCloud(
       warnings,
       authority.mode === "follower"
     );
-    // Realinhamento de UMA vez, quando esta maquina passa a ser secundaria. So no pull
-    // completo: e o unico que traz o conjunto inteiro da principal, entao e o unico em que
-    // "nao veio" significa "a principal nao tem". Com a nuvem ainda sem preco nenhum a
-    // limpeza fica para depois — apagar ali deixaria a balanca sem preco ate a principal
-    // publicar, e preco em branco para a balanca vale menos que preco divergente.
-    if (priceResyncPending && !since && hasPriceCadastroRows(payload)) {
-      applySection(warnings, "price_master_reconcile", () =>
-        reconcileFollowerPriceCadastro(database, settings.companyId, payload)
-      );
+    // A passada completa pedida pela eleicao da principal ja aconteceu: o cadastro de
+    // preco desta maquina esta alinhado com o que a nuvem tem. Nada e apagado aqui — quem
+    // resolve o par disputado e o `desktop-sync`, que derruba a linha concorrente quando a
+    // PRINCIPAL publica a dela, e o tombstone chega neste mesmo pull.
+    if (priceResyncPending && !since) {
       clearPriceMasterResyncPending(database);
     }
     const operations = applySection(warnings, "weighing_operations", () =>
@@ -961,122 +954,6 @@ function upsertCloudCadastro(
     count += applySection(warnings, table, run);
   }
   return count;
-}
-
-/** A nuvem ja tem cadastro de preco publicado? Ver o realinhamento da secundaria. */
-function hasPriceCadastroRows(payload: DesktopPullResponse): boolean {
-  return [
-    payload.productDefaultPrices,
-    payload.customerSpecialPrices,
-    payload.priceTables,
-    payload.priceTableItems,
-    payload.customerPriceTables,
-    payload.customerFreightRules
-  ].some((rows) => (rows?.length ?? 0) > 0);
-}
-
-/**
- * Tira de cena o cadastro de preco que so existe NESTA maquina, depois que ela passou a
- * ser secundaria: o que a balanca principal nao publicou deixa de valer.
- *
- * Roda uma unica vez por eleicao de principal, e sempre sobre o pull completo — que e o
- * unico que devolve o conjunto inteiro da pedreira. O que a principal tem com OUTRO id nao
- * chega aqui: o par duplicado ja cedeu na propria gravacao (`authoritative`).
- *
- * A regra de frete e a excecao: a mesma linha guarda o valor do cadastro (da principal) e
- * a memoria da ultima venda desta maquina. Dela sai so a parte do cadastro; a linha inteira
- * so cai quando nao sobra memoria nenhuma.
- */
-function reconcileFollowerPriceCadastro(
-  database: DesktopDatabase,
-  companyId: string,
-  payload: DesktopPullResponse
-): number {
-  const cloudIds = (rows: Array<Record<string, unknown>> | undefined): Set<string> =>
-    new Set((rows ?? []).map((row) => stringValue(row.id)).filter(Boolean));
-
-  let changed = 0;
-
-  // `price_table_items` nao tem `is_active` (so exclusao logica), entao a coluna entra no
-  // UPDATE apenas onde ela existe — um SET fixo estouraria a passada inteira ali.
-  const retire = (
-    table: string,
-    selectSql: string,
-    keep: Set<string>,
-    options: { hasIsActive?: boolean } = {}
-  ): void => {
-    const rows = database.prepare(selectSql).all(companyId) as Array<{ id: string }>;
-    const nowIso = new Date().toISOString();
-    const update = database.prepare(
-      `UPDATE ${table} SET deleted_at = ?, updated_at = ?${
-        options.hasIsActive === false ? "" : ", is_active = 0"
-      } WHERE id = ?`
-    );
-    for (const row of rows) {
-      if (keep.has(row.id)) continue;
-      update.run(nowIso, nowIso, row.id);
-      changed++;
-    }
-  };
-
-  retire(
-    "product_default_prices",
-    "SELECT id FROM product_default_prices WHERE company_id = ? AND deleted_at IS NULL",
-    cloudIds(payload.productDefaultPrices)
-  );
-  retire(
-    "customer_special_prices",
-    "SELECT id FROM customer_special_prices WHERE company_id = ? AND deleted_at IS NULL",
-    cloudIds(payload.customerSpecialPrices)
-  );
-  retire(
-    "price_table_items",
-    `SELECT pti.id FROM price_table_items pti
-     JOIN price_tables pt ON pt.id = pti.price_table_id
-     WHERE pt.company_id = ? AND pti.deleted_at IS NULL`,
-    cloudIds(payload.priceTableItems),
-    { hasIsActive: false }
-  );
-  retire(
-    "customer_price_tables",
-    `SELECT cpt.id FROM customer_price_tables cpt
-     JOIN customers c ON c.id = cpt.customer_id
-     WHERE c.company_id = ? AND cpt.deleted_at IS NULL`,
-    cloudIds(payload.customerPriceTables)
-  );
-  retire(
-    "price_tables",
-    "SELECT id FROM price_tables WHERE company_id = ? AND deleted_at IS NULL",
-    cloudIds(payload.priceTables)
-  );
-
-  const freightKeep = cloudIds(payload.customerFreightRules);
-  const freightRows = database
-    .prepare(
-      `SELECT fr.id, fr.rule_json FROM customer_freight_rules fr
-       JOIN customers c ON c.id = fr.customer_id
-       WHERE c.company_id = ? AND fr.deleted_at IS NULL`
-    )
-    .all(companyId) as Array<{ id: string; rule_json: string | null }>;
-  const nowIso = new Date().toISOString();
-  const dropFreight = database.prepare(
-    "UPDATE customer_freight_rules SET deleted_at = ?, updated_at = ?, is_active = 0 WHERE id = ?"
-  );
-  const keepMemory = database.prepare(
-    "UPDATE customer_freight_rules SET rule_json = ?, updated_at = ? WHERE id = ?"
-  );
-  for (const row of freightRows) {
-    if (freightKeep.has(row.id)) continue;
-    const memoryOnly = stripManualFreightValues(row.rule_json ?? "{}");
-    if (memoryOnly === null) {
-      dropFreight.run(nowIso, nowIso, row.id);
-    } else {
-      keepMemory.run(memoryOnly, nowIso, row.id);
-    }
-    changed++;
-  }
-
-  return changed;
 }
 
 function upsertCloudPriceTables(
