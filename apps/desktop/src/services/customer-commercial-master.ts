@@ -1,6 +1,7 @@
 import {
+  cloudRowWins,
   CUSTOMER_COMMERCIAL_PUBLISHED_AT_COLUMN,
-  type PriceAuthorityMode
+  type PriceConflictPolicy
 } from "./price-authority.js";
 
 /**
@@ -13,31 +14,48 @@ import {
  * vencimento). Ate esta versao nada disso saia do SQLite de cada balanca — o mesmo cliente
  * podia ter credito habilitado num computador e nao no outro.
  *
- * A decisao mora aqui, separada do SQL, porque ela tem tres desfechos e nenhum e obvio:
+ * A decisao usa a MESMA politica de conflito do preco (`priceConflictPolicy`), e mora aqui,
+ * separada do SQL, porque os tres desfechos precisam ser lidos juntos:
  *
- * - **principal**: nunca aceita o bloco da nuvem. Ela e a dona; o que esta la e o eco do
- *   proprio push dela, ou — na janela entre a eleicao e a republicacao — o bloco que outra
- *   balanca publicou antes de haver dona. Aceitar esse segundo caso faria a principal
- *   adotar justamente a configuracao que ela deveria estar corrigindo.
- * - **secundaria**: aceita sempre que o bloco tiver sido publicado, inclusive por cima de
- *   edicao local ainda nao enviada (`needs_push`). E o mesmo combinado do preco: o que ela
- *   digitou aqui nao e publicado, entao valeria ate o proximo pull e sumiria depois.
- * - **sem principal eleita**: o comportamento de sempre do cadastro compartilhado — a
- *   projecao vence, menos quando ha edicao local ainda nao enviada, que e mais nova.
+ * - `cloud` (**secundaria**): aceita sempre, inclusive por cima de edicao local ainda nao
+ *   enviada (`needs_push`). E o mesmo combinado do preco: o que ela digitou aqui nao e
+ *   publicado, entao valeria ate o proximo pull e sumiria depois.
+ * - `newest` (**principal**): cede para quem editou o cliente por ultimo. Este e o caso que
+ *   a pedreira com DUAS principais depende: "a principal nunca adota o que vem da nuvem"
+ *   funcionaria com uma so, e com duas devolveria o problema de origem — cada uma ficaria
+ *   para sempre com a configuracao que ela mesma digitou.
+ * - `local` (**sem principal**): o comportamento de sempre do cadastro compartilhado — a
+ *   projecao vence, menos quando ha edicao local ainda nao enviada, que e mais nova. Repare
+ *   que aqui `local` NAO quer dizer "a local sempre vence", como no preco: as demais colunas
+ *   do cliente ja se espelham por este criterio, e o bloco seguir outro faria a mesma tela
+ *   ter duas regras.
  *
  * E em todos os tres: bloco NAO publicado nao muda nada. Ver
  * `CUSTOMER_COMMERCIAL_PUBLISHED_AT_COLUMN`.
  */
 export function shouldApplyCloudCommercialBlock(input: {
-  mode: PriceAuthorityMode;
+  policy: PriceConflictPolicy;
   /** A linha como veio do `desktop-pull`. */
   cloudRow: Record<string, unknown>;
   /** A linha local tem edicao ainda nao enviada ao OMIE. */
   localNeedsPush: boolean;
+  /** Id do cliente: o mesmo dos dois lados, entao o desempate cai sempre no relogio. */
+  customerId: string;
+  cloudUpdatedAt: string | null;
+  localUpdatedAt: string | null;
 }): boolean {
   if (!isCommercialBlockPublished(input.cloudRow)) return false;
-  if (input.mode === "master") return false;
-  if (input.mode === "follower") return true;
+  if (input.policy === "cloud") return true;
+  if (input.policy === "newest") {
+    // Mesmo criterio do preco entre principais. Com o id igual dos dois lados, o empate de
+    // relogio cai para a copia local — e o empate e justamente o eco do proprio push desta
+    // maquina, onde adotar ou nao da no mesmo.
+    return cloudRowWins(
+      "newest",
+      { id: input.customerId, updatedAt: input.cloudUpdatedAt },
+      { id: input.customerId, updatedAt: input.localUpdatedAt }
+    );
+  }
   return !input.localNeedsPush;
 }
 

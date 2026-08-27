@@ -1,5 +1,5 @@
 /**
- * Abre caminho para o cadastro de preco da balanca PRINCIPAL na projecao da nuvem.
+ * Quem fica com a linha quando duas balancas PRINCIPAIS cadastram o mesmo preco.
  *
  * As tabelas de preco tem indice unico pela chave natural — `(customer_id, product_id)` no
  * preco especial, `(product_id, is_active)` no preco padrao — enquanto o `desktop-sync`
@@ -8,24 +8,27 @@
  * ids para a mesma chave, quem publicou primeiro ocupa a nuvem e o `upsert` do outro e
  * RECUSADO (23505).
  *
- * Enquanto nao havia dono isso era so um empate. Com uma principal eleita vira o oposto do
- * combinado: o preco dela — o unico que deveria valer — e justamente o que nao entra,
- * porque a secundaria chegou antes. Entao, quando quem envia e a principal, a linha
- * concorrente sai da frente ANTES do upsert.
+ * O criterio e o `updated_at` da propria linha: **quem editou por ultimo manda**.
  *
- * Sai como exclusao logica, e nao apagada: o tombstone viaja no proximo `desktop-pull` e e
- * o que faz a balanca que criou a linha largar a copia local dela. Apagar de vez deixaria a
- * outra maquina com uma linha viva que a nuvem nao tem mais.
+ * Nao e detalhe — e o que torna possivel ter mais de uma principal. "Quem publica por
+ * ultimo manda" faria as duas se derrubarem alternadamente a cada ciclo de sync, e o preco
+ * do par disputado ficaria oscilando entre os dois valores em TODAS as balancas da
+ * pedreira. Comparando a hora da edicao, o resultado e o mesmo seja qual for a ordem em que
+ * as maquinas sincronizam: converge, e converge para o que alguem digitou por ultimo.
  *
- * Este modulo e a parte pura da decisao (quem cede para quem). O acesso ao banco fica na
- * Edge Function.
+ * Empate no relogio cai no id (o maior vence). E arbitrario de proposito: o que importa e
+ * que as duas pontas cheguem a MESMA conclusao sem se falar.
+ *
+ * Este modulo e a parte pura da decisao. O acesso ao banco fica na Edge Function.
  */
 
-/** Uma linha de preco reduzida ao que decide conflito: o id e a chave natural. */
+/** Uma linha de preco reduzida ao que decide conflito: id, chave natural e hora da edicao. */
 export interface PriceRowKey {
   id: string;
   /** Valores da chave natural, na ordem declarada pela tabela. */
   key: Array<string | number | boolean | null>;
+  /** `updated_at` da linha. Ausente vale como a mais antiga possivel. */
+  updatedAt?: string | null;
 }
 
 export interface PriceMasterTable {
@@ -39,7 +42,7 @@ export interface PriceMasterTable {
 }
 
 /**
- * Tabelas de preco em que o indice unico da nuvem pode recusar a linha da principal.
+ * Tabelas de preco em que o indice unico da nuvem pode recusar a linha de uma principal.
  *
  * `price_tables`, `price_table_items` e `customer_price_tables` ficam de fora de proposito:
  * elas nao tem indice unico por chave natural na nuvem, entao nada e recusado ali e nao ha
@@ -91,29 +94,63 @@ function keyToken(key: Array<string | number | boolean | null>): string {
   return JSON.stringify(key);
 }
 
-/**
- * Ids das linhas que ja estao na nuvem e precisam ceder para as que a principal esta
- * enviando: mesma chave natural, id diferente.
- *
- * Uma linha que a principal esta enviando como EXCLUIDA nao reserva a chave para ninguem —
- * ela nao vai ocupar o indice —, entao nao derruba a linha de ninguem.
- */
-export function findRowsToRetire(incoming: PriceRowKey[], existing: PriceRowKey[]): string[] {
-  if (incoming.length === 0 || existing.length === 0) return [];
+function editedAt(row: PriceRowKey): number {
+  const parsed = row.updatedAt ? Date.parse(row.updatedAt) : Number.NaN;
+  return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+}
 
-  const claimed = new Map<string, Set<string>>();
-  for (const row of incoming) {
+/** A linha `a` vence a linha `b`? Hora da edicao; empate no id (o maior vence). */
+export function winsConflict(a: PriceRowKey, b: PriceRowKey): boolean {
+  const left = editedAt(a);
+  const right = editedAt(b);
+  if (left !== right) return left > right;
+  return a.id > b.id;
+}
+
+export interface PriceConflictResolution {
+  /** Linhas ja na nuvem que devem CEDER (exclusao logica) antes do upsert. */
+  retire: string[];
+  /**
+   * Linhas do payload que PERDERAM e nao devem ser gravadas.
+   *
+   * Perder e sair do payload, e nao ser tentada e recusada: um `upsert` que estoura no
+   * indice unico derruba o lote inteiro e vira erro de sincronizacao a cada ciclo, para
+   * sempre, num caso que nao e erro nenhum — e so a outra principal tendo editado depois.
+   */
+  skip: string[];
+}
+
+/**
+ * Resolve, para um lote de linhas de preco que uma principal esta enviando, o que cede na
+ * nuvem e o que nao deve ser gravado.
+ *
+ * Uma linha enviada como EXCLUIDA nao reserva a chave para ninguem (ela nao vai ocupar o
+ * indice), entao nao entra aqui — quem chama filtra com `isLiveRow` antes.
+ */
+export function resolvePriceConflicts(
+  incoming: PriceRowKey[],
+  existing: PriceRowKey[]
+): PriceConflictResolution {
+  const resolution: PriceConflictResolution = { retire: [], skip: [] };
+  if (incoming.length === 0 || existing.length === 0) return resolution;
+
+  const byKey = new Map<string, PriceRowKey[]>();
+  for (const row of existing) {
     const token = keyToken(row.key);
-    const ids = claimed.get(token) ?? new Set<string>();
-    ids.add(row.id);
-    claimed.set(token, ids);
+    byKey.set(token, [...(byKey.get(token) ?? []), row]);
   }
 
   const retire = new Set<string>();
-  for (const row of existing) {
-    const ids = claimed.get(keyToken(row.key));
-    if (!ids || ids.has(row.id)) continue;
-    retire.add(row.id);
+  const skip = new Set<string>();
+  for (const row of incoming) {
+    const rivals = (byKey.get(keyToken(row.key)) ?? []).filter((rival) => rival.id !== row.id);
+    if (rivals.length === 0) continue;
+    if (rivals.every((rival) => winsConflict(row, rival))) {
+      for (const rival of rivals) retire.add(rival.id);
+      continue;
+    }
+    skip.add(row.id);
   }
-  return [...retire];
+
+  return { retire: [...retire], skip: [...skip] };
 }

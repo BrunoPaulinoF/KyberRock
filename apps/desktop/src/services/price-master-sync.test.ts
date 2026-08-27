@@ -5,8 +5,8 @@ import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
 import { writeLocalSetting } from "./local-settings";
 import {
-  PRICE_MASTER_DEVICE_ID_KEY,
-  PRICE_MASTER_DEVICE_NAME_KEY,
+  PRICE_MASTER_DEVICE_IDS_KEY,
+  PRICE_MASTER_DEVICE_NAMES_KEY,
   PRICE_MASTER_REPUBLISH_KEY,
   PRICE_MASTER_RESYNC_KEY,
   isPriceMasterRepublishPending,
@@ -103,6 +103,105 @@ describe("balanca principal de precos (sincronizacao)", () => {
       await pullDesktopDataFromCloud(database, identity);
 
       expect(livePrices(database)).toEqual([{ id: "local-price", unit_price_cents: 9000 }]);
+    } finally {
+      database.close();
+    }
+  });
+
+  /**
+   * Duas principais na mesma pedreira. O desempate NAO e "quem publicou por ultimo" — com
+   * esse criterio as duas se derrubariam alternadamente e o preco do par disputado ficaria
+   * oscilando em todas as balancas. E a hora da EDICAO, comparada dos dois lados.
+   */
+  it("entre principais, o preco editado depois vence o gemeo local", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      seedCustomerAndProduct(database);
+      // Cadastrado aqui em 20/08 por R$ 90,00.
+      insertSpecialPrice(database, { id: "local-price", unitPriceCents: 9000 });
+      electMaster(database, ["desktop-a", "desktop-b"]);
+
+      // A outra principal cadastrou o mesmo par em 27/08 por R$ 120,00: mais recente.
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          customerSpecialPrices: [
+            {
+              id: "outra-principal",
+              customer_id: "cust-1",
+              product_id: "prod-1",
+              unit_price_cents: 12000,
+              unit: "ton",
+              is_active: true,
+              updated_at: "2026-08-27T10:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(livePrices(database)).toEqual([{ id: "outra-principal", unit_price_cents: 12000 }]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("entre principais, o preco local mais recente nao e derrubado pelo antigo da nuvem", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      seedCustomerAndProduct(database);
+      insertSpecialPrice(database, { id: "local-price", unitPriceCents: 9000 });
+      // Editado aqui HOJE: e o valor que a pedreira acabou de combinar.
+      database
+        .prepare("UPDATE customer_special_prices SET updated_at = ? WHERE id = 'local-price'")
+        .run("2026-08-28T10:00:00.000Z");
+      electMaster(database, ["desktop-a", "desktop-b"]);
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          customerSpecialPrices: [
+            {
+              id: "outra-principal",
+              customer_id: "cust-1",
+              product_id: "prod-1",
+              unit_price_cents: 12000,
+              unit: "ton",
+              is_active: true,
+              updated_at: "2026-08-27T10:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(livePrices(database)).toEqual([{ id: "local-price", unit_price_cents: 9000 }]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("a segunda principal continua publicando o cadastro de preco", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      seedCustomerAndProduct(database);
+      insertSpecialPrice(database, { id: "local-price", unitPriceCents: 9000 });
+      electMaster(database, ["desktop-a", "desktop-b"]);
+
+      await pushSharedCadastroToCloud(database, identity);
+
+      const sentKeys = invokeMock.mock.calls
+        .map((call) => (call[1]?.body ?? {}) as Record<string, unknown>)
+        .flatMap((body) => Object.keys(body));
+      expect(sentKeys).toContain("customerSpecialPrices");
     } finally {
       database.close();
     }
@@ -382,15 +481,20 @@ function livePrices(database: DesktopDatabase): Array<Record<string, unknown>> {
     .all() as Array<Record<string, unknown>>;
 }
 
-/** O painel elegeu `masterDeviceId` como principal de precos da pedreira. */
-function electMaster(database: DesktopDatabase, masterDeviceId: string): void {
-  writeLocalSetting(database, PRICE_MASTER_DEVICE_ID_KEY, masterDeviceId);
-  writeLocalSetting(database, PRICE_MASTER_DEVICE_NAME_KEY, `PC ${masterDeviceId}`);
+/** O painel marcou essas balancas como principais de precos da pedreira. */
+function electMaster(database: DesktopDatabase, master: string | string[]): void {
+  const masters = Array.isArray(master) ? master : [master];
+  writeLocalSetting(database, PRICE_MASTER_DEVICE_IDS_KEY, masters);
+  writeLocalSetting(
+    database,
+    PRICE_MASTER_DEVICE_NAMES_KEY,
+    masters.map((id) => `PC ${id}`)
+  );
   const deviceId = database
     .prepare("SELECT value_json FROM local_settings WHERE key = 'cloud_device_id'")
     .pluck()
     .get() as string;
-  if ((JSON.parse(deviceId) as string) === masterDeviceId) {
+  if (masters.includes(JSON.parse(deviceId) as string)) {
     writeLocalSetting(database, PRICE_MASTER_REPUBLISH_KEY, true);
   } else {
     writeLocalSetting(database, PRICE_MASTER_RESYNC_KEY, true);

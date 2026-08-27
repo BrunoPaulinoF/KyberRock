@@ -33,14 +33,16 @@ import {
   clearCustomerCommercialRepublishPending,
   clearPriceMasterRepublishPending,
   clearPriceMasterResyncPending,
+  cloudRowWins,
   isCustomerCommercialRepublishPending,
   isPriceMasterRepublishPending,
   isPriceMasterResyncPending,
   isPriceMasteredCadastroKey,
+  priceConflictPolicy,
   readPriceAuthority,
   MASTERED_CUSTOMER_PAYLOAD_COLUMNS,
   PRICE_MASTERED_CADASTRO_KEYS,
-  type PriceAuthorityMode
+  type PriceConflictPolicy
 } from "./price-authority.js";
 import { isSellableProduct } from "./product-classification.js";
 import { readReportChannelSettings, toCloudChannelSettingsRow } from "./report-channels.js";
@@ -783,7 +785,12 @@ export async function pullDesktopDataFromCloud(
       warnings
     );
     const customers = applySection(warnings, "customers", () =>
-      upsertCloudCustomers(database, settings.companyId, payload.customers ?? [], authority.mode)
+      upsertCloudCustomers(
+        database,
+        settings.companyId,
+        payload.customers ?? [],
+        priceConflictPolicy(authority.mode)
+      )
     );
     const products = applySection(warnings, "products", () =>
       upsertCloudProducts(database, settings.companyId, payload.products ?? [])
@@ -797,7 +804,7 @@ export async function pullDesktopDataFromCloud(
         settings.companyId,
         payload,
         warnings,
-        authority.mode === "follower"
+        priceConflictPolicy(authority.mode)
       );
     // A passada completa pedida pela eleicao da principal ja aconteceu: o cadastro de
     // preco desta maquina esta alinhado com o que a nuvem tem. Nada e apagado aqui — quem
@@ -898,11 +905,12 @@ function upsertCloudCadastro(
   payload: DesktopPullResponse,
   warnings: string[] = [],
   /**
-   * Esta maquina e secundaria de preco: o cadastro de preco que vem da nuvem e o da
-   * balanca principal e vence a linha local que disputa o mesmo par. Fora desse modo nada
-   * muda — sem principal definida a linha local continua tendo a ultima palavra.
+   * Quem vence quando a linha da nuvem disputa a mesma chave natural de uma linha local
+   * (ver `cloudRowWins`): a nuvem sempre, na secundaria; a mais recente, na principal —
+   * que agora pode ter outra principal do outro lado; a local, na pedreira sem principal,
+   * que e o comportamento anterior a este campo.
    */
-  authoritativePrices = false
+  pricePolicy: PriceConflictPolicy = "local"
 ): number {
   const sections: Array<[string, () => number]> = [
     // `carriers` e `payment_methods` NAO estao aqui: eles rodam antes dos clientes, em
@@ -946,7 +954,7 @@ function upsertCloudCadastro(
           database,
           companyId,
           payload.productDefaultPrices ?? [],
-          authoritativePrices
+          pricePolicy
         )
     ],
     [
@@ -956,7 +964,7 @@ function upsertCloudCadastro(
           database,
           companyId,
           payload.customerSpecialPrices ?? [],
-          authoritativePrices
+          pricePolicy
         )
     ],
     ["price_tables", () => upsertCloudPriceTables(database, companyId, payload.priceTables ?? [])],
@@ -971,11 +979,7 @@ function upsertCloudCadastro(
     [
       "customer_freight_rules",
       () =>
-        upsertCloudCustomerFreightRules(
-          database,
-          payload.customerFreightRules ?? [],
-          authoritativePrices
-        )
+        upsertCloudCustomerFreightRules(database, payload.customerFreightRules ?? [], pricePolicy)
     ],
     [
       "customer_future_billing_invoices",
@@ -1135,22 +1139,36 @@ function upsertCloudCustomerPriceTables(
   return count;
 }
 
+/**
+ * Linha local que ja ocupa a chave natural disputada. `updated_at` entra na leitura porque
+ * entre duas principais o desempate e a hora da edicao — sem ela, a comparacao cairia
+ * sempre no id e o preco mais recente poderia perder para o mais antigo.
+ */
+interface PriceConflictRow {
+  id: string;
+  updated_at?: string | null;
+}
+
+function toPriceConflictRow(row: PriceConflictRow): { id: string; updatedAt: string | null } {
+  return { id: row.id, updatedAt: isoStringValue(row.updated_at) || null };
+}
+
 function upsertCloudCustomerFreightRules(
   database: DesktopDatabase,
   rows: Array<Record<string, unknown>>,
-  authoritative = false
+  policy: PriceConflictPolicy = "local"
 ): number {
   // Indice unico local por (cliente, produto) e por regra padrao do cliente:
   // mantem a local quando a da nuvem chega com outro id para o mesmo par.
   const findConflictForProduct = database.prepare(
-    `SELECT id FROM customer_freight_rules
+    `SELECT id, updated_at FROM customer_freight_rules
      WHERE customer_id = ? AND product_id = ? AND deleted_at IS NULL LIMIT 1`
   );
   const findConflictForDefault = database.prepare(
-    `SELECT id FROM customer_freight_rules
+    `SELECT id, updated_at FROM customer_freight_rules
      WHERE customer_id = ? AND product_id IS NULL AND deleted_at IS NULL LIMIT 1`
   );
-  // Balanca secundaria: o valor de frete do cadastro e o da principal.
+  // A linha que perde a chave natural cede (exclusao logica) em vez de bloquear a outra.
   const yieldToMaster = database.prepare(
     `UPDATE customer_freight_rules SET deleted_at = ?, updated_at = ?, is_active = 0 WHERE id = ?`
   );
@@ -1187,20 +1205,24 @@ function upsertCloudCustomerFreightRules(
         productId
           ? findConflictForProduct.get(customerId, productId)
           : findConflictForDefault.get(customerId)
-      ) as { id: string } | undefined;
+      ) as PriceConflictRow | undefined;
       if (conflict && conflict.id !== id) {
-        if (!authoritative) continue;
+        if (!cloudRowWins(policy, { id, updatedAt }, toPriceConflictRow(conflict))) continue;
         localRuleJson = readLocalFreightRuleJson(readRuleJson, conflict.id);
         yieldToMaster.run(updatedAt, updatedAt, conflict.id);
       }
     }
     const cloudRuleJson = jsonStringValue(row.rule_json) ?? "{}";
-    const ruleJson = authoritative
-      ? mergeFollowerFreightRuleJson(
-          readLocalFreightRuleJson(readRuleJson, id) ?? localRuleJson,
-          cloudRuleJson
-        )
-      : cloudRuleJson;
+    // A memoria da ultima venda desta maquina (`source: "last_used"`) mora na mesma linha
+    // do valor combinado com o cliente. Espelhar a linha inteira apagaria a memoria a cada
+    // pull; a fusao mantem o cadastro de quem publicou e a memoria de quem esta aqui.
+    const ruleJson =
+      policy === "local"
+        ? cloudRuleJson
+        : mergeFollowerFreightRuleJson(
+            readLocalFreightRuleJson(readRuleJson, id) ?? localRuleJson,
+            cloudRuleJson
+          );
     upsert.run(
       id,
       customerId,
@@ -1881,7 +1903,7 @@ function upsertCloudProductDefaultPrices(
   database: DesktopDatabase,
   companyId: string,
   rows: Array<Record<string, unknown>>,
-  authoritative = false
+  policy: PriceConflictPolicy = "local"
 ): number {
   const upsert = database.prepare(`
     INSERT INTO product_default_prices (
@@ -1901,14 +1923,12 @@ function upsertCloudProductDefaultPrices(
   `);
 
   // Indice unico local (product_id, is_active) entre os nao excluidos: se a mesma
-  // tabela de preco ja existe localmente com outro id, mantem a local e ignora a
-  // copia da nuvem (gravar as duas violaria o indice e derrubaria o pull).
+  // tabela de preco ja existe localmente com outro id, gravar as duas violaria o indice e
+  // derrubaria o pull. Quem cede depende da politica (ver `cloudRowWins`).
   const findConflict = database.prepare(
-    `SELECT id FROM product_default_prices
+    `SELECT id, updated_at FROM product_default_prices
      WHERE product_id = ? AND is_active = ? AND deleted_at IS NULL LIMIT 1`
   );
-  // Balanca secundaria: quem manda no preco e a principal, entao a linha local que disputa
-  // o mesmo produto sai da frente em vez de vencer.
   const yieldToMaster = database.prepare(
     `UPDATE product_default_prices SET deleted_at = ?, updated_at = ?, is_active = 0 WHERE id = ?`
   );
@@ -1923,9 +1943,9 @@ function upsertCloudProductDefaultPrices(
     const deletedAt = isoStringValue(row.deleted_at);
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
     if (!deletedAt) {
-      const conflict = findConflict.get(productId, isActive) as { id: string } | undefined;
+      const conflict = findConflict.get(productId, isActive) as PriceConflictRow | undefined;
       if (conflict && conflict.id !== id) {
-        if (!authoritative) continue;
+        if (!cloudRowWins(policy, { id, updatedAt }, toPriceConflictRow(conflict))) continue;
         yieldToMaster.run(updatedAt, updatedAt, conflict.id);
       }
     }
@@ -1951,7 +1971,7 @@ function upsertCloudCustomerSpecialPrices(
   database: DesktopDatabase,
   companyId: string,
   rows: Array<Record<string, unknown>>,
-  authoritative = false
+  policy: PriceConflictPolicy = "local"
 ): number {
   const upsert = database.prepare(`
     INSERT INTO customer_special_prices (
@@ -1971,12 +1991,12 @@ function upsertCloudCustomerSpecialPrices(
 
   // Indice unico local (customer_id, product_id) entre os nao excluidos.
   const findConflict = database.prepare(
-    `SELECT id FROM customer_special_prices
+    `SELECT id, updated_at FROM customer_special_prices
      WHERE customer_id = ? AND product_id = ? AND deleted_at IS NULL LIMIT 1`
   );
   // Era exatamente aqui que o preco especial parava de sincronizar: as duas balancas
   // cadastraram o mesmo par com ids diferentes e cada uma descartava a linha da outra.
-  // Com principal definida, a linha da secundaria cede.
+  // Com principal definida, a linha que perde cede em vez de ser ignorada.
   const yieldToMaster = database.prepare(
     `UPDATE customer_special_prices SET deleted_at = ?, updated_at = ?, is_active = 0 WHERE id = ?`
   );
@@ -1991,9 +2011,9 @@ function upsertCloudCustomerSpecialPrices(
     const deletedAt = isoStringValue(row.deleted_at);
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
     if (!deletedAt) {
-      const conflict = findConflict.get(customerId, productId) as { id: string } | undefined;
+      const conflict = findConflict.get(customerId, productId) as PriceConflictRow | undefined;
       if (conflict && conflict.id !== id) {
-        if (!authoritative) continue;
+        if (!cloudRowWins(policy, { id, updatedAt }, toPriceConflictRow(conflict))) continue;
         yieldToMaster.run(updatedAt, updatedAt, conflict.id);
       }
     }
@@ -2173,6 +2193,7 @@ export async function lookupCnpjFromCloud(
 /** As colunas do bloco comercial como elas estao HOJE nesta maquina. */
 interface LocalCommercialRow {
   needs_push: number;
+  updated_at: string | null;
   default_payment_method_id: string | null;
   default_carrier_id: string | null;
   nf_required: number;
@@ -2191,14 +2212,14 @@ function upsertCloudCustomers(
   companyId: string,
   rows: Array<Record<string, unknown>>,
   /**
-   * Papel desta balanca no bloco comercial/credito do cadastro (ver
-   * `shouldApplyCloudCommercialBlock`). O padrao e o comportamento de sempre da pedreira
-   * que nao elegeu principal.
+   * Quem vence no bloco comercial/credito do cadastro (ver
+   * `shouldApplyCloudCommercialBlock`) — a mesma politica que decide o preco. O padrao e o
+   * comportamento de sempre da pedreira que nao elegeu principal.
    */
-  commercialMode: PriceAuthorityMode = "standalone"
+  commercialPolicy: PriceConflictPolicy = "local"
 ): number {
   const readLocalCommercial = database.prepare(
-    `SELECT needs_push, default_payment_method_id, default_carrier_id, nf_required, credit_mode,
+    `SELECT needs_push, updated_at, default_payment_method_id, default_carrier_id, nf_required, credit_mode,
             credit_account_enabled, credit_periodicity, credit_closing_day,
             credit_second_closing_day, credit_boleto_days, credit_second_boleto_days,
             credit_closing_weekday
@@ -2280,7 +2301,14 @@ function upsertCloudCustomers(
     const tradeName = stringValue(row.trade_name) || legalName;
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
     const local = readLocalCommercial.get(id) as LocalCommercialRow | undefined;
-    const commercial = resolveCommercialBlock(database, row, local, commercialMode);
+    const commercial = resolveCommercialBlock(
+      database,
+      row,
+      local,
+      commercialPolicy,
+      id,
+      updatedAt
+    );
     upsert.run(
       id,
       companyId,
@@ -2330,7 +2358,9 @@ function resolveCommercialBlock(
   database: DesktopDatabase,
   row: Record<string, unknown>,
   local: LocalCommercialRow | undefined,
-  mode: PriceAuthorityMode
+  policy: PriceConflictPolicy,
+  customerId: string,
+  cloudUpdatedAt: string
 ): {
   defaultPaymentMethodId: string | null;
   defaultCarrierId: string | null;
@@ -2352,9 +2382,12 @@ function resolveCommercialBlock(
 
   if (
     !shouldApplyCloudCommercialBlock({
-      mode,
+      policy,
       cloudRow: row,
-      localNeedsPush: Number(local?.needs_push ?? 0) === 1
+      localNeedsPush: Number(local?.needs_push ?? 0) === 1,
+      customerId,
+      cloudUpdatedAt,
+      localUpdatedAt: isoStringValue(local?.updated_at) || null
     })
   ) {
     return {

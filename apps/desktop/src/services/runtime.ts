@@ -4682,7 +4682,7 @@ export class DesktopRuntime {
   private assertPriceAuthority(): void {
     const authority = this.getPriceAuthority();
     if (authority.mode !== "follower") return;
-    throw new Error(priceEditBlockedMessage(authority.masterDeviceName));
+    throw new Error(priceEditBlockedMessage(authority.masterDeviceNames));
   }
 
   /**
@@ -4696,7 +4696,7 @@ export class DesktopRuntime {
   private assertCommercialAuthority(): void {
     const authority = this.getPriceAuthority();
     if (authority.mode !== "follower") return;
-    throw new Error(commercialEditBlockedMessage(authority.masterDeviceName));
+    throw new Error(commercialEditBlockedMessage(authority.masterDeviceNames));
   }
 
   /**
@@ -4719,7 +4719,7 @@ export class DesktopRuntime {
     ) {
       return;
     }
-    throw new Error(commercialEditBlockedMessage(authority.masterDeviceName));
+    throw new Error(commercialEditBlockedMessage(authority.masterDeviceNames));
   }
 
   /**

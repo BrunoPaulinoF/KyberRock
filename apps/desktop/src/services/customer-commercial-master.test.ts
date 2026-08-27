@@ -12,8 +12,8 @@ import {
 import {
   CUSTOMER_COMMERCIAL_REPUBLISH_KEY,
   MASTERED_CUSTOMER_PAYLOAD_COLUMNS,
-  PRICE_MASTER_DEVICE_ID_KEY,
-  PRICE_MASTER_DEVICE_NAME_KEY
+  PRICE_MASTER_DEVICE_IDS_KEY,
+  PRICE_MASTER_DEVICE_NAMES_KEY
 } from "./price-authority";
 import { pullDesktopDataFromCloud, pushSharedCadastroToCloud } from "./supabase-sync";
 
@@ -39,41 +39,79 @@ describe("bloco comercial do cliente (decisao)", () => {
     commercial_published_at: "2026-08-27T10:00:00.000Z",
     nf_required: false
   };
+  const clocks = {
+    customerId: "cust-1",
+    cloudUpdatedAt: "2026-08-27T10:00:00.000Z",
+    localUpdatedAt: "2026-08-27T09:00:00.000Z"
+  };
 
   it("a secundaria aceita o bloco publicado, inclusive por cima de edicao local pendente", () => {
     expect(
       shouldApplyCloudCommercialBlock({
-        mode: "follower",
+        ...clocks,
+        policy: "cloud",
         cloudRow: publishedRow,
         localNeedsPush: true
       })
     ).toBe(true);
   });
 
-  // A principal e a dona: o que esta na nuvem e o eco do push dela ou — na janela entre a
-  // eleicao e a republicacao — o bloco de outra balanca, publicado quando ainda nao havia
-  // dona. Adotar o segundo caso e adotar justamente o que ela deveria estar corrigindo.
-  it("a principal nunca adota o bloco da nuvem", () => {
+  /**
+   * Entre principais, quem editou por ultimo manda — o mesmo criterio do preco.
+   *
+   * "A principal nunca adota o que vem da nuvem" seria correto com uma principal so. Com
+   * duas devolveria o problema de origem: cada uma ficaria para sempre com a configuracao
+   * que ela mesma digitou, que e exatamente o que este recurso existe para acabar.
+   */
+  it("entre principais, a configuracao editada por ultimo vence", () => {
     expect(
       shouldApplyCloudCommercialBlock({
-        mode: "master",
+        ...clocks,
+        policy: "newest",
+        cloudRow: publishedRow,
+        localNeedsPush: false
+      })
+    ).toBe(true);
+
+    // A edicao daqui e mais nova: a da nuvem nao entra.
+    expect(
+      shouldApplyCloudCommercialBlock({
+        ...clocks,
+        localUpdatedAt: "2026-08-27T11:00:00.000Z",
+        policy: "newest",
+        cloudRow: publishedRow,
+        localNeedsPush: false
+      })
+    ).toBe(false);
+
+    // Empate de relogio e o eco do proprio push: adotar ou nao da no mesmo, e a copia local
+    // fica. As duas pontas decidem igual seja qual for a ordem em que sincronizam.
+    expect(
+      shouldApplyCloudCommercialBlock({
+        ...clocks,
+        localUpdatedAt: clocks.cloudUpdatedAt,
+        policy: "newest",
         cloudRow: publishedRow,
         localNeedsPush: false
       })
     ).toBe(false);
   });
 
+  // `local` aqui NAO e o `local` do preco ("a linha local sempre vence"): e o que as demais
+  // colunas do cliente ja fazem, para a mesma tela nao ter duas regras.
   it("sem principal eleita, a projecao vence — menos com edicao local pendente", () => {
     expect(
       shouldApplyCloudCommercialBlock({
-        mode: "standalone",
+        ...clocks,
+        policy: "local",
         cloudRow: publishedRow,
         localNeedsPush: false
       })
     ).toBe(true);
     expect(
       shouldApplyCloudCommercialBlock({
-        mode: "standalone",
+        ...clocks,
+        policy: "local",
         cloudRow: publishedRow,
         localNeedsPush: true
       })
@@ -87,7 +125,8 @@ describe("bloco comercial do cliente (decisao)", () => {
   it("bloco nao publicado nao muda nada, nem na secundaria", () => {
     expect(
       shouldApplyCloudCommercialBlock({
-        mode: "follower",
+        ...clocks,
+        policy: "cloud",
         cloudRow: { commercial_published_at: null, nf_required: null },
         localNeedsPush: false
       })
@@ -95,7 +134,8 @@ describe("bloco comercial do cliente (decisao)", () => {
     // Migracao da nuvem ainda nao aplicada: a coluna nem vem na resposta.
     expect(
       shouldApplyCloudCommercialBlock({
-        mode: "follower",
+        ...clocks,
+        policy: "cloud",
         cloudRow: { nf_required: null },
         localNeedsPush: false
       })
@@ -184,7 +224,7 @@ describe("bloco comercial do cliente (sincronizacao)", () => {
             WHERE id = 'cust-1'`
         )
         .run();
-      electMaster(database, "desktop-a");
+      electMasters(database, "desktop-a");
 
       invokeMock.mockResolvedValueOnce({
         data: { customers: [cloudCustomer({ credit_account_enabled: false, nf_required: true })] },
@@ -199,6 +239,76 @@ describe("bloco comercial do cliente (sincronizacao)", () => {
         credit_closing_weekday: null,
         nf_required: 1
       });
+    } finally {
+      database.close();
+    }
+  });
+
+  /**
+   * Duas principais (a da portaria e a do escritorio) nao podem ficar cada uma com a sua
+   * configuracao — seria o empate original de volta, so que entre principais. O desempate e
+   * a hora da edicao do cliente, o mesmo criterio do preco.
+   */
+  it("entre principais, adota a configuracao editada depois da sua", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      seedCustomer(database);
+      // As DUAS sao principais. Esta aqui configurou o credito as 09:00.
+      database
+        .prepare(
+          `UPDATE customers
+              SET credit_account_enabled = 1, credit_closing_day = 5,
+                  updated_at = '2026-08-27T09:00:00.000Z'
+            WHERE id = 'cust-1'`
+        )
+        .run();
+      electMasters(database, "desktop-a", "desktop-b");
+
+      // A outra principal editou as 10:00.
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          customers: [cloudCustomer({ credit_account_enabled: true, credit_closing_day: 20 })]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(commercialOf(database).credit_closing_day).toBe(20);
+    } finally {
+      database.close();
+    }
+  });
+
+  // ...e o contrario tambem: a edicao mais nova daqui nao e derrubada pela mais velha de la.
+  it("entre principais, mantem a sua configuracao quando ela e a mais nova", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      seedCustomer(database);
+      database
+        .prepare(
+          `UPDATE customers
+              SET credit_account_enabled = 1, credit_closing_day = 5,
+                  updated_at = '2026-08-27T11:00:00.000Z'
+            WHERE id = 'cust-1'`
+        )
+        .run();
+      electMasters(database, "desktop-a", "desktop-b");
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          customers: [cloudCustomer({ credit_account_enabled: true, credit_closing_day: 20 })]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(commercialOf(database).credit_closing_day).toBe(5);
     } finally {
       database.close();
     }
@@ -221,7 +331,7 @@ describe("bloco comercial do cliente (sincronizacao)", () => {
           "UPDATE customers SET credit_account_enabled = 1, credit_closing_day = 15 WHERE id = 'cust-1'"
         )
         .run();
-      electMaster(database, "desktop-a");
+      electMasters(database, "desktop-a");
 
       // Linha antiga: a coluna existe na nuvem, mas ninguem publicou o bloco ainda.
       invokeMock.mockResolvedValueOnce({
@@ -266,7 +376,7 @@ describe("bloco comercial do cliente (sincronizacao)", () => {
       database
         .prepare("UPDATE customers SET default_carrier_id = 'carrier-1' WHERE id = 'cust-1'")
         .run();
-      electMaster(database, "desktop-a");
+      electMasters(database, "desktop-a");
 
       invokeMock.mockResolvedValueOnce({
         data: { customers: [cloudCustomer({ default_carrier_id: null })] },
@@ -296,7 +406,7 @@ describe("bloco comercial do cliente (sincronizacao)", () => {
       database
         .prepare("UPDATE customers SET default_carrier_id = 'carrier-1' WHERE id = 'cust-1'")
         .run();
-      electMaster(database, "desktop-a");
+      electMasters(database, "desktop-a");
 
       invokeMock.mockResolvedValueOnce({
         data: { customers: [cloudCustomer({ default_carrier_id: "carrier-que-nao-chegou" })] },
@@ -325,7 +435,7 @@ describe("bloco comercial do cliente (sincronizacao)", () => {
       // A forma padrao do sistema nasce com id sorteado em cada balanca: aqui ela e
       // "pm-daqui", na principal e outra coisa, e as duas tem o mesmo `code`.
       const localCashId = seedPaymentMethod(database, "pm-daqui");
-      electMaster(database, "desktop-a");
+      electMasters(database, "desktop-a");
 
       invokeMock.mockResolvedValueOnce({
         data: {
@@ -360,7 +470,7 @@ describe("bloco comercial do cliente (sincronizacao)", () => {
     try {
       const identity = readIdentity(database);
       seedCustomer(database);
-      electMaster(database, "desktop-a");
+      electMasters(database, "desktop-a");
 
       await pushSharedCadastroToCloud(database, identity);
 
@@ -388,7 +498,7 @@ describe("bloco comercial do cliente (sincronizacao)", () => {
       database
         .prepare("UPDATE customers SET credit_account_enabled = 1, nf_required = 0 WHERE id = ?")
         .run("cust-1");
-      electMaster(database, "desktop-a");
+      electMasters(database, "desktop-a");
 
       await pushSharedCadastroToCloud(database, identity);
 
@@ -445,7 +555,7 @@ describe("bloco comercial do cliente (sincronizacao)", () => {
     try {
       const identity = readIdentity(database);
       seedCustomer(database);
-      electMaster(database, "desktop-a");
+      electMasters(database, "desktop-a");
 
       await pushSharedCadastroToCloud(database, identity);
 
@@ -507,9 +617,14 @@ function cloudCustomer(overrides: Record<string, unknown> = {}): Record<string, 
   };
 }
 
-function electMaster(database: DesktopDatabase, masterDeviceId: string): void {
-  writeLocalSetting(database, PRICE_MASTER_DEVICE_ID_KEY, masterDeviceId);
-  writeLocalSetting(database, PRICE_MASTER_DEVICE_NAME_KEY, `PC ${masterDeviceId}`);
+/** O painel marcou estas balancas como principais da pedreira. */
+function electMasters(database: DesktopDatabase, ...masterDeviceIds: string[]): void {
+  writeLocalSetting(database, PRICE_MASTER_DEVICE_IDS_KEY, masterDeviceIds);
+  writeLocalSetting(
+    database,
+    PRICE_MASTER_DEVICE_NAMES_KEY,
+    masterDeviceIds.map((id) => `PC ${id}`)
+  );
 }
 
 function seedCustomer(database: DesktopDatabase): void {

@@ -2173,7 +2173,7 @@ export function CustomersView({
                     label="Forma de pagamento padrao"
                     hint={
                       commercialIsReadOnly
-                        ? priceMasterHint(priceAuthority.masterDeviceName)
+                        ? priceMasterHint(priceAuthority.masterDeviceNames)
                         : "Puxada automaticamente na Nova entrada (pode ser trocada)"
                     }
                   >
@@ -2210,7 +2210,7 @@ export function CustomersView({
                     label="Transportadora padrao"
                     hint={
                       commercialIsReadOnly
-                        ? priceMasterHint(priceAuthority.masterDeviceName)
+                        ? priceMasterHint(priceAuthority.masterDeviceNames)
                         : "Puxada automaticamente na Nova entrada. Vincular uma transportadora na aba Transportadoras ja assume o padrao quando ele ainda nao foi definido."
                     }
                   >
