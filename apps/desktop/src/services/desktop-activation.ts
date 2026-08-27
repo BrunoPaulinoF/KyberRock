@@ -114,11 +114,16 @@ interface DesktopStatusResponse {
    */
   updateChannel?: string | null;
   /**
-   * Balanca principal de precos da pedreira. Os dois campos so vem quando a nuvem ja
-   * conhece a coluna `is_price_master`; ausentes, o papel gravado aqui nao e tocado (ver
-   * `applyPriceMasterFromCloud`). `null` e resposta legitima: a pedreira nao elegeu
+   * Balancas principais de precos da pedreira. Os campos so vem quando a nuvem ja conhece a
+   * coluna `is_price_master`; ausentes, o papel gravado aqui nao e tocado (ver
+   * `applyPriceMasterFromCloud`). Lista vazia e resposta legitima: a pedreira nao elegeu
    * principal e cada balanca segue publicando o proprio cadastro de preco.
+   *
+   * Os campos no singular sao o formato antigo (uma principal so) e continuam sendo lidos
+   * como reserva, para o caso de a nuvem ainda nao ter a versao que devolve a lista.
    */
+  priceMasterDeviceIds?: string[] | null;
+  priceMasterDeviceNames?: string[] | null;
   priceMasterDeviceId?: string | null;
   priceMasterDeviceName?: string | null;
   unitDevices?: CloudUnitDevice[];
@@ -144,6 +149,28 @@ function applyUpdateChannelFromCloud(
   } catch {
     // Ignora: o canal atual continua valendo.
   }
+}
+
+/**
+ * Le da resposta do `desktop-status` quais balancas sao principais de preco.
+ *
+ * `undefined` (nenhum dos campos veio) significa "a nuvem nao falou disso" e preserva o
+ * papel gravado aqui; lista vazia significa "esta pedreira nao tem principal". Aceita
+ * tambem o formato antigo, de uma principal so, para a balanca atualizada antes da nuvem
+ * nao ficar sem papel nenhum no meio do caminho.
+ */
+function readPriceMasters(
+  data: DesktopStatusResponse | null | undefined
+): Array<{ id: string | null; name: string | null }> | undefined {
+  if (!data) return undefined;
+  if (Array.isArray(data.priceMasterDeviceIds)) {
+    const names = Array.isArray(data.priceMasterDeviceNames) ? data.priceMasterDeviceNames : [];
+    return data.priceMasterDeviceIds.map((id, index) => ({ id, name: names[index] ?? null }));
+  }
+  if (!("priceMasterDeviceId" in data)) return undefined;
+  return data.priceMasterDeviceId
+    ? [{ id: data.priceMasterDeviceId, name: data.priceMasterDeviceName ?? null }]
+    : [];
 }
 
 export async function activateDesktop(
@@ -328,14 +355,7 @@ export async function validateDesktopAccess(
     if (data?.allowed) {
       writeLocalSetting(database, "last_license_check_at", checkedAt, checkedAt);
       applyUpdateChannelFromCloud(database, data.updateChannel);
-      applyPriceMasterFromCloud(
-        database,
-        data && "priceMasterDeviceId" in data
-          ? { id: data.priceMasterDeviceId ?? null, name: data.priceMasterDeviceName ?? null }
-          : undefined,
-        credentials.deviceId,
-        now
-      );
+      applyPriceMasterFromCloud(database, readPriceMasters(data), credentials.deviceId, now);
       // Atualiza a legenda multi-desktop (nome + cor de cada computador da
       // unidade). Best-effort: nunca derruba a validacao de acesso.
       if (Array.isArray(data.unitDevices) && data.unitDevices.length > 0) {

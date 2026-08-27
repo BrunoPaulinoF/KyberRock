@@ -82,20 +82,26 @@ These recur across the codebase and are easy to violate accidentally:
 - **Monorepo TS**: root `tsconfig.json` is references-only; each workspace is `composite: true`
   and excludes `**/*.test.ts` from its build — use `import type` for test-only symbols and for
   all type imports (`@typescript-eslint/consistent-type-imports` is an error).
-- **Balanca principal de precos** (`docs/preco-balanca-principal.md`, AGENTS.md "Balanca principal
+- **Balancas principais de precos** (`docs/preco-balanca-principal.md`, AGENTS.md "Balanca principal
   de precos"): o cadastro de preco da pedreira (preço padrão, preço especial por cliente, tabelas de
-  preço + vínculo e valor de frete do cadastro) tem **dono único** — a balança eleita no painel
-  (`device_registrations.is_price_master`, uma por empresa). A projeção desses dados já existia, mas
-  **empatava**: duas balanças cadastrando o mesmo par (cliente, produto) geram ids diferentes e o
-  pull de cada lado descartava a linha da outra por causa do índice único local, então cada
-  computador ficava com o preço que ele mesmo digitou. Com principal definida a linha local cede
-  (`authoritative` nos `upsertCloud*`), a secundária não publica preço (`PRICE_MASTERED_CADASTRO_KEYS`)
-  e a edição é recusada no **runtime**, não só na tela. O empate se repetia na nuvem — mesmo índice
-  único, e o `desktop-sync` grava por `id` —, então quando quem publica é a principal a linha
-  concorrente cede antes do upsert (`_shared/price-master-conflicts.ts`); sem isso o preço dela era
-  justamente o recusado. O pull **não apaga** preço: quem tira o par disputado é aquele tombstone,
-  que chega junto com o preço novo. Sem principal, nada muda. A memória de frete da última venda
-  (`source: "last_used"`) é da máquina e sobrevive ao espelhamento.
+  preço + vínculo e valor de frete do cadastro) tem **dono** — as balanças marcadas no painel
+  (`device_registrations.is_price_master`), que podem ser **mais de uma** por empresa. A projeção
+  desses dados já existia, mas **empatava**: duas balanças cadastrando o mesmo par (cliente, produto)
+  geram ids diferentes e o pull de cada lado descartava a linha da outra por causa do índice único
+  local, então cada computador ficava com o preço que ele mesmo digitou. Com principal definida a
+  linha que perde cede, a secundária não publica preço (`PRICE_MASTERED_CADASTRO_KEYS`) e a edição é
+  recusada no **runtime**, não só na tela. Quem perde depende da política (`priceConflictPolicy`):
+  `cloud` na secundária, `newest` entre principais, `local` sem principal. O `newest` é o que torna
+  possível ter duas principais — "quem publica por último" faria as duas se derrubarem
+  alternadamente e o preço oscilaria em toda a pedreira; comparando o `updated_at` da própria linha
+  (empate no maior id), as duas pontas decidem igual seja qual for a ordem do sync. A mesma regra
+  vive nos dois runtimes (`cloudRowWins` no desktop, `winsConflict` na nuvem). O empate se repetia na
+  nuvem — mesmo índice único, e o `desktop-sync` grava por `id` —, então quando quem publica é uma
+  principal a linha concorrente cede antes do upsert e a linha perdedora **sai do payload**
+  (`_shared/price-master-conflicts.ts`); tentá-la seria um 23505 derrubando o lote a cada ciclo. O
+  pull **não apaga** preço: quem tira o par disputado é aquele tombstone, que chega junto com o preço
+  novo. Sem principal, nada muda. A memória de frete da última venda (`source: "last_used"`) é da
+  máquina e sobrevive ao espelhamento.
 - **Backoffice financeiro** (`docs/financeiro.md`): é a cobrança **da plataforma** — a Kybernan
   fatura cada pedreira (`public.companies`) pela mensalidade acertada caso a caso. Nada a ver com
   o financeiro das operações da balança, que vive no OMIE; por isso a aba **Financeiro** do painel

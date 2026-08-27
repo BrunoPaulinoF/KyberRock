@@ -43,27 +43,30 @@ const DEVICE_BASE_COLUMNS =
   "id, company_id, unit_id, name, color, device_number, token_hash, is_active";
 
 /**
- * Balanca principal de precos da empresa (`is_price_master`), quando ha uma.
+ * Balancas principais de precos da empresa (`is_price_master`).
  *
- * Devolve `undefined` — e nao `null` — quando a coluna ainda nao existe no banco: o
- * desktop so grava a principal quando o campo VEM na resposta, entao a janela entre o
- * deploy da funcao e a aplicacao da migracao nao pode ser confundida com "a pedreira nao
- * tem principal". Confundir tiraria o espelhamento de preco das balancas que ja o tem.
+ * Devolve `undefined` — e nao lista vazia — quando a coluna ainda nao existe no banco: o
+ * desktop so grava o papel quando o campo VEM na resposta, entao a janela entre o deploy da
+ * funcao e a aplicacao da migracao nao pode ser confundida com "a pedreira nao tem
+ * principal". Confundir tiraria o espelhamento de preco das balancas que ja o tem.
+ *
+ * Mais de uma principal e o caso normal: quem cadastra preco na pedreira costuma ser mais
+ * de um posto. Entre elas, quem editou a linha por ultimo manda (`price-master-conflicts`).
  */
-async function selectPriceMaster(
+async function selectPriceMasters(
   supabase: ReturnType<typeof createClient>,
   companyId: string
-): Promise<{ id: string; name: string } | null | undefined> {
+): Promise<Array<{ id: string; name: string }> | undefined> {
   const { data, error } = await supabase
     .from("device_registrations")
     .select("id, name")
     .eq("company_id", companyId)
     .eq("is_price_master", true)
-    .limit(1);
+    .order("created_at", { ascending: true });
   if (error) return undefined;
-  const row = (data ?? [])[0] as { id?: unknown; name?: unknown } | undefined;
-  if (!row || typeof row.id !== "string") return null;
-  return { id: row.id, name: typeof row.name === "string" ? row.name : "" };
+  return ((data ?? []) as Array<{ id?: unknown; name?: unknown }>)
+    .filter((row): row is { id: string; name?: unknown } => typeof row.id === "string")
+    .map((row) => ({ id: row.id, name: typeof row.name === "string" ? row.name : "" }));
 }
 
 async function selectDeviceRow(
@@ -195,7 +198,7 @@ Deno.serve(async (req) => {
   // Consulta separada da legenda de proposito: `is_price_master` e uma coluna nova, e
   // pedi-la dentro do select acima faria a legenda multi-desktop inteira falhar enquanto
   // a migracao nao fosse aplicada.
-  const priceMaster = await selectPriceMaster(supabase, typedDevice.company_id);
+  const priceMasters = await selectPriceMasters(supabase, typedDevice.company_id);
 
   return jsonResponse({
     status: "approved",
@@ -211,13 +214,21 @@ Deno.serve(async (req) => {
     // (mesmo que 'latest') e o que permite o painel devolver uma balanca de teste
     // para producao. Omitir seria indistinguivel de "nuvem antiga".
     updateChannel: normalizeUpdateChannel(typedDevice.update_channel),
-    // Principal de precos da pedreira. Os campos so entram na resposta quando a coluna
+    // Principais de precos da pedreira. Os campos so entram na resposta quando a coluna
     // existe: omitir e o sinal de "nuvem antiga", e o desktop mantem o que ja sabia.
-    ...(priceMaster === undefined
+    //
+    // Os dois campos no singular ficam para uma instalacao antiga, que so sabe ler uma
+    // principal. Com duas ou mais eles vao como `null` de proposito: dizer so uma faria a
+    // outra principal se achar secundaria e parar de publicar preco, enquanto `null` a
+    // devolve ao comportamento anterior ao campo (cada uma publica o proprio cadastro),
+    // que e o pior caso seguro.
+    ...(priceMasters === undefined
       ? {}
       : {
-          priceMasterDeviceId: priceMaster?.id ?? null,
-          priceMasterDeviceName: priceMaster?.name || null
+          priceMasterDeviceIds: priceMasters.map((master) => master.id),
+          priceMasterDeviceNames: priceMasters.map((master) => master.name),
+          priceMasterDeviceId: priceMasters.length === 1 ? priceMasters[0].id : null,
+          priceMasterDeviceName: priceMasters.length === 1 ? priceMasters[0].name || null : null
         }),
     unitDevices: unitDevices ?? [],
     checkedAt

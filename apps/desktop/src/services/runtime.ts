@@ -4674,7 +4674,7 @@ export class DesktopRuntime {
   private assertPriceAuthority(): void {
     const authority = this.getPriceAuthority();
     if (authority.mode !== "follower") return;
-    throw new Error(priceEditBlockedMessage(authority.masterDeviceName));
+    throw new Error(priceEditBlockedMessage(authority.masterDeviceNames));
   }
 
   /**

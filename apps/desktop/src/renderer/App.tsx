@@ -12719,7 +12719,7 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               allowZero={false}
               hint={
                 pricesAreReadOnly
-                  ? priceMasterHint(priceAuthority.masterDeviceName)
+                  ? priceMasterHint(priceAuthority.masterDeviceNames)
                   : "Vazio remove o preco padrao. Alterar preco pede a senha de 4 digitos."
               }
             />
