@@ -177,6 +177,12 @@ import {
 import { CacheStore, type CacheQueryOptions, type CacheQueryResult } from "./cache-store.js";
 import { readOmiePullState, writeOmiePullState, SETUP_COMPANY_ID } from "./supabase-sync.js";
 import { listUnitDevices, type UnitDeviceInfo } from "./unit-devices.js";
+import {
+  priceEditBlockedMessage,
+  readActiveCloudDeviceId,
+  readPriceAuthority,
+  type PriceAuthority
+} from "./price-authority.js";
 import { CustomerReportService, type CustomerReportVariant } from "./customer-report.js";
 import {
   customerReportFileBaseName,
@@ -1478,16 +1484,19 @@ export class DesktopRuntime {
 
   setCustomerFreightRule(input: SetCustomerFreightRuleInput) {
     this.assertDesktopAccess();
+    this.assertPriceAuthority();
     return setCustomerFreightRule(this.database, input);
   }
 
   removeCustomerFreightRule(ruleId: string) {
     this.assertDesktopAccess();
+    this.assertPriceAuthority();
     return removeCustomerFreightRule(this.database, ruleId);
   }
 
   removeCustomerFreightModality(ruleId: string, modality: FreightModality) {
     this.assertDesktopAccess();
+    this.assertPriceAuthority();
     return removeCustomerFreightModality(this.database, ruleId, modality);
   }
 
@@ -3217,6 +3226,7 @@ export class DesktopRuntime {
     unit?: string;
   }): unknown {
     this.assertDesktopAccess();
+    this.assertPriceAuthority();
     const identity = this.ensureIdentity();
     const result = upsertProductDefaultPrice(this.database, {
       ...input,
@@ -3228,6 +3238,7 @@ export class DesktopRuntime {
 
   removeProductDefaultPrice(productId: string): void {
     this.assertDesktopAccess();
+    this.assertPriceAuthority();
     const identity = this.ensureIdentity();
     removeProductDefaultPrice(this.database, identity.companyId, productId);
     this.cacheStore.invalidate("product", identity.companyId);
@@ -3245,6 +3256,7 @@ export class DesktopRuntime {
     unit?: string;
   }): unknown {
     this.assertDesktopAccess();
+    this.assertPriceAuthority();
     const identity = this.ensureIdentity();
     return setCustomerSpecialPrice(this.database, {
       ...input,
@@ -3254,6 +3266,7 @@ export class DesktopRuntime {
 
   removeCustomerSpecialPrice(customerId: string, productId: string): void {
     this.assertDesktopAccess();
+    this.assertPriceAuthority();
     removeCustomerSpecialPrice(this.database, customerId, productId);
   }
 
@@ -3730,6 +3743,7 @@ export class DesktopRuntime {
 
   createPriceTable(input: Omit<CreatePriceTableInput, "companyId">): unknown {
     this.assertDesktopAccess();
+    this.assertPriceAuthority();
     const identity = this.ensureIdentity();
     const result = createPriceTable(this.database, { ...input, companyId: identity.companyId });
     this.cacheStore.invalidate("price_table", identity.companyId);
@@ -3738,6 +3752,7 @@ export class DesktopRuntime {
 
   updatePriceTableName(id: string, name: string): unknown {
     this.assertDesktopAccess();
+    this.assertPriceAuthority();
     const result = updatePriceTableName(this.database, id, name);
     this.cacheStore.invalidate("price_table", this.ensureIdentity().companyId);
     return result;
@@ -3745,12 +3760,14 @@ export class DesktopRuntime {
 
   deletePriceTable(id: string): void {
     this.assertDesktopAccess();
+    this.assertPriceAuthority();
     deletePriceTable(this.database, id);
     this.cacheStore.invalidate("price_table", this.ensureIdentity().companyId);
   }
 
   addPriceTableItem(input: AddPriceTableItemInput): unknown {
     this.assertDesktopAccess();
+    this.assertPriceAuthority();
     const result = addPriceTableItem(this.database, input);
     this.cacheStore.invalidate("price_table_item", this.ensureIdentity().companyId);
     return result;
@@ -3758,6 +3775,7 @@ export class DesktopRuntime {
 
   updatePriceTableItem(id: string, input: UpdatePriceTableItemInput): unknown {
     this.assertDesktopAccess();
+    this.assertPriceAuthority();
     const result = updatePriceTableItem(this.database, id, input);
     this.cacheStore.invalidate("price_table_item", this.ensureIdentity().companyId);
     return result;
@@ -3765,12 +3783,14 @@ export class DesktopRuntime {
 
   removePriceTableItem(id: string): void {
     this.assertDesktopAccess();
+    this.assertPriceAuthority();
     removePriceTableItem(this.database, id);
     this.cacheStore.invalidate("price_table_item", this.ensureIdentity().companyId);
   }
 
   linkCustomerToPriceTable(input: LinkCustomerToPriceTableInput): unknown {
     this.assertDesktopAccess();
+    this.assertPriceAuthority();
     const result = linkCustomerToPriceTable(this.database, input);
     this.cacheStore.invalidate("customer_price_table", this.ensureIdentity().companyId);
     return result;
@@ -3778,6 +3798,7 @@ export class DesktopRuntime {
 
   unlinkCustomerFromPriceTable(linkId: string): void {
     this.assertDesktopAccess();
+    this.assertPriceAuthority();
     unlinkCustomerFromPriceTable(this.database, linkId);
     this.cacheStore.invalidate("customer_price_table", this.ensureIdentity().companyId);
   }
@@ -4562,6 +4583,33 @@ export class DesktopRuntime {
     if (!access.canOperate) {
       throw new Error(access.message);
     }
+  }
+
+  /**
+   * Papel desta balanca no cadastro de preco. A tela usa para dizer de onde os precos vem
+   * e para nao oferecer um formulario que o backend vai recusar.
+   */
+  getPriceAuthority(): PriceAuthority {
+    return readPriceAuthority(
+      this.database,
+      readActiveCloudDeviceId(this.database) ??
+        getLocalDesktopIdentity(this.database)?.deviceId ??
+        null
+    );
+  }
+
+  /**
+   * Recusa a alteracao de preco na balanca secundaria.
+   *
+   * A trava fica aqui, e nao so na tela: o cadastro de preco desta maquina nao e mais
+   * publicado, entao um preco digitado aqui valeria ate o proximo pull e sumiria depois —
+   * o pior dos dois mundos para quem esta com o caminhao na balanca. A memoria de frete da
+   * ultima venda continua livre: ela e desta maquina, nao e cadastro.
+   */
+  private assertPriceAuthority(): void {
+    const authority = this.getPriceAuthority();
+    if (authority.mode !== "follower") return;
+    throw new Error(priceEditBlockedMessage(authority.masterDeviceName));
   }
 
   /**

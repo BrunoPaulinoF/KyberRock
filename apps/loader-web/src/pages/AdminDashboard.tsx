@@ -94,6 +94,13 @@ interface Device {
   name: string;
   isActive: boolean;
   updateChannel: DeviceUpdateChannel;
+  /**
+   * Balanca principal de precos da pedreira: a unica que publica preco padrao, preco
+   * especial por cliente, tabela de preco e valor de frete do cadastro. As demais espelham
+   * o que vem dela. Sem principal, cada balanca publica o proprio cadastro de preco — o
+   * empate que fazia o preco especial existir numa maquina e nao na outra.
+   */
+  isPriceMaster: boolean;
   lastSeenAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -297,6 +304,7 @@ export function AdminDashboard() {
           name: string;
           is_active: boolean;
           update_channel?: string | null;
+          is_price_master?: boolean | null;
           last_seen_at: string | null;
           created_at: string;
           updated_at: string;
@@ -345,6 +353,7 @@ export function AdminDashboard() {
           name: device.name,
           isActive: device.is_active,
           updateChannel: toDeviceUpdateChannel(device.update_channel),
+          isPriceMaster: device.is_price_master === true,
           lastSeenAt: device.last_seen_at,
           createdAt: device.created_at,
           updatedAt: device.updated_at
@@ -389,6 +398,13 @@ export function AdminDashboard() {
   const unitName = useCallback(
     (unitId: string) => units.find((unit) => unit.id === unitId)?.name ?? "—",
     [units]
+  );
+  /** Nome da balanca principal de precos da pedreira, para a linha dizer de quem ela espelha. */
+  const priceMasterName = useCallback(
+    (companyId: string) =>
+      devices.find((device) => device.companyId === companyId && device.isPriceMaster)?.name ??
+      null,
+    [devices]
   );
 
   const filteredCompanies = useMemo(
@@ -827,6 +843,44 @@ export function AdminDashboard() {
       )
     },
     {
+      // Dono do cadastro de preco da pedreira. Uma balanca por empresa: promover outra
+      // rebaixa a atual (o `update_device_price_master` limpa antes de marcar), e voltar
+      // para "Espelha a principal" na propria principal deixa a pedreira sem principal —
+      // ai cada maquina volta a publicar o proprio cadastro de preco.
+      key: "priceMaster",
+      header: "Precos",
+      render: (device) => (
+        <select
+          className="adm-select"
+          aria-label={`Cadastro de precos da balanca ${device.name}`}
+          title={
+            device.isPriceMaster
+              ? "Esta balanca define os precos da pedreira; as demais espelham o que ela publica."
+              : priceMasterName(device.companyId)
+                ? `Espelha os precos de ${priceMasterName(device.companyId)}.`
+                : "Nenhuma balanca principal definida: cada uma publica o proprio cadastro de preco."
+          }
+          value={device.isPriceMaster ? "master" : "follower"}
+          onChange={(event) =>
+            void run(
+              "update_device_price_master",
+              { deviceId: device.id, isPriceMaster: event.target.value === "master" },
+              event.target.value === "master"
+                ? `${device.name} passou a definir os precos da pedreira.`
+                : "Pedreira ficou sem balanca principal de precos."
+            )
+          }
+        >
+          <option value="master">Principal</option>
+          <option value="follower">
+            {priceMasterName(device.companyId) && !device.isPriceMaster
+              ? `Espelha ${priceMasterName(device.companyId)}`
+              : "Espelha a principal"}
+          </option>
+        </select>
+      )
+    },
+    {
       key: "lastSeen",
       header: "Ultimo contato",
       render: (device) => <span className="adm-mono">{formatDateTime(device.lastSeenAt)}</span>
@@ -1086,7 +1140,7 @@ export function AdminDashboard() {
             <>
               <PageHead
                 title="Balancas e licencas"
-                description="Desktops ativados e o codigo de ativacao de cada pedreira."
+                description="Desktops ativados e o codigo de ativacao de cada pedreira. Em Precos, escolha a balanca que define os precos da pedreira — as demais passam a espelhar o cadastro dela."
               />
               {generatedCode && (
                 <Note tone="ok">

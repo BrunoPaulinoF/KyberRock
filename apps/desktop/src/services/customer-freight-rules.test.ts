@@ -7,9 +7,11 @@ import {
   getCustomerFreightRuleForProduct,
   getCustomerFreightRules,
   getLastCustomerFreightNote,
+  mergeFollowerFreightRuleJson,
   rememberCustomerFreightValue,
   removeCustomerFreightModality,
-  setCustomerFreightRule
+  setCustomerFreightRule,
+  stripManualFreightValues
 } from "./customer-freight-rules";
 import type { FreightRule } from "./freight";
 
@@ -397,4 +399,67 @@ describe("frete do cliente por tipo de frete", () => {
       database.close();
     }
   });
+
+  /**
+   * Balanca secundaria: a mesma linha guarda o valor combinado com o cliente (cadastro, da
+   * balanca principal) e a memoria da ultima venda DESTA maquina. Espelhar a linha inteira
+   * apagaria a memoria a cada pull; ignorar a linha manteria o frete divergente.
+   */
+  describe("cadastro de frete vindo da balanca principal", () => {
+    it("aceita o cadastro da principal e preserva a memoria local do tipo que ela nao define", () => {
+      const merged = JSON.parse(
+        mergeFollowerFreightRuleJson(
+          ruleJson({
+            cif: { baseValueCents: 3000, source: "last_used" },
+            fob: { baseValueCents: 4000, source: "last_used" }
+          }),
+          ruleJson({ fob: { baseValueCents: 9000, source: "manual" } })
+        )
+      ) as { modalities: Record<string, { baseValueCents: number; source: string }> };
+
+      expect(merged.modalities.fob).toMatchObject({ baseValueCents: 9000, source: "manual" });
+      expect(merged.modalities.cif).toMatchObject({ baseValueCents: 3000, source: "last_used" });
+    });
+
+    it("tira o cadastro da regra que a principal nao tem e mantem so a memoria", () => {
+      const stripped = stripManualFreightValues(
+        ruleJson({
+          cif: { baseValueCents: 3000, source: "last_used" },
+          fob: { baseValueCents: 9000, source: "manual" }
+        })
+      );
+
+      expect(stripped).not.toBeNull();
+      const parsed = JSON.parse(stripped!) as {
+        baseValueCents: number;
+        modalities: Record<string, unknown>;
+      };
+      expect(Object.keys(parsed.modalities)).toEqual(["cif"]);
+      expect(parsed.baseValueCents).toBe(0);
+    });
+
+    it("devolve null quando a regra era so cadastro (a linha inteira sai de cena)", () => {
+      expect(
+        stripManualFreightValues(ruleJson({ fob: { baseValueCents: 9000, source: "manual" } }))
+      ).toBeNull();
+    });
+  });
 });
+
+function ruleJson(
+  modalities: Record<string, { baseValueCents: number; source: "manual" | "last_used" }>
+): string {
+  return JSON.stringify({
+    id: "default",
+    name: "Frete do cliente",
+    type: "per_ton",
+    baseValueCents: 0,
+    unit: "ton",
+    modalities: Object.fromEntries(
+      Object.entries(modalities).map(([key, value]) => [
+        key,
+        { type: "per_ton", ...value, updatedAt: "2026-08-27T10:00:00.000Z" }
+      ])
+    )
+  });
+}

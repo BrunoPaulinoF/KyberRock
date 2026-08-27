@@ -165,6 +165,7 @@ import { CustomersView } from "./CustomersView";
 import { HelpTooltip, Tooltip } from "./Tooltip";
 import { IconActionButton, OpIcon } from "./IconActionButton";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
+import { PriceMasterNotice, priceMasterHint, usePriceAuthority } from "./PriceMasterNotice";
 import { TIPS } from "./tooltip-messages";
 import {
   DocumentInput,
@@ -12236,6 +12237,11 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   // sistema descobre pela descricao — fixar aqui atende quem renomeou a categoria.
   const [advanceCategoryCode, setAdvanceCategoryCode] = useState("");
 
+  // Balanca secundaria: os precos vem da principal da pedreira e a tela nao oferece
+  // formulario que o backend vai recusar (ver `assertPriceAuthority` no runtime).
+  const priceAuthority = usePriceAuthority(desktopApi);
+  const pricesAreReadOnly = priceAuthority.mode === "follower";
+
   useEffect(() => {
     void loadPrices();
     void loadCategories();
@@ -12328,7 +12334,9 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
 
     const categoryCode = editCategoryCode || null;
     const categoryChanged = categoryCode !== (editing.omieCategoryCode ?? null);
-    const priceChanged = unitPriceCents !== editing.unitPriceCents;
+    // Na balanca secundaria o campo de preco esta desabilitado, mas a categoria OMIE
+    // continua editavel — categoria nao e preco e nao tem dono na pedreira.
+    const priceChanged = !pricesAreReadOnly && unitPriceCents !== editing.unitPriceCents;
 
     if (!priceChanged && !categoryChanged) {
       closeEdit();
@@ -12470,6 +12478,7 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         count={items.length}
       />
       <FlashBanner flash={flash} />
+      <PriceMasterNotice authority={priceAuthority} what="Os precos padrao" />
 
       <div
         style={{
@@ -12590,8 +12599,10 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
                   onClick={() => openEdit(item)}
                 />
                 <DeleteRowButton
-                  label="Remover preco"
-                  disabled={item.unitPriceCents === null}
+                  label={
+                    pricesAreReadOnly ? "Preco definido na balanca principal" : "Remover preco"
+                  }
+                  disabled={pricesAreReadOnly || item.unitPriceCents === null}
                   onClick={() => handleRemoveDefaultPrice(item)}
                 />
               </>
@@ -12626,9 +12637,14 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               label="Preco/ton (R$)"
               value={editPriceReais}
               onChange={setEditPriceReais}
+              disabled={pricesAreReadOnly}
               placeholder="150,00"
               allowZero={false}
-              hint="Vazio remove o preco padrao. Alterar preco pede a senha de 4 digitos."
+              hint={
+                pricesAreReadOnly
+                  ? priceMasterHint(priceAuthority.masterDeviceName)
+                  : "Vazio remove o preco padrao. Alterar preco pede a senha de 4 digitos."
+              }
             />
           </FormSection>
           <FormSection title="Integracao OMIE">

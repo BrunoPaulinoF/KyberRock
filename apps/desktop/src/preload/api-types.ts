@@ -26,6 +26,7 @@ import type {
   SyncResult
 } from "../services/supabase-sync";
 import type { PriceDetails } from "../services/pricing";
+import type { PriceAuthority as PriceAuthorityView } from "../services/price-authority";
 import type {
   CustomerSpecialPriceSummary,
   ProductDefaultPriceSummary
@@ -511,6 +512,12 @@ export interface KyberRockDesktopApi {
     customerId: string,
     productId: string
   ) => Promise<PriceDetails | null>;
+  /**
+   * Papel desta balanca no cadastro de preco: `master` (a principal da pedreira),
+   * `follower` (espelha a principal e nao edita preco) ou `standalone` (pedreira sem
+   * principal definida — cada maquina publica o proprio cadastro, como antes).
+   */
+  priceAuthorityGet: () => Promise<PriceAuthorityView>;
   productDefaultPricesList: () => Promise<ProductDefaultPriceSummary[]>;
   productDefaultPricesUpsert: (input: {
     productId: string;

@@ -23,6 +23,19 @@ import {
   type ReportRecipientRow
 } from "./report-recipients.js";
 import { getFreightModalityInfo } from "./freight.js";
+import {
+  mergeFollowerFreightRuleJson,
+  stripManualFreightValues
+} from "./customer-freight-rules.js";
+import {
+  clearPriceMasterRepublishPending,
+  clearPriceMasterResyncPending,
+  isPriceMasterRepublishPending,
+  isPriceMasterResyncPending,
+  isPriceMasteredCadastroKey,
+  readPriceAuthority,
+  PRICE_MASTERED_CADASTRO_KEYS
+} from "./price-authority.js";
 import { isSellableProduct } from "./product-classification.js";
 import { readReportChannelSettings, toCloudChannelSettingsRow } from "./report-channels.js";
 import {
@@ -719,8 +732,13 @@ export async function pullDesktopDataFromCloud(
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
   const lastPullAt = readStringLocalSetting(database, CADASTRO_LAST_PULL_KEY);
+  const authority = readPriceAuthority(database, settings.deviceId);
+  // Esta maquina acabou de virar secundaria de preco: o pull tem de vir INTEIRO. O delta
+  // diz o que a principal mudou, nunca o que ela nao tem — e e justamente o cadastro de
+  // preco que so existe aqui que precisa sair de cena.
+  const priceResyncPending = authority.mode === "follower" && isPriceMasterResyncPending(database);
   const since =
-    options.incremental && lastPullAt
+    options.incremental && lastPullAt && !priceResyncPending
       ? new Date(new Date(lastPullAt).getTime() - CADASTRO_INCREMENTAL_OVERLAP_MS).toISOString()
       : undefined;
   const { data, error } = await supabase.functions.invoke<DesktopPullResponse>("desktop-pull", {
@@ -757,7 +775,24 @@ export async function pullDesktopDataFromCloud(
     );
     // Cadastro compartilhado antes das operacoes: veiculo/transportadora/motorista
     // sao referenciados pelas operacoes vindas das outras maquinas da pedreira.
-    const cadastro = upsertCloudCadastro(database, settings.companyId, payload, warnings);
+    const cadastro = upsertCloudCadastro(
+      database,
+      settings.companyId,
+      payload,
+      warnings,
+      authority.mode === "follower"
+    );
+    // Realinhamento de UMA vez, quando esta maquina passa a ser secundaria. So no pull
+    // completo: e o unico que traz o conjunto inteiro da principal, entao e o unico em que
+    // "nao veio" significa "a principal nao tem". Com a nuvem ainda sem preco nenhum a
+    // limpeza fica para depois — apagar ali deixaria a balanca sem preco ate a principal
+    // publicar, e preco em branco para a balanca vale menos que preco divergente.
+    if (priceResyncPending && !since && hasPriceCadastroRows(payload)) {
+      applySection(warnings, "price_master_reconcile", () =>
+        reconcileFollowerPriceCadastro(database, settings.companyId, payload)
+      );
+      clearPriceMasterResyncPending(database);
+    }
     const operations = applySection(warnings, "weighing_operations", () =>
       upsertCloudOperations(database, settings, payload.operations ?? [], warnings)
     );
@@ -819,7 +854,13 @@ function upsertCloudCadastro(
   database: DesktopDatabase,
   companyId: string,
   payload: DesktopPullResponse,
-  warnings: string[] = []
+  warnings: string[] = [],
+  /**
+   * Esta maquina e secundaria de preco: o cadastro de preco que vem da nuvem e o da
+   * balanca principal e vence a linha local que disputa o mesmo par. Fora desse modo nada
+   * muda — sem principal definida a linha local continua tendo a ultima palavra.
+   */
+  authoritativePrices = false
 ): number {
   const sections: Array<[string, () => number]> = [
     ["carriers", () => upsertCloudCarriers(database, companyId, payload.carriers ?? [])],
@@ -852,12 +893,23 @@ function upsertCloudCadastro(
     ],
     [
       "product_default_prices",
-      () => upsertCloudProductDefaultPrices(database, companyId, payload.productDefaultPrices ?? [])
+      () =>
+        upsertCloudProductDefaultPrices(
+          database,
+          companyId,
+          payload.productDefaultPrices ?? [],
+          authoritativePrices
+        )
     ],
     [
       "customer_special_prices",
       () =>
-        upsertCloudCustomerSpecialPrices(database, companyId, payload.customerSpecialPrices ?? [])
+        upsertCloudCustomerSpecialPrices(
+          database,
+          companyId,
+          payload.customerSpecialPrices ?? [],
+          authoritativePrices
+        )
     ],
     ["price_tables", () => upsertCloudPriceTables(database, companyId, payload.priceTables ?? [])],
     [
@@ -870,7 +922,12 @@ function upsertCloudCadastro(
     ],
     [
       "customer_freight_rules",
-      () => upsertCloudCustomerFreightRules(database, payload.customerFreightRules ?? [])
+      () =>
+        upsertCloudCustomerFreightRules(
+          database,
+          payload.customerFreightRules ?? [],
+          authoritativePrices
+        )
     ],
     [
       "customer_future_billing_invoices",
@@ -904,6 +961,122 @@ function upsertCloudCadastro(
     count += applySection(warnings, table, run);
   }
   return count;
+}
+
+/** A nuvem ja tem cadastro de preco publicado? Ver o realinhamento da secundaria. */
+function hasPriceCadastroRows(payload: DesktopPullResponse): boolean {
+  return [
+    payload.productDefaultPrices,
+    payload.customerSpecialPrices,
+    payload.priceTables,
+    payload.priceTableItems,
+    payload.customerPriceTables,
+    payload.customerFreightRules
+  ].some((rows) => (rows?.length ?? 0) > 0);
+}
+
+/**
+ * Tira de cena o cadastro de preco que so existe NESTA maquina, depois que ela passou a
+ * ser secundaria: o que a balanca principal nao publicou deixa de valer.
+ *
+ * Roda uma unica vez por eleicao de principal, e sempre sobre o pull completo — que e o
+ * unico que devolve o conjunto inteiro da pedreira. O que a principal tem com OUTRO id nao
+ * chega aqui: o par duplicado ja cedeu na propria gravacao (`authoritative`).
+ *
+ * A regra de frete e a excecao: a mesma linha guarda o valor do cadastro (da principal) e
+ * a memoria da ultima venda desta maquina. Dela sai so a parte do cadastro; a linha inteira
+ * so cai quando nao sobra memoria nenhuma.
+ */
+function reconcileFollowerPriceCadastro(
+  database: DesktopDatabase,
+  companyId: string,
+  payload: DesktopPullResponse
+): number {
+  const cloudIds = (rows: Array<Record<string, unknown>> | undefined): Set<string> =>
+    new Set((rows ?? []).map((row) => stringValue(row.id)).filter(Boolean));
+
+  let changed = 0;
+
+  // `price_table_items` nao tem `is_active` (so exclusao logica), entao a coluna entra no
+  // UPDATE apenas onde ela existe — um SET fixo estouraria a passada inteira ali.
+  const retire = (
+    table: string,
+    selectSql: string,
+    keep: Set<string>,
+    options: { hasIsActive?: boolean } = {}
+  ): void => {
+    const rows = database.prepare(selectSql).all(companyId) as Array<{ id: string }>;
+    const nowIso = new Date().toISOString();
+    const update = database.prepare(
+      `UPDATE ${table} SET deleted_at = ?, updated_at = ?${
+        options.hasIsActive === false ? "" : ", is_active = 0"
+      } WHERE id = ?`
+    );
+    for (const row of rows) {
+      if (keep.has(row.id)) continue;
+      update.run(nowIso, nowIso, row.id);
+      changed++;
+    }
+  };
+
+  retire(
+    "product_default_prices",
+    "SELECT id FROM product_default_prices WHERE company_id = ? AND deleted_at IS NULL",
+    cloudIds(payload.productDefaultPrices)
+  );
+  retire(
+    "customer_special_prices",
+    "SELECT id FROM customer_special_prices WHERE company_id = ? AND deleted_at IS NULL",
+    cloudIds(payload.customerSpecialPrices)
+  );
+  retire(
+    "price_table_items",
+    `SELECT pti.id FROM price_table_items pti
+     JOIN price_tables pt ON pt.id = pti.price_table_id
+     WHERE pt.company_id = ? AND pti.deleted_at IS NULL`,
+    cloudIds(payload.priceTableItems),
+    { hasIsActive: false }
+  );
+  retire(
+    "customer_price_tables",
+    `SELECT cpt.id FROM customer_price_tables cpt
+     JOIN customers c ON c.id = cpt.customer_id
+     WHERE c.company_id = ? AND cpt.deleted_at IS NULL`,
+    cloudIds(payload.customerPriceTables)
+  );
+  retire(
+    "price_tables",
+    "SELECT id FROM price_tables WHERE company_id = ? AND deleted_at IS NULL",
+    cloudIds(payload.priceTables)
+  );
+
+  const freightKeep = cloudIds(payload.customerFreightRules);
+  const freightRows = database
+    .prepare(
+      `SELECT fr.id, fr.rule_json FROM customer_freight_rules fr
+       JOIN customers c ON c.id = fr.customer_id
+       WHERE c.company_id = ? AND fr.deleted_at IS NULL`
+    )
+    .all(companyId) as Array<{ id: string; rule_json: string | null }>;
+  const nowIso = new Date().toISOString();
+  const dropFreight = database.prepare(
+    "UPDATE customer_freight_rules SET deleted_at = ?, updated_at = ?, is_active = 0 WHERE id = ?"
+  );
+  const keepMemory = database.prepare(
+    "UPDATE customer_freight_rules SET rule_json = ?, updated_at = ? WHERE id = ?"
+  );
+  for (const row of freightRows) {
+    if (freightKeep.has(row.id)) continue;
+    const memoryOnly = stripManualFreightValues(row.rule_json ?? "{}");
+    if (memoryOnly === null) {
+      dropFreight.run(nowIso, nowIso, row.id);
+    } else {
+      keepMemory.run(memoryOnly, nowIso, row.id);
+    }
+    changed++;
+  }
+
+  return changed;
 }
 
 function upsertCloudPriceTables(
@@ -1036,7 +1209,8 @@ function upsertCloudCustomerPriceTables(
 
 function upsertCloudCustomerFreightRules(
   database: DesktopDatabase,
-  rows: Array<Record<string, unknown>>
+  rows: Array<Record<string, unknown>>,
+  authoritative = false
 ): number {
   // Indice unico local por (cliente, produto) e por regra padrao do cliente:
   // mantem a local quando a da nuvem chega com outro id para o mesmo par.
@@ -1047,6 +1221,13 @@ function upsertCloudCustomerFreightRules(
   const findConflictForDefault = database.prepare(
     `SELECT id FROM customer_freight_rules
      WHERE customer_id = ? AND product_id IS NULL AND deleted_at IS NULL LIMIT 1`
+  );
+  // Balanca secundaria: o valor de frete do cadastro e o da principal.
+  const yieldToMaster = database.prepare(
+    `UPDATE customer_freight_rules SET deleted_at = ?, updated_at = ?, is_active = 0 WHERE id = ?`
+  );
+  const readRuleJson = database.prepare(
+    "SELECT rule_json FROM customer_freight_rules WHERE id = ? AND deleted_at IS NULL"
   );
   const upsert = database.prepare(`
     INSERT INTO customer_freight_rules (
@@ -1069,20 +1250,34 @@ function upsertCloudCustomerFreightRules(
     const productId = row.product_id ? existingId(database, "products", row.product_id) : null;
     if (row.product_id && !productId) continue;
     const deletedAt = isoStringValue(row.deleted_at);
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    // A memoria da ultima venda desta maquina mora na MESMA linha do valor do cadastro
+    // (ver `mergeFollowerFreightRuleJson`), entao ela e lida antes de a linha ceder.
+    let localRuleJson: string | null = null;
     if (!deletedAt) {
       const conflict = (
         productId
           ? findConflictForProduct.get(customerId, productId)
           : findConflictForDefault.get(customerId)
       ) as { id: string } | undefined;
-      if (conflict && conflict.id !== id) continue;
+      if (conflict && conflict.id !== id) {
+        if (!authoritative) continue;
+        localRuleJson = readLocalFreightRuleJson(readRuleJson, conflict.id);
+        yieldToMaster.run(updatedAt, updatedAt, conflict.id);
+      }
     }
-    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    const cloudRuleJson = jsonStringValue(row.rule_json) ?? "{}";
+    const ruleJson = authoritative
+      ? mergeFollowerFreightRuleJson(
+          readLocalFreightRuleJson(readRuleJson, id) ?? localRuleJson,
+          cloudRuleJson
+        )
+      : cloudRuleJson;
     upsert.run(
       id,
       customerId,
       productId,
-      jsonStringValue(row.rule_json) ?? "{}",
+      ruleJson,
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
       updatedAt,
@@ -1091,6 +1286,14 @@ function upsertCloudCustomerFreightRules(
     count++;
   }
   return count;
+}
+
+function readLocalFreightRuleJson(
+  statement: ReturnType<DesktopDatabase["prepare"]>,
+  id: string
+): string | null {
+  const row = statement.get(id) as { rule_json: string | null } | undefined;
+  return row?.rule_json ?? null;
 }
 
 function upsertCloudCustomerFutureBillingInvoices(
@@ -1693,7 +1896,8 @@ function upsertCloudJunction(
 function upsertCloudProductDefaultPrices(
   database: DesktopDatabase,
   companyId: string,
-  rows: Array<Record<string, unknown>>
+  rows: Array<Record<string, unknown>>,
+  authoritative = false
 ): number {
   const upsert = database.prepare(`
     INSERT INTO product_default_prices (
@@ -1719,6 +1923,11 @@ function upsertCloudProductDefaultPrices(
     `SELECT id FROM product_default_prices
      WHERE product_id = ? AND is_active = ? AND deleted_at IS NULL LIMIT 1`
   );
+  // Balanca secundaria: quem manda no preco e a principal, entao a linha local que disputa
+  // o mesmo produto sai da frente em vez de vencer.
+  const yieldToMaster = database.prepare(
+    `UPDATE product_default_prices SET deleted_at = ?, updated_at = ?, is_active = 0 WHERE id = ?`
+  );
 
   let count = 0;
   for (const row of rows) {
@@ -1728,11 +1937,14 @@ function upsertCloudProductDefaultPrices(
     if (!id || !productId || price === null) continue;
     const isActive = booleanToSql(row.is_active, true);
     const deletedAt = isoStringValue(row.deleted_at);
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
     if (!deletedAt) {
       const conflict = findConflict.get(productId, isActive) as { id: string } | undefined;
-      if (conflict && conflict.id !== id) continue;
+      if (conflict && conflict.id !== id) {
+        if (!authoritative) continue;
+        yieldToMaster.run(updatedAt, updatedAt, conflict.id);
+      }
     }
-    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
     upsert.run(
       id,
       companyId,
@@ -1754,7 +1966,8 @@ function upsertCloudProductDefaultPrices(
 function upsertCloudCustomerSpecialPrices(
   database: DesktopDatabase,
   companyId: string,
-  rows: Array<Record<string, unknown>>
+  rows: Array<Record<string, unknown>>,
+  authoritative = false
 ): number {
   const upsert = database.prepare(`
     INSERT INTO customer_special_prices (
@@ -1777,6 +1990,12 @@ function upsertCloudCustomerSpecialPrices(
     `SELECT id FROM customer_special_prices
      WHERE customer_id = ? AND product_id = ? AND deleted_at IS NULL LIMIT 1`
   );
+  // Era exatamente aqui que o preco especial parava de sincronizar: as duas balancas
+  // cadastraram o mesmo par com ids diferentes e cada uma descartava a linha da outra.
+  // Com principal definida, a linha da secundaria cede.
+  const yieldToMaster = database.prepare(
+    `UPDATE customer_special_prices SET deleted_at = ?, updated_at = ?, is_active = 0 WHERE id = ?`
+  );
 
   let count = 0;
   for (const row of rows) {
@@ -1786,11 +2005,14 @@ function upsertCloudCustomerSpecialPrices(
     const price = integerValue(row.unit_price_cents);
     if (!id || !customerId || !productId || price === null) continue;
     const deletedAt = isoStringValue(row.deleted_at);
+    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
     if (!deletedAt) {
       const conflict = findConflict.get(customerId, productId) as { id: string } | undefined;
-      if (conflict && conflict.id !== id) continue;
+      if (conflict && conflict.id !== id) {
+        if (!authoritative) continue;
+        yieldToMaster.run(updatedAt, updatedAt, conflict.id);
+      }
     }
-    const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
     upsert.run(
       id,
       companyId,
@@ -7212,6 +7434,20 @@ export function resetSharedCadastroPushState(database: DesktopDatabase): void {
 }
 
 /**
+ * Zera os cursores SO do cadastro de preco, para a balanca recem-eleita principal
+ * republicar tudo o que ela ja tinha. Sem isso, o preco que ela cadastrou antes da eleicao
+ * ja estaria "atras do cursor" e nunca chegaria as demais maquinas.
+ */
+function resetPriceCadastroPushCursors(database: DesktopDatabase): void {
+  const state = readCadastroPushState(database);
+  const next = { ...state };
+  for (const key of PRICE_MASTERED_CADASTRO_KEYS) {
+    delete next[key];
+  }
+  writeLocalSetting(database, CADASTRO_PUSH_STATE_KEY, next);
+}
+
+/**
  * Envia um lote de cadastro. Se o lote inteiro falhar, testa uma linha sozinha
  * para separar os dois casos: nuvem indisponivel / tabela ausente (falha
  * sistemica, nada avanca e o proximo ciclo repete) e registro invalido isolado
@@ -7279,7 +7515,17 @@ export async function pushSharedCadastroToCloud(
   const errors: string[] = [];
   let pushed = 0;
 
+  const authority = readPriceAuthority(database, settings.deviceId);
+  if (authority.mode === "master" && isPriceMasterRepublishPending(database)) {
+    resetPriceCadastroPushCursors(database);
+    clearPriceMasterRepublishPending(database);
+  }
+
   for (const entity of CADASTRO_PUSH_ENTITIES) {
+    // Secundaria nao publica preco. Publicar seria devolver a disputa pelo outro lado: a
+    // linha desta maquina venceria na nuvem e a principal deixaria de ser a principal.
+    if (authority.mode === "follower" && isPriceMasteredCadastroKey(entity.key)) continue;
+
     let cursor = readCadastroPushState(database)[entity.key] ?? null;
 
     for (let round = 0; round < maxRounds; round++) {

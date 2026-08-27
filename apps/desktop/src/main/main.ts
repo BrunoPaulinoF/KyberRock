@@ -1274,6 +1274,13 @@ function registerIpcHandlers(): void {
     return runtime.getPriceDetailsForCustomerProduct(customerId, productId);
   });
 
+  // Papel desta balanca no cadastro de preco: a tela precisa saber antes de oferecer um
+  // formulario que o backend vai recusar (ver `assertPriceAuthority` no runtime).
+  ipcMain.handle("desktop:price-authority-get", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getPriceAuthority();
+  });
+
   ipcMain.handle("desktop:product-default-prices-list", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.listProductDefaultPrices();

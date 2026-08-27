@@ -93,6 +93,7 @@ type AdminAction =
   | "update_device_name"
   | "update_device_unit"
   | "update_device_channel"
+  | "update_device_price_master"
   | "delete_device"
   | "get_ai_settings"
   | "update_ai_settings"
@@ -192,16 +193,26 @@ const DEVICE_LIST_COLUMNS =
  * por causa de uma coluna cosmetica.
  */
 async function selectDevicesForList(supabase: SupabaseAdminClient) {
-  const withChannel = await supabase
-    .from("device_registrations")
-    .select(`${DEVICE_LIST_COLUMNS}, update_channel`)
-    .order("created_at", { ascending: false });
-  if (!withChannel.error) return withChannel;
+  // Da mais completa para a mais antiga: cada coluna acrescentada por migracao entra numa
+  // tentativa propria, para a lista continuar carregando no projeto que ainda nao a tem.
+  const attempts = [
+    `${DEVICE_LIST_COLUMNS}, update_channel, is_price_master`,
+    `${DEVICE_LIST_COLUMNS}, update_channel`,
+    DEVICE_LIST_COLUMNS
+  ];
 
-  return await supabase
+  let last = await supabase
     .from("device_registrations")
-    .select(DEVICE_LIST_COLUMNS)
+    .select(attempts[0])
     .order("created_at", { ascending: false });
+  for (const columns of attempts.slice(1)) {
+    if (!last.error) return last;
+    last = await supabase
+      .from("device_registrations")
+      .select(columns)
+      .order("created_at", { ascending: false });
+  }
+  return last;
 }
 
 // ---------------------------------------------------------------------------
@@ -419,7 +430,10 @@ Deno.serve(async (req) => {
         ...device,
         update_channel: normalizeUpdateChannel(
           (device as { update_channel?: unknown }).update_channel
-        )
+        ),
+        // Sem a coluna (migracao pendente) nenhuma balanca aparece como principal, que e o
+        // estado real: sem principal definida cada uma publica o proprio cadastro de preco.
+        is_price_master: (device as { is_price_master?: unknown }).is_price_master === true
       }));
       return jsonResponse({
         companies: maskedCompanies,
@@ -770,6 +784,59 @@ Deno.serve(async (req) => {
         throw error;
       }
       return jsonResponse({ ok: true, updateChannel });
+    }
+
+    /**
+     * Elege (ou dispensa) a balanca principal de precos da pedreira.
+     *
+     * Preco padrao, preco especial por cliente, tabela de preco e valor de frete do
+     * cadastro nascem no SQLite de uma balanca. Com uma principal definida, so ela publica
+     * esse cadastro e as demais espelham o que vem dela — e o que acaba com o preco
+     * especial que existe numa balanca e nao na outra. Sem principal, cada maquina
+     * continua publicando o proprio cadastro (o comportamento anterior a este campo).
+     *
+     * A limpeza vem ANTES da marcacao: o indice unico parcial admite uma unica principal
+     * por empresa, entao marcar primeiro derrubaria a troca de principal.
+     */
+    if (body.action === "update_device_price_master") {
+      const deviceId = String(payload.deviceId ?? "");
+      if (!deviceId) return jsonResponse({ error: "Informe a balanca" }, 400);
+      const isPriceMaster = payload.isPriceMaster === true;
+
+      const { data: device, error: deviceError } = await supabase
+        .from("device_registrations")
+        .select("id, company_id")
+        .eq("id", deviceId)
+        .single();
+      if (deviceError) throw deviceError;
+
+      const clear = await supabase
+        .from("device_registrations")
+        .update({ is_price_master: false, updated_at: new Date().toISOString() })
+        .eq("company_id", device.company_id)
+        .eq("is_price_master", true);
+      if (clear.error) {
+        if (/is_price_master/.test(clear.error.message ?? "")) {
+          return jsonResponse(
+            {
+              error:
+                "A coluna is_price_master ainda nao existe no banco. Aplique a migracao 202608270001_device_price_master.sql e tente de novo."
+            },
+            409
+          );
+        }
+        throw clear.error;
+      }
+
+      if (isPriceMaster) {
+        const { error } = await supabase
+          .from("device_registrations")
+          .update({ is_price_master: true, updated_at: new Date().toISOString() })
+          .eq("id", deviceId);
+        if (error) throw error;
+      }
+
+      return jsonResponse({ ok: true, isPriceMaster });
     }
 
     if (body.action === "update_company") {

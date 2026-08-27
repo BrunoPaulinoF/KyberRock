@@ -232,6 +232,7 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:get-price", customerId, productId),
   getPriceDetailsForCustomerProduct: (customerId: string, productId: string) =>
     ipcRenderer.invoke("desktop:get-price-details", customerId, productId),
+  priceAuthorityGet: () => ipcRenderer.invoke("desktop:price-authority-get"),
   productDefaultPricesList: () => ipcRenderer.invoke("desktop:product-default-prices-list"),
   productDefaultPricesUpsert: (input: unknown) =>
     ipcRenderer.invoke("desktop:product-default-prices-upsert", input),

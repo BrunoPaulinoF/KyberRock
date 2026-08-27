@@ -468,6 +468,55 @@ function numberOrUndefined(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+/**
+ * Junta a regra de frete da balanca principal com a MEMORIA desta maquina.
+ *
+ * A mesma linha carrega duas coisas de donos diferentes: o valor combinado com o cliente
+ * (`source: "manual"`, cadastro, que a principal define para a pedreira inteira) e o valor
+ * usado na ultima venda (`source: "last_used"`, que so serve para pre-preencher a proxima
+ * entrada DESTE computador). Espelhar a linha inteira apagaria a memoria local a cada
+ * pull; ignorar a linha manteria o frete divergente entre as balancas. Entao: a principal
+ * vence em tudo que ela define, e a memoria local sobrevive nos tipos de frete que ela
+ * nao definiu no cadastro.
+ */
+export function mergeFollowerFreightRuleJson(localJson: string | null, cloudJson: string): string {
+  if (!localJson) return cloudJson;
+
+  const cloud = parseRulePayload(cloudJson);
+  const cloudModalities = readModalities(cloud);
+  const localModalities = readModalities(parseRulePayload(localJson));
+
+  const merged: CustomerFreightModalityValues = { ...cloudModalities };
+  for (const [key, value] of Object.entries(localModalities)) {
+    if (!isFreightModality(key) || !value || value.source !== "last_used") continue;
+    if (cloudModalities[key]?.source === "manual") continue;
+    merged[key] = value;
+  }
+
+  return JSON.stringify({ ...stripModalities(cloud), modalities: merged });
+}
+
+/**
+ * Tira da regra os valores que pertencem ao cadastro (a principal e quem os define),
+ * preservando a memoria da ultima venda. Devolve `null` quando nao sobra nada — a linha
+ * inteira era cadastro e deve sair.
+ *
+ * E o que a balanca secundaria aplica no realinhamento completo, para uma regra que a
+ * principal nao tem parar de valer sem levar junto o pre-preenchimento da tela.
+ */
+export function stripManualFreightValues(ruleJson: string): string | null {
+  const payload = parseRulePayload(ruleJson);
+  const modalities = readModalities(payload);
+  const remaining: CustomerFreightModalityValues = {};
+  for (const [key, value] of Object.entries(modalities)) {
+    if (!isFreightModality(key) || !value || value.source !== "last_used") continue;
+    remaining[key] = value;
+  }
+
+  if (Object.keys(remaining).length === 0) return null;
+  return JSON.stringify({ ...stripModalities(payload), baseValueCents: 0, modalities: remaining });
+}
+
 /** A regra unica (compatibilidade) sem o mapa de valores por tipo de frete. */
 function stripModalities(payload: RuleJsonPayload): FreightRule {
   const rule = { ...payload };

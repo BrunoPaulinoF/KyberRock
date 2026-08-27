@@ -42,6 +42,30 @@ function normalizeUpdateChannel(value: unknown): "latest" | "beta" {
 const DEVICE_BASE_COLUMNS =
   "id, company_id, unit_id, name, color, device_number, token_hash, is_active";
 
+/**
+ * Balanca principal de precos da empresa (`is_price_master`), quando ha uma.
+ *
+ * Devolve `undefined` — e nao `null` — quando a coluna ainda nao existe no banco: o
+ * desktop so grava a principal quando o campo VEM na resposta, entao a janela entre o
+ * deploy da funcao e a aplicacao da migracao nao pode ser confundida com "a pedreira nao
+ * tem principal". Confundir tiraria o espelhamento de preco das balancas que ja o tem.
+ */
+async function selectPriceMaster(
+  supabase: ReturnType<typeof createClient>,
+  companyId: string
+): Promise<{ id: string; name: string } | null | undefined> {
+  const { data, error } = await supabase
+    .from("device_registrations")
+    .select("id, name")
+    .eq("company_id", companyId)
+    .eq("is_price_master", true)
+    .limit(1);
+  if (error) return undefined;
+  const row = (data ?? [])[0] as { id?: unknown; name?: unknown } | undefined;
+  if (!row || typeof row.id !== "string") return null;
+  return { id: row.id, name: typeof row.name === "string" ? row.name : "" };
+}
+
 async function selectDeviceRow(
   supabase: ReturnType<typeof createClient>,
   deviceId: string
@@ -168,6 +192,11 @@ Deno.serve(async (req) => {
     .eq("unit_id", typedDevice.unit_id)
     .order("created_at", { ascending: true });
 
+  // Consulta separada da legenda de proposito: `is_price_master` e uma coluna nova, e
+  // pedi-la dentro do select acima faria a legenda multi-desktop inteira falhar enquanto
+  // a migracao nao fosse aplicada.
+  const priceMaster = await selectPriceMaster(supabase, typedDevice.company_id);
+
   return jsonResponse({
     status: "approved",
     allowed: true,
@@ -182,6 +211,14 @@ Deno.serve(async (req) => {
     // (mesmo que 'latest') e o que permite o painel devolver uma balanca de teste
     // para producao. Omitir seria indistinguivel de "nuvem antiga".
     updateChannel: normalizeUpdateChannel(typedDevice.update_channel),
+    // Principal de precos da pedreira. Os campos so entram na resposta quando a coluna
+    // existe: omitir e o sinal de "nuvem antiga", e o desktop mantem o que ja sabia.
+    ...(priceMaster === undefined
+      ? {}
+      : {
+          priceMasterDeviceId: priceMaster?.id ?? null,
+          priceMasterDeviceName: priceMaster?.name || null
+        }),
     unitDevices: unitDevices ?? [],
     checkedAt
   });
