@@ -326,8 +326,8 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
 
 ## Balanca principal de precos
 
-Uma balanca por pedreira e a **dona do cadastro de preco**; as demais espelham o que ela publica.
-Guia do fluxo em `docs/preco-balanca-principal.md`.
+As balancas marcadas como **principais** sao as donas do cadastro de preco; as demais espelham o que
+elas publicam. Guia do fluxo em `docs/preco-balanca-principal.md`.
 
 - O que tem dono: `product_default_prices`, `customer_special_prices`, `price_tables`,
   `price_table_items`, `customer_price_tables` e `customer_freight_rules` — a lista vive em
@@ -337,41 +337,54 @@ Guia do fluxo em `docs/preco-balanca-principal.md`.
   cadastram o mesmo par (cliente, produto) geram ids diferentes, e o `upsertCloud*` de cada lado
   DESCARTAVA a linha da outra para nao violar o indice unico local (`(customer_id, product_id) where
 deleted_at is null`). Cada computador ficava com o preco que ele mesmo digitou, para sempre — o
-  sintoma que a operacao relatou. Com principal definida a linha local **cede** (`authoritative`);
-  sem principal, o comportamento anterior fica intacto.
-- Quem elege: painel administrativo → aba Balancas → coluna **Precos**
-  (`update_device_price_master` no `admin-api`), gravado em
-  `device_registrations.is_price_master` com indice unico **por empresa** (migracao
-  `202608270001_device_price_master.sql`). Por empresa, e nao por unidade, porque as tabelas de
-  preco na nuvem sao todas `company_id` e o `desktop-pull` devolve o cadastro de preco por empresa:
-  duas principais na mesma empresa voltariam a disputar as mesmas linhas.
-- Como chega na balanca: `desktop-status` devolve `priceMasterDeviceId`/`priceMasterDeviceName` a
+  sintoma que a operacao relatou. Com principal definida a linha que perde **cede**; sem principal
+  nenhuma, o comportamento anterior fica intacto.
+- Quem marca: painel administrativo → aba Balancas → coluna **Precos**
+  (`update_device_price_master` no `admin-api`), gravado em `device_registrations.is_price_master`.
+  **Mais de uma principal por pedreira e o caso normal** (a da portaria e a do escritorio): marcar
+  uma NAO rebaixa as outras, e o indice unico que limitava a uma foi removido
+  (`202608270003_device_price_masters.sql`; a coluna veio em `202608270001_device_price_master.sql`).
+- **A politica de conflito e um trio, nao um booleano** (`priceConflictPolicy`/`cloudRowWins`):
+  `cloud` na secundaria (a linha local sempre cede), `newest` na principal (cede quem foi EDITADA
+  antes — `updated_at` da linha, empate no maior id) e `local` sem principal (comportamento
+  anterior). O criterio `newest` e o que torna possivel ter duas principais: "quem publica por
+  ultimo" faria as duas se derrubarem alternadamente a cada ciclo e o par disputado ficaria
+  **oscilando** em todas as balancas. Comparando a hora da edicao, as duas pontas chegam a mesma
+  conclusao seja qual for a ordem em que sincronizam. A **mesma** regra vive nos dois runtimes
+  (`price-authority.ts` no desktop, `_shared/price-master-conflicts.ts` na nuvem): mudar uma sem a
+  outra faz balanca e nuvem discordarem da mesma linha.
+- Como chega na balanca: `desktop-status` devolve `priceMasterDeviceIds`/`priceMasterDeviceNames` a
   cada validacao de acesso (5 s). Campo **ausente** = nuvem antiga ou migracao pendente e NAO e
-  confundido com `null` (= pedreira sem principal): confundir devolveria ao empate quem ja espelha.
-  Mesma disciplina do `updateChannel`.
+  confundido com lista vazia (= pedreira sem principal): confundir devolveria ao empate quem ja
+  espelha. Mesma disciplina do `updateChannel`. Os campos no singular seguem na resposta so para
+  instalacao antiga, e vao `null` quando ha duas ou mais principais — dizer so uma faria a outra se
+  achar secundaria e parar de publicar preco.
 - **A nuvem tambem precisa ceder** (`_shared/price-master-conflicts.ts`): as tabelas de preco tem
   indice unico pela chave natural (`(customer_id, product_id)` no preco especial,
   `(product_id, is_active)` no padrao) e o `desktop-sync` grava com `onConflict: "id"`. Com dois ids
   para o mesmo par, quem publicou primeiro ocupa a nuvem e o upsert do outro e **recusado (23505)** —
-  ou seja, sem isto o preco da principal era exatamente o que nao entrava. Quando quem envia e a
-  principal, a linha concorrente e excluida logicamente ANTES do upsert; o tombstone viaja no pull
-  seguinte e e o que faz a secundaria largar a copia local. `customer_freight_rules` entra na lista
-  mesmo sem indice unico na nuvem: ela TEM indice unico local, e duas linhas do mesmo par chegando
-  juntas fariam o vencedor depender da ordem do lote.
-- Troca de papel arma **uma** passada: a principal recem-eleita zera os cursores de preco do push
+  ou seja, sem isto o preco da principal era exatamente o que nao entrava. Quando quem envia e uma
+  principal, `resolvePriceConflicts` diz o que **cede** (exclusao logica antes do upsert) e o que
+  **sai do payload**: a linha que perde nao pode ser tentada e recusada, senao o 23505 derruba o lote
+  e vira erro de sincronizacao a cada ciclo num caso que nao e erro nenhum. O tombstone viaja no pull
+  seguinte e e o que faz a outra maquina largar a copia local. `customer_freight_rules` entra na
+  lista mesmo sem indice unico na nuvem: ela TEM indice unico local, e duas linhas do mesmo par
+  chegando juntas fariam o vencedor depender da ordem do lote.
+- Troca de papel arma **uma** passada: a principal recem-marcada zera os cursores de preco do push
   (`PRICE_MASTER_REPUBLISH_KEY`) para republicar o que ja tinha; a secundaria recem-criada forca um
-  pull COMPLETO (`PRICE_MASTER_RESYNC_KEY`).
+  pull COMPLETO (`PRICE_MASTER_RESYNC_KEY`). Quem ja tinha o mesmo papel nao rearma nada — senao
+  marcar a segunda principal faria a pedreira inteira reenviar preco.
 - **O pull nao apaga preco.** Uma versao anterior deste fluxo retirava da secundaria o preco que a
   principal nao tivesse publicado, e isso abria uma janela de balanca **sem preco**: a secundaria
   descobre o papel em 5 s e puxa em 20 s, enquanto a principal so republica na proxima varredura
   completa — ate 30 minutos depois. O par disputado e resolvido pelo tombstone acima, que chega
   junto com o preco novo e nunca antes dele. Preco que so existe numa maquina converge para as duas
-  (a principal tambem o recebe) e sai de cena quando o operador o exclui NA PRINCIPAL.
+  (a principal tambem o recebe) e sai de cena quando o operador o exclui NUMA PRINCIPAL.
 - A trava de edicao esta no **runtime** (`assertPriceAuthority`), nao so na tela: preco digitado
   numa secundaria valeria ate o proximo pull e sumiria depois. `rememberCustomerFreightValue` fica
   **fora** da trava — a memoria da ultima venda e desta maquina, nao e cadastro.
-- Frete e o caso delicado: a MESMA linha guarda o valor do cadastro (`source: "manual"`, da
-  principal) e a memoria da ultima venda (`source: "last_used"`, local). `mergeFollowerFreightRuleJson`
+- Frete e o caso delicado: a MESMA linha guarda o valor do cadastro (`source: "manual"`, das
+  principais) e a memoria da ultima venda (`source: "last_used"`, local). `mergeFollowerFreightRuleJson`
   (`customer-freight-rules.ts`, pura e testada) separa os dois — sem ela, ou o pull apagava a memoria
   da maquina a cada ciclo, ou o frete continuava divergente.
 

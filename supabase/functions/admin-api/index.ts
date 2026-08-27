@@ -787,36 +787,30 @@ Deno.serve(async (req) => {
     }
 
     /**
-     * Elege (ou dispensa) a balanca principal de precos da pedreira.
+     * Marca (ou dispensa) uma balanca principal de precos da pedreira.
      *
      * Preco padrao, preco especial por cliente, tabela de preco e valor de frete do
-     * cadastro nascem no SQLite de uma balanca. Com uma principal definida, so ela publica
-     * esse cadastro e as demais espelham o que vem dela — e o que acaba com o preco
-     * especial que existe numa balanca e nao na outra. Sem principal, cada maquina
-     * continua publicando o proprio cadastro (o comportamento anterior a este campo).
+     * cadastro nascem no SQLite de uma balanca. As principais publicam esse cadastro e as
+     * demais espelham o que vem delas — e o que acaba com o preco especial que existe numa
+     * balanca e nao na outra. Sem nenhuma principal, cada maquina continua publicando o
+     * proprio cadastro (o comportamento anterior a este campo).
      *
-     * A limpeza vem ANTES da marcacao: o indice unico parcial admite uma unica principal
-     * por empresa, entao marcar primeiro derrubaria a troca de principal.
+     * Cada balanca e marcada por conta propria: marcar uma NAO rebaixa as outras. Mais de
+     * uma principal por pedreira e o caso normal (a da portaria e a do escritorio, por
+     * exemplo), e entre elas vence quem editou a linha por ultimo — ver
+     * `_shared/price-master-conflicts.ts`.
      */
     if (body.action === "update_device_price_master") {
       const deviceId = String(payload.deviceId ?? "");
       if (!deviceId) return jsonResponse({ error: "Informe a balanca" }, 400);
       const isPriceMaster = payload.isPriceMaster === true;
 
-      const { data: device, error: deviceError } = await supabase
+      const { error } = await supabase
         .from("device_registrations")
-        .select("id, company_id")
-        .eq("id", deviceId)
-        .single();
-      if (deviceError) throw deviceError;
-
-      const clear = await supabase
-        .from("device_registrations")
-        .update({ is_price_master: false, updated_at: new Date().toISOString() })
-        .eq("company_id", device.company_id)
-        .eq("is_price_master", true);
-      if (clear.error) {
-        if (/is_price_master/.test(clear.error.message ?? "")) {
+        .update({ is_price_master: isPriceMaster, updated_at: new Date().toISOString() })
+        .eq("id", deviceId);
+      if (error) {
+        if (/is_price_master/.test(error.message ?? "")) {
           return jsonResponse(
             {
               error:
@@ -825,15 +819,7 @@ Deno.serve(async (req) => {
             409
           );
         }
-        throw clear.error;
-      }
-
-      if (isPriceMaster) {
-        const { error } = await supabase
-          .from("device_registrations")
-          .update({ is_price_master: true, updated_at: new Date().toISOString() })
-          .eq("id", deviceId);
-        if (error) throw error;
+        throw error;
       }
 
       return jsonResponse({ ok: true, isPriceMaster });

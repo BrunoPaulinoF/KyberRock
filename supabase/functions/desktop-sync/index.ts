@@ -10,9 +10,9 @@ import {
   unknownColumnFromError
 } from "../_shared/unknown-column.ts";
 import {
-  findRowsToRetire,
   isLiveRow,
   naturalKeyOf,
+  resolvePriceConflicts,
   PRICE_MASTER_TABLES
 } from "../_shared/price-master-conflicts.ts";
 
@@ -129,8 +129,9 @@ async function clearPriceMasterConflicts(
   supabase: ReturnType<typeof createClient>,
   companyId: string,
   payload: CloudPayload
-): Promise<string[]> {
+): Promise<{ warnings: string[]; skip: Set<string> }> {
   const warnings: string[] = [];
+  const skip = new Set<string>();
 
   for (const entry of PRICE_MASTER_TABLES) {
     const rows = payload[entry.payloadKey as keyof CloudPayload] as
@@ -138,10 +139,14 @@ async function clearPriceMasterConflicts(
       | undefined;
     if (!rows?.length) continue;
 
-    // Linha enviada como excluida nao vai ocupar o indice: nao derruba ninguem.
+    // Linha enviada como excluida nao vai ocupar o indice: nao disputa com ninguem.
     const incoming = rows
       .filter(isLiveRow)
-      .map((row) => ({ id: String(row.id ?? ""), key: naturalKeyOf(row, entry.naturalKey) }))
+      .map((row) => ({
+        id: String(row.id ?? ""),
+        key: naturalKeyOf(row, entry.naturalKey),
+        updatedAt: typeof row.updated_at === "string" ? row.updated_at : null
+      }))
       .filter((row) => row.id);
     if (incoming.length === 0) continue;
 
@@ -157,7 +162,7 @@ async function clearPriceMasterConflicts(
 
     const { data, error } = await supabase
       .from(entry.table)
-      .select(`id, ${entry.naturalKey.join(", ")}`)
+      .select(`id, updated_at, ${entry.naturalKey.join(", ")}`)
       .eq("company_id", companyId)
       .is("deleted_at", null)
       .in(firstColumn, firstValues);
@@ -167,9 +172,15 @@ async function clearPriceMasterConflicts(
     }
 
     const existing = ((data ?? []) as Record<string, unknown>[])
-      .map((row) => ({ id: String(row.id ?? ""), key: naturalKeyOf(row, entry.naturalKey) }))
+      .map((row) => ({
+        id: String(row.id ?? ""),
+        key: naturalKeyOf(row, entry.naturalKey),
+        updatedAt: typeof row.updated_at === "string" ? row.updated_at : null
+      }))
       .filter((row) => row.id);
-    const retire = findRowsToRetire(incoming, existing);
+
+    const { retire, skip: loserIds } = resolvePriceConflicts(incoming, existing);
+    for (const id of loserIds) skip.add(id);
     if (retire.length === 0) continue;
 
     const retiredAt = new Date().toISOString();
@@ -186,13 +197,14 @@ async function clearPriceMasterConflicts(
       continue;
     }
 
-    console.info("desktop-sync: cadastro de preco cedeu para a balanca principal", {
+    console.info("desktop-sync: cadastro de preco cedeu para a edicao mais recente", {
       table: entry.table,
-      retired: retire.length
+      retired: retire.length,
+      skipped: loserIds.length
     });
   }
 
-  return warnings;
+  return { warnings, skip };
 }
 
 Deno.serve(async (req) => {
@@ -265,15 +277,25 @@ Deno.serve(async (req) => {
         counts.products = body.products.length;
       }
     }
-    // Quem envia e a balanca principal de precos: a linha de outra maquina que disputa a
-    // mesma chave natural cede ANTES do upsert, senao o indice unico da nuvem recusa
-    // justamente o preco que deveria valer para a pedreira inteira.
+    // Quem envia e uma balanca principal de precos: o par disputado e resolvido ANTES do
+    // upsert, pela hora da EDICAO (ver `_shared/price-master-conflicts.ts`). Sem isso o
+    // indice unico da nuvem recusaria a linha da principal — e, com mais de uma principal,
+    // as duas se derrubariam alternadamente a cada ciclo.
+    let priceRowsToSkip = new Set<string>();
     if (device.is_price_master === true) {
-      stepErrors.push(...(await clearPriceMasterConflicts(supabase, device.company_id, body)));
+      const resolution = await clearPriceMasterConflicts(supabase, device.company_id, body);
+      stepErrors.push(...resolution.warnings);
+      priceRowsToSkip = resolution.skip;
     }
 
     for (const { key, table } of CADASTRO_TABLES) {
-      const rows = body[key];
+      let rows = body[key];
+      // Perdeu para uma edicao mais recente de outra principal: a linha sai do lote. Tentar
+      // grava-la estouraria o indice unico e viraria erro de sincronizacao a cada ciclo,
+      // para sempre — e nao ha erro nenhum, so a outra tendo editado depois.
+      if (priceRowsToSkip.size > 0 && rows?.length) {
+        rows = rows.filter((row) => !priceRowsToSkip.has(String(row.id ?? "")));
+      }
       if (!rows?.length) continue;
       // company_id vem sempre do registro do dispositivo: um desktop nunca grava
       // cadastro em outra pedreira, mesmo que envie outro id no payload.

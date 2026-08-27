@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
-import type { PriceAuthority } from "../services/price-authority";
+import { priceMasterWhere, type PriceAuthority } from "../services/price-authority";
 
 /**
  * Aviso de "os precos vem da balanca principal".
@@ -15,8 +15,8 @@ const PRICE_AUTHORITY_REFRESH_MS = 15_000;
 
 const AUTHORITY_FALLBACK: PriceAuthority = {
   mode: "standalone",
-  masterDeviceId: null,
-  masterDeviceName: null
+  masterDeviceIds: [],
+  masterDeviceNames: []
 };
 
 /**
@@ -67,23 +67,20 @@ export function PriceMasterNotice({
 }) {
   if (authority.mode !== "follower") return null;
 
-  const where = authority.masterDeviceName
-    ? `no computador "${authority.masterDeviceName}"`
-    : "no computador principal da pedreira";
-
   return (
     <p style={noticeStyle}>
-      {what} desta pedreira sao definidos {where}. Aqui eles so sao exibidos — a alteracao feita la
-      chega neste computador em segundos.
+      {what} desta pedreira sao definidos {priceMasterWhere(authority.masterDeviceNames)}. Aqui eles
+      so sao exibidos — a alteracao feita la chega neste computador em segundos.
     </p>
   );
 }
 
 /** Texto curto para o `hint` de um campo desabilitado pela balanca principal. */
-export function priceMasterHint(masterDeviceName: string | null): string {
-  return masterDeviceName
-    ? `Definido no computador "${masterDeviceName}", a balanca principal da pedreira.`
-    : "Definido no computador principal da pedreira.";
+export function priceMasterHint(masterDeviceNames: readonly string[]): string {
+  const where = priceMasterWhere(masterDeviceNames);
+  return masterDeviceNames.length > 1
+    ? `Definido ${where} — as balancas principais da pedreira.`
+    : `Definido ${where}${masterDeviceNames.length === 1 ? ", a balanca principal da pedreira" : ""}.`;
 }
 
 const noticeStyle = {

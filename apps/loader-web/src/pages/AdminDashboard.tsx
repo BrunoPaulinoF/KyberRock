@@ -399,11 +399,12 @@ export function AdminDashboard() {
     (unitId: string) => units.find((unit) => unit.id === unitId)?.name ?? "—",
     [units]
   );
-  /** Nome da balanca principal de precos da pedreira, para a linha dizer de quem ela espelha. */
-  const priceMasterName = useCallback(
+  /** Nomes das balancas principais de precos da pedreira, para a linha dizer de quem espelha. */
+  const priceMasterNames = useCallback(
     (companyId: string) =>
-      devices.find((device) => device.companyId === companyId && device.isPriceMaster)?.name ??
-      null,
+      devices
+        .filter((device) => device.companyId === companyId && device.isPriceMaster)
+        .map((device) => device.name),
     [devices]
   );
 
@@ -843,42 +844,51 @@ export function AdminDashboard() {
       )
     },
     {
-      // Dono do cadastro de preco da pedreira. Uma balanca por empresa: promover outra
-      // rebaixa a atual (o `update_device_price_master` limpa antes de marcar), e voltar
-      // para "Espelha a principal" na propria principal deixa a pedreira sem principal —
-      // ai cada maquina volta a publicar o proprio cadastro de preco.
+      // Dono do cadastro de preco da pedreira. Cada balanca e marcada por conta propria:
+      // marcar uma NAO rebaixa as outras, e mais de uma principal e o caso normal (a da
+      // portaria e a do escritorio, por exemplo). Entre principais vence quem editou o
+      // preco por ultimo. Sem nenhuma marcada, cada maquina volta a publicar o proprio
+      // cadastro de preco — o comportamento anterior ao campo.
       key: "priceMaster",
       header: "Precos",
-      render: (device) => (
-        <select
-          className="adm-select"
-          aria-label={`Cadastro de precos da balanca ${device.name}`}
-          title={
-            device.isPriceMaster
-              ? "Esta balanca define os precos da pedreira; as demais espelham o que ela publica."
-              : priceMasterName(device.companyId)
-                ? `Espelha os precos de ${priceMasterName(device.companyId)}.`
-                : "Nenhuma balanca principal definida: cada uma publica o proprio cadastro de preco."
-          }
-          value={device.isPriceMaster ? "master" : "follower"}
-          onChange={(event) =>
-            void run(
-              "update_device_price_master",
-              { deviceId: device.id, isPriceMaster: event.target.value === "master" },
-              event.target.value === "master"
-                ? `${device.name} passou a definir os precos da pedreira.`
-                : "Pedreira ficou sem balanca principal de precos."
-            )
-          }
-        >
-          <option value="master">Principal</option>
-          <option value="follower">
-            {priceMasterName(device.companyId) && !device.isPriceMaster
-              ? `Espelha ${priceMasterName(device.companyId)}`
-              : "Espelha a principal"}
-          </option>
-        </select>
-      )
+      render: (device) => {
+        const masters = priceMasterNames(device.companyId);
+        const others = masters.filter((name) => name !== device.name);
+        return (
+          <select
+            className="adm-select"
+            aria-label={`Cadastro de precos da balanca ${device.name}`}
+            title={
+              device.isPriceMaster
+                ? others.length > 0
+                  ? `Esta balanca define os precos da pedreira, junto com ${others.join(", ")}.`
+                  : "Esta balanca define os precos da pedreira; as demais espelham o que ela publica."
+                : masters.length > 0
+                  ? `Espelha os precos de ${masters.join(", ")}.`
+                  : "Nenhuma balanca principal definida: cada uma publica o proprio cadastro de preco."
+            }
+            value={device.isPriceMaster ? "master" : "follower"}
+            onChange={(event) =>
+              void run(
+                "update_device_price_master",
+                { deviceId: device.id, isPriceMaster: event.target.value === "master" },
+                event.target.value === "master"
+                  ? `${device.name} passou a definir os precos da pedreira.`
+                  : others.length > 0
+                    ? `${device.name} voltou a espelhar os precos de ${others.join(", ")}.`
+                    : "Pedreira ficou sem balanca principal de precos."
+              )
+            }
+          >
+            <option value="master">Principal</option>
+            <option value="follower">
+              {others.length > 0 && !device.isPriceMaster
+                ? `Espelha ${others.join(", ")}`
+                : "Espelha a principal"}
+            </option>
+          </select>
+        );
+      }
     },
     {
       key: "lastSeen",
