@@ -297,6 +297,44 @@ nunca está ali.
   `connected_at` e o desktop apaga o registro local). Gerar um novo revoga os anteriores da mesma
   pedreira — dois links vivos são duas janelas de pareamento abertas.
 
+## Balanca principal de precos
+
+Uma balanca por pedreira e a **dona do cadastro de preco**; as demais espelham o que ela publica.
+Guia do fluxo em `docs/preco-balanca-principal.md`.
+
+- O que tem dono: `product_default_prices`, `customer_special_prices`, `price_tables`,
+  `price_table_items`, `customer_price_tables` e `customer_freight_rules` — a lista vive em
+  `PRICE_MASTERED_CADASTRO_KEYS` (`apps/desktop/src/services/price-authority.ts`) e vale nos DOIS
+  sentidos: o que a secundaria deixa de empurrar e exatamente o que ela aceita da nuvem sem discutir.
+- **O problema que isso encerra**: a projecao de preco ja existia, mas EMPATAVA. Duas balancas que
+  cadastram o mesmo par (cliente, produto) geram ids diferentes, e o `upsertCloud*` de cada lado
+  DESCARTAVA a linha da outra para nao violar o indice unico local (`(customer_id, product_id) where
+deleted_at is null`). Cada computador ficava com o preco que ele mesmo digitou, para sempre — o
+  sintoma que a operacao relatou. Com principal definida a linha local **cede** (`authoritative`);
+  sem principal, o comportamento anterior fica intacto.
+- Quem elege: painel administrativo → aba Balancas → coluna **Precos**
+  (`update_device_price_master` no `admin-api`), gravado em
+  `device_registrations.is_price_master` com indice unico **por empresa** (migracao
+  `202608270001_device_price_master.sql`). Por empresa, e nao por unidade, porque as tabelas de
+  preco na nuvem sao todas `company_id` e o `desktop-pull` devolve o cadastro de preco por empresa:
+  duas principais na mesma empresa voltariam a disputar as mesmas linhas.
+- Como chega na balanca: `desktop-status` devolve `priceMasterDeviceId`/`priceMasterDeviceName` a
+  cada validacao de acesso (5 s). Campo **ausente** = nuvem antiga ou migracao pendente e NAO e
+  confundido com `null` (= pedreira sem principal): confundir devolveria ao empate quem ja espelha.
+  Mesma disciplina do `updateChannel`.
+- Troca de papel arma **uma** passada: a principal recem-eleita zera os cursores de preco do push
+  (`PRICE_MASTER_REPUBLISH_KEY`) para republicar o que ja tinha; a secundaria recem-criada forca um
+  pull COMPLETO (`PRICE_MASTER_RESYNC_KEY`) e retira o preco que so existe nela. O realinhamento
+  **espera** enquanto a nuvem nao tem preco nenhum publicado (`hasPriceCadastroRows`): preco em
+  branco na balanca custa mais caro que preco divergente.
+- A trava de edicao esta no **runtime** (`assertPriceAuthority`), nao so na tela: preco digitado
+  numa secundaria valeria ate o proximo pull e sumiria depois. `rememberCustomerFreightValue` fica
+  **fora** da trava — a memoria da ultima venda e desta maquina, nao e cadastro.
+- Frete e o caso delicado: a MESMA linha guarda o valor do cadastro (`source: "manual"`, da
+  principal) e a memoria da ultima venda (`source: "last_used"`, local). `mergeFollowerFreightRuleJson`
+  e `stripManualFreightValues` (`customer-freight-rules.ts`, puras e testadas) separam os dois — sem
+  elas, ou o pull apagava a memoria da maquina a cada ciclo, ou o frete continuava divergente.
+
 ## OMIE idempotency
 
 Every OMIE call uses a key of the form `kyberrock:{unitId}:{operationId}:{action}` (e.g. `kyberrock:unit_abc:op_123:create_sales_order`). Re-sends must not duplicate orders.

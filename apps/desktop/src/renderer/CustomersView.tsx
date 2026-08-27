@@ -57,6 +57,7 @@ import {
 } from "./crud-ui";
 import type { DetailSectionData } from "./crud-ui";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
+import { PriceMasterNotice, usePriceAuthority } from "./PriceMasterNotice";
 import { formatDbDateTime } from "./format-datetime";
 
 /**
@@ -564,6 +565,10 @@ export function CustomersView({
   const [creditMovements, setCreditMovements] = useState<CreditMovementRow[]>([]);
   const [creditBusy, setCreditBusy] = useState(false);
   const [customerFreightRules, setCustomerFreightRules] = useState<CustomerFreightRuleView[]>([]);
+  // Balanca secundaria: preco especial e frete do cadastro vem da balanca principal da
+  // pedreira. A tela avisa e nao oferece o formulario que o backend vai recusar.
+  const priceAuthority = usePriceAuthority(desktopApi);
+  const pricesAreReadOnly = priceAuthority.mode === "follower";
   const [freightProductId, setFreightProductId] = useState("");
   const [freightValueReais, setFreightValueReais] = useState("");
   const [freightMode, setFreightMode] = useState<"default" | "product">("default");
@@ -2453,6 +2458,10 @@ export function CustomersView({
                 <section style={styles.formSection}>
                   <div style={{ display: "grid", gap: "8px" }}>
                     <h4 style={styles.formSectionTitle}>Frete do cliente</h4>
+                    <PriceMasterNotice
+                      authority={priceAuthority}
+                      what="Os valores de frete do cadastro"
+                    />
                     {editingId ? (
                       <>
                         <div style={{ display: "flex", gap: "8px" }}>
@@ -2556,8 +2565,11 @@ export function CustomersView({
                         <button
                           type="button"
                           onClick={() => void handleSaveFreightRule()}
-                          disabled={savingFreight}
-                          style={{ ...styles.secondaryButton, opacity: savingFreight ? 0.5 : 1 }}
+                          disabled={savingFreight || pricesAreReadOnly}
+                          style={{
+                            ...styles.secondaryButton,
+                            opacity: savingFreight || pricesAreReadOnly ? 0.5 : 1
+                          }}
                         >
                           {savingFreight ? "Salvando..." : "Salvar frete"}
                         </button>
@@ -2589,7 +2601,11 @@ export function CustomersView({
                                 onClick={() =>
                                   void handleRemoveFreightRule(entry.ruleId, entry.modality)
                                 }
-                                style={styles.dangerButton}
+                                disabled={pricesAreReadOnly}
+                                style={{
+                                  ...styles.dangerButton,
+                                  opacity: pricesAreReadOnly ? 0.5 : 1
+                                }}
                               >
                                 Remover
                               </button>
@@ -2608,6 +2624,7 @@ export function CustomersView({
                 <section style={styles.formSection}>
                   <div style={{ display: "grid", gap: "8px" }}>
                     <h4 style={styles.formSectionTitle}>Precos especiais</h4>
+                    <PriceMasterNotice authority={priceAuthority} what="Os precos especiais" />
                     {editingId ? (
                       <>
                         <div style={styles.fieldRow}>
@@ -2634,7 +2651,11 @@ export function CustomersView({
                         <button
                           type="button"
                           onClick={() => void handleSaveSpecialPrice()}
-                          style={styles.secondaryButton}
+                          disabled={pricesAreReadOnly}
+                          style={{
+                            ...styles.secondaryButton,
+                            opacity: pricesAreReadOnly ? 0.5 : 1
+                          }}
                         >
                           Salvar preco especial
                         </button>
@@ -2661,7 +2682,11 @@ export function CustomersView({
                               <button
                                 type="button"
                                 onClick={() => void handleRemoveSpecialPrice(price.productId)}
-                                style={styles.dangerButton}
+                                disabled={pricesAreReadOnly}
+                                style={{
+                                  ...styles.dangerButton,
+                                  opacity: pricesAreReadOnly ? 0.5 : 1
+                                }}
                               >
                                 Remover
                               </button>

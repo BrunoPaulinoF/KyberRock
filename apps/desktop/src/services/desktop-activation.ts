@@ -9,6 +9,7 @@ import {
 } from "./supabase-sync.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
 import { writeUpdateChannel } from "./update-channel.js";
+import { applyPriceMasterFromCloud } from "./price-authority.js";
 import { upsertUnitDevices, type CloudUnitDevice } from "./unit-devices.js";
 
 export const DESKTOP_ACCESS_GRACE_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
@@ -112,6 +113,14 @@ interface DesktopStatusResponse {
    * gravado localmente NAO e tocado (ver `applyUpdateChannelFromCloud`).
    */
   updateChannel?: string | null;
+  /**
+   * Balanca principal de precos da pedreira. Os dois campos so vem quando a nuvem ja
+   * conhece a coluna `is_price_master`; ausentes, o papel gravado aqui nao e tocado (ver
+   * `applyPriceMasterFromCloud`). `null` e resposta legitima: a pedreira nao elegeu
+   * principal e cada balanca segue publicando o proprio cadastro de preco.
+   */
+  priceMasterDeviceId?: string | null;
+  priceMasterDeviceName?: string | null;
   unitDevices?: CloudUnitDevice[];
   checkedAt?: string;
 }
@@ -319,6 +328,14 @@ export async function validateDesktopAccess(
     if (data?.allowed) {
       writeLocalSetting(database, "last_license_check_at", checkedAt, checkedAt);
       applyUpdateChannelFromCloud(database, data.updateChannel);
+      applyPriceMasterFromCloud(
+        database,
+        data && "priceMasterDeviceId" in data
+          ? { id: data.priceMasterDeviceId ?? null, name: data.priceMasterDeviceName ?? null }
+          : undefined,
+        credentials.deviceId,
+        now
+      );
       // Atualiza a legenda multi-desktop (nome + cor de cada computador da
       // unidade). Best-effort: nunca derruba a validacao de acesso.
       if (Array.isArray(data.unitDevices) && data.unitDevices.length > 0) {
