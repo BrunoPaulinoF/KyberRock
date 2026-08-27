@@ -36,9 +36,9 @@ portaria e a do escritório). A partir daí:
 
 | Papel                        | Publica preço? | Linha da nuvem que disputa a mesma chave | Edita preço na tela? |
 | ---------------------------- | -------------- | ---------------------------------------- | -------------------- |
-| **Principal** (`master`)     | sim            | vence se foi **editada depois**           | sim                  |
-| **Secundária** (`follower`)  | não            | **vence** a linha local                   | não                  |
-| Sem principal (`standalone`) | sim            | perde para a linha local                  | sim                  |
+| **Principal** (`master`)     | sim            | vence se foi **editada depois**          | sim                  |
+| **Secundária** (`follower`)  | não            | **vence** a linha local                  | não                  |
+| Sem principal (`standalone`) | sim            | perde para a linha local                 | sim                  |
 
 O terceiro caso é o comportamento anterior, intacto: pedreira que não marcar nenhuma principal
 continua exatamente como estava.

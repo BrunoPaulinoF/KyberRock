@@ -926,11 +926,7 @@ function upsertCloudCadastro(
     [
       "customer_freight_rules",
       () =>
-        upsertCloudCustomerFreightRules(
-          database,
-          payload.customerFreightRules ?? [],
-          pricePolicy
-        )
+        upsertCloudCustomerFreightRules(database, payload.customerFreightRules ?? [], pricePolicy)
     ],
     [
       "customer_future_billing_invoices",

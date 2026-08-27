@@ -198,8 +198,20 @@ describe("quem vence a chave natural disputada", () => {
     expect(cloudRowWins("newest", antiga, nova)).toBe(false);
 
     const mesmaHora = "2026-08-27T12:00:00.000Z";
-    expect(cloudRowWins("newest", { id: "pc-b", updatedAt: mesmaHora }, { id: "pc-a", updatedAt: mesmaHora })).toBe(true);
-    expect(cloudRowWins("newest", { id: "pc-a", updatedAt: mesmaHora }, { id: "pc-b", updatedAt: mesmaHora })).toBe(false);
+    expect(
+      cloudRowWins(
+        "newest",
+        { id: "pc-b", updatedAt: mesmaHora },
+        { id: "pc-a", updatedAt: mesmaHora }
+      )
+    ).toBe(true);
+    expect(
+      cloudRowWins(
+        "newest",
+        { id: "pc-a", updatedAt: mesmaHora },
+        { id: "pc-b", updatedAt: mesmaHora }
+      )
+    ).toBe(false);
   });
 
   it("hora ausente ou invalida vale como a mais antiga, nunca como vitoria por acidente", () => {
