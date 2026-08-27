@@ -25,13 +25,22 @@ import {
 import { getFreightModalityInfo } from "./freight.js";
 import { mergeFollowerFreightRuleJson } from "./customer-freight-rules.js";
 import {
+  normalizeCreditMode,
+  normalizeCreditPeriodicity,
+  shouldApplyCloudCommercialBlock
+} from "./customer-commercial-master.js";
+import {
+  clearCustomerCommercialRepublishPending,
   clearPriceMasterRepublishPending,
   clearPriceMasterResyncPending,
+  isCustomerCommercialRepublishPending,
   isPriceMasterRepublishPending,
   isPriceMasterResyncPending,
   isPriceMasteredCadastroKey,
   readPriceAuthority,
-  PRICE_MASTERED_CADASTRO_KEYS
+  MASTERED_CUSTOMER_PAYLOAD_COLUMNS,
+  PRICE_MASTERED_CADASTRO_KEYS,
+  type PriceAuthorityMode
 } from "./price-authority.js";
 import { isSellableProduct } from "./product-classification.js";
 import { readReportChannelSettings, toCloudChannelSettingsRow } from "./report-channels.js";
@@ -765,21 +774,31 @@ export async function pullDesktopDataFromCloud(
         payload.devices ?? []
       )
     );
+    // Transportadoras e formas de pagamento antes dos clientes: e delas que o bloco
+    // comercial do cliente depende para traduzir os padroes (ver a funcao).
+    const customerReferences = upsertCloudCustomerReferences(
+      database,
+      settings.companyId,
+      payload,
+      warnings
+    );
     const customers = applySection(warnings, "customers", () =>
-      upsertCloudCustomers(database, settings.companyId, payload.customers ?? [])
+      upsertCloudCustomers(database, settings.companyId, payload.customers ?? [], authority.mode)
     );
     const products = applySection(warnings, "products", () =>
       upsertCloudProducts(database, settings.companyId, payload.products ?? [])
     );
     // Cadastro compartilhado antes das operacoes: veiculo/transportadora/motorista
     // sao referenciados pelas operacoes vindas das outras maquinas da pedreira.
-    const cadastro = upsertCloudCadastro(
-      database,
-      settings.companyId,
-      payload,
-      warnings,
-      authority.mode === "follower"
-    );
+    const cadastro =
+      customerReferences +
+      upsertCloudCadastro(
+        database,
+        settings.companyId,
+        payload,
+        warnings,
+        authority.mode === "follower"
+      );
     // A passada completa pedida pela eleicao da principal ja aconteceu: o cadastro de
     // preco desta maquina esta alinhado com o que a nuvem tem. Nada e apagado aqui — quem
     // resolve o par disputado e o `desktop-sync`, que derruba a linha concorrente quando a
@@ -839,6 +858,35 @@ function applySection(warnings: string[], table: string, run: () => number): num
 }
 
 /**
+ * O cadastro que os CLIENTES apontam, gravado antes deles.
+ *
+ * O bloco comercial do cliente traz dois ids: a transportadora padrao e a forma de
+ * pagamento padrao. Os dois precisam existir aqui no momento em que o cliente e gravado —
+ * a forma de pagamento, mais que existir, precisa ter a EQUIVALENCIA registrada, porque o
+ * id da principal nunca chega a ser gravado nesta maquina (UNIQUE por `code`, ids
+ * sorteados em cada balanca).
+ *
+ * Enquanto tudo isto rodava depois dos clientes, o padrao chegava sem tradutor: o cliente
+ * era gravado sem forma de pagamento e sem transportadora, e o pull seguinte — incremental
+ * — nao trazia a linha de novo para corrigir. O padrao ficava vazio para sempre.
+ */
+function upsertCloudCustomerReferences(
+  database: DesktopDatabase,
+  companyId: string,
+  payload: DesktopPullResponse,
+  warnings: string[]
+): number {
+  return (
+    applySection(warnings, "carriers", () =>
+      upsertCloudCarriers(database, companyId, payload.carriers ?? [])
+    ) +
+    applySection(warnings, "payment_methods", () =>
+      upsertCloudPaymentMethods(database, companyId, payload.paymentMethods ?? [])
+    )
+  );
+}
+
+/**
  * Projeta no SQLite o cadastro compartilhado da pedreira que veio do desktop-pull:
  * transportadoras, motoristas, veiculos, os vinculos entre eles e os precos.
  * E o que faz um computador recem-instalado enxergar exatamente o mesmo cadastro
@@ -857,7 +905,8 @@ function upsertCloudCadastro(
   authoritativePrices = false
 ): number {
   const sections: Array<[string, () => number]> = [
-    ["carriers", () => upsertCloudCarriers(database, companyId, payload.carriers ?? [])],
+    // `carriers` e `payment_methods` NAO estao aqui: eles rodam antes dos clientes, em
+    // `upsertCloudCustomerReferences`.
     ["drivers", () => upsertCloudDrivers(database, companyId, payload.drivers ?? [])],
     ["vehicles", () => upsertCloudVehicles(database, companyId, payload.vehicles ?? [])],
     [
@@ -939,10 +988,6 @@ function upsertCloudCadastro(
     [
       "payment_terms",
       () => upsertCloudPaymentTerms(database, companyId, payload.paymentTerms ?? [])
-    ],
-    [
-      "payment_methods",
-      () => upsertCloudPaymentMethods(database, companyId, payload.paymentMethods ?? [])
     ],
     ["accounts", () => upsertCloudAccounts(database, companyId, payload.accounts ?? [])],
     [
@@ -2125,17 +2170,50 @@ export async function lookupCnpjFromCloud(
   return data;
 }
 
+/** As colunas do bloco comercial como elas estao HOJE nesta maquina. */
+interface LocalCommercialRow {
+  needs_push: number;
+  default_payment_method_id: string | null;
+  default_carrier_id: string | null;
+  nf_required: number;
+  credit_mode: string;
+  credit_account_enabled: number;
+  credit_periodicity: string;
+  credit_closing_day: number | null;
+  credit_second_closing_day: number | null;
+  credit_boleto_days: number | null;
+  credit_second_boleto_days: number | null;
+  credit_closing_weekday: number | null;
+}
+
 function upsertCloudCustomers(
   database: DesktopDatabase,
   companyId: string,
-  rows: Array<Record<string, unknown>>
+  rows: Array<Record<string, unknown>>,
+  /**
+   * Papel desta balanca no bloco comercial/credito do cadastro (ver
+   * `shouldApplyCloudCommercialBlock`). O padrao e o comportamento de sempre da pedreira
+   * que nao elegeu principal.
+   */
+  commercialMode: PriceAuthorityMode = "standalone"
 ): number {
+  const readLocalCommercial = database.prepare(
+    `SELECT needs_push, default_payment_method_id, default_carrier_id, nf_required, credit_mode,
+            credit_account_enabled, credit_periodicity, credit_closing_day,
+            credit_second_closing_day, credit_boleto_days, credit_second_boleto_days,
+            credit_closing_weekday
+       FROM customers WHERE id = ?`
+  );
   const upsert = database.prepare(`
     INSERT INTO customers (
       id, company_id, omie_customer_id, source, legal_name, trade_name, document, phone, email,
-      credit_limit_cents, open_receivables_cents, default_freight_modality, sync_status, is_active,
+      credit_limit_cents, open_receivables_cents, default_freight_modality,
+      default_payment_method_id, default_carrier_id, nf_required, credit_mode,
+      credit_account_enabled, credit_periodicity, credit_closing_day, credit_second_closing_day,
+      credit_boleto_days, credit_second_boleto_days, credit_closing_weekday,
+      sync_status, is_active,
       created_at, updated_at, deleted_at, last_synced_at, needs_push
-    ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, NULL, ?, 0)
+    ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, NULL, ?, 0)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       -- Nunca apagar o codigo do OMIE que ja temos: sem ele o proximo push tenta um
@@ -2158,6 +2236,22 @@ function upsertCloudCustomers(
       -- Tipo de frete padrao da aba Transporte. Segue a mesma guarda dos demais campos do
       -- cadastro: edicao local ainda nao enviada ao OMIE nunca e sobrescrita pela nuvem.
       default_freight_modality = CASE WHEN customers.needs_push = 0 THEN excluded.default_freight_modality ELSE customers.default_freight_modality END,
+      -- Bloco comercial/credito: sem CASE aqui de proposito. Quem decide entre a nuvem e a
+      -- copia local e shouldApplyCloudCommercialBlock, la em cima, porque a regra tem tres
+      -- desfechos (principal nunca aceita, secundaria sempre aceita, sem principal segue o
+      -- needs_push) e depende de uma coluna que o SQL daqui nao ve. O que chega em excluded
+      -- ja e o valor final: quando o bloco nao se aplica, ele e a propria copia local.
+      default_payment_method_id = excluded.default_payment_method_id,
+      default_carrier_id = excluded.default_carrier_id,
+      nf_required = excluded.nf_required,
+      credit_mode = excluded.credit_mode,
+      credit_account_enabled = excluded.credit_account_enabled,
+      credit_periodicity = excluded.credit_periodicity,
+      credit_closing_day = excluded.credit_closing_day,
+      credit_second_closing_day = excluded.credit_second_closing_day,
+      credit_boleto_days = excluded.credit_boleto_days,
+      credit_second_boleto_days = excluded.credit_second_boleto_days,
+      credit_closing_weekday = excluded.credit_closing_weekday,
       sync_status = CASE WHEN customers.needs_push = 0 THEN 'synced' ELSE customers.sync_status END,
       is_active = CASE WHEN customers.needs_push = 0 THEN excluded.is_active ELSE customers.is_active END,
       updated_at = CASE WHEN customers.needs_push = 0 THEN excluded.updated_at ELSE customers.updated_at END,
@@ -2185,6 +2279,8 @@ function upsertCloudCustomers(
     const legalName = stringValue(row.legal_name) || stringValue(row.trade_name) || "Cliente";
     const tradeName = stringValue(row.trade_name) || legalName;
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    const local = readLocalCommercial.get(id) as LocalCommercialRow | undefined;
+    const commercial = resolveCommercialBlock(database, row, local, commercialMode);
     upsert.run(
       id,
       companyId,
@@ -2197,6 +2293,17 @@ function upsertCloudCustomers(
       integerValue(row.credit_limit_cents),
       integerValue(row.open_receivables_cents) ?? 0,
       nullableStringValue(row.default_freight_modality),
+      commercial.defaultPaymentMethodId,
+      commercial.defaultCarrierId,
+      commercial.nfRequired,
+      commercial.creditMode,
+      commercial.creditAccountEnabled,
+      commercial.creditPeriodicity,
+      commercial.creditClosingDay,
+      commercial.creditSecondClosingDay,
+      commercial.creditBoletoDays,
+      commercial.creditSecondBoletoDays,
+      commercial.creditClosingWeekday,
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
       updatedAt,
@@ -2205,6 +2312,88 @@ function upsertCloudCustomers(
     count++;
   }
   return count;
+}
+
+/**
+ * O bloco comercial/credito que vai ser gravado nesta linha: o da nuvem quando ele se
+ * aplica, senao a propria copia local.
+ *
+ * Os dois ids passam por tradutor em vez de irem direto. A forma de pagamento padrao do
+ * sistema nasce com id SORTEADO em cada balanca (ver a migracao `local_payment_methods...`),
+ * entao o id que a principal publicou nao existe aqui — `resolvePaymentMethodId` acha a
+ * gemea pelo `code`. A transportadora tem id unico, mas pode nao ter sido espelhada ainda
+ * neste mesmo pull; `resolveMirroredId` mantem o vinculo anterior em vez de apaga-lo por
+ * causa de um cadastro atrasado. Nos dois casos, id vazio continua sendo id vazio: e assim
+ * que a principal limpa o padrao nas demais maquinas.
+ */
+function resolveCommercialBlock(
+  database: DesktopDatabase,
+  row: Record<string, unknown>,
+  local: LocalCommercialRow | undefined,
+  mode: PriceAuthorityMode
+): {
+  defaultPaymentMethodId: string | null;
+  defaultCarrierId: string | null;
+  nfRequired: number;
+  creditMode: string;
+  creditAccountEnabled: number;
+  creditPeriodicity: string;
+  creditClosingDay: number | null;
+  creditSecondClosingDay: number | null;
+  creditBoletoDays: number | null;
+  creditSecondBoletoDays: number | null;
+  creditClosingWeekday: number | null;
+} {
+  // Os defaults sao os do CREATE TABLE: linha nova (INSERT) nao tem copia local para herdar.
+  const localNfRequired = local ? local.nf_required : 1;
+  const localCreditMode = normalizeCreditMode(local?.credit_mode, "normal");
+  const localCreditAccountEnabled = local ? local.credit_account_enabled : 0;
+  const localCreditPeriodicity = normalizeCreditPeriodicity(local?.credit_periodicity, "monthly");
+
+  if (
+    !shouldApplyCloudCommercialBlock({
+      mode,
+      cloudRow: row,
+      localNeedsPush: Number(local?.needs_push ?? 0) === 1
+    })
+  ) {
+    return {
+      defaultPaymentMethodId: local?.default_payment_method_id ?? null,
+      defaultCarrierId: local?.default_carrier_id ?? null,
+      nfRequired: localNfRequired,
+      creditMode: localCreditMode,
+      creditAccountEnabled: localCreditAccountEnabled,
+      creditPeriodicity: localCreditPeriodicity,
+      creditClosingDay: local?.credit_closing_day ?? null,
+      creditSecondClosingDay: local?.credit_second_closing_day ?? null,
+      creditBoletoDays: local?.credit_boleto_days ?? null,
+      creditSecondBoletoDays: local?.credit_second_boleto_days ?? null,
+      creditClosingWeekday: local?.credit_closing_weekday ?? null
+    };
+  }
+
+  return {
+    defaultPaymentMethodId: resolvePaymentMethodId(
+      database,
+      row.default_payment_method_id,
+      local?.default_payment_method_id
+    ),
+    defaultCarrierId: resolveMirroredId(
+      database,
+      "carriers",
+      row.default_carrier_id,
+      local?.default_carrier_id
+    ),
+    nfRequired: booleanToSql(row.nf_required, localNfRequired === 1),
+    creditMode: normalizeCreditMode(row.credit_mode, localCreditMode),
+    creditAccountEnabled: booleanToSql(row.credit_account_enabled, localCreditAccountEnabled === 1),
+    creditPeriodicity: normalizeCreditPeriodicity(row.credit_periodicity, localCreditPeriodicity),
+    creditClosingDay: integerValue(row.credit_closing_day),
+    creditSecondClosingDay: integerValue(row.credit_second_closing_day),
+    creditBoletoDays: integerValue(row.credit_boleto_days),
+    creditSecondBoletoDays: integerValue(row.credit_second_boleto_days),
+    creditClosingWeekday: integerValue(row.credit_closing_weekday)
+  };
 }
 
 function upsertCloudProducts(
@@ -3795,7 +3984,7 @@ export async function pushOmieCustomersToCloud(
     .prepare(
       `SELECT id, omie_customer_id, omie_integration_code, legal_name, trade_name, document, phone, email,
               fiscal_emails, zipcode, address_street, address_number, address_complement, neighborhood, city, state,
-              default_payment_term_id, omie_billing_blocked
+              default_payment_term_id, omie_billing_blocked, observations
        FROM customers
        WHERE company_id = ? AND deleted_at IS NULL AND needs_push = 1 AND source IN ('local', 'hybrid')
        ORDER BY updated_at ASC
@@ -3820,6 +4009,7 @@ export async function pushOmieCustomersToCloud(
     state: string | null;
     default_payment_term_id: string | null;
     omie_billing_blocked: number;
+    observations: string | null;
   }>;
 
   let pushed = 0;
@@ -3896,6 +4086,11 @@ export async function pushOmieCustomersToCloud(
               city: customer.city ?? undefined,
               state: customer.state ?? undefined,
               defaultPaymentTermId: customer.default_payment_term_id ?? undefined,
+              // Observacoes internas: o KyberRock e quem manda neste campo, entao string
+              // vazia LIMPA a observacao no OMIE. Sem enviar, o que a operadora digitava
+              // aqui era sobrescrito pela observacao do OMIE na leitura seguinte do
+              // cadastro de referencia — sumia ate na propria maquina que digitou.
+              observations: customer.observations ?? "",
               billingBlocked: customer.omie_billing_blocked === 1
             }
           }
@@ -6800,6 +6995,16 @@ interface CadastroPushEntity {
   /** SELECT com os parametros nomeados @companyId, @cursorAt, @cursorId e @limit. */
   sql: string;
   map: (row: Record<string, unknown>, companyId: string) => Record<string, unknown>;
+  /**
+   * Colunas do payload cujo dono e a balanca principal, quando o dono e de PARTE da linha.
+   *
+   * Preco e uma entidade inteira: a secundaria deixa de publicar a chave e pronto. O bloco
+   * comercial do cliente nao da para resolver assim — o cliente tem de continuar sendo
+   * publicado por qualquer balanca, porque nome, documento e endereco nao tem dono. Entao a
+   * secundaria publica a linha SEM estas colunas, e o upsert do `desktop-sync` preserva o
+   * que a nuvem ja tem nelas (coluna ausente do payload nao entra no SET).
+   */
+  masteredColumns?: readonly string[];
 }
 
 function cursorExpression(alias: string, column: string): string {
@@ -6853,9 +7058,12 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
       table: "customers",
       alias: "c",
       columns:
-        "c.id, c.omie_customer_id, c.legal_name, c.trade_name, c.document, c.phone, c.email, c.credit_limit_cents, c.open_receivables_cents, c.default_freight_modality, c.is_active, c.created_at, c.updated_at, c.deleted_at",
+        "c.id, c.omie_customer_id, c.legal_name, c.trade_name, c.document, c.phone, c.email, c.credit_limit_cents, c.open_receivables_cents, c.default_freight_modality, c.default_payment_method_id, c.default_carrier_id, c.nf_required, c.credit_mode, c.credit_account_enabled, c.credit_periodicity, c.credit_closing_day, c.credit_second_closing_day, c.credit_boleto_days, c.credit_second_boleto_days, c.credit_closing_weekday, c.is_active, c.created_at, c.updated_at, c.deleted_at",
       where: "c.company_id = @companyId"
     }),
+    // O bloco comercial/credito e da balanca principal. A secundaria continua publicando o
+    // cliente (nome, documento, telefone, limite), so que sem estas colunas.
+    masteredColumns: MASTERED_CUSTOMER_PAYLOAD_COLUMNS,
     map: (row, companyId) => {
       const updatedAt = cloudTimestamp(row.updated_at, new Date().toISOString());
       const legalName = stringValue(row.legal_name) || stringValue(row.trade_name) || "Cliente";
@@ -6874,6 +7082,21 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         // migracao nao for aplicada o `desktop-sync` a descarta do payload e regrava o
         // resto (ver `_shared/unknown-column.ts`), entao o cadastro nao para por causa dela.
         default_freight_modality: nullableStringValue(row.default_freight_modality),
+        // Bloco comercial/credito da aba Comercial. Vai inteiro, com os nulos: e assim que
+        // "sem transportadora padrao" chega as demais maquinas. A marca de publicacao e o
+        // que permite a secundaria distinguir esse nulo de "ninguem publicou ainda".
+        default_payment_method_id: nullableStringValue(row.default_payment_method_id),
+        default_carrier_id: nullableStringValue(row.default_carrier_id),
+        nf_required: Number(row.nf_required ?? 1) === 1,
+        credit_mode: stringValue(row.credit_mode) || "normal",
+        credit_account_enabled: Number(row.credit_account_enabled ?? 0) === 1,
+        credit_periodicity: stringValue(row.credit_periodicity) || "monthly",
+        credit_closing_day: integerValue(row.credit_closing_day),
+        credit_second_closing_day: integerValue(row.credit_second_closing_day),
+        credit_boleto_days: integerValue(row.credit_boleto_days),
+        credit_second_boleto_days: integerValue(row.credit_second_boleto_days),
+        credit_closing_weekday: integerValue(row.credit_closing_weekday),
+        commercial_published_at: updatedAt,
         is_active: cloudActive(row),
         created_at: cloudTimestamp(row.created_at, updatedAt),
         updated_at: updatedAt
@@ -7411,12 +7634,39 @@ export function resetSharedCadastroPushState(database: DesktopDatabase): void {
  * ja estaria "atras do cursor" e nunca chegaria as demais maquinas.
  */
 function resetPriceCadastroPushCursors(database: DesktopDatabase): void {
-  const state = readCadastroPushState(database);
-  const next = { ...state };
-  for (const key of PRICE_MASTERED_CADASTRO_KEYS) {
+  resetCadastroPushCursors(database, PRICE_MASTERED_CADASTRO_KEYS);
+}
+
+/**
+ * Zera os cursores das entidades informadas, para o proximo push reenviar so o que elas
+ * cobrem. O resto do cadastro continua de onde parou.
+ */
+function resetCadastroPushCursors(database: DesktopDatabase, keys: readonly string[]): void {
+  const next = { ...readCadastroPushState(database) };
+  for (const key of keys) {
     delete next[key];
   }
   writeLocalSetting(database, CADASTRO_PUSH_STATE_KEY, next);
+}
+
+/** As entidades que carregam colunas com dono — hoje so `customers`. */
+const MASTERED_COLUMN_ENTITY_KEYS: readonly string[] = CADASTRO_PUSH_ENTITIES.filter(
+  (entity) => entity.masteredColumns && entity.masteredColumns.length > 0
+).map((entity) => entity.key);
+
+/** As mesmas linhas sem as colunas cujo dono e a principal. */
+function stripMasteredColumns(
+  rows: Array<Record<string, unknown>>,
+  columns: readonly string[]
+): Array<Record<string, unknown>> {
+  const drop = new Set(columns);
+  return rows.map((row) => {
+    const kept: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) {
+      if (!drop.has(key)) kept[key] = value;
+    }
+    return kept;
+  });
 }
 
 /**
@@ -7492,11 +7742,23 @@ export async function pushSharedCadastroToCloud(
     resetPriceCadastroPushCursors(database);
     clearPriceMasterRepublishPending(database);
   }
+  // O bloco comercial/credito passou a viajar nesta versao (ou esta maquina acabou de virar
+  // principal). O push do cadastro e incremental por cursor, entao sem zerar o cursor dos
+  // clientes o bloco so chegaria na nuvem nos poucos que alguem editasse depois — e as
+  // demais balancas continuariam divergentes. Vale para a principal E para a pedreira sem
+  // principal eleita; quem nao publica o bloco e so a secundaria.
+  if (authority.mode !== "follower" && isCustomerCommercialRepublishPending(database)) {
+    resetCadastroPushCursors(database, MASTERED_COLUMN_ENTITY_KEYS);
+    clearCustomerCommercialRepublishPending(database);
+  }
 
   for (const entity of CADASTRO_PUSH_ENTITIES) {
     // Secundaria nao publica preco. Publicar seria devolver a disputa pelo outro lado: a
     // linha desta maquina venceria na nuvem e a principal deixaria de ser a principal.
     if (authority.mode === "follower" && isPriceMasteredCadastroKey(entity.key)) continue;
+    // Entidade que ela CONTINUA publicando, mas sem as colunas com dono (o cliente e a
+    // unica hoje): a linha vai sem o bloco comercial e a nuvem preserva o da principal.
+    const stripColumns = authority.mode === "follower" ? (entity.masteredColumns ?? null) : null;
 
     let cursor = readCadastroPushState(database)[entity.key] ?? null;
 
@@ -7518,9 +7780,10 @@ export async function pushSharedCadastroToCloud(
 
       if (rows.length === 0) break;
 
-      const payload = rows
+      const mapped = rows
         .map((row) => entity.map(row, settings.companyId))
         .filter((row) => Boolean(row.id));
+      const payload = stripColumns ? stripMasteredColumns(mapped, stripColumns) : mapped;
 
       const sent = await sendCadastroBatch(settings, entity, payload, errors);
       pushed += sent.pushed;

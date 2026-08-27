@@ -2090,5 +2090,25 @@ CREATE INDEX IF NOT EXISTS idx_customer_vehicles_customer
 -- e o comportamento de sempre.
 ALTER TABLE customers ADD COLUMN default_freight_modality TEXT;
 `
+  },
+  {
+    version: 57,
+    name: "customer_commercial_republish",
+    sql: `
+-- O bloco comercial/credito do cliente passou a viajar para a nuvem nesta versao. Nas
+-- pedreiras que ja estao rodando, quase nenhum cliente vai ser editado tao cedo — e o push
+-- do cadastro e incremental, por cursor de updated_at. Sem zerar o cursor, o bloco so
+-- chegaria na nuvem nos poucos clientes que alguem tocasse depois da atualizacao, e as
+-- demais balancas continuariam com a configuracao divergente que motivou a mudanca.
+--
+-- A marca vale para a principal E para a pedreira sem principal eleita (nos dois casos a
+-- maquina publica o bloco). A secundaria nao publica, entao ela simplesmente ignora a
+-- marca — que continua gravada e passa a valer no dia em que ela for eleita principal.
+INSERT INTO local_settings (key, value_json, updated_at)
+VALUES ('customer_commercial_republish_pending', 'true', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+ON CONFLICT(key) DO UPDATE SET
+  value_json = excluded.value_json,
+  updated_at = excluded.updated_at;
+`
   }
 ];

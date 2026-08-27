@@ -57,7 +57,7 @@ import {
 } from "./crud-ui";
 import type { DetailSectionData } from "./crud-ui";
 import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
-import { PriceMasterNotice, usePriceAuthority } from "./PriceMasterNotice";
+import { PriceMasterNotice, priceMasterHint, usePriceAuthority } from "./PriceMasterNotice";
 import { formatDbDateTime } from "./format-datetime";
 
 /**
@@ -567,6 +567,11 @@ export function CustomersView({
   // pedreira. A tela avisa e nao oferece o formulario que o backend vai recusar.
   const priceAuthority = usePriceAuthority(desktopApi);
   const pricesAreReadOnly = priceAuthority.mode === "follower";
+  // Mesma eleicao, outro bloco: a aba Comercial (forma de pagamento e transportadora
+  // padrao, exige NF, uso de credito OMIE e a conta de credito) tambem e da balanca
+  // principal. O runtime recusa a gravacao; aqui a tela avisa antes e desabilita, para a
+  // operadora nao descobrir no clique do salvar.
+  const commercialIsReadOnly = priceAuthority.mode === "follower";
   const [freightProductId, setFreightProductId] = useState("");
   const [freightValueReais, setFreightValueReais] = useState("");
   const [freightMode, setFreightMode] = useState<"default" | "product">("default");
@@ -2160,9 +2165,17 @@ export function CustomersView({
               {activeFormSection === "comercial" ? (
                 <section style={styles.formSection}>
                   <h4 style={styles.formSectionTitle}>Comercial</h4>
+                  <PriceMasterNotice
+                    authority={priceAuthority}
+                    what="Os dados comerciais e as regras de credito do cliente"
+                  />
                   <Field
                     label="Forma de pagamento padrao"
-                    hint="Puxada automaticamente na Nova entrada (pode ser trocada)"
+                    hint={
+                      commercialIsReadOnly
+                        ? priceMasterHint(priceAuthority.masterDeviceName)
+                        : "Puxada automaticamente na Nova entrada (pode ser trocada)"
+                    }
                   >
                     <OptionSearchPicker
                       options={paymentMethods.map((method) => ({
@@ -2173,7 +2186,8 @@ export function CustomersView({
                       onChange={(id) => setForm({ ...form, defaultPaymentMethodId: id })}
                       placeholder="Buscar forma de pagamento..."
                       leadingOption={{ id: "", label: "Selecione" }}
-                      inputStyle={getInputStyle(false)}
+                      disabled={commercialIsReadOnly}
+                      inputStyle={getInputStyle(commercialIsReadOnly)}
                     />
                   </Field>
                   <Field
@@ -2194,7 +2208,11 @@ export function CustomersView({
                   />
                   <Field
                     label="Transportadora padrao"
-                    hint="Puxada automaticamente na Nova entrada. Vincular uma transportadora na aba Transportadoras ja assume o padrao quando ele ainda nao foi definido."
+                    hint={
+                      commercialIsReadOnly
+                        ? priceMasterHint(priceAuthority.masterDeviceName)
+                        : "Puxada automaticamente na Nova entrada. Vincular uma transportadora na aba Transportadoras ja assume o padrao quando ele ainda nao foi definido."
+                    }
                   >
                     <OptionSearchPicker
                       options={defaultCarrierOptions.map((carrier) => ({
@@ -2206,7 +2224,8 @@ export function CustomersView({
                       onChange={(id) => setForm({ ...form, defaultCarrierId: id })}
                       placeholder="Buscar transportadora..."
                       leadingOption={{ id: "", label: "Sem transportadora padrao" }}
-                      inputStyle={getInputStyle(false)}
+                      disabled={commercialIsReadOnly}
+                      inputStyle={getInputStyle(commercialIsReadOnly)}
                     />
                   </Field>
                   <label style={styles.checkbox}>
@@ -2214,6 +2233,7 @@ export function CustomersView({
                       type="checkbox"
                       checked={form.creditAccountEnabled}
                       onChange={(e) => setForm({ ...form, creditAccountEnabled: e.target.checked })}
+                      disabled={commercialIsReadOnly}
                     />
                     Habilitar credito do cliente
                   </label>
@@ -2228,7 +2248,8 @@ export function CustomersView({
                               creditPeriodicity: e.target.value as "monthly" | "biweekly" | "weekly"
                             })
                           }
-                          style={getInputStyle(false)}
+                          disabled={commercialIsReadOnly}
+                          style={getInputStyle(commercialIsReadOnly)}
                         >
                           <option value="monthly">Mensal</option>
                           <option value="biweekly">Quinzenal</option>
@@ -2246,7 +2267,8 @@ export function CustomersView({
                               onChange={(e) =>
                                 setForm({ ...form, creditClosingWeekday: e.target.value })
                               }
-                              style={getInputStyle(false)}
+                              disabled={commercialIsReadOnly}
+                              style={getInputStyle(commercialIsReadOnly)}
                             >
                               <option value="">Selecione...</option>
                               <option value="1">Segunda-feira</option>
@@ -2266,7 +2288,8 @@ export function CustomersView({
                               onChange={(e) =>
                                 setForm({ ...form, creditBoletoDays: e.target.value })
                               }
-                              style={getInputStyle(false)}
+                              disabled={commercialIsReadOnly}
+                              style={getInputStyle(commercialIsReadOnly)}
                               placeholder="Ex: 3"
                             />
                           </Field>
@@ -2291,7 +2314,8 @@ export function CustomersView({
                               onChange={(e) =>
                                 setForm({ ...form, creditClosingDay: e.target.value })
                               }
-                              style={getInputStyle(false)}
+                              disabled={commercialIsReadOnly}
+                              style={getInputStyle(commercialIsReadOnly)}
                               placeholder={
                                 form.creditPeriodicity === "biweekly" ? "Ex: 1" : "Ex: 30"
                               }
@@ -2312,7 +2336,8 @@ export function CustomersView({
                               onChange={(e) =>
                                 setForm({ ...form, creditBoletoDays: e.target.value })
                               }
-                              style={getInputStyle(false)}
+                              disabled={commercialIsReadOnly}
+                              style={getInputStyle(commercialIsReadOnly)}
                               placeholder="Ex: 10"
                             />
                           </Field>
@@ -2328,7 +2353,8 @@ export function CustomersView({
                                   onChange={(e) =>
                                     setForm({ ...form, creditSecondClosingDay: e.target.value })
                                   }
-                                  style={getInputStyle(false)}
+                                  disabled={commercialIsReadOnly}
+                                  style={getInputStyle(commercialIsReadOnly)}
                                   placeholder="Ex: 16"
                                 />
                               </Field>
@@ -2343,7 +2369,8 @@ export function CustomersView({
                                   onChange={(e) =>
                                     setForm({ ...form, creditSecondBoletoDays: e.target.value })
                                   }
-                                  style={getInputStyle(false)}
+                                  disabled={commercialIsReadOnly}
+                                  style={getInputStyle(commercialIsReadOnly)}
                                   placeholder="Ex: 10"
                                 />
                               </Field>
@@ -2359,7 +2386,8 @@ export function CustomersView({
                       onChange={(e) =>
                         setForm({ ...form, creditMode: e.target.value as "normal" | "prepaid" })
                       }
-                      style={getInputStyle(false)}
+                      disabled={commercialIsReadOnly}
+                      style={getInputStyle(commercialIsReadOnly)}
                     >
                       <option value="normal">Nao debitar credito</option>
                       <option value="prepaid">Debitar credito pre-pago</option>
@@ -2370,6 +2398,7 @@ export function CustomersView({
                       type="checkbox"
                       checked={form.nfRequired}
                       onChange={(e) => setForm({ ...form, nfRequired: e.target.checked })}
+                      disabled={commercialIsReadOnly}
                     />
                     Exige nota fiscal
                   </label>
@@ -2550,11 +2579,20 @@ export function CustomersView({
                           </select>
                         </Field>
 
+                        {/*
+                          Transporte proprio grava a TRANSPORTADORA PADRAO do cliente, que
+                          e um campo da balanca principal — por isso o aviso aparece aqui,
+                          e nao no tipo de frete logo acima, que continua livre.
+                        */}
+                        <PriceMasterNotice
+                          authority={priceAuthority}
+                          what="A transportadora padrao do cliente"
+                        />
                         <label style={styles.checkbox}>
                           <input
                             type="checkbox"
                             checked={transport?.isOwnTransport ?? false}
-                            disabled={transportBusy || !desktopApi}
+                            disabled={transportBusy || !desktopApi || commercialIsReadOnly}
                             onChange={(event) => {
                               const enabled = event.target.checked;
                               void applyTransport(

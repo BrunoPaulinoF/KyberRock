@@ -62,6 +62,15 @@ export type PushCustomerPayload = {
   city?: string;
   state?: string;
   defaultPaymentTermId?: string;
+  /**
+   * Observacoes internas do cadastro (campo `observacao` do cliente no OMIE).
+   *
+   * O KyberRock gerencia este campo, e por isso a string vazia LIMPA a observacao la, em
+   * vez de preservar como fazem os demais campos: sem isso a operadora nao conseguiria
+   * apagar o que escreveu. `undefined` (chamador que nao gerencia o campo, como o push de
+   * transportadora) nao mexe nele.
+   */
+  observations?: string;
   /** Bloqueia/libera o faturamento do cliente no OMIE (bloquear_faturamento S/N). */
   billingBlocked?: boolean;
   tags?: string[];
@@ -295,7 +304,11 @@ export const OMIE_CUSTOMER_FIELD_MAX_LENGTHS = {
   endereco_numero: 20,
   bairro: 60,
   cidade: 40,
-  cep: 10
+  cep: 10,
+  // O OMIE nao publica o tamanho do campo de observacao do cadastro. O corte aqui e
+  // conservador e serve so para nao mandar um texto sem fim e levar a recusa do cadastro
+  // inteiro por causa de uma anotacao interna.
+  observacao: 500
 } as const;
 
 /**
@@ -326,7 +339,7 @@ export function buildCustomerPayload(payload: PushCustomerPayload): Record<strin
   const state = normalizeOmieState(payload.state);
   const tags = (payload.tags ?? []).map((tag) => tag.trim()).filter((tag) => tag.length > 0);
 
-  return dropEmptyFields({
+  const body = dropEmptyFields({
     codigo_cliente_omie: payload.omieCustomerId,
     // Sem id local nao ha codigo de integracao a informar (o campo cai em dropEmptyFields);
     // chamar toOmieIntegrationCode com vazio geraria um codigo que nao aponta para nada.
@@ -374,6 +387,31 @@ export function buildCustomerPayload(payload: PushCustomerPayload): Record<strin
       payload.billingBlocked === undefined ? undefined : payload.billingBlocked ? "S" : "N",
     tags: tags.length > 0 ? tags.map((tag) => ({ tag })) : undefined
   });
+
+  // Fora do dropEmptyFields de proposito: nele a string vazia e descartada para um
+  // AlterarCliente nunca APAGAR no OMIE o que o KyberRock nao tem. Com a observacao e o
+  // contrario — quem manda no campo e o cadastro daqui, entao apagar a anotacao aqui tem
+  // de apagar la. `undefined` continua nao mexendo no campo (e o caso da transportadora,
+  // que reaproveita este mesmo builder e nao gerencia observacao).
+  if (payload.observations !== undefined) {
+    body.observacao = clampOmieObservation(payload.observations);
+  }
+
+  return body;
+}
+
+/**
+ * Corte da observacao, sem passar pelo `clampOmieText`.
+ *
+ * Aquele normaliza espaco em branco (`\s+` vira um espaco so), o que e o certo para razao
+ * social e endereco e o errado aqui: a observacao e um campo de varias linhas, e colapsar
+ * as quebras reescreveria o texto da operadora a cada ida e volta ao OMIE.
+ */
+function clampOmieObservation(value: string): string {
+  const text = value.trim();
+  return text.length <= OMIE_CUSTOMER_FIELD_MAX_LENGTHS.observacao
+    ? text
+    : text.slice(0, OMIE_CUSTOMER_FIELD_MAX_LENGTHS.observacao).trimEnd();
 }
 
 /**
