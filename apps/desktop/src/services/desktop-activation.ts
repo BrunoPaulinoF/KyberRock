@@ -7,6 +7,7 @@ import {
   getSupabaseClient,
   writeStoredSupabaseConfig
 } from "./supabase-sync.js";
+import { readInstalledAppVersion } from "./app-version.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
 import { writeUpdateChannel } from "./update-channel.js";
 import { applyPriceMasterFromCloud } from "./price-authority.js";
@@ -337,7 +338,11 @@ export async function validateDesktopAccess(
       {
         body: {
           deviceId: credentials.deviceId,
-          deviceToken: credentials.deviceToken
+          deviceToken: credentials.deviceToken,
+          // De carona no ping que ja existia: o painel precisa saber a versao
+          // que esta INSTALADA aqui, e nao a que foi liberada para o anel.
+          // Ausente (versao nao gravada) a nuvem mantem a leitura anterior.
+          appVersion: readInstalledAppVersion() ?? undefined
         }
       }
     );

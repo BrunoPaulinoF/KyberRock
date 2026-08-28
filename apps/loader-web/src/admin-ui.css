@@ -1262,3 +1262,98 @@
   color: var(--adm-accent);
   word-break: break-word;
 }
+
+/* ---------------------------------------------------------------------------
+   Grafico da frota: qual balanca esta em qual versao.
+
+   Barras em HTML, e nao uma biblioteca de grafico: sao poucas faixas, o dado ja
+   vem agregado e a pergunta que se responde aqui e "QUAL computador ficou para
+   tras" — os nomes abaixo da barra sao o conteudo, a barra so da a proporcao.
+   Uma dependencia de grafico custaria mais bundle do que o desenho inteiro.
+   --------------------------------------------------------------------------- */
+
+.adm-fleet {
+  display: grid;
+  gap: 18px;
+}
+
+.adm-fleet-row {
+  display: grid;
+  gap: 6px;
+}
+
+.adm-fleet-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.adm-fleet-count {
+  font-size: 12px;
+  color: var(--adm-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.adm-fleet-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--adm-surface-3);
+  overflow: hidden;
+}
+
+/* Largura minima garantida no componente: uma balanca sozinha numa frota grande
+   viraria uma barra invisivel, e ela e justamente a que interessa. */
+.adm-fleet-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--adm-line-2);
+}
+
+.adm-fleet-fill-producao {
+  background: #16a34a;
+}
+
+.adm-fleet-fill-teste {
+  background: var(--adm-accent);
+}
+
+.adm-fleet-fill-outra {
+  background: #d97706;
+}
+
+.adm-fleet-fill-desconhecida {
+  background: var(--adm-line-2);
+}
+
+.adm-fleet-devices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.adm-fleet-chip {
+  padding: 3px 8px;
+  border: 1px solid var(--adm-line);
+  border-radius: var(--adm-radius-sm);
+  background: var(--adm-surface-2);
+  font-size: 12px;
+  color: var(--adm-ink-2);
+}
+
+.adm-fleet-chip em {
+  font-style: normal;
+  color: var(--adm-muted);
+}
+
+.adm-fleet-chip strong {
+  font-weight: 600;
+  color: var(--adm-accent);
+}
+
+/* Balanca bloqueada nao recebe atualizacao: continua na lista (a versao dela e
+   um fato), mas apagada, para nao ser lida como frota pendente de atualizar. */
+.adm-fleet-chip-off {
+  opacity: 0.55;
+  text-decoration: line-through;
+}

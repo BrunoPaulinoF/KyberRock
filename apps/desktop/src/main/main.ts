@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
 
 import { isDesktopDataAccessError } from "../database/data-access.js";
+import { setInstalledAppVersion } from "../services/app-version.js";
 import { DesktopRuntime, type FiscalDocumentPrinter } from "../services/runtime.js";
 import type { ActivateDesktopInput } from "../services/desktop-activation.js";
 import type { CacheQueryOptions } from "../services/cache-store.js";
@@ -2943,6 +2944,12 @@ process.on("uncaughtException", (error) => {
 process.on("unhandledRejection", (reason) => {
   writeStartupLog("process:unhandledRejection", reason);
 });
+
+// A versao instalada tem que ficar disponivel para os servicos ANTES da
+// primeira validacao de acesso: e ela que o `desktop-status` leva para o painel
+// saber o que cada balanca esta rodando de verdade. So o processo principal
+// enxerga `app.getVersion()`.
+setInstalledAppVersion(app.getVersion());
 
 configureAutoUpdater();
 registerIpcHandlers();

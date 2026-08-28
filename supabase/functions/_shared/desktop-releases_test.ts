@@ -216,6 +216,28 @@ describe("summarizeDesktopReleases", () => {
     expect(byVersion(rows, "0.8.197").canReject).toBe(true);
   });
 
+  it("oferece cancelar o teste so no que esta em teste", () => {
+    // Cancelar devolve a versao para parada, sem a marca definitiva de
+    // reprovada. Em quem ja esta parado nao ha teste para cancelar.
+    const rows = summarizeDesktopReleases([
+      parado("0.8.198"),
+      emTeste("0.8.197"),
+      release("0.8.193")
+    ]);
+
+    expect(byVersion(rows, "0.8.197").canCancelTest).toBe(true);
+    expect(byVersion(rows, "0.8.198").canCancelTest).toBe(false);
+    expect(byVersion(rows, "0.8.193").canCancelTest).toBe(false);
+  });
+
+  it("nao oferece cancelar o teste na producao atual", () => {
+    // A producao atual nao esta publicada como pre-release: despublicar a
+    // versao que a frota recebe deixaria as balancas sem canal.
+    const rows = summarizeDesktopReleases([release("0.8.193")]);
+
+    expect(byVersion(rows, "0.8.193").canCancelTest).toBe(false);
+  });
+
   it("nao oferece reprovar a producao atual", () => {
     // Tirar do ar a versao que a frota recebe deixaria as balancas sem canal
     // de atualizacao nenhum.

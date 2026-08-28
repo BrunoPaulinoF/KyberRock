@@ -449,19 +449,42 @@ manifesto da raiz; tambem por **workflow_dispatch**):
 **Passo 2 — pela aba Atualizacoes do painel (ou pelo `desktop-promote.yml` direto).** A tela
 (`apps/loader-web/src/pages/DesktopUpdates.tsx`) lista as versoes com a situacao de cada uma —
 **Parado**, **Em teste**, **Producao**, **Incompleto** — e oferece os gestos que movem alguma
-coisa: _Enviar para teste_, _Liberar para producao_, _Reprovar_ e a volta atras. Ela tambem mostra
-quantas balancas estao em cada anel, porque uma versao em teste com zero balancas marcadas nunca
-sera avaliada.
+coisa: _Enviar para teste_, _Liberar para producao_, _Cancelar teste_, _Reprovar_ e a volta atras.
+Ela tambem mostra, em cartao no topo, a versao que esta em producao e a que esta em teste, e quantas
+balancas estao em cada anel — uma versao em teste com zero balancas marcadas nunca sera avaliada.
 
-Quatro coisas na tela merecem atencao de quem for mexer nela:
+Seis coisas na tela merecem atencao de quem for mexer nela:
 
 - **Ela se recarrega sozinha** e nao espera clique: promover so dispara um run, e o estado da
   versao muda no GitHub segundos depois. O ritmo esta em `apps/loader-web/src/lib/desktop-updates.ts`
   (3s com promocao a caminho, 8s com build compilando, 30s parada, nada com a aba escondida). Um
   gesto so e dado por concluido quando a versao aparece no estado pedido — producao se confere por
   `isCurrentProduction`, nunca pelo estado `producao`, que uma estavel antiga ja tem.
-- **Tres linhas sobem para o topo com selo**: a versao atual, o ultimo build gerado pelo Actions e
-  ainda nao distribuido, e a versao anterior a atual (`arrangeReleases`).
+- **Quatro linhas sobem para o topo com selo**, nessa ordem (`arrangeReleases`): a versao em
+  producao, a que esta **em teste** agora, o ultimo build gerado pelo Actions e ainda nao
+  distribuido, e a versao anterior a atual. E a ordem em que se pergunta — o que a frota tem, o que
+  esta sendo avaliado para entrar, o que nem entrou na fila, para onde se recua. As duas primeiras
+  aparecem tambem como cartao no topo da tela, porque sao as unicas que se consulta sem intencao de
+  clicar em nada.
+- **_Cancelar teste_ nao e _Reprovar_.** Sair do anel de teste tinha uma porta so, e ela e
+  definitiva: reprovar marca a release com o asset `REPROVADA.txt` e o workflow recusa distribui-la
+  para sempre, nem com `force`. Mas quase toda saida do teste e "a avaliacao acabou" ou "subiu por
+  engano", nao "quebrou". _Cancelar teste_ dispara `target: parar` — a release volta para rascunho e
+  pode ir a teste de novo; a balanca de teste passa a enxergar a ultima aprovada na proxima
+  verificacao. O alvo `parar` ja existia no workflow, mas so era alcancavel pela pagina do Actions
+  (`PANEL_PROMOTE_TARGETS` no `admin-api`). A versao **anterior** publicada em teste por uma volta
+  atras tambem ganha esse botao: sem ele, desistir de uma regressao exigiria reprovar a versao boa
+  que existe justamente para ser o porto seguro.
+- **O grafico da frota responde o que a lista nao respondia: quem JA instalou.** Liberar nao e
+  instalar — a balanca verifica a cada 30 min e so troca quando o operador fecha o app, entao a
+  frota passa horas ou dias com duas ou tres versoes ao mesmo tempo e a maquina que fica dias sem
+  fechar o app era invisivel. Cada barra e uma versao instalada (mais nova primeiro) com o **nome**
+  dos computadores que estao nela, porque a pergunta de verdade e "qual balanca ficou para tras". O
+  dado e reportado pelo proprio desktop no `desktop-status` (`app_version` /
+  `app_version_seen_at`, migracao `202608280002`), de carona no ping que ja existia; o desktop le a
+  versao de `services/app-version.ts`, que o `main.ts` preenche no arranque porque `electron` nao
+  pode ser importado nos servicos. Balanca que nunca se reportou fica na faixa **Sem informacao**,
+  por ultimo e separada das versoes antigas: nao saber e diferente de estar atrasado.
 - **A volta atras tem duas etapas e botao laranja.** _Voltar para esta versao_ manda a antiga para o
   anel de **teste** (onde a balanca de teste roda com `allowDowngrade` e desce de verdade) e so
   entao a linha oferece _Regredir producao para esta versao_ (`target: latest` + `force`, que as

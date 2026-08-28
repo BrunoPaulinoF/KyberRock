@@ -196,6 +196,7 @@ async function selectDevicesForList(supabase: SupabaseAdminClient) {
   // Da mais completa para a mais antiga: cada coluna acrescentada por migracao entra numa
   // tentativa propria, para a lista continuar carregando no projeto que ainda nao a tem.
   const attempts = [
+    `${DEVICE_LIST_COLUMNS}, update_channel, is_price_master, app_version, app_version_seen_at`,
     `${DEVICE_LIST_COLUMNS}, update_channel, is_price_master`,
     `${DEVICE_LIST_COLUMNS}, update_channel`,
     DEVICE_LIST_COLUMNS
@@ -242,8 +243,14 @@ const GITHUB_READ_TOKEN_ENV = "GH_RELEASES_TOKEN";
 const GITHUB_ACTIONS_TOKEN_ENV = "GH_ACTIONS_TOKEN";
 const PROMOTE_WORKFLOW_FILE = "desktop-promote.yml";
 const RELEASE_WORKFLOW_FILE = "desktop-release.yml";
-/** Alvos que o painel pode disparar. `reabilitar` fica so na pagina do Actions: e raro e deliberado. */
-const PANEL_PROMOTE_TARGETS = ["beta", "latest", "reprovar"] as const;
+/**
+ * Alvos que o painel pode disparar. `reabilitar` fica so na pagina do Actions:
+ * e raro e deliberado.
+ *
+ * `parar` e o cancelamento do teste: devolve a versao ao rascunho sem condenar
+ * a release, ao contrario de `reprovar`, que marca a versao para sempre.
+ */
+const PANEL_PROMOTE_TARGETS = ["beta", "latest", "reprovar", "parar"] as const;
 const PROMOTE_WORKFLOW_REF = "main";
 
 /**
@@ -950,12 +957,44 @@ Deno.serve(async (req) => {
         channelCounts[normalizeUpdateChannel(row.update_channel)] += 1;
       }
 
+      /**
+       * O que cada balanca esta RODANDO — que nao e o que foi liberado.
+       *
+       * Liberar para producao nao instala nada: a maquina verifica a cada 30
+       * min e so troca quando o operador fecha o app. A frota fica dias com
+       * duas ou tres versoes ao mesmo tempo, e ate agora essa distancia era
+       * invisivel no painel. A versao vem do proprio desktop pelo
+       * `desktop-status` (coluna `app_version`); `null` e "ainda nao se
+       * reportou", nunca "desatualizada".
+       *
+       * Os nomes de pedreira sao uma leitura extra e BEST-EFFORT: sem eles o
+       * grafico ainda responde a pergunta (versao por balanca), entao uma falha
+       * aqui nao pode derrubar a aba que distribui as versoes.
+       */
+      const unitNames = new Map<string, string>();
+      const { data: unitRows } = await supabase.from("units").select("id, name");
+      for (const unit of (unitRows ?? []) as Array<Record<string, unknown>>) {
+        if (typeof unit.id === "string") unitNames.set(unit.id, String(unit.name ?? ""));
+      }
+
+      const devices = ((deviceRows ?? []) as Array<Record<string, unknown>>).map((row) => ({
+        id: String(row.id ?? ""),
+        name: typeof row.name === "string" && row.name.length > 0 ? row.name : "Sem nome",
+        unitName: unitNames.get(String(row.unit_id ?? "")) ?? null,
+        version: typeof row.app_version === "string" ? row.app_version : null,
+        versionSeenAt: typeof row.app_version_seen_at === "string" ? row.app_version_seen_at : null,
+        updateChannel: normalizeUpdateChannel(row.update_channel),
+        isActive: row.is_active !== false,
+        lastSeenAt: typeof row.last_seen_at === "string" ? row.last_seen_at : null
+      }));
+
       return jsonResponse({
         releases: summarizeDesktopReleases(await response.json(), {
           buildingRunNumbers: await buildingRunNumbers(token),
           currentProductionTag: await currentProductionTag(token)
         }),
         channelCounts,
+        devices,
         canPromote: Boolean(Deno.env.get(GITHUB_ACTIONS_TOKEN_ENV)),
         actionsUrl: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${PROMOTE_WORKFLOW_FILE}`
       });

@@ -29,6 +29,21 @@ function normalizeUpdateChannel(value: unknown): "latest" | "beta" {
 }
 
 /**
+ * Versao instalada que a balanca diz estar rodando.
+ *
+ * Passa por um filtro de formato porque o valor vai direto para uma tela que
+ * compara versoes numero a numero: o que nao for `MAJOR.MINOR.PATCH` viraria
+ * uma "versao" fantasma no grafico da frota, ao lado das de verdade. Fora do
+ * formato (ou ausente, no desktop antigo) vale `null` — a coluna guarda "nao
+ * sei", que e diferente de "desatualizada".
+ */
+function normalizeAppVersion(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const version = value.trim().replace(/^v/, "");
+  return /^\d+\.\d+\.\d+$/.test(version) ? version : null;
+}
+
+/**
  * Le o registro da balanca tolerando a coluna `update_channel` ainda nao existir.
  *
  * As Edge Functions sao implantadas pelo CI a cada push, mas as migracoes SQL
@@ -100,6 +115,8 @@ Deno.serve(async (req) => {
   const body = (await req.json().catch(() => ({}))) as {
     deviceId?: string;
     deviceToken?: string;
+    /** Versao do desktop rodando nesta balanca. Ausente no desktop anterior a este campo. */
+    appVersion?: string;
   };
 
   const deviceId = String(body.deviceId ?? "");
@@ -182,10 +199,22 @@ Deno.serve(async (req) => {
   }
 
   const checkedAt = new Date().toISOString();
-  await supabase
-    .from("device_registrations")
-    .update({ last_seen_at: checkedAt, updated_at: checkedAt })
-    .eq("id", typedDevice.id);
+  const appVersion = normalizeAppVersion(body.appVersion);
+  // A versao instalada viaja de carona no ping que ja existia. A gravacao e
+  // tolerante a coluna ausente pelo mesmo motivo de sempre: as funcoes sobem no
+  // push e as migracoes sao aplicadas a parte, e um update com coluna
+  // desconhecida falha INTEIRO — aqui isso apagaria o `last_seen_at` de toda a
+  // frota ate a migracao ser aplicada.
+  const touch = { last_seen_at: checkedAt, updated_at: checkedAt };
+  const touched = appVersion
+    ? await supabase
+        .from("device_registrations")
+        .update({ ...touch, app_version: appVersion, app_version_seen_at: checkedAt })
+        .eq("id", typedDevice.id)
+    : { error: null };
+  if (touched.error || !appVersion) {
+    await supabase.from("device_registrations").update(touch).eq("id", typedDevice.id);
+  }
 
   // Legenda multi-desktop: todos os computadores da unidade (nome + cor), para o
   // desktop identificar o responsavel por cada operacao criada por outra maquina.
