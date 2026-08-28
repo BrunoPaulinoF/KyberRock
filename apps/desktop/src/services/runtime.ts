@@ -81,7 +81,12 @@ import {
   getCustomerLastEntryPreferences,
   getOperationOmieIssue,
   listCanceledWeighingOperations,
+  countClosedWeighingOperations,
+  listClosedOperationProductDescriptions,
+  listClosedOperationsNeedingOmieAttention,
   listClosedWeighingOperations,
+  listClosedWeighingOperationsUpdatedSince,
+  listRecentClosedWeighingOperations,
   listOpenWeighingOperations,
   updateWeighingOperationProduct,
   updateWeighingOperationCustomer,
@@ -97,6 +102,10 @@ import {
   type UpdateWeighingOperationCustomerInput,
   type UpdateWeighingOperationCarrierInput,
   type UpdateWeighingOperationDetailsInput
+} from "./weighing-operations.js";
+import type {
+  ClosedWeighingOperationFilters,
+  ListClosedWeighingOperationsOptions
 } from "./weighing-operations.js";
 import {
   getCustomerFreightRules,
@@ -1440,9 +1449,39 @@ export class DesktopRuntime {
     return listCanceledWeighingOperations(this.database);
   }
 
-  listClosedWeighingOperations(): WeighingOperationSummary[] {
+  listClosedWeighingOperations(
+    options: ListClosedWeighingOperationsOptions = {}
+  ): WeighingOperationSummary[] {
     this.assertDesktopAccess();
-    return listClosedWeighingOperations(this.database);
+    return listClosedWeighingOperations(this.database, options);
+  }
+
+  countClosedWeighingOperations(filters: ClosedWeighingOperationFilters = {}): number {
+    this.assertDesktopAccess();
+    return countClosedWeighingOperations(this.database, filters);
+  }
+
+  listClosedOperationProductDescriptions(): string[] {
+    this.assertDesktopAccess();
+    return listClosedOperationProductDescriptions(this.database);
+  }
+
+  listClosedOperationsNeedingOmieAttention(): WeighingOperationSummary[] {
+    this.assertDesktopAccess();
+    return listClosedOperationsNeedingOmieAttention(this.database);
+  }
+
+  listClosedWeighingOperationsUpdatedSince(
+    sinceIso: string,
+    alsoIds: readonly string[] = []
+  ): WeighingOperationSummary[] {
+    this.assertDesktopAccess();
+    return listClosedWeighingOperationsUpdatedSince(this.database, sinceIso, alsoIds);
+  }
+
+  listRecentClosedWeighingOperations(limit: number): WeighingOperationSummary[] {
+    this.assertDesktopAccess();
+    return listRecentClosedWeighingOperations(this.database, limit);
   }
 
   /**

@@ -32,7 +32,21 @@ const desktopApi = {
   pullCloudNow: () => ipcRenderer.invoke("desktop:pull-cloud-now"),
   listCanceledWeighingOperations: () =>
     ipcRenderer.invoke("desktop:list-canceled-weighing-operations"),
-  listClosedWeighingOperations: () => ipcRenderer.invoke("desktop:list-closed-weighing-operations"),
+  listClosedWeighingOperations: (options?: {
+    limit?: number;
+    offset?: number;
+    productDescription?: string;
+  }) => ipcRenderer.invoke("desktop:list-closed-weighing-operations", options),
+  countClosedWeighingOperations: (filters?: { productDescription?: string }) =>
+    ipcRenderer.invoke("desktop:count-closed-weighing-operations", filters),
+  listRecentClosedWeighingOperations: (limit: number) =>
+    ipcRenderer.invoke("desktop:list-recent-closed-weighing-operations", limit),
+  listClosedOperationProductDescriptions: () =>
+    ipcRenderer.invoke("desktop:list-closed-operation-products"),
+  listClosedOperationsNeedingOmieAttention: () =>
+    ipcRenderer.invoke("desktop:list-closed-operations-omie-attention"),
+  listClosedWeighingOperationsUpdatedSince: (sinceIso: string, alsoIds?: string[]) =>
+    ipcRenderer.invoke("desktop:list-closed-weighing-operations-since", sinceIso, alsoIds),
   operationOmieIssue: (operationId: string) =>
     ipcRenderer.invoke("desktop:operation-omie-issue", operationId),
   customerOmieReadiness: (customerId: string, operationType?: "invoice" | "internal") =>

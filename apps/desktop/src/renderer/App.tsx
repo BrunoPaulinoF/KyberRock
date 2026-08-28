@@ -127,6 +127,11 @@ import { MountainOutline } from "./MountainOutline";
 import { CrudFormModal } from "./CrudFormModal";
 import { EntityPickerDialog } from "./EntityPickerDialog";
 import { readAllCacheRows } from "./cache-rows";
+import {
+  CLOSED_PAGE_SIZE,
+  loadClosedOperationsData,
+  pendingOmieIdsOf
+} from "./closed-operations-data";
 import { OptionSearchPicker } from "./OptionSearchPicker";
 import { SearchPicker } from "./SearchPicker";
 import { loadEntityPickerPage } from "./entity-picker";
@@ -506,7 +511,20 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [openOperations, setOpenOperations] = useState<WeighingOperationSummary[]>([]);
   const [truckAverageMinutes, setTruckAverageMinutes] = useState(0);
   const [canceledOperations, setCanceledOperations] = useState<WeighingOperationSummary[]>([]);
+  // A aba Concluidas deixou de carregar o historico INTEIRO (ver `closed-operations-data`):
+  // `closedOperations` e a pagina que a tabela mostra -- ou o conjunto todo, quando ha busca
+  // digitada, porque a ordenacao por proximidade nao existe em SQL. Os demais recortes tem
+  // cada um a sua consulta, todas pequenas.
   const [closedOperations, setClosedOperations] = useState<WeighingOperationSummary[]>([]);
+  const [closedTotal, setClosedTotal] = useState(0);
+  const [closedProducts, setClosedProducts] = useState<string[]>([]);
+  const [closedOmieAttention, setClosedOmieAttention] = useState<WeighingOperationSummary[]>([]);
+  /** Recorte recente + pendentes: alimenta o painel e os avisos de envio ao OMIE. */
+  const [recentClosedOperations, setRecentClosedOperations] = useState<WeighingOperationSummary[]>(
+    []
+  );
+  /** Cresce com "Carregar mais". Volta ao inicial quando o filtro ou a busca mudam. */
+  const [closedPageSize, setClosedPageSize] = useState(CLOSED_PAGE_SIZE);
   const [operationsTab, setOperationsTab] = useState<OperationsTab>("open");
   // Multi-desktop: computadores da unidade (nome + cor) para a legenda e o
   // contorno colorido das operacoes por responsavel.
@@ -683,22 +701,26 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     () => filterCanceledOperations(canceledOperations, canceledFilter),
     [canceledOperations, canceledFilter]
   );
-  const filteredClosedOperations = useMemo(() => {
-    const byProduct =
-      closedProductFilter === "all"
-        ? closedOperations
-        : closedOperations.filter((op) => op.productDescription === closedProductFilter);
-    return filterClosedOperationsBySearch(byProduct, closedSearch);
-  }, [closedOperations, closedProductFilter, closedSearch]);
+  // O filtro de produto ja foi aplicado no SQL (ver `loadClosedOperationsData`), entao aqui
+  // sobra a busca -- que continua pontuando por proximidade em memoria, sobre o conjunto
+  // inteiro que a carga traz justamente quando ha busca digitada.
+  const filteredClosedOperations = useMemo(
+    () => filterClosedOperationsBySearch(closedOperations, closedSearch),
+    [closedOperations, closedSearch]
+  );
   // Operacoes concluidas que ainda nao chegaram ao OMIE: alimentam o alerta do topo da
   // aba Concluidas, com o motivo e o atalho para corrigir o cadastro.
+  // A MESMA regra de sempre (`getFiscalBillingStatus`), so que aplicada sobre o recorte em
+  // SQL em vez da lista inteira. O recorte e um superconjunto provado: todo retorno
+  // `warning`/`danger` daquela funcao exige um dos status de
+  // `OMIE_ATTENTION_BILLING_STATUSES` (ha teste que varre as 64 combinacoes).
   const closedNotSentToOmie = useMemo(
     () =>
-      closedOperations.filter((operation) => {
+      closedOmieAttention.filter((operation) => {
         const status = getFiscalBillingStatus(operation);
         return status.tone === "warning" || status.tone === "danger";
       }),
-    [closedOperations]
+    [closedOmieAttention]
   );
   // A fila como o operador ve na tela: as cargas ja concluidas pelo carregador no topo,
   // na ordem em que foram concluidas (a primeira concluida e a primeira a ser fechada), e
@@ -831,9 +853,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   // no canto superior direito + um som: suave no sucesso, de alerta na falha.
   useEffect(() => {
     const events = omieDeliverySeededRef.current
-      ? diffOmieDeliveryEvents(omieDeliveryStateRef.current, closedOperations)
+      ? diffOmieDeliveryEvents(omieDeliveryStateRef.current, recentClosedOperations)
       : [];
-    omieDeliveryStateRef.current = buildOmieDeliveryStates(closedOperations);
+    omieDeliveryStateRef.current = buildOmieDeliveryStates(recentClosedOperations);
     omieDeliverySeededRef.current = true;
     if (events.length === 0) return;
 
@@ -844,7 +866,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     if (events.some((event) => event.kind === "success")) {
       playOmieAlertSound("success");
     }
-  }, [closedOperations]);
+  }, [recentClosedOperations]);
 
   useEffect(
     () => () => {
@@ -882,6 +904,41 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     };
   }, [desktopApi, phase, hasOpenOperations]);
 
+  /**
+   * Recarrega TUDO o que a aba Concluidas precisa, em recortes pequenos.
+   *
+   * Um lugar so para os tres momentos que recarregavam a lista (abertura, tick de 15 s e
+   * depois de uma acao do operador): se um deles usasse parametros diferentes, a tela
+   * mostraria uma coisa e o alerta outra.
+   */
+  const refreshClosedOperations = useCallback(async (): Promise<void> => {
+    if (!desktopApi) return;
+    const data = await loadClosedOperationsData(desktopApi, {
+      productFilter: closedProductFilter,
+      search: closedSearch,
+      pageSize: closedPageSize,
+      pendingOmieIds: pendingOmieIdsOf(omieDeliveryStateRef.current)
+    });
+    setClosedOperations(data.page);
+    setClosedTotal(data.total);
+    setClosedProducts(data.products);
+    setClosedOmieAttention(data.omieAttention);
+    setRecentClosedOperations(data.recent);
+  }, [desktopApi, closedProductFilter, closedSearch, closedPageSize]);
+
+  // Trocar o filtro, a busca ou pedir mais linhas recarrega do banco -- e o SQL que
+  // filtra e pagina agora, entao a tela nao tem mais de onde recortar sozinha.
+  useEffect(() => {
+    if (!desktopApi || phase !== "unlocked") return;
+    void refreshClosedOperations();
+  }, [desktopApi, phase, refreshClosedOperations]);
+
+  // Filtro ou busca novos recomecam a paginacao: continuar na pagina 7 de outro
+  // recorte mostraria um pedaco do meio da lista sem nada acima dele.
+  useEffect(() => {
+    setClosedPageSize(CLOSED_PAGE_SIZE);
+  }, [closedProductFilter, closedSearch]);
+
   // Multi-desktop: pull leve periodico da nuvem para enxergar as operacoes
   // registradas pelos outros computadores da pedreira sem esperar a
   // sincronizacao completa agendada. O pull pede so o que mudou desde o ciclo
@@ -899,17 +956,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         if (cancelled) return;
         // Sempre rele as listas: o pull tambem grava mudanca de status (fechada,
         // cancelada) que nao aumenta a contagem de linhas trazidas.
-        const [nextOpen, nextCanceled, nextClosed, nextDevices] = await Promise.all([
+        const [nextOpen, nextCanceled, nextDevices] = await Promise.all([
           api.listOpenWeighingOperations(),
           api.listCanceledWeighingOperations(),
-          api.listClosedWeighingOperations(),
           api.listUnitDevices()
         ]);
         if (cancelled) return;
         setOpenOperations(nextOpen);
         setCanceledOperations(nextCanceled);
-        setClosedOperations(nextClosed);
         setUnitDevices(nextDevices);
+        await refreshClosedOperations();
       } catch {
         // best-effort: a proxima sincronizacao (agendada ou por evento) cobre
       }
@@ -921,7 +977,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [desktopApi, phase]);
+  }, [desktopApi, phase, refreshClosedOperations]);
 
   useEffect(() => {
     writeStoredThemeMode(themeMode);
@@ -1438,7 +1494,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         nextUpdateState,
         nextOpenOperations,
         nextCanceledOperations,
-        nextClosedOperations,
         nextUnitDevices,
         nextPrinters,
         nextProfiles,
@@ -1449,7 +1504,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         desktopApi.getUpdateState(),
         desktopApi.listOpenWeighingOperations(),
         desktopApi.listCanceledWeighingOperations(),
-        desktopApi.listClosedWeighingOperations(),
+        // A aba Concluidas nao entra aqui: ela tem o proprio efeito de carga, que
+        // reage tambem a troca de filtro, de busca e ao "Carregar mais".
         desktopApi.listUnitDevices(),
         desktopApi.listWindowsPrinters(),
         desktopApi.listPrintProfiles(),
@@ -1463,7 +1519,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       setUpdateState(nextUpdateState);
       setOpenOperations(nextOpenOperations);
       setCanceledOperations(nextCanceledOperations);
-      setClosedOperations(nextClosedOperations);
       setUnitDevices(nextUnitDevices);
       setPrinters(nextPrinters);
       setPrintProfiles(nextProfiles);
@@ -1656,24 +1711,20 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       return;
     }
 
-    const [
-      nextOpenOperations,
-      nextCanceledOperations,
-      nextClosedOperations,
-      nextUnitDevices,
-      nextStatus
-    ] = await Promise.all([
-      desktopApi.listOpenWeighingOperations(),
-      desktopApi.listCanceledWeighingOperations(),
-      desktopApi.listClosedWeighingOperations(),
-      desktopApi.listUnitDevices(),
-      desktopApi.getStatus(navigator.onLine)
-    ]);
+    const [nextOpenOperations, nextCanceledOperations, nextUnitDevices, nextStatus] =
+      await Promise.all([
+        desktopApi.listOpenWeighingOperations(),
+        desktopApi.listCanceledWeighingOperations(),
+        desktopApi.listUnitDevices(),
+        desktopApi.getStatus(navigator.onLine)
+      ]);
     setOpenOperations(nextOpenOperations);
     setCanceledOperations(nextCanceledOperations);
-    setClosedOperations(nextClosedOperations);
     setUnitDevices(nextUnitDevices);
     setStatus(nextStatus);
+    // A aba Concluidas recarrega pelo mesmo caminho de sempre, com o filtro e a
+    // pagina que estao na tela.
+    await refreshClosedOperations();
   }
 
   /**
@@ -3253,7 +3304,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               <DashboardView
                 status={status}
                 openOperations={openOperations}
-                closedOperations={closedOperations}
+                closedOperations={recentClosedOperations}
                 cloudConnected={cloudConnected}
                 omieStatus={omieStatus}
                 printProfiles={printProfiles}
@@ -3427,13 +3478,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                           style={{ ...styles.input, minWidth: "180px" }}
                         >
                           <option value="all">Todos</option>
-                          {Array.from(new Set(closedOperations.map((op) => op.productDescription)))
-                            .filter(Boolean)
-                            .map((desc) => (
-                              <option key={desc} value={desc}>
-                                {desc}
-                              </option>
-                            ))}
+                          {closedProducts.map((desc) => (
+                            <option key={desc} value={desc}>
+                              {desc}
+                            </option>
+                          ))}
                         </select>
                       </label>
                       <label
@@ -3466,7 +3515,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         tip={TIPS.operations.clearClosed}
                         tone="danger"
                         placement="bottom"
-                        disabled={closedOperations.length === 0}
+                        disabled={closedTotal === 0}
                         onClick={() => requestClearOperations("closed")}
                       />
                     </div>
@@ -3868,6 +3917,26 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         </span>
                       </div>
                     ))}
+                    {/*
+                      A tabela mostra uma pagina. Sem busca digitada, o corte e do SQL --
+                      e o que impede a tela de crescer sem limite junto com o historico.
+                      Com busca, a carga traz o conjunto inteiro (a ordem e por
+                      proximidade), entao nao ha o que carregar depois.
+                    */}
+                    {!closedSearch.trim() && closedOperations.length < closedTotal ? (
+                      <div style={styles.closedOperationsFooter}>
+                        <span style={styles.closedOperationsFooterCount}>
+                          Mostrando {closedOperations.length} de {closedTotal}
+                        </span>
+                        <button
+                          type="button"
+                          style={styles.secondaryButton}
+                          onClick={() => setClosedPageSize((current) => current + CLOSED_PAGE_SIZE)}
+                        >
+                          Carregar mais
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </section>
@@ -13824,6 +13893,18 @@ const styles = {
     borderTop: "1px solid var(--kr-border)",
     fontSize: "13px",
     color: "var(--kr-text)"
+  },
+  closedOperationsFooter: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "12px",
+    padding: "14px 12px",
+    flexWrap: "wrap" as const
+  },
+  closedOperationsFooterCount: {
+    color: "var(--kr-muted)",
+    fontSize: "13px"
   },
   closedOperationsTableRow: {
     display: "grid",

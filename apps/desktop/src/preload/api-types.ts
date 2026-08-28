@@ -9,6 +9,8 @@ import type { DesktopStatusSnapshot } from "../services/status";
 import type { UpdateState } from "../services/update-flow";
 import type { UpdateRing } from "../services/update-candidates";
 import type {
+  ClosedWeighingOperationFilters,
+  ListClosedWeighingOperationsOptions,
   OperationFreightInput,
   OperationOmieIssue,
   OperationType,
@@ -158,7 +160,17 @@ export interface KyberRockDesktopApi {
   /** Pull leve da nuvem para enxergar operacoes dos outros computadores. */
   pullCloudNow: () => Promise<{ pulled: number; errors: string[] }>;
   listCanceledWeighingOperations: () => Promise<WeighingOperationSummary[]>;
-  listClosedWeighingOperations: () => Promise<WeighingOperationSummary[]>;
+  listClosedWeighingOperations: (
+    options?: ListClosedWeighingOperationsOptions
+  ) => Promise<WeighingOperationSummary[]>;
+  countClosedWeighingOperations: (filters?: ClosedWeighingOperationFilters) => Promise<number>;
+  listRecentClosedWeighingOperations: (limit: number) => Promise<WeighingOperationSummary[]>;
+  listClosedOperationProductDescriptions: () => Promise<string[]>;
+  listClosedOperationsNeedingOmieAttention: () => Promise<WeighingOperationSummary[]>;
+  listClosedWeighingOperationsUpdatedSince: (
+    sinceIso: string,
+    alsoIds?: string[]
+  ) => Promise<WeighingOperationSummary[]>;
   /**
    * Por que uma operacao concluida ainda nao chegou ao OMIE, com os campos do cadastro
    * do cliente que precisam ser corrigidos antes do reenvio.

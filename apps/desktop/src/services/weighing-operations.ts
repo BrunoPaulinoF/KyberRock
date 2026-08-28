@@ -2328,12 +2328,14 @@ export function listCanceledWeighingOperations(
     .map((row) => mapOperationRow(row as OperationRow));
 }
 
-export function listClosedWeighingOperations(
-  database: DesktopDatabase
-): WeighingOperationSummary[] {
-  return database
-    .prepare(
-      `SELECT
+/**
+ * As colunas e os JOINs da listagem de operacoes concluidas.
+ *
+ * Ficam separados do WHERE para as consultas abaixo montarem recortes diferentes do MESMO
+ * resumo -- a pagina da tela, as que precisam de atencao fiscal, as do dia -- sem nenhuma
+ * delas reescrever a projecao e arriscar divergir das outras.
+ */
+const CLOSED_OPERATION_SELECT = `SELECT
         o.id, o.operation_code, o.status, o.operation_type, o.entry_weight_kg, o.exit_weight_kg, o.net_weight_kg,
         o.unit_price_cents, o.base_unit_price_cents, o.applied_price_table_id, o.applied_price_table_name,
         o.applied_price_table_item_id, o.price_unit, o.price_savings_percent,
@@ -2367,15 +2369,187 @@ export function listClosedWeighingOperations(
        LEFT JOIN payment_terms pt ON pt.id = o.payment_term_id
        LEFT JOIN carriers crr ON crr.id = o.carrier_id
        LEFT JOIN payment_methods pmd ON pmd.id = o.payment_method_id
-       LEFT JOIN devices dv ON dv.id = o.device_id
+       LEFT JOIN devices dv ON dv.id = o.device_id`;
+
+const CLOSED_OPERATION_ORDER = `       ORDER BY COALESCE(o.exit_weight_captured_at, o.created_at) DESC, o.created_at DESC`;
+
+/** Filtros que o SQL sabe aplicar. A BUSCA nao entra aqui -- ver `listClosedWeighingOperations`. */
+export interface ClosedWeighingOperationFilters {
+  /**
+   * Descricao do produto, exatamente como a tela mostra. A comparacao usa o mesmo
+   * `COALESCE(p.description, o.remote_product_description)` da projecao: filtrar so por
+   * `p.description` perderia a operacao cujo produto veio espelhado de outra balanca.
+   */
+  productDescription?: string;
+}
+
+export interface ListClosedWeighingOperationsOptions extends ClosedWeighingOperationFilters {
+  /** Quantas linhas trazer. Ausente = todas (comportamento historico). */
+  limit?: number;
+  offset?: number;
+}
+
+function closedOperationFilterSql(filters: ClosedWeighingOperationFilters): {
+  sql: string;
+  params: unknown[];
+} {
+  const params: unknown[] = [];
+  let sql = "";
+  if (filters.productDescription !== undefined) {
+    sql += "\n         AND COALESCE(p.description, o.remote_product_description) = ?";
+    params.push(filters.productDescription);
+  }
+  return { sql, params };
+}
+
+const CLOSED_OPERATION_WHERE = `
        WHERE o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
-         AND o.deleted_at IS NULL
-       -- Pela data em que a pesagem FECHOU, e nao pela ultima alteracao: ordenar por
-       -- updated_at fazia a lista inteira se reembaralhar a cada faturamento em massa ou
-       -- sincronizacao, e a carga de ontem aparecia como se fosse a mais recente.
-       ORDER BY COALESCE(o.exit_weight_captured_at, o.created_at) DESC, o.created_at DESC`
+         AND o.deleted_at IS NULL`;
+
+/**
+ * As operacoes concluidas, da mais recente para a mais antiga.
+ *
+ * `limit` existe porque esta consulta e a mais cara do desktop e roda a cada 15 s no tick
+ * do multi-desktop. O custo e proporcional as LINHAS DEVOLVIDAS, e quase todo ele esta em
+ * materializar cada linha como objeto JavaScript -- nenhum indice ajuda. Medido com 20 mil
+ * operacoes: 897 ms para a lista inteira contra 42 ms com `LIMIT 200`. E o SQLite aqui e
+ * SINCRONO, entao esse tempo trava o processo principal do Electron, o mesmo que le a
+ * balanca.
+ *
+ * Sem `limit` o comportamento e o historico (traz tudo), para quem precisa do conjunto
+ * inteiro continuar funcionando sem mudanca.
+ *
+ * A BUSCA por texto continua fora daqui de proposito: ela ordena por proximidade
+ * (`rankByText`, em `closed-operations-search.ts`), e nao ha como reproduzir essa
+ * pontuacao em SQL sem mudar qual linha aparece primeiro. Quem busca carrega o conjunto e
+ * pontua em memoria, exatamente como antes.
+ */
+export function listClosedWeighingOperations(
+  database: DesktopDatabase,
+  options: ListClosedWeighingOperationsOptions = {}
+): WeighingOperationSummary[] {
+  const { sql: filterSql, params } = closedOperationFilterSql(options);
+  let sql = `${CLOSED_OPERATION_SELECT}${CLOSED_OPERATION_WHERE}${filterSql}
+${CLOSED_OPERATION_ORDER}`;
+  if (options.limit !== undefined) {
+    sql += "\n       LIMIT ? OFFSET ?";
+    params.push(options.limit, options.offset ?? 0);
+  }
+  return database
+    .prepare(sql)
+    .all(...params)
+    .map((row) => mapOperationRow(row as OperationRow));
+}
+
+/** Quantas operacoes concluidas existem para o filtro -- para a tela dizer "X de Y". */
+export function countClosedWeighingOperations(
+  database: DesktopDatabase,
+  filters: ClosedWeighingOperationFilters = {}
+): number {
+  const { sql: filterSql, params } = closedOperationFilterSql(filters);
+  const row = database
+    .prepare(
+      `SELECT COUNT(*) AS total
+       FROM weighing_operations o
+       LEFT JOIN products p ON p.id = o.product_id${CLOSED_OPERATION_WHERE}${filterSql}`
+    )
+    .get(...params) as { total: number };
+  return row.total;
+}
+
+/**
+ * Os produtos que aparecem nas operacoes concluidas, para o seletor da tela.
+ *
+ * Era `new Set(closedOperations.map(...))` no renderer, o que exigia a lista inteira em
+ * memoria so para montar um seletor de meia duzia de itens.
+ */
+export function listClosedOperationProductDescriptions(database: DesktopDatabase): string[] {
+  return database
+    .prepare(
+      `SELECT DISTINCT COALESCE(p.description, o.remote_product_description) AS description
+       FROM weighing_operations o
+       LEFT JOIN products p ON p.id = o.product_id${CLOSED_OPERATION_WHERE}
+       ORDER BY description`
     )
     .all()
+    .map((row) => (row as { description: string | null }).description)
+    .filter((description): description is string => Boolean(description));
+}
+
+/**
+ * As operacoes concluidas cujo estado fiscal pode exigir atencao.
+ *
+ * E o SUPERCONJUNTO exato do alerta do topo da aba Concluidas. Quem decide o tom
+ * (`getFiscalBillingStatus`, no renderer) tem nove ramos, e traduzi-los para SQL seria a
+ * chance de o alerta mudar em silencio. Aqui o SQL so estreita: TODO retorno `warning` ou
+ * `danger` daquela funcao exige que `omie_billing_status` seja um destes tres valores --
+ * os demais ramos devolvem `success` ou `neutral`. O renderer aplica a MESMA funcao sobre
+ * este recorte, entao o resultado e identico ao de varrer a lista inteira.
+ */
+export const OMIE_ATTENTION_BILLING_STATUSES = [
+  "cadastro_incompleto",
+  "service_order_failed",
+  "failed"
+] as const;
+
+export function listClosedOperationsNeedingOmieAttention(
+  database: DesktopDatabase
+): WeighingOperationSummary[] {
+  const placeholders = OMIE_ATTENTION_BILLING_STATUSES.map(() => "?").join(", ");
+  return database
+    .prepare(
+      `${CLOSED_OPERATION_SELECT}${CLOSED_OPERATION_WHERE}
+         AND o.omie_billing_status IN (${placeholders})
+${CLOSED_OPERATION_ORDER}`
+    )
+    .all(...OMIE_ATTENTION_BILLING_STATUSES)
+    .map((row) => mapOperationRow(row as OperationRow));
+}
+
+/**
+ * As operacoes concluidas alteradas mais recentemente, no maximo `limit`.
+ *
+ * E o recorte da "atividade recente" do painel, que ordena por `updatedAt` e corta em
+ * poucas linhas. Existe separado da janela por data porque so ele e EXATO num dia parado:
+ * a janela devolveria vazio, e o painel deixaria de mostrar as ultimas operacoes que
+ * mostrava antes.
+ */
+export function listRecentClosedWeighingOperations(
+  database: DesktopDatabase,
+  limit: number
+): WeighingOperationSummary[] {
+  return database
+    .prepare(
+      `${CLOSED_OPERATION_SELECT}${CLOSED_OPERATION_WHERE}
+       ORDER BY o.updated_at DESC, o.id ASC
+       LIMIT ?`
+    )
+    .all(limit)
+    .map((row) => mapOperationRow(row as OperationRow));
+}
+
+/**
+ * As operacoes concluidas alteradas a partir de um instante, mais as de ids informados.
+ *
+ * Serve o painel (os numeros do dia) e os avisos de envio ao OMIE. Os ids explicitos sao o
+ * que torna o aviso EXATO em vez de "quase sempre certo": o aviso compara o estado de cada
+ * operacao com o do ciclo anterior, entao a operacao que estava pendente precisa continuar
+ * visivel no ciclo em que ela muda -- mesmo que a janela de tempo ja nao a alcance.
+ */
+export function listClosedWeighingOperationsUpdatedSince(
+  database: DesktopDatabase,
+  sinceIso: string,
+  alsoIds: readonly string[] = []
+): WeighingOperationSummary[] {
+  const ids = [...new Set(alsoIds)];
+  const idClause = ids.length > 0 ? ` OR o.id IN (${ids.map(() => "?").join(", ")})` : "";
+  return database
+    .prepare(
+      `${CLOSED_OPERATION_SELECT}${CLOSED_OPERATION_WHERE}
+         AND (o.updated_at >= ?${idClause})
+${CLOSED_OPERATION_ORDER}`
+    )
+    .all(sinceIso, ...ids)
     .map((row) => mapOperationRow(row as OperationRow));
 }
 
