@@ -37,6 +37,21 @@ describe("tela de operacoes concluidas", () => {
     expect(appSource).toContain("Carregar mais");
   });
 
+  it("mexer no filtro ou na pagina NAO dispara ida a nuvem", () => {
+    // O tick de 15 s chama o carregador pelo ref, e nao pela dependencia do efeito.
+    // Se `refreshClosedOperations` virar dependencia do efeito do tick, cada clique em
+    // "Carregar mais", cada troca de filtro e cada busca derrubam o setInterval, disparam
+    // um `pullCloudNow()` na hora e reiniciam o relogio do ciclo.
+    const tick = sliceBetween(
+      appSource,
+      "// Multi-desktop: pull leve periodico da nuvem",
+      "writeStoredThemeMode(themeMode)"
+    );
+    expect(tick).toContain("await refreshClosedOperationsRef.current()");
+    expect(tick).toContain("}, [desktopApi, phase]);");
+    expect(tick).not.toContain("}, [desktopApi, phase, refreshClosedOperations]);");
+  });
+
   it("a busca espera o operador parar de digitar antes de ir ao banco", () => {
     // Com busca digitada a carga traz o conjunto INTEIRO (a pontuacao por proximidade nao
     // existe em SQL). Se a carga dependesse do valor imediato, cada TECLA releria todo o

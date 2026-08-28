@@ -935,6 +935,20 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     setRecentClosedOperations(data.recent);
   }, [desktopApi, closedProductFilter, closedSearchForLoad, closedPageSize]);
 
+  /**
+   * O carregador mais recente, sem entrar em dependencia de efeito.
+   *
+   * O tick de 15 s precisa chamar a versao atual (com o filtro e a pagina que estao na
+   * tela), mas NAO pode ser recriado quando ela muda: recriar o efeito derruba o
+   * `setInterval` e dispara um `tick()` novo na hora -- ou seja, clicar em "Carregar mais",
+   * trocar o filtro ou digitar na busca sairia buscando na NUVEM e reiniciaria o relogio do
+   * ciclo. O ref mantem o efeito com dependencias estaveis, como era antes da paginacao.
+   */
+  const refreshClosedOperationsRef = useRef(refreshClosedOperations);
+  useEffect(() => {
+    refreshClosedOperationsRef.current = refreshClosedOperations;
+  }, [refreshClosedOperations]);
+
   // Trocar o filtro, a busca ou pedir mais linhas recarrega do banco -- e o SQL que
   // filtra e pagina agora, entao a tela nao tem mais de onde recortar sozinha.
   useEffect(() => {
@@ -974,7 +988,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         setOpenOperations(nextOpen);
         setCanceledOperations(nextCanceled);
         setUnitDevices(nextDevices);
-        await refreshClosedOperations();
+        await refreshClosedOperationsRef.current();
       } catch {
         // best-effort: a proxima sincronizacao (agendada ou por evento) cobre
       }
@@ -986,7 +1000,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [desktopApi, phase, refreshClosedOperations]);
+  }, [desktopApi, phase]);
 
   useEffect(() => {
     writeStoredThemeMode(themeMode);
