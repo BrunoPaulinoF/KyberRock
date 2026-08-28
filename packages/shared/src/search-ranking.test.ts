@@ -203,3 +203,46 @@ describe("rankByText", () => {
     expect(rankByText(items, (item) => item.text, "").map((item) => item.id)).toEqual(["1", "2"]);
   });
 });
+
+describe("normalizeSearchText: memoria", () => {
+  // A memoizacao so pode valer a pena se for invisivel: mesma entrada, mesma saida,
+  // na primeira chamada e na milesima. Estes casos existem para travar isso — se
+  // alguem trocar a politica de despejo, o resultado nao pode mudar junto.
+  it("devolve o mesmo resultado na repeticao", () => {
+    const value = "Pedreira Sao Joao & Cia. LTDA";
+    const first = normalizeSearchText(value);
+    const second = normalizeSearchText(value);
+    const third = normalizeSearchText(value);
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+    expect(first).toBe("pedreira sao joao cia ltda");
+  });
+
+  it("continua correto depois de estourar o teto e esvaziar", () => {
+    const probe = "Levisa Transportes";
+    const before = normalizeSearchText(probe);
+    // Enche a memoria muito alem do teto: em algum ponto ela e esvaziada e o valor
+    // sondado precisa ser recalculado do zero.
+    for (let i = 0; i < 25_000; i += 1) {
+      normalizeSearchText(`entrada-descartavel-${i}`);
+    }
+    expect(normalizeSearchText(probe)).toBe(before);
+    expect(normalizeSearchText(probe)).toBe("levisa transportes");
+  });
+
+  it("nao confunde entradas que normalizam para o mesmo texto", () => {
+    // Chaves diferentes, mesma saida: a memoria e por texto CRU, entao as duas
+    // entradas convivem sem uma sobrescrever a resposta da outra.
+    expect(normalizeSearchText("ABC-1D23")).toBe("abc 1d23");
+    expect(normalizeSearchText("abc.1d23")).toBe("abc 1d23");
+    expect(normalizeSearchText("ABC-1D23")).toBe("abc 1d23");
+  });
+
+  it("preserva a busca completa depois da memoria aquecida", () => {
+    const rows = [customer("Levisa"), customer("Levisa Transportes"), customer("Britagem Sul")];
+    const first = rankSearchMatches(rows, CUSTOMER_FIELDS, "levisa");
+    const second = rankSearchMatches(rows, CUSTOMER_FIELDS, "levisa");
+    expect(second).toEqual(first);
+    expect(first.map((r) => r.tradeName)).toEqual(["Levisa", "Levisa Transportes"]);
+  });
+});

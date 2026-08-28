@@ -1,12 +1,38 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
-import { AdminLogin } from "./pages/AdminLogin";
-import { AdminDashboard } from "./pages/AdminDashboard";
 import { LoaderLogin } from "./pages/LoaderLogin";
 import { LoaderDashboard } from "./pages/LoaderDashboard";
-import { SalesReport } from "./pages/SalesReport";
 import { WhatsappConnect } from "./pages/WhatsappConnect";
+
+/**
+ * As telas do painel administrativo saem do pacote inicial.
+ *
+ * Quem abre este site na esmagadora maioria das vezes e o carregador, no celular,
+ * dentro da pedreira -- e ele so precisa de `LoaderDashboard`. O pacote unico fazia
+ * esse celular baixar tambem o painel inteiro: `AdminDashboard` mais o backoffice
+ * financeiro e a tela de atualizacoes do desktop, que ele nunca abre. Agora cada uma
+ * vira um pedaco separado, buscado so quando alguem entra na rota.
+ *
+ * `LoaderLogin`, `LoaderDashboard` e `WhatsappConnect` ficam de fora do lazy de
+ * proposito: sao o caminho comum e um pedaco separado so adicionaria uma ida a rede
+ * na hora em que a conexao da pedreira e o gargalo.
+ */
+const AdminLogin = lazy(() =>
+  import("./pages/AdminLogin").then((m) => ({ default: m.AdminLogin }))
+);
+const AdminDashboard = lazy(() =>
+  import("./pages/AdminDashboard").then((m) => ({ default: m.AdminDashboard }))
+);
+const SalesReport = lazy(() =>
+  import("./pages/SalesReport").then((m) => ({ default: m.SalesReport }))
+);
+
+/** O mesmo texto que os guardas de rota ja mostram enquanto a sessao carrega. */
+function RouteFallback() {
+  return <div>Carregando...</div>;
+}
 
 function PrivateAdminRoute({ children }: { children: React.ReactNode }) {
   const { isAdmin, isLoading } = useAuth();
@@ -96,7 +122,9 @@ export function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <AppRoutes />
+        <Suspense fallback={<RouteFallback />}>
+          <AppRoutes />
+        </Suspense>
       </BrowserRouter>
     </AuthProvider>
   );

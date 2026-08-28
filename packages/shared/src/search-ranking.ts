@@ -24,14 +24,39 @@
  * vem a linha e o que fazer com a ordem.
  */
 
+/**
+ * Memoria da normalizacao. Funcao pura, entao a mesma entrada tem sempre a mesma saida e
+ * guardar o resultado nao muda resposta nenhuma \u2014 muda so quantas vezes ele e calculado.
+ *
+ * Por que vale a pena: `scoreTermAgainstText` normaliza o texto do campo a CADA termo, e
+ * `scoreRow` a chama para cada (linha x campo x termo). Procurar "levisa br" num cadastro de
+ * 1.500 clientes com 7 campos pesquisaveis normalizava ~21 mil vezes \u2014 a cada tecla, sempre
+ * sobre os MESMOS textos, e cada normalizacao e um `normalize("NFD")` mais duas regex. Com a
+ * memoria o cadastro e normalizado uma vez e as teclas seguintes so consultam.
+ *
+ * O teto existe porque a chave e texto vindo do cadastro (e da busca digitada): sem limite a
+ * memoria cresceria junto com tudo que ja foi procurado na sessao. Ao estourar, esvazia
+ * inteiro \u2014 e a politica mais simples que nao tem como errar, e o custo e so recalcular a
+ * proxima passada. Trocar por LRU nao pagaria a complexidade aqui.
+ */
+const NORMALIZE_CACHE_LIMIT = 20_000;
+const normalizeCache = new Map<string, string>();
+
 /** Texto comparavel: sem acento, minusculo, pontuacao virando espaco. */
 export function normalizeSearchText(value: string): string {
-  return value
+  const cached = normalizeCache.get(value);
+  if (cached !== undefined) return cached;
+
+  const normalized = value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+
+  if (normalizeCache.size >= NORMALIZE_CACHE_LIMIT) normalizeCache.clear();
+  normalizeCache.set(value, normalized);
+  return normalized;
 }
 
 /**

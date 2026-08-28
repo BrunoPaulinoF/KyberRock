@@ -6471,6 +6471,103 @@ export function resolveOmieLocalId(
   return `${preferredId}__${companyId}`;
 }
 
+/**
+ * As colunas de DADOS que o upsert do cadastro OMIE grava, com a expressao que define o
+ * novo valor de cada uma.
+ *
+ * Esta lista e a UNICA fonte: dela saem tanto a clausula `SET` quanto o teste de "mudou
+ * alguma coisa?". Escrever as duas a mao era o jeito de deixar uma coluna de fora do teste
+ * e, com isso, parar de propagar justamente aquela coluna. Aqui isso nao tem como
+ * acontecer — as duas se derivam do mesmo array.
+ *
+ * `omieOwned`: o OMIE manda, sempre. `localFirst`: a edicao local ainda nao enviada ao OMIE
+ * (`needs_push = 1`) tem precedencia — e a protecao que ja existia para nao apagar da tela
+ * o CPF/CNPJ que o operador acabou de digitar.
+ *
+ * Os tres carimbos de tempo (`last_synced_at`, `omie_updated_at`, `updated_at`) NAO entram:
+ * eles valem `now()` a cada passada e, se entrassem, "mudou alguma coisa?" seria sempre
+ * verdadeiro e nada disto teria efeito.
+ */
+const omieOwned = (column: string): OmieUpsertColumn => ({
+  column,
+  expr: `excluded.${column}`
+});
+const localFirst = (column: string): OmieUpsertColumn => ({
+  column,
+  expr: `CASE WHEN customers.needs_push = 0 THEN excluded.${column} ELSE customers.${column} END`
+});
+
+interface OmieUpsertColumn {
+  column: string;
+  expr: string;
+}
+
+const OMIE_CUSTOMER_DATA_COLUMNS: readonly OmieUpsertColumn[] = [
+  omieOwned("company_id"),
+  omieOwned("omie_customer_id"),
+  omieOwned("omie_integration_code"),
+  localFirst("legal_name"),
+  localFirst("trade_name"),
+  localFirst("document"),
+  localFirst("state_registration"),
+  localFirst("municipal_registration"),
+  localFirst("is_individual"),
+  localFirst("email"),
+  localFirst("fiscal_emails"),
+  localFirst("homepage"),
+  localFirst("contact_name"),
+  localFirst("phone"),
+  localFirst("phone_secondary"),
+  localFirst("zipcode"),
+  localFirst("address_street"),
+  localFirst("address_number"),
+  localFirst("address_complement"),
+  localFirst("neighborhood"),
+  localFirst("city"),
+  localFirst("state"),
+  localFirst("country"),
+  localFirst("country_code"),
+  localFirst("ibge_city_code"),
+  localFirst("ibge_state_code"),
+  omieOwned("customer_type"),
+  omieOwned("is_foreign"),
+  localFirst("omie_billing_blocked"),
+  localFirst("observations"),
+  omieOwned("tags_json"),
+  omieOwned("salesperson_id"),
+  localFirst("default_payment_term_id"),
+  omieOwned("is_active"),
+  // `deleted_at` nao viaja no INSERT: o valor novo e o literal NULL, e a comparacao abaixo
+  // e o que faz um cliente que estava apagado localmente e voltou no OMIE contar como
+  // mudanca (e portanto ser republicado para as outras balancas).
+  { column: "deleted_at", expr: "NULL" },
+  {
+    column: "sync_status",
+    expr: "CASE WHEN customers.needs_push = 0 THEN 'synced' ELSE customers.sync_status END"
+  }
+];
+
+/**
+ * "A passada do OMIE mexeu de verdade nesta linha?"
+ *
+ * `IS NOT` porque e a desigualdade que trata NULL como valor: `NULL <> NULL` daria NULL
+ * (nem verdadeiro nem falso) e a coluna nula nunca contaria como mudanca — nem quando
+ * deixasse de ser nula.
+ *
+ * Diferenca de afinidade entre o valor gravado e o vindo do OMIE cai para o lado seguro:
+ * a comparacao acusa mudanca, o `updated_at` avanca e o comportamento e o de antes desta
+ * otimizacao. O unico caso em que o carimbo NAO avanca e aquele em que toda coluna e
+ * literalmente identica a que ja esta no banco — ou seja, quando avanca-lo nao
+ * representaria alteracao nenhuma para ninguem.
+ */
+const OMIE_CUSTOMER_CHANGED_SQL = OMIE_CUSTOMER_DATA_COLUMNS.map(
+  ({ column, expr }) => `(${expr}) IS NOT customers.${column}`
+).join("\n        OR ");
+
+const OMIE_CUSTOMER_SET_SQL = OMIE_CUSTOMER_DATA_COLUMNS.map(
+  ({ column, expr }) => `      ${column} = ${expr}`
+).join(",\n");
+
 function upsertOmieCustomers(
   database: DesktopDatabase,
   companyId: string,
@@ -6504,45 +6601,26 @@ function upsertOmieCustomers(
       omie_updated_at, needs_push, created_at, updated_at
     ) VALUES (?, ?, ?, ?, 'omie', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(id) DO UPDATE SET
-      company_id = excluded.company_id,
-      omie_customer_id = excluded.omie_customer_id,
-      omie_integration_code = excluded.omie_integration_code,
-      legal_name = CASE WHEN customers.needs_push = 0 THEN excluded.legal_name ELSE customers.legal_name END,
-      trade_name = CASE WHEN customers.needs_push = 0 THEN excluded.trade_name ELSE customers.trade_name END,
-      document = CASE WHEN customers.needs_push = 0 THEN excluded.document ELSE customers.document END,
-      state_registration = CASE WHEN customers.needs_push = 0 THEN excluded.state_registration ELSE customers.state_registration END,
-      municipal_registration = CASE WHEN customers.needs_push = 0 THEN excluded.municipal_registration ELSE customers.municipal_registration END,
-      is_individual = CASE WHEN customers.needs_push = 0 THEN excluded.is_individual ELSE customers.is_individual END,
-      email = CASE WHEN customers.needs_push = 0 THEN excluded.email ELSE customers.email END,
-      fiscal_emails = CASE WHEN customers.needs_push = 0 THEN excluded.fiscal_emails ELSE customers.fiscal_emails END,
-      homepage = CASE WHEN customers.needs_push = 0 THEN excluded.homepage ELSE customers.homepage END,
-      contact_name = CASE WHEN customers.needs_push = 0 THEN excluded.contact_name ELSE customers.contact_name END,
-      phone = CASE WHEN customers.needs_push = 0 THEN excluded.phone ELSE customers.phone END,
-      phone_secondary = CASE WHEN customers.needs_push = 0 THEN excluded.phone_secondary ELSE customers.phone_secondary END,
-      zipcode = CASE WHEN customers.needs_push = 0 THEN excluded.zipcode ELSE customers.zipcode END,
-      address_street = CASE WHEN customers.needs_push = 0 THEN excluded.address_street ELSE customers.address_street END,
-      address_number = CASE WHEN customers.needs_push = 0 THEN excluded.address_number ELSE customers.address_number END,
-      address_complement = CASE WHEN customers.needs_push = 0 THEN excluded.address_complement ELSE customers.address_complement END,
-      neighborhood = CASE WHEN customers.needs_push = 0 THEN excluded.neighborhood ELSE customers.neighborhood END,
-      city = CASE WHEN customers.needs_push = 0 THEN excluded.city ELSE customers.city END,
-      state = CASE WHEN customers.needs_push = 0 THEN excluded.state ELSE customers.state END,
-      country = CASE WHEN customers.needs_push = 0 THEN excluded.country ELSE customers.country END,
-      country_code = CASE WHEN customers.needs_push = 0 THEN excluded.country_code ELSE customers.country_code END,
-      ibge_city_code = CASE WHEN customers.needs_push = 0 THEN excluded.ibge_city_code ELSE customers.ibge_city_code END,
-      ibge_state_code = CASE WHEN customers.needs_push = 0 THEN excluded.ibge_state_code ELSE customers.ibge_state_code END,
-      customer_type = excluded.customer_type,
-      is_foreign = excluded.is_foreign,
-      omie_billing_blocked = CASE WHEN customers.needs_push = 0 THEN excluded.omie_billing_blocked ELSE customers.omie_billing_blocked END,
-      observations = CASE WHEN customers.needs_push = 0 THEN excluded.observations ELSE customers.observations END,
-      tags_json = excluded.tags_json,
-      salesperson_id = excluded.salesperson_id,
-      default_payment_term_id = CASE WHEN customers.needs_push = 0 THEN excluded.default_payment_term_id ELSE customers.default_payment_term_id END,
-      is_active = excluded.is_active,
-      deleted_at = NULL,
-      sync_status = CASE WHEN customers.needs_push = 0 THEN 'synced' ELSE customers.sync_status END,
+${OMIE_CUSTOMER_SET_SQL},
       last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
       omie_updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      -- O carimbo so anda quando alguma coluna de dado mudou de fato.
+      --
+      -- Ele nao e enfeite: o cursor do push do cadastro compartilhado e keyset em
+      -- updated_at, entao carimbar a linha inteira a cada passada do OMIE fazia o
+      -- cadastro INTEIRO ser republicado na nuvem toda vez -- 860 mil UPDATEs em 1.581
+      -- clientes, 350 mil em 167 produtos. E, do outro lado, cada UPDATE desses movia o
+      -- updated_at da nuvem, entao o pull incremental de 15 s das outras balancas
+      -- rebaixava o cadastro completo em vez de nada. O sincronismo incremental existia no
+      -- codigo mas nunca era incremental na pratica.
+      --
+      -- As demais colunas continuam sendo gravadas exatamente como antes: se o valor e o
+      -- mesmo, reescreve-lo e no-op; se e diferente, a condicao abaixo e verdadeira.
+      updated_at = CASE
+        WHEN ${OMIE_CUSTOMER_CHANGED_SQL}
+        THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        ELSE customers.updated_at
+      END
   `);
 
   const softDeleteNonCustomer = database.prepare(`
@@ -6625,6 +6703,59 @@ function upsertOmieCustomers(
   return persisted;
 }
 
+/**
+ * As colunas de DADOS do upsert de produtos vindo do OMIE. Mesma ideia da lista de
+ * clientes acima: dela saem tanto a clausula SET quanto o teste de "mudou alguma coisa?",
+ * para nao existir a possibilidade de uma coluna ficar de fora so do segundo.
+ *
+ * Produto era o caso mais extremo do carimbo a toa: 167 linhas com 349.787 UPDATEs na
+ * nuvem, 2.094 por linha. Aqui o OMIE manda em tudo (nao ha o needs_push do cliente), entao
+ * toda coluna e excluded; a excecao e deleted_at, que nao viaja no INSERT e cujo valor novo
+ * e o literal NULL -- e a comparacao dele que faz um produto reativado no OMIE contar como
+ * mudanca.
+ *
+ * updated_from_omie_at e updated_at ficam de fora pelo mesmo motivo de sempre: valem now()
+ * a cada passada e tornariam a condicao sempre verdadeira.
+ */
+const OMIE_PRODUCT_DATA_COLUMNS: readonly OmieUpsertColumn[] = [
+  omieOwned("company_id"),
+  omieOwned("omie_product_id"),
+  omieOwned("omie_integration_code"),
+  omieOwned("code"),
+  omieOwned("description"),
+  omieOwned("detailed_description"),
+  omieOwned("unit"),
+  omieOwned("ncm"),
+  omieOwned("ean"),
+  omieOwned("unit_price_cents"),
+  omieOwned("family_code"),
+  omieOwned("family_description"),
+  omieOwned("brand"),
+  omieOwned("model"),
+  omieOwned("internal_notes"),
+  omieOwned("gross_weight_kg"),
+  omieOwned("net_weight_kg"),
+  omieOwned("height_m"),
+  omieOwned("width_m"),
+  omieOwned("depth_m"),
+  omieOwned("cest"),
+  omieOwned("item_type"),
+  omieOwned("icms_origin"),
+  omieOwned("blocked"),
+  omieOwned("tracks_stock"),
+  omieOwned("fiscal_recommendations_json"),
+  omieOwned("is_active"),
+  { column: "deleted_at", expr: "NULL" }
+];
+
+const OMIE_PRODUCT_CHANGED_SQL = OMIE_PRODUCT_DATA_COLUMNS.map(
+  ({ column, expr }) => `(${expr}) IS NOT products.${column}`
+).join("\n        OR ");
+
+const OMIE_PRODUCT_SET_SQL = OMIE_PRODUCT_DATA_COLUMNS.map(
+  ({ column, expr }) => `      ${column} = ${expr}`
+).join(",\n");
+
 function upsertOmieProducts(
   database: DesktopDatabase,
   companyId: string,
@@ -6649,36 +6780,15 @@ function upsertOmieProducts(
       is_active, updated_from_omie_at, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(id) DO UPDATE SET
-      company_id = excluded.company_id,
-      omie_product_id = excluded.omie_product_id,
-      omie_integration_code = excluded.omie_integration_code,
-      code = excluded.code,
-      description = excluded.description,
-      detailed_description = excluded.detailed_description,
-      unit = excluded.unit,
-      ncm = excluded.ncm,
-      ean = excluded.ean,
-      unit_price_cents = excluded.unit_price_cents,
-      family_code = excluded.family_code,
-      family_description = excluded.family_description,
-      brand = excluded.brand,
-      model = excluded.model,
-      internal_notes = excluded.internal_notes,
-      gross_weight_kg = excluded.gross_weight_kg,
-      net_weight_kg = excluded.net_weight_kg,
-      height_m = excluded.height_m,
-      width_m = excluded.width_m,
-      depth_m = excluded.depth_m,
-      cest = excluded.cest,
-      item_type = excluded.item_type,
-      icms_origin = excluded.icms_origin,
-      blocked = excluded.blocked,
-      tracks_stock = excluded.tracks_stock,
-      fiscal_recommendations_json = excluded.fiscal_recommendations_json,
-      is_active = excluded.is_active,
-      deleted_at = NULL,
+${OMIE_PRODUCT_SET_SQL},
       updated_from_omie_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      -- So anda quando alguma coluna mudou de fato: ver a nota do upsert de clientes.
+      -- Produto era o caso mais extremo -- 167 linhas, 349.787 UPDATEs na nuvem.
+      updated_at = CASE
+        WHEN ${OMIE_PRODUCT_CHANGED_SQL}
+        THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        ELSE products.updated_at
+      END
   `);
 
   let synced = 0;
@@ -6744,6 +6854,50 @@ function findProductLocalId(
   return row?.id ?? null;
 }
 
+/**
+ * As colunas de DADOS do upsert de transportadoras vindas do OMIE (o cadastro de
+ * fornecedores). Mesma ideia das listas de clientes e produtos acima.
+ *
+ * Duas colunas nao sao `excluded` e precisam entrar na deteccao pelo valor EFETIVO, nao
+ * pelo literal: `sync_status` e `needs_push` dependem do estado atual da linha. Se
+ * ficassem de fora, uma transportadora que acabou de ser sincronizada com o OMIE mudaria
+ * de estado sem que as outras balancas ficassem sabendo.
+ */
+const OMIE_CARRIER_DATA_COLUMNS: readonly OmieUpsertColumn[] = [
+  omieOwned("company_id"),
+  omieOwned("omie_customer_id"),
+  omieOwned("omie_integration_code"),
+  omieOwned("name"),
+  omieOwned("document"),
+  omieOwned("phone"),
+  omieOwned("email"),
+  omieOwned("zipcode"),
+  omieOwned("address_street"),
+  omieOwned("address_number"),
+  omieOwned("address_complement"),
+  omieOwned("neighborhood"),
+  omieOwned("city"),
+  omieOwned("state"),
+  omieOwned("is_active"),
+  {
+    column: "sync_status",
+    expr: "CASE WHEN carriers.needs_push = 0 THEN 'synced' ELSE carriers.sync_status END"
+  },
+  {
+    column: "needs_push",
+    expr: "CASE WHEN carriers.needs_push = 0 THEN 0 ELSE carriers.needs_push END"
+  },
+  { column: "deleted_at", expr: "NULL" }
+];
+
+const OMIE_CARRIER_CHANGED_SQL = OMIE_CARRIER_DATA_COLUMNS.map(
+  ({ column, expr }) => `(${expr}) IS NOT carriers.${column}`
+).join("\n        OR ");
+
+const OMIE_CARRIER_SET_SQL = OMIE_CARRIER_DATA_COLUMNS.map(
+  ({ column, expr }) => `      ${column} = ${expr}`
+).join(",\n");
+
 function upsertOmieSuppliers(
   database: DesktopDatabase,
   companyId: string,
@@ -6757,26 +6911,15 @@ function upsertOmieSuppliers(
       is_active, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'omie', 'synced', 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(id) DO UPDATE SET
-      company_id = excluded.company_id,
-      omie_customer_id = excluded.omie_customer_id,
-      omie_integration_code = excluded.omie_integration_code,
-      name = excluded.name,
-      document = excluded.document,
-      phone = excluded.phone,
-      email = excluded.email,
-      zipcode = excluded.zipcode,
-      address_street = excluded.address_street,
-      address_number = excluded.address_number,
-      address_complement = excluded.address_complement,
-      neighborhood = excluded.neighborhood,
-      city = excluded.city,
-      state = excluded.state,
-      is_active = excluded.is_active,
-      sync_status = CASE WHEN carriers.needs_push = 0 THEN 'synced' ELSE carriers.sync_status END,
-      needs_push = CASE WHEN carriers.needs_push = 0 THEN 0 ELSE carriers.needs_push END,
+${OMIE_CARRIER_SET_SQL},
       last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-      deleted_at = NULL,
-      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      -- So anda quando alguma coluna mudou de fato: ver a nota do upsert de clientes.
+      -- Transportadora: 463 linhas, 81.889 UPDATEs na nuvem.
+      updated_at = CASE
+        WHEN ${OMIE_CARRIER_CHANGED_SQL}
+        THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        ELSE carriers.updated_at
+      END
   `);
 
   let persisted = 0;
