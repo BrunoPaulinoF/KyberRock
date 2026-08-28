@@ -167,3 +167,108 @@ describe("upsert do cadastro OMIE: quando o updated_at anda", () => {
     database.close();
   });
 });
+
+describe("upsert de produtos OMIE: quando o updated_at anda", () => {
+  function createDatabase(): DesktopDatabase {
+    const database = openDesktopDatabase({ databasePath: ":memory:" });
+    runDesktopMigrations(database);
+    database
+      .prepare(
+        `INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+         VALUES ('company-1', 'KyberRock LTDA', 'KyberRock', datetime('now'), datetime('now'))`
+      )
+      .run();
+    return database;
+  }
+
+  function omieProduct(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 9001,
+      code: "BRITA1",
+      description: "Brita 1",
+      unit: "TON",
+      ncm: "25171000",
+      ean: null,
+      unitPriceCents: 5500,
+      itemType: "04",
+      ...overrides
+    };
+  }
+
+  function applyPass(database: DesktopDatabase, overrides: Record<string, unknown> = {}): void {
+    applyOmieReferenceData(database, "company-1", {
+      products: [omieProduct(overrides)]
+    } as Parameters<typeof applyOmieReferenceData>[2]);
+  }
+
+  function readRow(database: DesktopDatabase): Record<string, unknown> {
+    return database.prepare("SELECT * FROM products WHERE omie_product_id = 9001").get() as Record<
+      string,
+      unknown
+    >;
+  }
+
+  function backdate(database: DesktopDatabase): string {
+    const marker = "2020-01-01T00:00:00.000Z";
+    database.prepare("UPDATE products SET updated_at = ? WHERE omie_product_id = 9001").run(marker);
+    return marker;
+  }
+
+  it("NAO mexe no carimbo quando a passada nao traz nenhuma mudanca", () => {
+    const database = createDatabase();
+    applyPass(database);
+    const marker = backdate(database);
+
+    applyPass(database);
+
+    expect(readRow(database).updated_at).toBe(marker);
+    database.close();
+  });
+
+  it("mexe no carimbo quando QUALQUER coluna muda de valor", () => {
+    const casos: Array<[string, Record<string, unknown>]> = [
+      ["descricao", { description: "Brita 1 lavada" }],
+      ["codigo", { code: "BRITA1L" }],
+      ["preco", { unitPriceCents: 6200 }],
+      ["unidade", { unit: "M3" }],
+      ["ncm", { ncm: "25174100" }],
+      ["ean", { ean: "7891234567890" }],
+      ["marca", { brand: "Pedreira Sul" }],
+      ["familia", { familyCode: "AGREG" }],
+      ["peso liquido", { netWeightKg: 1600 }],
+      ["observacoes internas", { internalNotes: "Estoque no patio 3" }],
+      ["codigo de integracao", { integrationCode: "KR-9001" }],
+      ["cest", { cest: "0100100" }],
+      ["origem do icms", { icmsOrigin: "0" }]
+    ];
+
+    for (const [rotulo, mudanca] of casos) {
+      const database = createDatabase();
+      applyPass(database);
+      const marker = backdate(database);
+
+      applyPass(database, mudanca);
+
+      expect(readRow(database).updated_at, `mudanca de ${rotulo}`).not.toBe(marker);
+      database.close();
+    }
+  });
+
+  it("mexe no carimbo quando o produto volta de uma exclusao logica", () => {
+    const database = createDatabase();
+    applyPass(database);
+    database
+      .prepare(
+        "UPDATE products SET deleted_at = '2020-06-01T00:00:00.000Z' WHERE omie_product_id = 9001"
+      )
+      .run();
+    const marker = backdate(database);
+
+    applyPass(database);
+
+    const row = readRow(database);
+    expect(row.deleted_at).toBeNull();
+    expect(row.updated_at).not.toBe(marker);
+    database.close();
+  });
+});

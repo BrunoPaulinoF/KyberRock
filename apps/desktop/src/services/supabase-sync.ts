@@ -6703,6 +6703,59 @@ ${OMIE_CUSTOMER_SET_SQL},
   return persisted;
 }
 
+/**
+ * As colunas de DADOS do upsert de produtos vindo do OMIE. Mesma ideia da lista de
+ * clientes acima: dela saem tanto a clausula SET quanto o teste de "mudou alguma coisa?",
+ * para nao existir a possibilidade de uma coluna ficar de fora so do segundo.
+ *
+ * Produto era o caso mais extremo do carimbo a toa: 167 linhas com 349.787 UPDATEs na
+ * nuvem, 2.094 por linha. Aqui o OMIE manda em tudo (nao ha o needs_push do cliente), entao
+ * toda coluna e excluded; a excecao e deleted_at, que nao viaja no INSERT e cujo valor novo
+ * e o literal NULL -- e a comparacao dele que faz um produto reativado no OMIE contar como
+ * mudanca.
+ *
+ * updated_from_omie_at e updated_at ficam de fora pelo mesmo motivo de sempre: valem now()
+ * a cada passada e tornariam a condicao sempre verdadeira.
+ */
+const OMIE_PRODUCT_DATA_COLUMNS: readonly OmieUpsertColumn[] = [
+  omieOwned("company_id"),
+  omieOwned("omie_product_id"),
+  omieOwned("omie_integration_code"),
+  omieOwned("code"),
+  omieOwned("description"),
+  omieOwned("detailed_description"),
+  omieOwned("unit"),
+  omieOwned("ncm"),
+  omieOwned("ean"),
+  omieOwned("unit_price_cents"),
+  omieOwned("family_code"),
+  omieOwned("family_description"),
+  omieOwned("brand"),
+  omieOwned("model"),
+  omieOwned("internal_notes"),
+  omieOwned("gross_weight_kg"),
+  omieOwned("net_weight_kg"),
+  omieOwned("height_m"),
+  omieOwned("width_m"),
+  omieOwned("depth_m"),
+  omieOwned("cest"),
+  omieOwned("item_type"),
+  omieOwned("icms_origin"),
+  omieOwned("blocked"),
+  omieOwned("tracks_stock"),
+  omieOwned("fiscal_recommendations_json"),
+  omieOwned("is_active"),
+  { column: "deleted_at", expr: "NULL" }
+];
+
+const OMIE_PRODUCT_CHANGED_SQL = OMIE_PRODUCT_DATA_COLUMNS.map(
+  ({ column, expr }) => `(${expr}) IS NOT products.${column}`
+).join("\n        OR ");
+
+const OMIE_PRODUCT_SET_SQL = OMIE_PRODUCT_DATA_COLUMNS.map(
+  ({ column, expr }) => `      ${column} = ${expr}`
+).join(",\n");
+
 function upsertOmieProducts(
   database: DesktopDatabase,
   companyId: string,
@@ -6727,36 +6780,15 @@ function upsertOmieProducts(
       is_active, updated_from_omie_at, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(id) DO UPDATE SET
-      company_id = excluded.company_id,
-      omie_product_id = excluded.omie_product_id,
-      omie_integration_code = excluded.omie_integration_code,
-      code = excluded.code,
-      description = excluded.description,
-      detailed_description = excluded.detailed_description,
-      unit = excluded.unit,
-      ncm = excluded.ncm,
-      ean = excluded.ean,
-      unit_price_cents = excluded.unit_price_cents,
-      family_code = excluded.family_code,
-      family_description = excluded.family_description,
-      brand = excluded.brand,
-      model = excluded.model,
-      internal_notes = excluded.internal_notes,
-      gross_weight_kg = excluded.gross_weight_kg,
-      net_weight_kg = excluded.net_weight_kg,
-      height_m = excluded.height_m,
-      width_m = excluded.width_m,
-      depth_m = excluded.depth_m,
-      cest = excluded.cest,
-      item_type = excluded.item_type,
-      icms_origin = excluded.icms_origin,
-      blocked = excluded.blocked,
-      tracks_stock = excluded.tracks_stock,
-      fiscal_recommendations_json = excluded.fiscal_recommendations_json,
-      is_active = excluded.is_active,
-      deleted_at = NULL,
+${OMIE_PRODUCT_SET_SQL},
       updated_from_omie_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      -- So anda quando alguma coluna mudou de fato: ver a nota do upsert de clientes.
+      -- Produto era o caso mais extremo -- 167 linhas, 349.787 UPDATEs na nuvem.
+      updated_at = CASE
+        WHEN ${OMIE_PRODUCT_CHANGED_SQL}
+        THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        ELSE products.updated_at
+      END
   `);
 
   let synced = 0;
