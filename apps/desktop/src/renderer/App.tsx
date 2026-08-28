@@ -542,6 +542,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [closedProductFilter, setClosedProductFilter] = useState<string>("all");
   // Busca da aba Concluidas: cliente, CNPJ/CPF ou produto (ver closed-operations-search).
   const [closedSearch, setClosedSearch] = useState("");
+  /**
+   * O termo que dispara a CARGA -- e nao o que a tela mostra.
+   *
+   * Com busca digitada a carga traz o conjunto inteiro (a pontuacao por proximidade nao
+   * existe em SQL), entao usar o valor imediato faria cada TECLA reler todo o historico.
+   * A tela e a pontuacao continuam usando `closedSearch`, sem espera nenhuma: o operador
+   * ve o filtro reagir na hora sobre o que ja esta carregado.
+   */
+  const closedSearchForLoad = useDebouncedValue(closedSearch, SEARCH_DEBOUNCE_MS);
   // Busca da aba Abertas: a placa do caminhao (ver open-operations-queue).
   const [openPlateSearch, setOpenPlateSearch] = useState("");
   // Operacao cujo cadastro esta sendo corrigido para reenviar ao OMIE (alerta da aba
@@ -915,7 +924,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     if (!desktopApi) return;
     const data = await loadClosedOperationsData(desktopApi, {
       productFilter: closedProductFilter,
-      search: closedSearch,
+      search: closedSearchForLoad,
       pageSize: closedPageSize,
       pendingOmieIds: pendingOmieIdsOf(omieDeliveryStateRef.current)
     });
@@ -924,7 +933,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     setClosedProducts(data.products);
     setClosedOmieAttention(data.omieAttention);
     setRecentClosedOperations(data.recent);
-  }, [desktopApi, closedProductFilter, closedSearch, closedPageSize]);
+  }, [desktopApi, closedProductFilter, closedSearchForLoad, closedPageSize]);
 
   // Trocar o filtro, a busca ou pedir mais linhas recarrega do banco -- e o SQL que
   // filtra e pagina agora, entao a tela nao tem mais de onde recortar sozinha.
@@ -937,7 +946,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   // recorte mostraria um pedaco do meio da lista sem nada acima dele.
   useEffect(() => {
     setClosedPageSize(CLOSED_PAGE_SIZE);
-  }, [closedProductFilter, closedSearch]);
+  }, [closedProductFilter, closedSearchForLoad]);
 
   // Multi-desktop: pull leve periodico da nuvem para enxergar as operacoes
   // registradas pelos outros computadores da pedreira sem esperar a
