@@ -227,6 +227,34 @@ offending link of the chain, not above the `return`.
   redefinir. O token do desktop (**SHA-256** em `device_registrations.token_hash`) **não tem
   cofre**: o valor em claro só existe na máquina ativada, e a saída é gerar novo código de
   ativação.
+- **Coluna Saúde da aba Balanças**: o painel enxergava da frota só `last_seen_at` ("está ligada")
+  e `app_version` ("está em tal versão") — nada dizia se a balança está **entregando** o que
+  fecha. Fila parada, envio esperando clique do operador e o motivo da última recusa só existiam
+  na tela daquele computador, então o problema chegava por telefone, depois de a pedreira já ter
+  parado. O resumo viaja **de carona no `desktop-status`**, o ping que já roda a cada 5 s: nenhuma
+  requisição nova, e o desktop o recalcula no máximo uma vez por minuto
+  (`services/device-health.ts` — leitura best-effort, falhar nela nunca pode derrubar a validação
+  que libera a operação). É um **resumo**, não um espelho da `sync_queue`: contagem, data mais
+  antiga e uma mensagem truncada; replicar a fila na nuvem criaria um segundo lugar de onde os
+  dados da operação vazam. As duas contagens não são "quantos" e sim **quem anda sozinho**:
+  `markSyncJobBlocked` mantém o job em `failed` e só empurra o `next_attempt_at` para o ano 9999,
+  ou seja, ele é tão parado quanto um `dead_letter` — contá-lo entre os pendentes esconderia o
+  caso mais comum de balança travada (cadastro incompleto para NF-e) dentro do número que quer
+  dizer "está andando". A classificação em cores é pura e testada em
+  `apps/loader-web/src/lib/device-health.ts` (o que conta como parada, quanto silêncio ainda é
+  normal), e **nulo não pode virar zero** em nenhum degrau do caminho: balança que nunca reportou
+  aparece em cinza como "Sem dados", porque pintá-la de verde seria o painel afirmando o que
+  ninguém apurou. Enquanto a aba está aberta ela se relê sozinha a cada 60 s (`silent`: sem
+  piscar "carregando" nem acusar erro de rede) — monitor que só mostra o estado do momento em que
+  a página abriu deixaria de fora justamente a balança que travou depois disso.
+- **Gravação do ping em degraus** (`_shared/device-touch.ts`): as Edge Functions sobem no push e
+  as migrações são aplicadas à parte, e update com coluna desconhecida falha INTEIRO. Por isso o
+  `desktop-status` tenta do mais completo ao mais pobre, **uma coluna nova por degrau** — com um
+  degrau só, a janela da migração da saúde derrubaria junto a versão instalada, que já
+  funcionava. O último degrau é o `last_seen_at` cru e **sempre roda**: a versão anterior só
+  gravava quando havia algo a enriquecer, então o desktop antigo (que manda apenas `deviceId` e
+  token) não chegava a update nenhum e ficava com o `last_seen_at` congelado — a frota o mostrava
+  eternamente offline, sem nada na tela explicando por quê.
 - **Renomear balança (`update_device_name`)**: o nome de `device_registrations` não é rótulo só
   da lista do painel — é o que **todas** as máquinas da pedreira exibem para aquele computador
   (legenda de cores da tela de Operações e campo "Computador" no detalhe da operação). Cada

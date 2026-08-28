@@ -134,6 +134,15 @@ These recur across the codebase and are easy to violate accidentally:
   não há `boleto_payment_id`, WhatsApp só quando `whatsapp_sent_at` está vazio — e recupera ciclos
   pulados em vez de perder o mês. A liberação do bloqueio é conservadora: só desfaz bloqueio que o
   próprio motor aplicou (`billing_invoices.blocked_at`).
+- **Saúde da frota** (AGENTS.md "Coluna Saúde da aba Balanças"): a nuvem sabia se a balança está
+  **ligada** (`last_seen_at`) e em que **versão** (`app_version`), mas não se ela está
+  _entregando_ — fila parada e envio esperando clique do operador só apareciam na tela daquela
+  máquina, e o suporte descobria por telefone. O resumo (`services/device-health.ts` →
+  `_shared/device-health.ts` → coluna Saúde do painel) pega carona no `desktop-status`, sem
+  requisição nova. Duas regras se repetem em todo o caminho: **parado não é pendente** — o job
+  bloqueado por falha determinística fica em `failed` com `next_attempt_at` no ano 9999 e não
+  anda mais sozinho, igual ao `dead_letter` — e **nulo não é zero**, porque "esta balança nunca
+  reportou" (instalação antiga, migração pendente) não pode ser exibido como "fila limpa".
 - **Central de ajuda** (`apps/desktop/src/renderer/documentation-*`): o texto vive em
   `documentation-content.ts` (dados puros), a busca em `documentation-search.ts` e a tela em
   `DocumentationView.tsx` — corrigir uma dúvida operacional não deve tocar o componente. O

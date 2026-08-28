@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
 import { supabaseConfig } from "../config/supabase-config";
+import { classifyDeviceHealth, type DeviceHealthLevel } from "../lib/device-health";
 import { DEVICE_NAME_MAX_LENGTH, parseDeviceName } from "../lib/device-name";
 import { matchesSearch, rankBySearch } from "../lib/search-ranking";
 import { AiAssistantSettings } from "./AiAssistantSettings";
@@ -24,7 +25,30 @@ import {
   PageHead,
   Panel
 } from "../components/admin";
-import type { Column, NavSection } from "../components/admin";
+import type { Column, NavSection, Tone } from "../components/admin";
+
+/**
+ * Cor de cada estado de saude da balanca.
+ *
+ * "Sem dados" fica em cinza de proposito: e a balanca que nao reportou, e
+ * pinta-la de verde seria o painel afirmando o que ninguem apurou.
+ */
+const HEALTH_TONES: Record<DeviceHealthLevel, Tone> = {
+  unknown: "neutral",
+  ok: "ok",
+  warn: "warn",
+  down: "danger"
+};
+
+/**
+ * De quanto em quanto tempo a aba Balancas se atualiza sozinha.
+ *
+ * A aba deixou de ser so cadastro: com a coluna de saude ela vira o monitor da
+ * frota, e monitor que so mostra o estado do momento em que a pagina foi aberta
+ * e pior que nenhum — quem esta com a tela aberta pararia de ver justamente a
+ * balanca que travou depois disso. As demais abas continuam carregando uma vez.
+ */
+const DEVICES_REFRESH_INTERVAL_MS = 60_000;
 
 /**
  * Console administrativo da plataforma.
@@ -102,6 +126,18 @@ interface Device {
    */
   isPriceMaster: boolean;
   lastSeenAt: string | null;
+  /**
+   * Saude da fila de envio, reportada pela propria balanca no `desktop-status`.
+   *
+   * `null` em toda parte e "esta balanca nunca reportou" — instalacao anterior
+   * ao relatorio, ou nuvem sem a migracao aplicada. A tela precisa saber
+   * distinguir isso de "fila limpa": ver `lib/device-health.ts`.
+   */
+  healthQueuePending: number | null;
+  healthQueueBlocked: number | null;
+  healthOldestPendingAt: string | null;
+  healthLastError: string | null;
+  healthCollectedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -265,110 +301,148 @@ export function AdminDashboard() {
     [logout]
   );
 
-  const loadData = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const data = await callAdminFunction<{
-        companies: Array<{
-          id: string;
-          name: string;
-          legal_name: string;
-          document: string | null;
-          is_active: boolean;
-          created_at: string;
-          omie_app_key?: string | null;
-          omie_app_secret?: string | null;
-          desktop_activation_code?: string;
-          desktop_activation_code_rotated_at?: string;
-        }>;
-        units: Array<{
-          id: string;
-          company_id: string;
-          name: string;
-          timezone: string;
-          is_active: boolean;
-        }>;
-        users: Array<{
-          id: string;
-          email: string;
-          name: string;
-          role?: string;
-          company_id: string;
-          unit_id: string;
-          is_active: boolean;
-        }>;
-        devices: Array<{
-          id: string;
-          company_id: string;
-          unit_id: string;
-          name: string;
-          is_active: boolean;
-          update_channel?: string | null;
-          is_price_master?: boolean | null;
-          last_seen_at: string | null;
-          created_at: string;
-          updated_at: string;
-        }>;
-      }>("admin-api", { action: "list" });
+  /**
+   * `silent` e a releitura de fundo da aba Balancas: nao acende "carregando" e
+   * nao acusa erro na tela. Uma oscilacao de rede num ciclo automatico nao pode
+   * piscar a tabela nem plantar um aviso vermelho que ninguem pediu — a proxima
+   * passada resolve, e ate la vale o ultimo estado conhecido.
+   */
+  const loadData = useCallback(
+    async (options: { silent?: boolean } = {}) => {
+      if (!options.silent) setIsLoading(true);
+      try {
+        const data = await callAdminFunction<{
+          companies: Array<{
+            id: string;
+            name: string;
+            legal_name: string;
+            document: string | null;
+            is_active: boolean;
+            created_at: string;
+            omie_app_key?: string | null;
+            omie_app_secret?: string | null;
+            desktop_activation_code?: string;
+            desktop_activation_code_rotated_at?: string;
+          }>;
+          units: Array<{
+            id: string;
+            company_id: string;
+            name: string;
+            timezone: string;
+            is_active: boolean;
+          }>;
+          users: Array<{
+            id: string;
+            email: string;
+            name: string;
+            role?: string;
+            company_id: string;
+            unit_id: string;
+            is_active: boolean;
+          }>;
+          devices: Array<{
+            id: string;
+            company_id: string;
+            unit_id: string;
+            name: string;
+            is_active: boolean;
+            update_channel?: string | null;
+            is_price_master?: boolean | null;
+            last_seen_at: string | null;
+            // Ausentes enquanto a migracao da saude nao for aplicada: a funcao cai
+            // no select sem elas para a lista inteira nao deixar de carregar.
+            health_queue_pending?: number | null;
+            health_queue_blocked?: number | null;
+            health_oldest_pending_at?: string | null;
+            health_last_error?: string | null;
+            health_collected_at?: string | null;
+            created_at: string;
+            updated_at: string;
+          }>;
+        }>("admin-api", { action: "list" });
 
-      setCompanies(
-        data.companies.map((company) => ({
-          id: company.id,
-          name: company.name,
-          legalName: company.legal_name,
-          document: company.document ?? "",
-          isActive: company.is_active,
-          createdAt: company.created_at,
-          omieAppKeyMasked: company.omie_app_key ?? null,
-          omieAppSecretConfigured: Boolean(company.omie_app_secret),
-          desktopActivationCode: company.desktop_activation_code,
-          desktopActivationCodeRotatedAt: company.desktop_activation_code_rotated_at
-        }))
-      );
-      setUnits(
-        data.units.map((unit) => ({
-          id: unit.id,
-          companyId: unit.company_id,
-          name: unit.name,
-          timezone: unit.timezone,
-          isActive: unit.is_active
-        }))
-      );
-      setUsers(
-        data.users.map((user) => ({
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role === "comercial" ? "comercial" : "loader",
-          companyId: user.company_id,
-          unitId: user.unit_id,
-          isActive: user.is_active
-        }))
-      );
-      setDevices(
-        (data.devices ?? []).map((device) => ({
-          id: device.id,
-          companyId: device.company_id,
-          unitId: device.unit_id,
-          name: device.name,
-          isActive: device.is_active,
-          updateChannel: toDeviceUpdateChannel(device.update_channel),
-          isPriceMaster: device.is_price_master === true,
-          lastSeenAt: device.last_seen_at,
-          createdAt: device.created_at,
-          updatedAt: device.updated_at
-        }))
-      );
-    } catch (error) {
-      handleError(error, "Nao foi possivel carregar os cadastros.");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [handleError]);
+        setCompanies(
+          data.companies.map((company) => ({
+            id: company.id,
+            name: company.name,
+            legalName: company.legal_name,
+            document: company.document ?? "",
+            isActive: company.is_active,
+            createdAt: company.created_at,
+            omieAppKeyMasked: company.omie_app_key ?? null,
+            omieAppSecretConfigured: Boolean(company.omie_app_secret),
+            desktopActivationCode: company.desktop_activation_code,
+            desktopActivationCodeRotatedAt: company.desktop_activation_code_rotated_at
+          }))
+        );
+        setUnits(
+          data.units.map((unit) => ({
+            id: unit.id,
+            companyId: unit.company_id,
+            name: unit.name,
+            timezone: unit.timezone,
+            isActive: unit.is_active
+          }))
+        );
+        setUsers(
+          data.users.map((user) => ({
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role === "comercial" ? "comercial" : "loader",
+            companyId: user.company_id,
+            unitId: user.unit_id,
+            isActive: user.is_active
+          }))
+        );
+        setDevices(
+          (data.devices ?? []).map((device) => ({
+            id: device.id,
+            companyId: device.company_id,
+            unitId: device.unit_id,
+            name: device.name,
+            isActive: device.is_active,
+            updateChannel: toDeviceUpdateChannel(device.update_channel),
+            isPriceMaster: device.is_price_master === true,
+            lastSeenAt: device.last_seen_at,
+            // `?? null` e nao `?? 0`: coluna ausente (migracao pendente) e campo
+            // nulo (balanca que nunca reportou) tem que continuar sendo "nao sei"
+            // ate a tela. Virar zero aqui faria a coluna pintar de verde a frota
+            // inteira no dia do deploy.
+            healthQueuePending: device.health_queue_pending ?? null,
+            healthQueueBlocked: device.health_queue_blocked ?? null,
+            healthOldestPendingAt: device.health_oldest_pending_at ?? null,
+            healthLastError: device.health_last_error ?? null,
+            healthCollectedAt: device.health_collected_at ?? null,
+            createdAt: device.created_at,
+            updatedAt: device.updated_at
+          }))
+        );
+      } catch (error) {
+        if (!options.silent) handleError(error, "Nao foi possivel carregar os cadastros.");
+      } finally {
+        if (!options.silent) setIsLoading(false);
+      }
+    },
+    [handleError]
+  );
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  // Enquanto a aba Balancas estiver aberta ela se atualiza sozinha: a saude da
+  // fila muda sem ninguem clicar, e uma balanca que trava depois de a pagina
+  // abrir precisa aparecer. Sai de cena junto com a aba — as outras nao
+  // ganharam trafego nenhum com isto.
+  useEffect(() => {
+    if (section !== "devices") return;
+    const intervalId = window.setInterval(
+      () => void loadData({ silent: true }),
+      DEVICES_REFRESH_INTERVAL_MS
+    );
+    return () => window.clearInterval(intervalId);
+  }, [section, loadData]);
 
   /** Executa uma acao do admin-api, mostra o resultado e recarrega a lista. */
   const run = useCallback(
@@ -887,6 +961,39 @@ export function AdminDashboard() {
                 : "Espelha a principal"}
             </option>
           </select>
+        );
+      }
+    },
+    {
+      key: "health",
+      header: "Saude",
+      /**
+       * O que esta balanca esta ENTREGANDO — a pergunta que "ultimo contato" e
+       * "versao" nunca responderam. Fila parada e envio esperando clique do
+       * operador so existiam na tela daquele computador, entao o suporte
+       * descobria por telefone, depois de a pedreira ja ter parado.
+       *
+       * A classificacao inteira vive em `lib/device-health.ts`, pura e testada:
+       * o que conta como parada e quanto silencio ainda e normal sao decisoes de
+       * operacao, e nao da para revisa-las lendo uma tabela de mil e oitocentas
+       * linhas.
+       */
+      render: (device) => {
+        const health = classifyDeviceHealth({
+          isActive: device.isActive,
+          lastSeenAt: device.lastSeenAt,
+          queuePending: device.healthQueuePending,
+          queueBlocked: device.healthQueueBlocked,
+          oldestPendingAt: device.healthOldestPendingAt,
+          lastError: device.healthLastError,
+          collectedAt: device.healthCollectedAt
+        });
+        return (
+          <span title={health.detail}>
+            <Badge tone={HEALTH_TONES[health.level]} dot={health.level !== "unknown"}>
+              {health.label}
+            </Badge>
+          </span>
         );
       }
     },

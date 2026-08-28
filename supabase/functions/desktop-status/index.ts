@@ -1,6 +1,8 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
+import { deviceHealthColumns, normalizeDeviceHealth } from "../_shared/device-health.ts";
+import { orderedTouchAttempts } from "../_shared/device-touch.ts";
 import {
   resolveUpdateNotice,
   type DeliveredUpdateNotice
@@ -132,6 +134,12 @@ Deno.serve(async (req) => {
     deviceToken?: string;
     /** Versao do desktop rodando nesta balanca. Ausente no desktop anterior a este campo. */
     appVersion?: string;
+    /**
+     * Resumo da fila de envio desta balanca (ver `_shared/device-health.ts`).
+     * Ausente no desktop anterior a este campo — e ai a nuvem mantem o ultimo
+     * relato conhecido em vez de zerar a coluna.
+     */
+    health?: unknown;
   };
 
   const deviceId = String(body.deviceId ?? "");
@@ -245,17 +253,33 @@ Deno.serve(async (req) => {
     enrichedTouch.update_notice_seen_at = checkedAt;
   }
 
+  // Saude da fila desta balanca, que o painel usa para dizer "parou" antes de a
+  // pedreira ligar reclamando. Ausente = desktop antigo: nao escrevemos coluna
+  // nenhuma, para o painel continuar mostrando o ultimo relato em vez de uma
+  // fila limpa que ninguem apurou.
+  const health = normalizeDeviceHealth(body.health);
+  const healthTouch: Record<string, unknown> = health
+    ? { ...enrichedTouch, ...deviceHealthColumns(health, checkedAt) }
+    : enrichedTouch;
+
   // Tolerante a coluna ausente pelo mesmo motivo de sempre: as funcoes sobem no
   // push e as migracoes sao aplicadas a parte, e um update com coluna
   // desconhecida falha INTEIRO — aqui isso apagaria o `last_seen_at` de toda a
   // frota ate a migracao ser aplicada. O `last_seen_at` e o que nao pode faltar;
-  // versao e aviso sao dispensaveis nessa janela.
-  const touched =
-    Object.keys(enrichedTouch).length > Object.keys(touch).length
-      ? await supabase.from("device_registrations").update(enrichedTouch).eq("id", typedDevice.id)
-      : { error: null };
-  if (touched.error) {
-    await supabase.from("device_registrations").update(touch).eq("id", typedDevice.id);
+  // saude, versao e aviso sao dispensaveis nessa janela.
+  //
+  // Da gravacao mais completa para a mais pobre, uma coluna nova por degrau: com
+  // um degrau so, a janela da migracao da SAUDE derrubaria junto a VERSAO, que
+  // ja funcionava. O ultimo degrau e sempre o `touch` cru — e por isso ele roda
+  // tambem quando nao ha nada a enriquecer, caso do desktop antigo que so manda
+  // deviceId e token. Antes, esse desktop nao chegava a update nenhum e ficava
+  // com o `last_seen_at` congelado: a frota o mostrava eternamente offline.
+  for (const update of orderedTouchAttempts([healthTouch, enrichedTouch, touch])) {
+    const { error } = await supabase
+      .from("device_registrations")
+      .update(update)
+      .eq("id", typedDevice.id);
+    if (!error) break;
   }
 
   const updateNotice: DeliveredUpdateNotice | null =
