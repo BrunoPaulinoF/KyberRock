@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
 import {
   arrangeReleases,
+  devicesNeedingUpdateNotice,
+  devicesWithPendingNotice,
   groupFleetVersions,
   hasBuildInProgress,
   isPromotionApplied,
@@ -137,6 +139,10 @@ export interface FleetDeviceRow extends FleetDeviceLike {
   updateChannel: "latest" | "beta";
   isActive: boolean;
   lastSeenAt: string | null;
+  /** Aviso de atualizacao pendente. Ausentes na funcao antiga. */
+  noticeVersion?: string | null;
+  noticeSentAt?: string | null;
+  noticeSeenAt?: string | null;
 }
 
 interface ReleasesResponse {
@@ -691,6 +697,16 @@ export function FleetVersionBars({
                   {device.name}
                   {device.unitName ? <em> · {device.unitName}</em> : null}
                   {device.updateChannel === "beta" ? <strong> · teste</strong> : null}
+                  {/*
+                    Aviso pendente. "Avisada" e "recebeu" sao coisas diferentes:
+                    sem a marca de entrega, o silencio tanto pode ser a maquina
+                    desligada quanto o operador que viu o recado e nao clicou.
+                  */}
+                  {device.noticeVersion ? (
+                    <b className="adm-fleet-chip-notice">
+                      {device.noticeSeenAt ? " · avisada" : " · aviso a caminho"}
+                    </b>
+                  ) : null}
                 </span>
               ))}
             </div>
@@ -733,6 +749,8 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
    */
   const [notesCache, setNotesCache] = useState<Record<string, ReleaseNotes>>({});
   const [isLoadingNotes, setIsLoadingNotes] = useState(false);
+  /** Um disparo de aviso de atualizacao em curso — segura os dois botoes. */
+  const [isNotifying, setIsNotifying] = useState(false);
   const [notesError, setNotesError] = useState<string | null>(null);
 
   const handleError = useCallback(
@@ -880,6 +898,77 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
       }),
     [devices, currentVersion, testRelease]
   );
+
+  /**
+   * Quem o aviso de atualizacao alcanca, e quem ja tem um pendente.
+   *
+   * A regra de quem entra vive em `lib/desktop-updates.ts` (pura e testada) —
+   * aqui so se resolve a versao de destino: a de PRODUCAO, sempre. Chamar a
+   * frota para a versao em teste seria distribuir versao em avaliacao pela porta
+   * dos fundos, que e exatamente o que os dois aneis existem para impedir.
+   */
+  const updateTargets = useMemo(
+    () => devicesNeedingUpdateNotice(devices ?? [], currentVersion),
+    [devices, currentVersion]
+  );
+  const pendingNotices = useMemo(() => devicesWithPendingNotice(devices ?? []), [devices]);
+
+  /**
+   * Manda o recado — e nada alem disso.
+   *
+   * O painel NAO instala: aplicar a atualizacao reinicia o desktop, e uma
+   * balanca no meio de uma pesagem nao pode ser reiniciada por um clique daqui.
+   * O aviso sobe na tela do operador com o botao de atualizar agora; quem
+   * decide a hora e quem esta na balanca.
+   */
+  async function notifyDevices(): Promise<void> {
+    if (!currentVersion || updateTargets.length === 0) return;
+    if (
+      !window.confirm(
+        `Avisar ${updateTargets.length} ${updateTargets.length === 1 ? "balanca" : "balancas"} para atualizar para a versao ${currentVersion}?\n\n` +
+          "Cada uma recebe o aviso na proxima verificacao (ate 30 s) e mostra ao operador o botao de atualizar agora. O painel nao reinicia balanca nenhuma: quem escolhe a hora e quem esta na pedreira."
+      )
+    ) {
+      return;
+    }
+
+    setIsNotifying(true);
+    try {
+      await callAdminFunction("admin-api", {
+        action: "request_desktop_update",
+        payload: { version: currentVersion, deviceIds: updateTargets.map((device) => device.id) }
+      });
+      setFeedback({
+        tone: "ok",
+        text: `Aviso enviado para ${updateTargets.length} ${updateTargets.length === 1 ? "balanca" : "balancas"}. Cada uma mostra o pedido ao operador na proxima verificacao; o aviso some sozinho quando ela chega na versao ${currentVersion}.`
+      });
+      await load({ silent: true });
+    } catch (error) {
+      handleError(error, "Nao foi possivel avisar as balancas.");
+    } finally {
+      setIsNotifying(false);
+    }
+  }
+
+  async function cancelNotices(): Promise<void> {
+    if (pendingNotices.length === 0) return;
+    setIsNotifying(true);
+    try {
+      await callAdminFunction("admin-api", {
+        action: "clear_desktop_update_notice",
+        payload: { deviceIds: pendingNotices.map((device) => device.id) }
+      });
+      setFeedback({
+        tone: "info",
+        text: "Avisos cancelados. O pedido sai da tela do operador na proxima verificacao."
+      });
+      await load({ silent: true });
+    } catch (error) {
+      handleError(error, "Nao foi possivel cancelar os avisos.");
+    } finally {
+      setIsNotifying(false);
+    }
+  }
 
   async function promote(release: ReleaseRow, intent: PromotionIntent) {
     const action = PROMOTION_ACTIONS[intent];
@@ -1122,12 +1211,50 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
         <Panel
           title="Versoes instaladas na frota"
           description="O que cada computador esta RODANDO — que nao e o que foi liberado: a balanca verifica a cada 30 min e so troca de versao quando o operador fecha o app."
+          actions={
+            <>
+              {pendingNotices.length > 0 && (
+                <Button onClick={() => void cancelNotices()} disabled={isNotifying}>
+                  Cancelar avisos ({pendingNotices.length})
+                </Button>
+              )}
+              <Button
+                variant="primary"
+                onClick={() => void notifyDevices()}
+                disabled={isNotifying || !currentVersion || updateTargets.length === 0}
+                title={
+                  !currentVersion
+                    ? "Nenhuma versao em producao para pedir."
+                    : updateTargets.length === 0
+                      ? "Toda a frota ja esta na versao de producao."
+                      : undefined
+                }
+              >
+                {isNotifying
+                  ? "Avisando…"
+                  : updateTargets.length === 0
+                    ? "Frota atualizada"
+                    : `Avisar ${updateTargets.length} ${updateTargets.length === 1 ? "balanca" : "balancas"} para atualizar`}
+              </Button>
+            </>
+          }
         >
           {devices.length === 0 ? (
             <p className="adm-cell-sub">Nenhuma balanca ativada ainda.</p>
           ) : (
             <>
               <FleetVersionBars groups={fleet} total={devices.length} />
+              {/*
+                O aviso e um recado, nao um comando: o desktop reinicia para
+                aplicar a atualizacao, e por isso quem clica em "atualizar
+                agora" e o operador, na balanca, entre um caminhao e outro.
+              */}
+              <p className="adm-cell-sub">
+                O aviso chega em ate 30 s e abre na tela do operador o pedido para atualizar. O
+                painel nao reinicia balanca nenhuma — instalar reinicia o app, entao a hora e
+                escolhida na pedreira. Cada aviso some sozinho quando aquela balanca reporta a
+                versao pedida.
+              </p>
               {fleet.some((group) => group.version === null) && (
                 <p className="adm-cell-sub">
                   "Sem informacao" e a balanca que ainda nao reportou a versao — instalacao anterior

@@ -44,6 +44,25 @@ describe("FleetVersionBars", () => {
     expect(html).toContain("Deposito");
   });
 
+  it("separa a balanca avisada da que ainda nao recebeu o recado", () => {
+    // Silencio de uma maquina nao avisada e silencio de uma que recebeu e nao
+    // clicou pedem providencias diferentes.
+    const devices = [
+      device("a", "0.8.193", { name: "Portaria", noticeVersion: "0.8.200", noticeSeenAt: null }),
+      device("b", "0.8.193", {
+        name: "Escritorio",
+        noticeVersion: "0.8.200",
+        noticeSeenAt: "2026-08-28T12:00:05.000Z"
+      })
+    ];
+    const html = renderToStaticMarkup(
+      <FleetVersionBars groups={groupFleetVersions(devices)} total={devices.length} />
+    );
+
+    expect(html).toContain("aviso a caminho");
+    expect(html).toContain("· avisada");
+  });
+
   it("uma balanca sozinha numa frota grande ainda desenha uma barra visivel", () => {
     // Sem largura minima a unica maquina atrasada — justamente a que interessa
     // — viraria uma barra de zero pixel.

@@ -590,6 +590,21 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   // A versao que o operador ja respondeu no aviso — ver `shouldAnnounceUpdate`.
   const answeredUpdateVersionRef = useRef<string | null>(null);
+  /**
+   * O aviso e um PEDIDO do painel, e nao a descoberta rotineira de versao nova.
+   * Muda o texto do modal: quem esta na balanca precisa saber que alguem pediu,
+   * senao "mais tarde" e a resposta obvia.
+   */
+  const [updateRequestedByAdmin, setUpdateRequestedByAdmin] = useState(false);
+  /**
+   * Pedido do painel ja anunciado nesta sessao, como `versao|disparo`.
+   *
+   * A validacao de acesso repete a cada 5 s e traria o mesmo recado sem parar. A
+   * chave inclui a HORA do disparo de proposito: reenviar o aviso no painel
+   * (mesma versao, disparo novo) volta a interromper a tela — e reenviar e
+   * justamente o que se faz quando o primeiro pedido foi ignorado.
+   */
+  const announcedUpdateNoticeRef = useRef<string | null>(null);
   const updateReady = updateState.status === "available" || updateState.status === "downloaded";
   // So na balanca marcada como teste, e so quando o anel de teste e o de
   // producao tem versoes diferentes para instalar: ai quem decide e o operador.
@@ -1170,6 +1185,36 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     };
   }, [desktopApi]);
 
+  /**
+   * Pedido de atualizacao vindo do painel.
+   *
+   * Chega junto da validacao de acesso (`desktop-status`), que ja roda sozinha —
+   * por isso nao ha canal novo nem verificacao extra aqui. O que ele faz e
+   * SUBIR o aviso na tela: instalar reinicia o app, entao quem decide a hora
+   * continua sendo quem esta na balanca, com o caminhao na frente ou nao.
+   */
+  useEffect(() => {
+    const notice = accessStatus?.updateNotice ?? null;
+    if (!notice) {
+      // Aviso atendido ou cancelado no painel: tira o recado da tela em vez de
+      // deixar o operador respondendo a um pedido que ja nao existe.
+      if (updateRequestedByAdmin) {
+        setShowUpdateModal(false);
+        setUpdateRequestedByAdmin(false);
+      }
+      announcedUpdateNoticeRef.current = null;
+      return;
+    }
+
+    const key = `${notice.version}|${notice.requestedAt ?? ""}`;
+    if (announcedUpdateNoticeRef.current === key) return;
+    announcedUpdateNoticeRef.current = key;
+
+    setAvailableVersion(notice.version);
+    setUpdateRequestedByAdmin(true);
+    setShowUpdateModal(true);
+  }, [accessStatus, updateRequestedByAdmin]);
+
   const handleUnlocked = useCallback(() => setPhase("bootstrapping_cloud"), []);
 
   const finishOpeningVideo = useCallback(() => {
@@ -1729,6 +1774,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   function dismissUpdateNotice(): void {
     answeredUpdateVersionRef.current = availableVersion;
     setShowUpdateModal(false);
+    setUpdateRequestedByAdmin(false);
   }
 
   /** O botao do menu: verifica quando nao ha versao em maos, instala quando ha. */
@@ -1789,6 +1835,41 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     const nextState = await desktopApi.downloadAndInstallUpdate();
     setUpdateState(nextState);
     setMessage(nextState.errorMessage ?? describeUpdateState(nextState));
+  }
+
+  /**
+   * "Atualizar agora" do aviso PEDIDO PELO PAINEL.
+   *
+   * Aqui se verifica antes, ao contrario do aviso comum: este recado chega da
+   * nuvem, e nao do updater — a versao pode nem ter sido procurada ainda
+   * (a verificacao automatica roda de 30 em 30 minutos). Sem a verificacao, o
+   * clique cairia num updater parado e nao faria absolutamente nada, que e a
+   * pior resposta possivel para quem acabou de ser chamado a atualizar.
+   */
+  async function handleInstallRequestedUpdate(): Promise<void> {
+    dismissUpdateNotice();
+
+    if (!desktopApi) {
+      return;
+    }
+
+    let state = updateState;
+    if (!isUpdateInstallable(state.status)) {
+      state = await desktopApi.checkForUpdates();
+      setUpdateState(state);
+    }
+
+    if (hasUpdateRingChoice(state)) {
+      setShowUpdateChoiceModal(true);
+      return;
+    }
+
+    if (isUpdateInstallable(state.status)) {
+      state = await desktopApi.downloadAndInstallUpdate();
+      setUpdateState(state);
+    }
+
+    setMessage(state.errorMessage ?? describeUpdateState(state));
   }
 
   /** Instala a versao do anel escolhido pelo operador (so na balanca de teste). */
@@ -2946,16 +3027,30 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             {showUpdateModal && !showUpdateChoiceModal ? (
               <div style={styles.modalOverlay}>
                 <div style={styles.modal}>
-                  <h2 style={styles.modalTitle}>Nova versão disponível</h2>
+                  <h2 style={styles.modalTitle}>
+                    {updateRequestedByAdmin ? "Atualização solicitada" : "Nova versão disponível"}
+                  </h2>
                   <p style={styles.modalText}>
-                    A versão <strong>{availableVersion}</strong> do KyberRock Desktop está
-                    disponível. Deseja atualizar agora?
+                    {updateRequestedByAdmin ? (
+                      <>
+                        O administrador pediu que esta balança atualize para a versão{" "}
+                        <strong>{availableVersion}</strong>. O KyberRock reinicia para aplicar —
+                        conclua a pesagem em andamento antes de continuar.
+                      </>
+                    ) : (
+                      <>
+                        A versão <strong>{availableVersion}</strong> do KyberRock Desktop está
+                        disponível. Deseja atualizar agora?
+                      </>
+                    )}
                   </p>
                   <div style={styles.modalActions}>
                     <button
                       type="button"
                       onClick={() => {
-                        void handleInstallAnnouncedUpdate();
+                        void (updateRequestedByAdmin
+                          ? handleInstallRequestedUpdate()
+                          : handleInstallAnnouncedUpdate());
                       }}
                       style={styles.primaryButton}
                     >

@@ -280,6 +280,10 @@ export interface FleetDeviceLike {
   version: string | null;
   updateChannel?: "latest" | "beta";
   isActive?: boolean;
+  /** Versao para a qual esta balanca ja foi chamada a atualizar. */
+  noticeVersion?: string | null;
+  /** Quando o aviso chegou na balanca. Nulo com aviso pendente = maquina desligada. */
+  noticeSeenAt?: string | null;
 }
 
 /**
@@ -374,4 +378,36 @@ export function groupFleetVersions(
   }
 
   return groups;
+}
+
+// ---------------------------------------------------------------------------
+// Chamar a frota para atualizar
+// ---------------------------------------------------------------------------
+
+/**
+ * Quais balancas o aviso de atualizacao deve alcancar.
+ *
+ * Liberar uma versao nao instala nada: a balanca verifica a cada 30 min e so
+ * aplica quando o operador fecha o app. A que fica dias sem fechar continua na
+ * versao velha, e ate agora apressar isso era telefonar para a pedreira.
+ *
+ * Fica de fora quem ja esta na versao pedida — mandar o recado ali seria
+ * inofensivo (a nuvem o apaga no primeiro ping), mas apareceria no painel como
+ * um aviso pendente que ninguem pediu. Balanca BLOQUEADA tambem fica de fora:
+ * ela nao recebe atualizacao nenhuma, entao o pedido nunca sairia de pendente.
+ *
+ * Quem nunca reportou versao ENTRA: nao saber onde a maquina esta e o motivo
+ * mais forte para chama-la, nao um motivo para ignora-la.
+ */
+export function devicesNeedingUpdateNotice<T extends FleetDeviceLike>(
+  devices: readonly T[],
+  version: string | null
+): T[] {
+  if (!version) return [];
+  return devices.filter((device) => device.isActive !== false && device.version !== version);
+}
+
+/** Balancas com aviso pendente — as que o botao de cancelar alcanca. */
+export function devicesWithPendingNotice<T extends FleetDeviceLike>(devices: readonly T[]): T[] {
+  return devices.filter((device) => Boolean(device.noticeVersion));
 }
