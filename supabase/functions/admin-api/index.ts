@@ -187,6 +187,17 @@ const DEVICE_LIST_COLUMNS =
   "id, company_id, unit_id, name, color, installation_id, is_active, last_seen_at, created_at, updated_at";
 
 /**
+ * Saude da fila de envio reportada pela propria balanca no `desktop-status`.
+ *
+ * Num degrau proprio da lista de tentativas abaixo: pedi-las junto das colunas
+ * de versao faria a janela entre o deploy e a migracao da saude derrubar TAMBEM
+ * a leitura de versao, que ja funcionava, e a aba de atualizacoes ficaria sem o
+ * grafico da frota por causa de uma coluna que ela nem usa.
+ */
+const DEVICE_HEALTH_COLUMNS =
+  "health_queue_pending, health_queue_blocked, health_oldest_pending_at, health_last_error, health_collected_at";
+
+/**
  * Lista as balancas tolerando a coluna `update_channel` ainda nao existir.
  *
  * As Edge Functions sao implantadas pelo CI a cada push, mas as migracoes SQL sao
@@ -198,6 +209,7 @@ async function selectDevicesForList(supabase: SupabaseAdminClient) {
   // Da mais completa para a mais antiga: cada coluna acrescentada por migracao entra numa
   // tentativa propria, para a lista continuar carregando no projeto que ainda nao a tem.
   const attempts = [
+    `${DEVICE_LIST_COLUMNS}, ${DEVICE_HEALTH_COLUMNS}, update_channel, is_price_master, app_version, app_version_seen_at, update_notice_version, update_notice_sent_at, update_notice_seen_at`,
     `${DEVICE_LIST_COLUMNS}, update_channel, is_price_master, app_version, app_version_seen_at, update_notice_version, update_notice_sent_at, update_notice_seen_at`,
     `${DEVICE_LIST_COLUMNS}, update_channel, is_price_master, app_version, app_version_seen_at`,
     `${DEVICE_LIST_COLUMNS}, update_channel, is_price_master`,

@@ -8,6 +8,7 @@ import {
   writeStoredSupabaseConfig
 } from "./supabase-sync.js";
 import { readInstalledAppVersion } from "./app-version.js";
+import { readDeviceHealthForHeartbeat } from "./device-health.js";
 import {
   applyUpdateNoticeFromCloud,
   readUpdateNotice,
@@ -363,7 +364,13 @@ export async function validateDesktopAccess(
           // De carona no ping que ja existia: o painel precisa saber a versao
           // que esta INSTALADA aqui, e nao a que foi liberada para o anel.
           // Ausente (versao nao gravada) a nuvem mantem a leitura anterior.
-          appVersion: readInstalledAppVersion() ?? undefined
+          appVersion: readInstalledAppVersion() ?? undefined,
+          // Tambem de carona: fila de envio parada, envio esperando clique do
+          // operador e o motivo da ultima recusa. Sem isto o painel so sabia
+          // dizer "esta ligada e em tal versao", e o suporte descobria a
+          // balanca travada por telefone. `undefined` (leitura falhou, ou
+          // desktop antigo) mantem o que a nuvem ja sabia.
+          health: readDeviceHealthForHeartbeat(database, now) ?? undefined
         }
       }
     );
