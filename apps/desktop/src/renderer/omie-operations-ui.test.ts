@@ -21,7 +21,34 @@ describe("tela de operacoes concluidas", () => {
     const toolbar = sliceBetween(appSource, "value={closedProductFilter}", "showDeviceColors ?");
 
     expect(toolbar).toContain("Cliente, CNPJ/CPF ou produto");
-    expect(appSource).toContain("filterClosedOperationsBySearch(byProduct, closedSearch)");
+    // A busca continua pontuando por proximidade em memoria: a ordenacao dela nao tem
+    // equivalente em SQL, e paginar antes de pontuar mudaria qual linha aparece primeiro.
+    expect(appSource).toContain("filterClosedOperationsBySearch(closedOperations, closedSearch)");
+  });
+
+  it("filtra por produto e pagina no banco, nao em memoria", () => {
+    // O filtro de produto saiu do `.filter()` em memoria e foi para o SQL junto com a
+    // paginacao -- e o que impede a tela de carregar o historico inteiro a cada ciclo.
+    // Se alguem trouxer o filtro de volta para a memoria, a lista volta a crescer sem fim.
+    expect(appSource).toContain("loadClosedOperationsData(");
+    expect(appSource).not.toContain(
+      "closedOperations.filter((op) => op.productDescription === closedProductFilter)"
+    );
+    expect(appSource).toContain("Carregar mais");
+  });
+
+  it("a busca espera o operador parar de digitar antes de ir ao banco", () => {
+    // Com busca digitada a carga traz o conjunto INTEIRO (a pontuacao por proximidade nao
+    // existe em SQL). Se a carga dependesse do valor imediato, cada TECLA releria todo o
+    // historico -- pior que antes desta mudanca, quando digitar nao tocava o banco.
+    // A tela e a pontuacao seguem com `closedSearch`, sem espera; so a CARGA espera.
+    expect(appSource).toContain(
+      "const closedSearchForLoad = useDebouncedValue(closedSearch, SEARCH_DEBOUNCE_MS)"
+    );
+    expect(appSource).toContain("search: closedSearchForLoad,");
+    // A pontuacao NAO pode passar a usar o valor com espera: o filtro ficaria travando
+    // atras do que o operador acabou de digitar.
+    expect(appSource).toContain("filterClosedOperationsBySearch(closedOperations, closedSearch)");
   });
 
   it("alerta as concluidas que nao chegaram ao OMIE e oferece a edicao dos itens", () => {

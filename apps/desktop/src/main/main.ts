@@ -10,6 +10,10 @@ import { inspect } from "node:util";
 
 import { isDesktopDataAccessError } from "../database/data-access.js";
 import { setInstalledAppVersion } from "../services/app-version.js";
+import type {
+  ClosedWeighingOperationFilters,
+  ListClosedWeighingOperationsOptions
+} from "../services/weighing-operations.js";
 import { DesktopRuntime, type FiscalDocumentPrinter } from "../services/runtime.js";
 import type { ActivateDesktopInput } from "../services/desktop-activation.js";
 import type { CacheQueryOptions } from "../services/cache-store.js";
@@ -414,13 +418,62 @@ function registerIpcHandlers(): void {
     return runtime.listCanceledWeighingOperations();
   });
 
-  ipcMain.handle("desktop:list-closed-weighing-operations", () => {
+  ipcMain.handle(
+    "desktop:list-closed-weighing-operations",
+    (_event, options?: ListClosedWeighingOperationsOptions) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
+
+      return runtime.listClosedWeighingOperations(options ?? {});
+    }
+  );
+
+  ipcMain.handle(
+    "desktop:count-closed-weighing-operations",
+    (_event, filters?: ClosedWeighingOperationFilters) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
+
+      return runtime.countClosedWeighingOperations(filters ?? {});
+    }
+  );
+
+  ipcMain.handle("desktop:list-recent-closed-weighing-operations", (_event, limit: number) => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
     }
 
-    return runtime.listClosedWeighingOperations();
+    return runtime.listRecentClosedWeighingOperations(limit);
   });
+
+  ipcMain.handle("desktop:list-closed-operation-products", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.listClosedOperationProductDescriptions();
+  });
+
+  ipcMain.handle("desktop:list-closed-operations-omie-attention", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.listClosedOperationsNeedingOmieAttention();
+  });
+
+  ipcMain.handle(
+    "desktop:list-closed-weighing-operations-since",
+    (_event, sinceIso: string, alsoIds?: string[]) => {
+      if (!runtime) {
+        throw new Error("Desktop runtime is not ready.");
+      }
+
+      return runtime.listClosedWeighingOperationsUpdatedSince(sinceIso, alsoIds ?? []);
+    }
+  );
 
   ipcMain.handle("desktop:operation-omie-issue", (_event, operationId: string) => {
     if (!runtime) {
