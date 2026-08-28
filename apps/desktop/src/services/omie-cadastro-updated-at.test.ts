@@ -272,3 +272,108 @@ describe("upsert de produtos OMIE: quando o updated_at anda", () => {
     database.close();
   });
 });
+
+describe("upsert de transportadoras OMIE: quando o updated_at anda", () => {
+  function createDatabase(): DesktopDatabase {
+    const database = openDesktopDatabase({ databasePath: ":memory:" });
+    runDesktopMigrations(database);
+    database
+      .prepare(
+        `INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+         VALUES ('company-1', 'KyberRock LTDA', 'KyberRock', datetime('now'), datetime('now'))`
+      )
+      .run();
+    return database;
+  }
+
+  function applyPass(database: DesktopDatabase, overrides: Record<string, unknown> = {}): void {
+    applyOmieReferenceData(database, "company-1", {
+      suppliers: [
+        {
+          id: 7001,
+          name: "Transportes Aguia LTDA",
+          document: "11222333000144",
+          phone: "1544445555",
+          city: "Sorocaba",
+          state: "SP",
+          tagsJson: ["Transportadora"],
+          ...overrides
+        }
+      ]
+    } as Parameters<typeof applyOmieReferenceData>[2]);
+  }
+
+  function readRow(database: DesktopDatabase): Record<string, unknown> {
+    return database.prepare("SELECT * FROM carriers WHERE omie_customer_id = 7001").get() as Record<
+      string,
+      unknown
+    >;
+  }
+
+  function backdate(database: DesktopDatabase): string {
+    const marker = "2020-01-01T00:00:00.000Z";
+    database
+      .prepare("UPDATE carriers SET updated_at = ? WHERE omie_customer_id = 7001")
+      .run(marker);
+    return marker;
+  }
+
+  it("NAO mexe no carimbo quando a passada nao traz nenhuma mudanca", () => {
+    const database = createDatabase();
+    applyPass(database);
+    const marker = backdate(database);
+
+    applyPass(database);
+
+    expect(readRow(database).updated_at).toBe(marker);
+    database.close();
+  });
+
+  it("mexe no carimbo quando QUALQUER coluna muda de valor", () => {
+    const casos: Array<[string, Record<string, unknown>]> = [
+      ["nome", { name: "Transportes Aguia Norte LTDA" }],
+      ["documento", { document: "99888777000166" }],
+      ["telefone", { phone: "1533332222" }],
+      ["email", { email: "contato@aguia.com.br" }],
+      ["cidade", { city: "Itu" }],
+      ["uf", { state: "MG" }],
+      ["cep", { zipcode: "18300000" }],
+      ["logradouro", { addressStreet: "Rodovia Castelo Branco km 90" }],
+      ["bairro", { neighborhood: "Centro" }],
+      ["codigo de integracao", { integrationCode: "KR-7001" }]
+    ];
+
+    for (const [rotulo, mudanca] of casos) {
+      const database = createDatabase();
+      applyPass(database);
+      const marker = backdate(database);
+
+      applyPass(database, mudanca);
+
+      expect(readRow(database).updated_at, `mudanca de ${rotulo}`).not.toBe(marker);
+      database.close();
+    }
+  });
+
+  it("mexe no carimbo quando a edicao local e marcada como ja sincronizada", () => {
+    // `sync_status` e `needs_push` nao sao colunas do OMIE: elas dependem do estado da
+    // propria linha. Uma transportadora editada na balanca e ainda nao enviada
+    // (needs_push = 1) que passa a needs_push = 0 muda de estado, e essa mudanca precisa
+    // chegar as outras maquinas.
+    const database = createDatabase();
+    applyPass(database);
+    database
+      .prepare(
+        "UPDATE carriers SET needs_push = 0, sync_status = 'pending' WHERE omie_customer_id = 7001"
+      )
+      .run();
+    const marker = backdate(database);
+
+    applyPass(database);
+
+    const row = readRow(database);
+    expect(row.sync_status).toBe("synced");
+    expect(row.updated_at).not.toBe(marker);
+    database.close();
+  });
+});

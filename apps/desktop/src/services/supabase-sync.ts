@@ -6854,6 +6854,50 @@ function findProductLocalId(
   return row?.id ?? null;
 }
 
+/**
+ * As colunas de DADOS do upsert de transportadoras vindas do OMIE (o cadastro de
+ * fornecedores). Mesma ideia das listas de clientes e produtos acima.
+ *
+ * Duas colunas nao sao `excluded` e precisam entrar na deteccao pelo valor EFETIVO, nao
+ * pelo literal: `sync_status` e `needs_push` dependem do estado atual da linha. Se
+ * ficassem de fora, uma transportadora que acabou de ser sincronizada com o OMIE mudaria
+ * de estado sem que as outras balancas ficassem sabendo.
+ */
+const OMIE_CARRIER_DATA_COLUMNS: readonly OmieUpsertColumn[] = [
+  omieOwned("company_id"),
+  omieOwned("omie_customer_id"),
+  omieOwned("omie_integration_code"),
+  omieOwned("name"),
+  omieOwned("document"),
+  omieOwned("phone"),
+  omieOwned("email"),
+  omieOwned("zipcode"),
+  omieOwned("address_street"),
+  omieOwned("address_number"),
+  omieOwned("address_complement"),
+  omieOwned("neighborhood"),
+  omieOwned("city"),
+  omieOwned("state"),
+  omieOwned("is_active"),
+  {
+    column: "sync_status",
+    expr: "CASE WHEN carriers.needs_push = 0 THEN 'synced' ELSE carriers.sync_status END"
+  },
+  {
+    column: "needs_push",
+    expr: "CASE WHEN carriers.needs_push = 0 THEN 0 ELSE carriers.needs_push END"
+  },
+  { column: "deleted_at", expr: "NULL" }
+];
+
+const OMIE_CARRIER_CHANGED_SQL = OMIE_CARRIER_DATA_COLUMNS.map(
+  ({ column, expr }) => `(${expr}) IS NOT carriers.${column}`
+).join("\n        OR ");
+
+const OMIE_CARRIER_SET_SQL = OMIE_CARRIER_DATA_COLUMNS.map(
+  ({ column, expr }) => `      ${column} = ${expr}`
+).join(",\n");
+
 function upsertOmieSuppliers(
   database: DesktopDatabase,
   companyId: string,
@@ -6867,26 +6911,15 @@ function upsertOmieSuppliers(
       is_active, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'omie', 'synced', 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(id) DO UPDATE SET
-      company_id = excluded.company_id,
-      omie_customer_id = excluded.omie_customer_id,
-      omie_integration_code = excluded.omie_integration_code,
-      name = excluded.name,
-      document = excluded.document,
-      phone = excluded.phone,
-      email = excluded.email,
-      zipcode = excluded.zipcode,
-      address_street = excluded.address_street,
-      address_number = excluded.address_number,
-      address_complement = excluded.address_complement,
-      neighborhood = excluded.neighborhood,
-      city = excluded.city,
-      state = excluded.state,
-      is_active = excluded.is_active,
-      sync_status = CASE WHEN carriers.needs_push = 0 THEN 'synced' ELSE carriers.sync_status END,
-      needs_push = CASE WHEN carriers.needs_push = 0 THEN 0 ELSE carriers.needs_push END,
+${OMIE_CARRIER_SET_SQL},
       last_synced_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-      deleted_at = NULL,
-      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      -- So anda quando alguma coluna mudou de fato: ver a nota do upsert de clientes.
+      -- Transportadora: 463 linhas, 81.889 UPDATEs na nuvem.
+      updated_at = CASE
+        WHEN ${OMIE_CARRIER_CHANGED_SQL}
+        THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        ELSE carriers.updated_at
+      END
   `);
 
   let persisted = 0;
