@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   arrangeReleases,
+  groupFleetVersions,
   hasBuildInProgress,
   isPromotionApplied,
   isPromotionStale,
@@ -9,7 +10,12 @@ import {
   rollbackActionFor,
   PROMOTION_TIMEOUT_MS
 } from "./desktop-updates";
-import type { PendingPromotion, ReleaseLike, ReleaseState } from "./desktop-updates";
+import type {
+  FleetDeviceLike,
+  PendingPromotion,
+  ReleaseLike,
+  ReleaseState
+} from "./desktop-updates";
 
 function release(
   version: string,
@@ -75,6 +81,26 @@ describe("isPromotionApplied", () => {
 
     expect(isPromotionApplied(antes, pending("0.8.193", "latest"))).toBe(false);
     expect(isPromotionApplied(depois, pending("0.8.193", "latest"))).toBe(true);
+  });
+
+  it("conclui o cancelamento do teste quando a versao volta para parada", () => {
+    const aindaEmTeste = [release("0.8.200", "teste"), release("0.8.199", "producao")];
+    const cancelou = [release("0.8.200", "parado"), release("0.8.199", "producao")];
+
+    expect(isPromotionApplied(aindaEmTeste, pending("0.8.200", "parar"))).toBe(false);
+    expect(isPromotionApplied(cancelou, pending("0.8.200", "parar"))).toBe(true);
+  });
+
+  it("cancelar o teste nao se confunde com reprovar", () => {
+    // Reprovar tambem volta a release para rascunho, mas deixa o marcador — e
+    // dar um pelo outro faria a tela devolver os botoes com o gesto errado
+    // concluido.
+    const reprovada = [release("0.8.200", "reprovada")];
+
+    expect(isPromotionApplied(reprovada, pending("0.8.200", "parar"))).toBe(false);
+    expect(isPromotionApplied([release("0.8.200", "parado")], pending("0.8.200", "reprovar"))).toBe(
+      false
+    );
   });
 
   it("conclui a reprovacao quando o marcador aparece", () => {
@@ -230,8 +256,46 @@ describe("arrangeReleases", () => {
     const emTeste = release("0.8.202", "teste", { newer: true });
     const { highlights } = arrangeReleases([emTeste, build, producao, anterior]);
 
-    expect(highlights["0.8.202"]).toBeUndefined();
+    // A que ja esta em teste tem selo proprio: "ultima gerada" e a que nao foi
+    // distribuida para anel nenhum.
+    expect(highlights["0.8.202"]).toBe("teste");
     expect(highlights["0.8.201"]).toBe("ultima");
+  });
+
+  it("a ordem do topo e producao, teste, ultima gerada e anterior", () => {
+    const emTeste = release("0.8.202", "teste", { newer: true });
+    const { ordered, highlights } = arrangeReleases([emTeste, build, producao, anterior, antiga]);
+
+    expect(ordered.map((row) => row.version)).toEqual([
+      "0.8.200",
+      "0.8.202",
+      "0.8.201",
+      "0.8.193",
+      "0.8.190"
+    ]);
+    expect(highlights).toEqual({
+      "0.8.200": "atual",
+      "0.8.202": "teste",
+      "0.8.201": "ultima",
+      "0.8.193": "anterior"
+    });
+  });
+
+  it("com duas pre-releases publicadas marca a mais nova, que e a que o teste recebe", () => {
+    const nova = release("0.8.202", "teste", { newer: true });
+    const velha = release("0.8.201", "teste", { newer: true });
+    const { highlights } = arrangeReleases([nova, velha, producao]);
+
+    expect(highlights["0.8.202"]).toBe("teste");
+    expect(highlights["0.8.201"]).toBeUndefined();
+  });
+
+  it("versao antiga em teste (volta atras em curso) sobe como a em teste, nao como anterior", () => {
+    const voltando = release("0.8.193", "teste", { older: true });
+    const { ordered, highlights } = arrangeReleases([producao, voltando, antiga]);
+
+    expect(ordered.map((row) => row.version)).toEqual(["0.8.200", "0.8.193", "0.8.190"]);
+    expect(highlights["0.8.193"]).toBe("teste");
   });
 
   it("build ainda compilando ja conta como o ultimo lancado", () => {
@@ -259,5 +323,69 @@ describe("arrangeReleases", () => {
 
   it("lista vazia nao quebra", () => {
     expect(arrangeReleases([])).toEqual({ ordered: [], highlights: {} });
+  });
+});
+
+describe("groupFleetVersions", () => {
+  function device(
+    id: string,
+    version: string | null,
+    overrides: Partial<FleetDeviceLike> = {}
+  ): FleetDeviceLike {
+    return { id, name: `Balanca ${id}`, version, ...overrides };
+  }
+
+  it("agrupa por versao instalada, da mais nova para a mais antiga", () => {
+    const groups = groupFleetVersions([
+      device("a", "0.8.193"),
+      device("b", "0.8.200"),
+      device("c", "0.8.200")
+    ]);
+
+    expect(groups.map((group) => group.version)).toEqual(["0.8.200", "0.8.193"]);
+    expect(groups[0].count).toBe(2);
+    expect(groups[0].devices.map((row) => row.id)).toEqual(["b", "c"]);
+  });
+
+  it("ordena por numero, e nao por texto (0.8.9 e mais antiga que 0.8.10)", () => {
+    const groups = groupFleetVersions([device("a", "0.8.9"), device("b", "0.8.10")]);
+
+    expect(groups.map((group) => group.version)).toEqual(["0.8.10", "0.8.9"]);
+  });
+
+  it("marca o papel de cada versao pelos aneis publicados", () => {
+    const groups = groupFleetVersions(
+      [device("a", "0.8.201"), device("b", "0.8.200"), device("c", "0.8.190")],
+      { productionVersion: "0.8.200", testVersion: "0.8.201" }
+    );
+
+    expect(groups.map((group) => group.role)).toEqual(["teste", "producao", "outra"]);
+  });
+
+  it("as balancas sem noticia ficam por ultimo, e nao entre as versoes antigas", () => {
+    // Nao saber a versao e diferente de estar atrasado: misturar as duas coisas
+    // esconderia a maquina de que ninguem tem noticia, que e o caso a olhar.
+    const groups = groupFleetVersions(
+      [device("a", null), device("b", "0.8.200"), device("c", "0.8.190")],
+      { productionVersion: "0.8.200" }
+    );
+
+    expect(groups.map((group) => group.version)).toEqual(["0.8.200", "0.8.190", null]);
+    expect(groups[2].role).toBe("desconhecida");
+  });
+
+  it("a fatia e sobre a frota inteira e soma 1", () => {
+    const groups = groupFleetVersions([
+      device("a", "0.8.200"),
+      device("b", "0.8.200"),
+      device("c", "0.8.190"),
+      device("d", null)
+    ]);
+
+    expect(groups.map((group) => group.share)).toEqual([0.5, 0.25, 0.25]);
+  });
+
+  it("frota vazia nao divide por zero", () => {
+    expect(groupFleetVersions([])).toEqual([]);
   });
 });

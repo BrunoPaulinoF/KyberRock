@@ -3,11 +3,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
 import {
   arrangeReleases,
+  groupFleetVersions,
   hasBuildInProgress,
   isPromotionApplied,
   isPromotionStale,
   nextRefreshDelayMs,
   rollbackActionFor,
+  type FleetDeviceLike,
+  type FleetVersionGroup,
   type PendingPromotion,
   type PromotionTarget,
   type ReleaseHighlight,
@@ -55,12 +58,28 @@ import {
 // oferecer um botao que seria recusado depois — o disparo responde na hora, mas
 // o resultado so aparece no run do Actions.
 //
-// ## As tres linhas do topo
+// ## As quatro linhas do topo
 //
-// A lista pode ter trinta versoes quase iguais. As tres que respondem as
+// A lista pode ter trinta versoes quase iguais. As quatro que respondem as
 // perguntas do dia a dia sobem e ganham selo (ver `lib/desktop-updates.ts`): a
-// que a frota esta recebendo, o ultimo build que o Actions gerou e ninguem
-// distribuiu, e a anterior a atual — que e para onde se volta se der problema.
+// que a frota esta recebendo, a que esta em teste, o ultimo build que o Actions
+// gerou e ninguem distribuiu, e a anterior a atual — que e para onde se volta
+// se der problema. As duas primeiras aparecem tambem como cartao no topo da
+// tela, porque sao as unicas que se consulta sem intencao de clicar em nada.
+//
+// ## Cancelar teste nao e reprovar
+//
+// Sair do anel de teste tinha uma porta so, e ela era definitiva: `reprovar`
+// marca a release para sempre e nem `force` a traz de volta. Mas quase toda
+// saida do teste e "a avaliacao acabou", nao "quebrou" — por isso o cancelar,
+// que devolve a versao a PARADO, de onde ela pode ir a teste de novo.
+//
+// ## O grafico da frota
+//
+// Liberar nao e instalar. Depois do clique a frota passa horas ou dias com duas
+// ou tres versoes ao mesmo tempo, e a maquina que fica dias sem fechar o app era
+// invisivel. O grafico mostra qual computador esta em qual versao, com o dado
+// que o proprio desktop reporta no `desktop-status`.
 //
 // ## Volta atras em duas etapas, e o que ela NAO faz
 //
@@ -99,10 +118,30 @@ export interface ReleaseRow {
   canSendToTest: boolean;
   canReleaseToProduction: boolean;
   canReject: boolean;
+  /** Ausente na funcao antiga: sem o campo a tela simplesmente nao oferece o botao. */
+  canCancelTest?: boolean;
+}
+
+/**
+ * Uma balanca e a versao que ELA esta rodando (`desktop-status` -> `app_version`).
+ *
+ * Ausente na funcao antiga; a tela trata lista vazia como "ainda nao da para
+ * saber" e esconde o grafico, em vez de mostrar uma frota vazia.
+ */
+export interface FleetDeviceRow extends FleetDeviceLike {
+  id: string;
+  name: string;
+  unitName: string | null;
+  version: string | null;
+  versionSeenAt: string | null;
+  updateChannel: "latest" | "beta";
+  isActive: boolean;
+  lastSeenAt: string | null;
 }
 
 interface ReleasesResponse {
   releases: ReleaseRow[];
+  devices?: FleetDeviceRow[];
   channelCounts: { latest: number; beta: number };
   canPromote: boolean;
   actionsUrl: string;
@@ -119,6 +158,7 @@ interface ReleasesResponse {
 export type PromotionIntent =
   | "beta"
   | "latest"
+  | "cancel-test"
   | "reprovar"
   | "rollback-test"
   | "rollback-production"
@@ -161,6 +201,32 @@ export const PROMOTION_ACTIONS: Record<PromotionIntent, ActionCopy> = {
     dispatched: (v) => `Liberando a versao ${v} para producao…`,
     done: (v) =>
       `Versao ${v} liberada para producao. As balancas recebem na proxima verificacao e instalam quando o operador fechar o app.`
+  },
+  /**
+   * Tira a versao do anel de teste sem condenar a release.
+   *
+   * Existe porque "reprovar" era a unica saida do teste e ela e definitiva: a
+   * release fica marcada para sempre e nao volta nem com `force`. Mas a maior
+   * parte das saidas do anel de teste nao e "quebrou" — e "a avaliacao acabou",
+   * "entrou outra versao no lugar" ou "subiu por engano". Nesses casos a versao
+   * volta para PARADO, de onde pode ir a teste de novo.
+   *
+   * A balanca de teste nao fica sem canal: com a pre-release fora do ar ela
+   * passa a enxergar a ultima aprovada, como antes de a versao subir.
+   */
+  "cancel-test": {
+    target: "parar",
+    force: false,
+    label: "Cancelar teste",
+    busyLabel: "Cancelando…",
+    variant: "warn",
+    confirm: (version) =>
+      `Cancelar o teste da versao ${version}?\n\n` +
+      "Ela sai do anel de teste e volta para parada — as balancas de teste voltam para a ultima versao aprovada na proxima verificacao.\n\n" +
+      "Nao e reprovar: a versao continua podendo ir para teste de novo depois.",
+    dispatched: (v) => `Cancelando o teste da versao ${v}…`,
+    done: (v) =>
+      `Teste da versao ${v} cancelado. Ela voltou para parada e as balancas de teste voltam para a ultima aprovada na proxima verificacao.`
   },
   reprovar: {
     target: "reprovar",
@@ -230,6 +296,7 @@ const STATE_LABEL: Record<string, { text: string; tone: Tone }> = {
 /** Selo das tres linhas que sobem para o topo. */
 const HIGHLIGHT_LABEL: Record<ReleaseHighlight, { text: string; tone: Tone }> = {
   atual: { text: "Versao atual", tone: "ok" },
+  teste: { text: "Em teste agora", tone: "info" },
   ultima: { text: "Ultima gerada", tone: "info" },
   anterior: { text: "Versao anterior", tone: "warn" }
 };
@@ -269,12 +336,16 @@ function formatClock(value: number | null): string {
 export function intentsFor(release: ReleaseRow): PromotionIntent[] {
   const rollback = rollbackActionFor(release);
   if (rollback === "test") return ["rollback-test"];
-  if (rollback === "production") return ["rollback-production"];
+  // A volta atras publicou esta versao antiga no anel de teste. Alem de seguir
+  // para a frota, precisa dar para DESISTIR: sem isso a unica saida seria
+  // reprovar a versao boa que existe justamente para servir de porto seguro.
+  if (rollback === "production") return ["rollback-production", "cancel-test"];
   if (rollback === "resume") return ["resume"];
 
   const intents: PromotionIntent[] = [];
   if (release.canSendToTest) intents.push("beta");
   if (release.canReleaseToProduction) intents.push("latest");
+  if (release.canCancelTest) intents.push("cancel-test");
   if (release.canReject) intents.push("reprovar");
   return intents;
 }
@@ -554,6 +625,82 @@ export function ReleaseNotesModal({
   );
 }
 
+// ---------------------------------------------------------------------------
+// O que a frota esta RODANDO
+//
+// A lista de versoes responde o que foi LIBERADO. Nao respondia o que chegou:
+// liberar para producao nao instala nada — a balanca verifica a cada 30 min e so
+// troca quando o operador fecha o app. Entre o clique e a frota inteira
+// atualizada passam horas ou dias, e a maquina que fica dias sem fechar o app
+// era invisivel: ninguem sabia que ela estava tres versoes atras.
+//
+// O grafico e uma barra por versao instalada, da mais nova para a mais antiga, e
+// abaixo dela os computadores que estao nela — porque a pergunta que se faz de
+// verdade nao e "quantos por cento", e "QUAL balanca ficou para tras".
+//
+// A versao vem do proprio desktop (`desktop-status` -> `app_version`), entao
+// balanca offline mantem a ultima leitura e balanca que nunca se reportou
+// aparece em "sem informacao" — que fica por ultimo e nao se mistura com as
+// versoes antigas: nao saber e diferente de estar atrasado.
+// ---------------------------------------------------------------------------
+
+const FLEET_ROLE_LABEL: Record<FleetVersionGroup["role"], { text: string; tone: Tone }> = {
+  producao: { text: "Producao", tone: "ok" },
+  teste: { text: "Teste", tone: "info" },
+  outra: { text: "Fora dos aneis", tone: "warn" },
+  desconhecida: { text: "Sem informacao", tone: "neutral" }
+};
+
+export function FleetVersionBars({
+  groups,
+  total
+}: {
+  groups: readonly FleetVersionGroup[];
+  total: number;
+}) {
+  return (
+    <div className="adm-fleet">
+      {groups.map((group) => {
+        const role = FLEET_ROLE_LABEL[group.role];
+        return (
+          <div className="adm-fleet-row" key={group.version ?? "sem-informacao"}>
+            <div className="adm-fleet-head">
+              <span className="adm-cell-primary adm-mono">{group.version ?? "Sem informacao"}</span>
+              <Badge tone={role.tone}>{role.text}</Badge>
+              <span className="adm-fleet-count">
+                {group.count} de {total} {total === 1 ? "balanca" : "balancas"}
+              </span>
+            </div>
+            <div className="adm-fleet-bar">
+              <div
+                className={`adm-fleet-fill adm-fleet-fill-${group.role}`}
+                style={{ width: `${Math.max(group.share * 100, 2)}%` }}
+              />
+            </div>
+            <div className="adm-fleet-devices">
+              {group.devices.map((device) => (
+                <span
+                  key={device.id}
+                  className={`adm-fleet-chip${device.isActive === false ? " adm-fleet-chip-off" : ""}`}
+                  title={
+                    device.isActive === false
+                      ? "Balanca bloqueada: nao recebe atualizacao."
+                      : undefined
+                  }
+                >
+                  {device.name}
+                  {device.unitName ? <em> · {device.unitName}</em> : null}
+                  {device.updateChannel === "beta" ? <strong> · teste</strong> : null}
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 interface PendingAction extends PendingPromotion {
   intent: PromotionIntent;
 }
@@ -719,6 +866,20 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
 
   const { ordered, highlights } = useMemo(() => arrangeReleases(data?.releases ?? []), [data]);
   const currentVersion = ordered.find((release) => release.isCurrentProduction)?.version ?? null;
+  // A versao publicada como pre-release mais nova e a que as balancas de teste
+  // realmente recebem — a lista chega do GitHub da mais nova para a mais antiga.
+  const testRelease = ordered.find((release) => release.state === "teste") ?? null;
+  const productionRelease = ordered.find((release) => release.isCurrentProduction) ?? null;
+
+  const devices = data?.devices;
+  const fleet = useMemo(
+    () =>
+      groupFleetVersions(devices ?? [], {
+        productionVersion: currentVersion,
+        testVersion: testRelease?.version ?? null
+      }),
+    [devices, currentVersion, testRelease]
+  );
 
   async function promote(release: ReleaseRow, intent: PromotionIntent) {
     const action = PROMOTION_ACTIONS[intent];
@@ -885,8 +1046,34 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
         </Note>
       )}
 
+      {/*
+        Os dois primeiros cartoes respondem, sem ler a tabela, as duas perguntas
+        que se faz ao abrir esta aba: o que a frota recebe hoje e o que esta
+        sendo avaliado para entrar. Sao a mesma verdade da lista (os selos
+        "Versao atual" e "Em teste agora"), so que legivel de longe.
+      */}
       {data && (
         <StatGrid>
+          <Stat
+            label="Versao em producao"
+            value={productionRelease?.version ?? "—"}
+            tone={productionRelease ? "ok" : "warn"}
+            hint={
+              productionRelease
+                ? `Publicada em ${formatDateTime(productionRelease.publishedAt)}`
+                : "Nenhuma versao estavel publicada."
+            }
+          />
+          <Stat
+            label="Versao em teste"
+            value={testRelease?.version ?? "—"}
+            tone={testRelease ? "accent" : "neutral"}
+            hint={
+              testRelease
+                ? `Publicada em ${formatDateTime(testRelease.publishedAt)}`
+                : "Nenhuma versao no anel de teste."
+            }
+          />
           <Stat label="Balancas em producao" value={String(data.channelCounts.latest)} />
           <Stat
             label="Balancas em teste"
@@ -902,7 +1089,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
 
       <Panel
         title="Versoes publicadas"
-        description="No topo: a versao que a frota recebe, o ultimo build gerado pelo GitHub e a versao anterior — que e para onde a volta atras leva. O link de cada linha abre o texto dos PRs que entraram naquela versao."
+        description="No topo: a versao que a frota recebe, a que esta em teste, o ultimo build gerado pelo GitHub e a versao anterior — que e para onde a volta atras leva. O link de cada linha abre o texto dos PRs que entraram naquela versao."
         flush
         actions={
           <>
@@ -930,6 +1117,28 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
           }
         />
       </Panel>
+
+      {devices !== undefined && (
+        <Panel
+          title="Versoes instaladas na frota"
+          description="O que cada computador esta RODANDO — que nao e o que foi liberado: a balanca verifica a cada 30 min e so troca de versao quando o operador fecha o app."
+        >
+          {devices.length === 0 ? (
+            <p className="adm-cell-sub">Nenhuma balanca ativada ainda.</p>
+          ) : (
+            <>
+              <FleetVersionBars groups={fleet} total={devices.length} />
+              {fleet.some((group) => group.version === null) && (
+                <p className="adm-cell-sub">
+                  "Sem informacao" e a balanca que ainda nao reportou a versao — instalacao anterior
+                  a este campo ou computador que nao se conectou desde entao. Nao quer dizer
+                  desatualizada.
+                </p>
+              )}
+            </>
+          )}
+        </Panel>
+      )}
 
       {notesVersion && (
         <ReleaseNotesModal

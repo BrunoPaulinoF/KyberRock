@@ -21,6 +21,7 @@ function row(
     canSendToTest: false,
     canReleaseToProduction: false,
     canReject: false,
+    canCancelTest: false,
     ...overrides
   };
 }
@@ -36,7 +37,18 @@ describe("intentsFor", () => {
     expect(intentsFor(build)).toEqual(["beta", "reprovar"]);
   });
 
-  it("versao em teste no caminho normal: liberar para producao e reprovar", () => {
+  it("versao em teste no caminho normal: liberar, cancelar o teste e reprovar", () => {
+    const teste = row("0.8.201", "teste", {
+      isNewerThanProduction: true,
+      canReleaseToProduction: true,
+      canCancelTest: true,
+      canReject: true
+    });
+
+    expect(intentsFor(teste)).toEqual(["latest", "cancel-test", "reprovar"]);
+  });
+
+  it("funcao antiga (sem canCancelTest) nao inventa o botao de cancelar", () => {
     const teste = row("0.8.201", "teste", {
       isNewerThanProduction: true,
       canReleaseToProduction: true,
@@ -62,10 +74,12 @@ describe("intentsFor", () => {
     expect(intentsFor(anterior)).toEqual(["rollback-test"]);
   });
 
-  it("versao anterior ja em teste oferece regredir a producao", () => {
+  it("versao anterior ja em teste oferece regredir a producao e desistir", () => {
+    // Sem o cancelar, a unica saida de uma volta atras iniciada por engano seria
+    // reprovar a versao boa que existe para servir de porto seguro.
     const emTeste = row("0.8.193", "teste", { isOlderThanProduction: true, canReject: true });
 
-    expect(intentsFor(emTeste)).toEqual(["rollback-production"]);
+    expect(intentsFor(emTeste)).toEqual(["rollback-production", "cancel-test"]);
   });
 
   it("versao de onde se voltou oferece retomar a producao", () => {
@@ -93,6 +107,21 @@ describe("PROMOTION_ACTIONS", () => {
     expect(PROMOTION_ACTIONS["rollback-production"].force).toBe(true);
     expect(PROMOTION_ACTIONS.resume.target).toBe("latest");
     expect(PROMOTION_ACTIONS.resume.force).toBe(true);
+  });
+
+  it("cancelar o teste apenas despublica: nao forca e nao condena a versao", () => {
+    // `parar` devolve a release ao rascunho; `reprovar` marca a versao para
+    // sempre. Trocar um alvo pelo outro aqui seria irreversivel.
+    expect(PROMOTION_ACTIONS["cancel-test"].target).toBe("parar");
+    expect(PROMOTION_ACTIONS["cancel-test"].force).toBe(false);
+    expect(PROMOTION_ACTIONS["cancel-test"].confirm).not.toBeNull();
+  });
+
+  it("a confirmacao de cancelar deixa claro que nao e reprovar", () => {
+    const text = PROMOTION_ACTIONS["cancel-test"].confirm?.("0.8.201", "0.8.200") ?? "";
+
+    expect(text).toContain("0.8.201");
+    expect(text.toLowerCase()).toContain("nao e reprovar");
   });
 
   it("os gestos do caminho normal nunca forcam", () => {

@@ -71,6 +71,16 @@ export interface DesktopReleaseSummary {
   canReleaseToProduction: boolean;
   /** Da para reprovar: tirar do ar e travar a promocao para sempre. */
   canReject: boolean;
+  /**
+   * Da para tirar do anel de teste sem condenar a versao.
+   *
+   * Reprovar e definitivo (marca a release para sempre); cancelar o teste so
+   * devolve a versao ao estado "parado", de onde ela pode ser enviada para
+   * teste de novo. Existe porque a maioria das saidas do anel de teste nao e
+   * "quebrou": e "a avaliacao acabou", "entrou outra versao no lugar" ou "isso
+   * subiu por engano".
+   */
+  canCancelTest: boolean;
 }
 
 export interface SummarizeOptions {
@@ -207,7 +217,8 @@ export function summarizeDesktopReleases(
         isNewerThanProduction: false,
         canSendToTest: false,
         canReleaseToProduction: false,
-        canReject: false
+        canReject: false,
+        canCancelTest: false
       };
     })
     .filter((row) => row.version.length > 0);
@@ -238,6 +249,11 @@ export function summarizeDesktopReleases(
     // Reprovar vale para o que ainda pode subir. Na producao atual nao: tirar
     // do ar a versao que a frota recebe deixaria as balancas sem canal.
     row.canReject = (row.state === "teste" || row.state === "parado") && !row.isCurrentProduction;
+
+    // Cancelar o teste so existe para o que ESTA em teste. Na producao atual
+    // nao: la a flag de prerelease nem esta ligada, e despublicar a versao que
+    // a frota recebe deixaria as balancas sem canal.
+    row.canCancelTest = row.state === "teste" && !row.isCurrentProduction;
   }
 
   return rows;
