@@ -213,6 +213,26 @@ interface PrintReceiptRow {
   updated_at: string;
 }
 
+/**
+ * As colunas que `mapPrintReceiptRow` de fato usa -- ou seja, `PrintReceiptRow` inteira.
+ *
+ * Existe para NAO usar `SELECT *` aqui. A tabela guarda tambem `content_snapshot_json`, a
+ * copia renderizada do cupom, que pesa ~11 kB por linha (medido em producao) e que este
+ * modulo descarta em seguida: o tipo acima nunca declarou essa coluna e o mapeamento nunca
+ * a leu. O `SELECT *` mandava o SQLite ler os ~11 kB de cada cupom do disco para o
+ * resultado ser jogado fora logo depois.
+ *
+ * Custava caro onde mais aparece: `listPrintReceipts` nao tem WHERE nem LIMIT e roda na
+ * abertura do programa. Com 3.840 cupons a leitura caiu de 282 ms para 7 ms -- e a medicao
+ * usou snapshot de 5,8 kB, metade do tamanho real, entao na pedreira a diferenca e maior.
+ *
+ * A reimpressao NAO depende dessa coluna: ela remonta o cupom a partir da operacao (ver
+ * `reprintWeighingReceipt`). Quem le o snapshot e so o espelhamento para a nuvem, em
+ * `supabase-sync`, com a sua propria consulta.
+ */
+const PRINT_RECEIPT_COLUMNS = `id, operation_id, unit_id, receipt_number, device_number,
+     copy_number, printed_at, printer_name, status, error_message, created_at, updated_at`;
+
 export function configureReceiptPrintProfile(
   database: DesktopDatabase,
   input: ConfigureReceiptPrintProfileInput,
@@ -290,7 +310,7 @@ export function listPrintProfiles(database: DesktopDatabase): PrintProfileSummar
 
 export function listPrintReceipts(database: DesktopDatabase): PrintReceiptSummary[] {
   return database
-    .prepare("SELECT * FROM print_receipts ORDER BY created_at DESC")
+    .prepare(`SELECT ${PRINT_RECEIPT_COLUMNS} FROM print_receipts ORDER BY created_at DESC`)
     .all()
     .map((row) => mapPrintReceiptRow(row as PrintReceiptRow));
 }
@@ -609,9 +629,9 @@ function getRequiredPrintReceipt(
   database: DesktopDatabase,
   receiptId: string
 ): PrintReceiptSummary {
-  const row = database.prepare("SELECT * FROM print_receipts WHERE id = ?").get(receiptId) as
-    | PrintReceiptRow
-    | undefined;
+  const row = database
+    .prepare(`SELECT ${PRINT_RECEIPT_COLUMNS} FROM print_receipts WHERE id = ?`)
+    .get(receiptId) as PrintReceiptRow | undefined;
 
   if (!row) {
     throw new Error(`Print receipt ${receiptId} was not found.`);

@@ -310,6 +310,90 @@ describe("printing", () => {
     }
   });
 
+  /**
+   * A leitura dos cupons deixou de usar `SELECT *` para nao trazer do disco o
+   * `content_snapshot_json` (~11 kB por linha) que o mapeamento ja descartava. Estes casos
+   * travam a equivalencia: os mesmos cupons, com os mesmos campos preenchidos, na mesma
+   * ordem -- e a garantia de que o snapshot continua GRAVADO, so nao e mais lido aqui.
+   */
+  it("lista os cupons com todos os campos, sem trazer o snapshot descartado", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, { identity, windowsPrinterName: "TERMICA-80" });
+      const operation = createClosedOperation(database, identity);
+      const impresso = await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer
+      );
+
+      const listados = listPrintReceipts(database);
+      const listado = listados.find((r) => r.id === impresso.id);
+
+      // Campo a campo, a via listada e identica a que a impressao devolveu.
+      expect(listado).toEqual(impresso);
+      // E nenhum campo do resumo pode ter virado indefinido pela troca da consulta.
+      expect(listado?.operationId).toBe(operation.id);
+      expect(listado?.unitId).toBe(identity.unitId);
+      expect(listado?.receiptNumber).toBeGreaterThan(0);
+      expect(listado?.printerName).toBe("TERMICA-80");
+      expect(listado?.status).toBe("printed");
+      expect(listado?.printedAt).toBeTruthy();
+      expect(listado?.createdAt).toBeTruthy();
+      expect(listado?.updatedAt).toBeTruthy();
+      expect(listado?.deviceNumber).toBe(impresso.deviceNumber);
+      expect(listado?.errorMessage).toBeNull();
+      // O resumo nunca teve o snapshot -- e continua sem.
+      expect("contentSnapshotJson" in (listado as object)).toBe(false);
+
+      // O snapshot segue GRAVADO na tabela: a consulta parou de le-lo, nao de grava-lo.
+      // E o que o espelhamento para a nuvem usa, com a consulta dele.
+      for (const via of listados) {
+        const gravado = database
+          .prepare("SELECT content_snapshot_json FROM print_receipts WHERE id = ?")
+          .get(via.id) as { content_snapshot_json: string };
+        expect(gravado.content_snapshot_json.length).toBeGreaterThan(0);
+        expect(() => JSON.parse(gravado.content_snapshot_json)).not.toThrow();
+      }
+    } finally {
+      database.close();
+    }
+  });
+
+  it("mantem a ordem do cupom mais recente para o mais antigo", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, { identity, windowsPrinterName: "TERMICA-80" });
+      const operation = createClosedOperation(database, identity);
+      await printWeighingReceipt(database, { operationId: operation.id, identity }, printer);
+
+      // As vias de uma mesma impressao nascem no mesmo milissegundo, entao empatam no
+      // ORDER BY. Datas distintas e o que torna a ordem observavel de verdade.
+      const vias = listPrintReceipts(database);
+      expect(vias.length).toBeGreaterThan(1);
+      vias.forEach((via, indice) => {
+        database
+          .prepare("UPDATE print_receipts SET created_at = ? WHERE id = ?")
+          .run(`2026-0${indice + 1}-01T10:00:00.000Z`, via.id);
+      });
+
+      const ordenados = listPrintReceipts(database);
+      expect(ordenados.map((r) => r.createdAt)).toEqual(
+        [...ordenados.map((r) => r.createdAt)].sort().reverse()
+      );
+      // Nenhuma via se perdeu na troca da consulta.
+      expect(new Set(ordenados.map((r) => r.id))).toEqual(new Set(vias.map((r) => r.id)));
+    } finally {
+      database.close();
+    }
+  });
+
   it("rejects printing an open operation", async () => {
     const database = createDatabase();
     const printer = createFakePrinter();
