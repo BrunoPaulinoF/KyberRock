@@ -1,6 +1,10 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
+import {
+  resolveUpdateNotice,
+  type DeliveredUpdateNotice
+} from "../_shared/desktop-update-notice.ts";
 
 type DeviceRow = {
   id: string;
@@ -13,6 +17,11 @@ type DeviceRow = {
   is_active: boolean;
   // Ausente na leitura de emergencia (migracao ainda nao aplicada).
   update_channel?: string | null;
+  // Aviso de atualizacao disparado no painel. Ausentes ate a migracao rodar.
+  update_notice_version?: string | null;
+  update_notice_sent_at?: string | null;
+  update_notice_seen_at?: string | null;
+  app_version?: string | null;
 };
 
 /**
@@ -88,21 +97,27 @@ async function selectDeviceRow(
   supabase: ReturnType<typeof createClient>,
   deviceId: string
 ): Promise<{ data: Record<string, unknown> | null; error: unknown }> {
-  const withChannel = await supabase
+  // Da leitura mais completa para a mais antiga: cada coluna acrescentada por
+  // migracao entra numa tentativa propria, porque um select com coluna
+  // desconhecida falha INTEIRO — e o chamador trata erro de leitura como
+  // "Desktop nao registrado", o que bloquearia a frota ate a migracao rodar.
+  const attempts = [
+    `${DEVICE_BASE_COLUMNS}, update_channel, app_version, update_notice_version, update_notice_sent_at, update_notice_seen_at`,
+    `${DEVICE_BASE_COLUMNS}, update_channel`,
+    DEVICE_BASE_COLUMNS
+  ];
+
+  let last = await supabase
     .from("device_registrations")
-    .select(`${DEVICE_BASE_COLUMNS}, update_channel`)
+    .select(attempts[0])
     .eq("id", deviceId)
     .single();
-  if (!withChannel.error) {
-    return { data: withChannel.data as Record<string, unknown> | null, error: null };
+  for (const columns of attempts.slice(1)) {
+    if (!last.error) break;
+    last = await supabase.from("device_registrations").select(columns).eq("id", deviceId).single();
   }
 
-  const fallback = await supabase
-    .from("device_registrations")
-    .select(DEVICE_BASE_COLUMNS)
-    .eq("id", deviceId)
-    .single();
-  return { data: fallback.data as Record<string, unknown> | null, error: fallback.error };
+  return { data: last.data as Record<string, unknown> | null, error: last.error };
 }
 
 Deno.serve(async (req) => {
@@ -205,16 +220,46 @@ Deno.serve(async (req) => {
   // push e as migracoes sao aplicadas a parte, e um update com coluna
   // desconhecida falha INTEIRO — aqui isso apagaria o `last_seen_at` de toda a
   // frota ate a migracao ser aplicada.
-  const touch = { last_seen_at: checkedAt, updated_at: checkedAt };
-  const touched = appVersion
-    ? await supabase
-        .from("device_registrations")
-        .update({ ...touch, app_version: appVersion, app_version_seen_at: checkedAt })
-        .eq("id", typedDevice.id)
-    : { error: null };
-  if (touched.error || !appVersion) {
+  const touch: Record<string, unknown> = { last_seen_at: checkedAt, updated_at: checkedAt };
+
+  /**
+   * Aviso de atualizacao que o painel deixou para esta balanca.
+   *
+   * A decisao (entregar, apagar, nada) vive em `_shared/desktop-update-notice.ts`,
+   * puro e testado. O que muda aqui e so o efeito colateral: a marca de entrega
+   * e gravada UMA vez — reescreve-la a cada ping faria toda balanca ligada
+   * parecer avisada agora mesmo, e e justamente essa data que separa "maquina
+   * desligada" de "recado entregue e ninguem clicou".
+   */
+  const noticeOutcome = resolveUpdateNotice(typedDevice, appVersion);
+  const enrichedTouch: Record<string, unknown> = { ...touch };
+  if (appVersion) {
+    enrichedTouch.app_version = appVersion;
+    enrichedTouch.app_version_seen_at = checkedAt;
+  }
+  if (noticeOutcome.kind === "clear") {
+    enrichedTouch.update_notice_version = null;
+    enrichedTouch.update_notice_sent_at = null;
+    enrichedTouch.update_notice_seen_at = null;
+  } else if (noticeOutcome.kind === "deliver" && noticeOutcome.markSeen) {
+    enrichedTouch.update_notice_seen_at = checkedAt;
+  }
+
+  // Tolerante a coluna ausente pelo mesmo motivo de sempre: as funcoes sobem no
+  // push e as migracoes sao aplicadas a parte, e um update com coluna
+  // desconhecida falha INTEIRO — aqui isso apagaria o `last_seen_at` de toda a
+  // frota ate a migracao ser aplicada. O `last_seen_at` e o que nao pode faltar;
+  // versao e aviso sao dispensaveis nessa janela.
+  const touched =
+    Object.keys(enrichedTouch).length > Object.keys(touch).length
+      ? await supabase.from("device_registrations").update(enrichedTouch).eq("id", typedDevice.id)
+      : { error: null };
+  if (touched.error) {
     await supabase.from("device_registrations").update(touch).eq("id", typedDevice.id);
   }
+
+  const updateNotice: DeliveredUpdateNotice | null =
+    noticeOutcome.kind === "deliver" ? noticeOutcome.notice : null;
 
   // Legenda multi-desktop: todos os computadores da unidade (nome + cor), para o
   // desktop identificar o responsavel por cada operacao criada por outra maquina.
@@ -243,6 +288,11 @@ Deno.serve(async (req) => {
     // (mesmo que 'latest') e o que permite o painel devolver uma balanca de teste
     // para producao. Omitir seria indistinguivel de "nuvem antiga".
     updateChannel: normalizeUpdateChannel(typedDevice.update_channel),
+    // Aviso de atualizacao pedido no painel. Vai SEMPRE, inclusive `null`: e o
+    // `null` que faz o desktop apagar um aviso ja atendido ou cancelado — omitir
+    // seria indistinguivel de "nuvem antiga", e o recado ficaria pendurado na
+    // tela do operador para sempre.
+    updateNotice,
     // Principais de precos da pedreira. Os campos so entram na resposta quando a coluna
     // existe: omitir e o sinal de "nuvem antiga", e o desktop mantem o que ja sabia.
     //

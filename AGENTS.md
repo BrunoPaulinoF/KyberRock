@@ -453,7 +453,7 @@ coisa: _Enviar para teste_, _Liberar para producao_, _Cancelar teste_, _Reprovar
 Ela tambem mostra, em cartao no topo, a versao que esta em producao e a que esta em teste, e quantas
 balancas estao em cada anel — uma versao em teste com zero balancas marcadas nunca sera avaliada.
 
-Seis coisas na tela merecem atencao de quem for mexer nela:
+Sete coisas na tela merecem atencao de quem for mexer nela:
 
 - **Ela se recarrega sozinha** e nao espera clique: promover so dispara um run, e o estado da
   versao muda no GitHub segundos depois. O ritmo esta em `apps/loader-web/src/lib/desktop-updates.ts`
@@ -475,6 +475,22 @@ Seis coisas na tela merecem atencao de quem for mexer nela:
   (`PANEL_PROMOTE_TARGETS` no `admin-api`). A versao **anterior** publicada em teste por uma volta
   atras tambem ganha esse botao: sem ele, desistir de uma regressao exigiria reprovar a versao boa
   que existe justamente para ser o porto seguro.
+- **Avisar a frota para atualizar e um recado, nao um comando.** O botao no painel do grafico
+  (`request_desktop_update`) marca `device_registrations.update_notice_version` nas balancas que
+  estao atras da **producao**; o `desktop-status` entrega o recado no ping que ja existe e o
+  desktop sobe o aviso na tela do operador, com "Atualizar agora". O painel **nao instala e nao
+  reinicia nada**: aplicar a atualizacao reinicia o app, e uma balanca no meio de uma pesagem
+  nao pode ser reiniciada por um clique de outra cidade — quem escolhe a hora e quem esta na
+  pedreira. O aviso se apaga sozinho quando aquela balanca reporta a versao pedida (regra em
+  `_shared/desktop-update-notice.ts`), e a entrega e marcada uma unica vez
+  (`update_notice_seen_at`), que e o que separa "maquina desligada" de "recado entregue e
+  ninguem clicou". No desktop o recado e gravado localmente (`services/update-notice.ts`) para
+  sobreviver a reinicio e a queda de internet, e viaja para a tela dentro do
+  `DesktopAccessStatus`, que o renderer ja consulta de 5 em 5 s — sem canal novo. O aviso
+  reenviado (mesma versao, disparo novo) volta a interromper a tela de proposito: reenviar e o
+  que se faz quando o primeiro pedido foi ignorado. Como o recado chega da nuvem e nao do
+  updater, o "Atualizar agora" dele **verifica antes de instalar** — sem isso o clique cairia
+  num updater parado e nao faria nada.
 - **O grafico da frota responde o que a lista nao respondia: quem JA instalou.** Liberar nao e
   instalar — a balanca verifica a cada 30 min e so troca quando o operador fecha o app, entao a
   frota passa horas ou dias com duas ou tres versoes ao mesmo tempo e a maquina que fica dias sem

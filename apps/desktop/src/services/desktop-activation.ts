@@ -8,6 +8,12 @@ import {
   writeStoredSupabaseConfig
 } from "./supabase-sync.js";
 import { readInstalledAppVersion } from "./app-version.js";
+import {
+  applyUpdateNoticeFromCloud,
+  readUpdateNotice,
+  shouldShowUpdateNotice,
+  type DesktopUpdateNotice
+} from "./update-notice.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
 import { writeUpdateChannel } from "./update-channel.js";
 import { applyPriceMasterFromCloud } from "./price-authority.js";
@@ -48,6 +54,13 @@ export interface DesktopAccessStatus {
    * nao uma decisao do administrador — a tela mostra isso ao operador.
    */
   lastError: string | null;
+  /**
+   * Pedido de atualizacao vindo do painel, quando esta balanca ainda nao esta na
+   * versao pedida. A tela do operador transforma isso no aviso com o botao de
+   * atualizar agora — instalar reinicia o app, entao quem decide a hora e quem
+   * esta na balanca.
+   */
+  updateNotice: DesktopUpdateNotice | null;
   checkedAt: string;
   /**
    * Pedreiras ativas da empresa, devolvidas quando a ativacao precisa saber em
@@ -128,6 +141,14 @@ interface DesktopStatusResponse {
   priceMasterDeviceId?: string | null;
   priceMasterDeviceName?: string | null;
   unitDevices?: CloudUnitDevice[];
+  /**
+   * Aviso de atualizacao deixado no painel para esta balanca.
+   *
+   * `null` e uma resposta com significado — "nao ha aviso", e o que apaga um
+   * recado ja atendido ou cancelado. Campo AUSENTE e nuvem antiga: nesse caso o
+   * que esta gravado aqui nao e tocado (ver `applyUpdateNoticeFromCloud`).
+   */
+  updateNotice?: DesktopUpdateNotice | null;
   checkedAt?: string;
 }
 
@@ -360,6 +381,13 @@ export async function validateDesktopAccess(
     if (data?.allowed) {
       writeLocalSetting(database, "last_license_check_at", checkedAt, checkedAt);
       applyUpdateChannelFromCloud(database, data.updateChannel);
+      // Best-effort, como o canal: um recado de atualizacao nunca pode derrubar
+      // a validacao que libera a operacao.
+      try {
+        applyUpdateNoticeFromCloud(database, data.updateNotice, now);
+      } catch {
+        // Ignora falha ao gravar o aviso.
+      }
       applyPriceMasterFromCloud(database, readPriceMasters(data), credentials.deviceId, now);
       // Atualiza a legenda multi-desktop (nome + cor de cada computador da
       // unidade). Best-effort: nunca derruba a validacao de acesso.
@@ -569,8 +597,27 @@ function buildAccessStatus(
     deviceId: credentials?.deviceId ?? null,
     lastSuccessfulCheckAt,
     graceExpiresAt,
-    lastError: readStringLocalSetting(database, ACCESS_LAST_ERROR_KEY)
+    lastError: readStringLocalSetting(database, ACCESS_LAST_ERROR_KEY),
+    updateNotice: readPendingUpdateNotice(database)
   };
+}
+
+/**
+ * O aviso de atualizacao que a tela deve mostrar agora — ou `null`.
+ *
+ * A conferencia contra a versao instalada acontece aqui, e nao na nuvem, porque
+ * a balanca chega na versao pedida ANTES de o `desktop-status` limpar o aviso
+ * (ele so apaga no ping seguinte). Sem isto, o app recem-atualizado abriria
+ * pedindo para atualizar. Best-effort: leitura de aviso nao derruba o status de
+ * acesso.
+ */
+function readPendingUpdateNotice(database: DesktopDatabase): DesktopUpdateNotice | null {
+  try {
+    const notice = readUpdateNotice(database);
+    return shouldShowUpdateNotice(notice, readInstalledAppVersion()) ? notice : null;
+  } catch {
+    return null;
+  }
 }
 
 function getCompanyAndUnitNames(

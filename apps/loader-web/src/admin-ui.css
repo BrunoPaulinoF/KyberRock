@@ -1357,3 +1357,9 @@
   opacity: 0.55;
   text-decoration: line-through;
 }
+
+/* Aviso de atualizacao pendente naquela balanca (ver DesktopUpdates.tsx). */
+.adm-fleet-chip-notice {
+  font-weight: 600;
+  color: #b45309;
+}

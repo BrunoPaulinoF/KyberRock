@@ -98,6 +98,8 @@ type AdminAction =
   | "get_ai_settings"
   | "update_ai_settings"
   | "list_desktop_releases"
+  | "request_desktop_update"
+  | "clear_desktop_update_notice"
   | "get_desktop_release_notes"
   | "promote_desktop_release"
   | "reveal_credentials";
@@ -196,6 +198,7 @@ async function selectDevicesForList(supabase: SupabaseAdminClient) {
   // Da mais completa para a mais antiga: cada coluna acrescentada por migracao entra numa
   // tentativa propria, para a lista continuar carregando no projeto que ainda nao a tem.
   const attempts = [
+    `${DEVICE_LIST_COLUMNS}, update_channel, is_price_master, app_version, app_version_seen_at, update_notice_version, update_notice_sent_at, update_notice_seen_at`,
     `${DEVICE_LIST_COLUMNS}, update_channel, is_price_master, app_version, app_version_seen_at`,
     `${DEVICE_LIST_COLUMNS}, update_channel, is_price_master`,
     `${DEVICE_LIST_COLUMNS}, update_channel`,
@@ -983,6 +986,13 @@ Deno.serve(async (req) => {
         unitName: unitNames.get(String(row.unit_id ?? "")) ?? null,
         version: typeof row.app_version === "string" ? row.app_version : null,
         versionSeenAt: typeof row.app_version_seen_at === "string" ? row.app_version_seen_at : null,
+        // Aviso de atualizacao pendente nesta balanca — e se ele ja chegou nela.
+        noticeVersion:
+          typeof row.update_notice_version === "string" ? row.update_notice_version : null,
+        noticeSentAt:
+          typeof row.update_notice_sent_at === "string" ? row.update_notice_sent_at : null,
+        noticeSeenAt:
+          typeof row.update_notice_seen_at === "string" ? row.update_notice_seen_at : null,
         updateChannel: normalizeUpdateChannel(row.update_channel),
         isActive: row.is_active !== false,
         lastSeenAt: typeof row.last_seen_at === "string" ? row.last_seen_at : null
@@ -1072,6 +1082,91 @@ Deno.serve(async (req) => {
           : null,
         bodiesUnavailable: bodiesUnavailable(detailed)
       });
+    }
+
+    /**
+     * Pede a uma ou mais balancas que atualizem para uma versao.
+     *
+     * Nao instala nada e nao pode instalar: o desktop reinicia para aplicar a
+     * atualizacao, e uma balanca pesando caminhao nao pode ser reiniciada pela
+     * nuvem. O que isto faz e deixar o recado — o `desktop-status` o entrega no
+     * ping que ja existe e o operador ve na tela dele, com o botao de atualizar
+     * agora. Quem decide a hora continua sendo quem esta na balanca.
+     *
+     * Os ids vem da tela de proposito: e ela que ja sabe, pelo grafico da frota,
+     * quais balancas estao atras da versao pedida. Aqui so se confere o formato
+     * — mandar o recado para quem ja esta na versao seria inofensivo (o proprio
+     * `desktop-status` apaga o aviso no primeiro ping), mas apareceria no painel
+     * como um aviso pendente que ninguem pediu.
+     */
+    if (body.action === "request_desktop_update") {
+      const version = String(payload.version ?? "")
+        .replace(/^v/, "")
+        .trim();
+      if (!/^\d+\.\d+\.\d+$/.test(version)) {
+        return jsonResponse({ error: "Versao invalida." }, 400);
+      }
+
+      const deviceIds = Array.isArray(payload.deviceIds)
+        ? (payload.deviceIds as unknown[]).filter(
+            (id): id is string => typeof id === "string" && id.length > 0
+          )
+        : [];
+      if (deviceIds.length === 0) {
+        return jsonResponse({ error: "Nenhuma balanca informada." }, 400);
+      }
+
+      const sentAt = new Date().toISOString();
+      const { error } = await supabase
+        .from("device_registrations")
+        .update({
+          update_notice_version: version,
+          update_notice_sent_at: sentAt,
+          // Zerado a cada disparo: a marca responde "esta balanca recebeu ESTE
+          // recado", nao "ja recebeu algum um dia".
+          update_notice_seen_at: null,
+          updated_at: sentAt
+        })
+        .in("id", deviceIds);
+      if (error) {
+        if (/update_notice/.test(error.message ?? "")) {
+          return jsonResponse(
+            {
+              error:
+                "As colunas de aviso de atualizacao ainda nao existem no banco. Aplique a migracao 202608280003_device_update_notice.sql e tente de novo."
+            },
+            409
+          );
+        }
+        throw error;
+      }
+
+      return jsonResponse({ ok: true, version, notified: deviceIds.length, sentAt });
+    }
+
+    /** Cancela o aviso pendente — o recado sai da tela do operador no proximo ping. */
+    if (body.action === "clear_desktop_update_notice") {
+      const deviceIds = Array.isArray(payload.deviceIds)
+        ? (payload.deviceIds as unknown[]).filter(
+            (id): id is string => typeof id === "string" && id.length > 0
+          )
+        : [];
+      if (deviceIds.length === 0) {
+        return jsonResponse({ error: "Nenhuma balanca informada." }, 400);
+      }
+
+      const { error } = await supabase
+        .from("device_registrations")
+        .update({
+          update_notice_version: null,
+          update_notice_sent_at: null,
+          update_notice_seen_at: null,
+          updated_at: new Date().toISOString()
+        })
+        .in("id", deviceIds);
+      if (error) throw error;
+
+      return jsonResponse({ ok: true, cleared: deviceIds.length });
     }
 
     if (body.action === "promote_desktop_release") {

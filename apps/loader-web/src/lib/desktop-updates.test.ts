@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   arrangeReleases,
+  devicesNeedingUpdateNotice,
+  devicesWithPendingNotice,
   groupFleetVersions,
   hasBuildInProgress,
   isPromotionApplied,
@@ -387,5 +389,67 @@ describe("groupFleetVersions", () => {
 
   it("frota vazia nao divide por zero", () => {
     expect(groupFleetVersions([])).toEqual([]);
+  });
+});
+
+describe("devicesNeedingUpdateNotice", () => {
+  function device(
+    id: string,
+    version: string | null,
+    overrides: Partial<FleetDeviceLike> = {}
+  ): FleetDeviceLike {
+    return { id, name: `Balanca ${id}`, version, ...overrides };
+  }
+
+  it("chama quem esta atras da versao pedida", () => {
+    const alvo = devicesNeedingUpdateNotice(
+      [device("a", "0.8.200"), device("b", "0.8.193")],
+      "0.8.200"
+    );
+
+    expect(alvo.map((row) => row.id)).toEqual(["b"]);
+  });
+
+  it("chama tambem quem nunca reportou versao", () => {
+    // Nao saber onde a maquina esta e o motivo mais forte para chama-la.
+    const alvo = devicesNeedingUpdateNotice([device("a", null)], "0.8.200");
+
+    expect(alvo.map((row) => row.id)).toEqual(["a"]);
+  });
+
+  it("nao chama balanca bloqueada: ela nao recebe atualizacao nenhuma", () => {
+    // O aviso ficaria pendente para sempre, porque nada o resolveria.
+    const alvo = devicesNeedingUpdateNotice(
+      [device("a", "0.8.193", { isActive: false })],
+      "0.8.200"
+    );
+
+    expect(alvo).toEqual([]);
+  });
+
+  it("sem versao de destino nao chama ninguem", () => {
+    expect(devicesNeedingUpdateNotice([device("a", "0.8.193")], null)).toEqual([]);
+  });
+
+  it("reenviar para quem ja foi avisado continua valendo", () => {
+    // O primeiro pedido pode ter sido ignorado; o disparo novo reabre o aviso
+    // na tela do operador.
+    const alvo = devicesNeedingUpdateNotice(
+      [device("a", "0.8.193", { noticeVersion: "0.8.200" })],
+      "0.8.200"
+    );
+
+    expect(alvo.map((row) => row.id)).toEqual(["a"]);
+  });
+});
+
+describe("devicesWithPendingNotice", () => {
+  it("lista so quem tem aviso pendente", () => {
+    const devices: FleetDeviceLike[] = [
+      { id: "a", name: "A", version: "0.8.193", noticeVersion: "0.8.200" },
+      { id: "b", name: "B", version: "0.8.200" }
+    ];
+
+    expect(devicesWithPendingNotice(devices).map((row) => row.id)).toEqual(["a"]);
   });
 });
