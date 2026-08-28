@@ -1,6 +1,7 @@
 # Fase 1 - Design Tecnico E Modelo De Dados
 
-Status: draft inicial criado.
+Status: concluida. Os quatro documentos desta pasta deixaram de ser draft e viraram a
+documentacao viva dos assuntos que cobrem — sao mantidos junto com o codigo.
 
 ## Objetivo
 
@@ -16,32 +17,32 @@ Definir contratos, entidades, status, sincronizacao, multiunidade e regras de co
 
 ## Status Dos Entregaveis
 
-| Entregavel                                    | Status       |
-| --------------------------------------------- | ------------ |
-| Documento tecnico em `docs/ARCHITECTURE.md`   | Criado       |
-| Modelo de dados SQLite                        | Draft criado |
-| Modelo de dados Supabase Postgres             | Draft criado |
-| Contratos TypeScript compartilhados           | Draft criado |
-| Identificadores globais e locais              | Definido     |
-| Empresa, unidade e dispositivo desde o inicio | Definido     |
-| Status de operacao                            | Definido     |
-| Fila local de sincronizacao                   | Definida     |
-| Idempotencia Supabase e OMIE                  | Definida     |
-| Estrategia de conflito                        | Definida     |
-| Cancelamento antes/depois do OMIE             | Definido     |
-| Backup e restauracao local                    | Definido     |
-| Logs locais e cloud                           | Definido     |
-| Estrategia de seguranca                       | Draft criado |
-| Frete no modelo                               | Draft criado |
+Todos entregues e hoje implementados no codigo:
+
+| Entregavel                                    | Status                                            |
+| --------------------------------------------- | ------------------------------------------------- |
+| Documento tecnico em `docs/ARCHITECTURE.md`   | Mantido como visao consolidada do sistema         |
+| Modelo de dados SQLite                        | Implementado (migrations ate a versao 57)         |
+| Modelo de dados Supabase Postgres             | Implementado (`supabase/migrations/`)             |
+| Contratos TypeScript compartilhados           | Implementados em `packages/*` e no preload        |
+| Identificadores globais e locais              | Implementado                                      |
+| Empresa, unidade e dispositivo desde o inicio | Implementado, com varias balancas por pedreira    |
+| Status de operacao                            | Implementado (`packages/shared/src/operation.ts`) |
+| Fila local de sincronizacao                   | Implementada                                      |
+| Idempotencia Supabase e OMIE                  | Implementada                                      |
+| Estrategia de conflito                        | Implementada, incluindo dono do preco por balanca |
+| Cancelamento antes/depois do OMIE             | Implementado                                      |
+| Backup e restauracao local                    | Implementados                                     |
+| Logs locais e cloud                           | Implementados                                     |
+| Estrategia de seguranca                       | Implementada                                      |
+| Frete no modelo                               | Implementado (quatro modalidades + legado)        |
 
 ## Decisoes Para A Fase 2
 
 - SQLite desktop: `better-sqlite3`.
 - Site do carregador: Vite + React + TypeScript, com deploy inicial via Docker no EasyPanel.
 
-## Pendencias Antes Da Fase 3
+## Pendencias Que Sobreviveram
 
-- Revisar estes documentos com o usuario.
-- Confirmar se o modelo inicial atende a expansao multiunidade.
-- Confirmar formula exata de frete.
-- Definir migrations SQLite iniciais.
+- A formula de frete por distancia continua parametrizavel por cliente/produto, sem formula unica
+  fechada comercialmente.
