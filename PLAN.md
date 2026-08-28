@@ -5,6 +5,13 @@ Data: 2026-06-06
 Base: `PRD.md`  
 Objetivo: organizar a construcao do KyberRock por fases executaveis, cobrindo o PRD completo, os riscos tecnicos principais e os criterios de aceite para iniciar, validar, pilotar e colocar o sistema em producao.
 
+> **Como ler este documento hoje.** O plano de fases e o registro da intencao original; ele foi
+> cumprido e o sistema entrou em producao. Cada fase carrega uma linha `Status:` com o que
+> aconteceu de fato — inclusive onde a implementacao divergiu do previsto. Modulos que nasceram
+> depois do plano (backoffice financeiro, painel administrativo completo, frota de versoes,
+> central de ajuda, credito/carteira/faturamento futuro) nao tem fase propria aqui: a descricao
+> atual do sistema esta em `docs/ARCHITECTURE.md`.
+
 ## 1. Decisoes Iniciais Confirmadas
 
 - O gerenciador de pacotes sera `npm`.
@@ -294,7 +301,7 @@ Criar o aplicativo desktop Windows com banco local, migrations, backup e capacid
 
 ## 7.1. Fase 3.1 - Instalador E Atualizacoes Do Desktop
 
-Status: base implementada. O app tem configuracao de instalador Windows e fluxo de update manual com botao. A publicacao real de updates depende de definir a URL HTTPS final na VPS/EasyPanel e publicar os artefatos nesse endpoint.
+Status: concluida. Instalador Windows NSIS e auto-update publicados por GitHub Releases (repo privado), com download publico via Edge Function `desktop-download`. A distribuicao evoluiu depois: a release nasce em rascunho e e promovida em dois aneis pela aba Atualizacoes do painel — ver `AGENTS.md`, secao "Desktop versioning".
 
 ### Objetivo
 
@@ -364,7 +371,7 @@ Construir o fluxo operacional principal usando balanca simulada antes da integra
 
 ## 9. Fase 5 - Impressao Local No Windows
 
-Status: implementada com validacao fisica pendente. O desktop lista impressoras do Windows, salva perfil de cupom 80 mm, imprime automaticamente apos fechamento, registra falhas sem perder a operacao e permite reimpressao auditada como segunda via. Teste fisico depende do PC com impressora instalada.
+Status: concluida. O desktop lista impressoras do Windows, salva perfil de cupom 80 mm, imprime automaticamente apos fechamento, registra falhas sem perder a operacao e permite reimpressao auditada como segunda via. Alem do caminho por `webContents.print`, existe envio ESC-POS bruto, inclusive para impressora de rede. Validado em impressora termica real.
 
 ### Objetivo
 
@@ -396,6 +403,11 @@ Implementar e validar a impressao do cupom termico de 80 mm usando impressora in
 
 ## 10. Fase 6 - Integracao Real Com A Balanca
 
+Status: concluida. Adapters Toledo por serial e por TCP/IP em `packages/scale-adapters`, com
+reconexao por backoff, parser de protocolo proprio, captura so de peso estavel e tela de
+diagnostico/descoberta no desktop. A balanca virtual continua disponivel para teste. Nunca houve
+campo de peso manual.
+
 ### Objetivo
 
 Substituir a balanca simulada por um adapter real configuravel. A Toledo 950 IDLCG 2 e o primeiro alvo conhecido, mas a implementacao deve preservar suporte a outros modelos e conexoes.
@@ -426,9 +438,9 @@ Substituir a balanca simulada por um adapter real configuravel. A Toledo 950 IDL
 - Fase 4 concluida.
 - Acesso ao PC da balanca.
 
-## 10. Fase 7.1 - Portal De Administracao
+## 10.1. Fase 7.1 - Portal De Administracao
 
-Status: implementada. Portal admin em `/admin` no mesmo site do carregador. Login exclusivo com Google para `kybernantech@gmail.com`. Admin consegue criar, editar e excluir pedreiras e usuarios carregadores. Carregadores nao podem se cadastrar sozinhos.
+Status: concluida e muito ampliada. Portal admin em `/admin` no mesmo site do carregador, com login por usuario e senha guardados em secret (Edge Function `admin-auth`). Alem de pedreiras, unidades e usuarios carregadores, o painel gerencia a frota de balancas (numero, cor, nome, unidade, canal de atualizacao, balanca principal de precos), as versoes do desktop, o backoffice financeiro e o assistente de IA. Carregadores nao podem se cadastrar sozinhos.
 
 ### Objetivo
 
@@ -460,6 +472,11 @@ Criar um portal de administracao escalavel para gerenciar multiplas pedreiras/un
 - Fase 7 concluida.
 
 ## 11. Fase 7 - Supabase Base E Sincronizacao Cloud
+
+Status: concluida e ampliada. Alem da projecao das operacoes, a nuvem passou a compartilhar o
+cadastro entre as balancas da mesma pedreira (`desktop-sync` / `desktop-pull`), com pull
+incremental por cursor e dono do cadastro de preco e do bloco comercial na balanca principal
+(`docs/preco-balanca-principal.md`).
 
 ### Objetivo
 
@@ -500,6 +517,9 @@ Criar/configurar o projeto Supabase e implementar a sincronizacao cloud necessar
 
 ## 12. Fase 8 - Site Do Carregador
 
+Status: concluida. O carregador ve as solicitacoes em aberto da sua unidade e marca a conclusao
+do carregamento, que volta para a balanca pelo pull (`loading_requests.loader_completed_at`).
+
 ### Objetivo
 
 Criar o site online para o carregador visualizar solicitacoes de carregamento em aberto.
@@ -529,6 +549,10 @@ Criar o site online para o carregador visualizar solicitacoes de carregamento em
 - Fase 7 concluida.
 
 ## 13. Fase 9 - Integracao OMIE: Cadastros E Sincronizacao
+
+Status: concluida. Toda chamada ao OMIE sai da Edge Function `omie-sync` — cadastros, dados de
+referencia, envio de cliente e de transportadora criados localmente, e espelho dos adiantamentos.
+As credenciais ficam por empresa, do lado servidor.
 
 ### Objetivo
 
@@ -570,6 +594,11 @@ Implementar a primeira parte da integracao OMIE, focada em cadastros e dados fin
 
 ## 14. Fase 10 - Regras Comerciais, Precos E Bloqueio Financeiro
 
+Status: concluida e ampliada. Alem de tabela de preco vinculada ao cliente, existem preco padrao
+por produto e preco especial por cliente, senha para alteracao de preco, e o cadastro de preco tem
+dono quando a pedreira elege balanca principal. O bloqueio financeiro usa limite e titulos em
+aberto do OMIE mais as operacoes locais ainda nao sincronizadas.
+
 ### Objetivo
 
 Implementar as regras comerciais que determinam preco, condicao de pagamento e bloqueio antes de liberar a entrada do caminhao.
@@ -603,6 +632,10 @@ Implementar as regras comerciais que determinam preco, condicao de pagamento e b
 - Cadastros basicos disponiveis.
 
 ## 15. Fase 11 - Integracao OMIE: Pedido, Operacao Interna E Cancelamentos
+
+Status: concluida e ampliada. Pedido de venda, ordem de servico, faturamento, conferencia de
+faturamento (numero da nota), cancelamento e baixa de adiantamento, todos idempotentes por codigo
+de integracao. Detalhe dos fluxos em `docs/phase-1/sync-strategy.md`.
 
 ### Objetivo
 
@@ -640,6 +673,10 @@ Enviar operacoes fechadas ao OMIE no formato correto e tratar cancelamentos/alte
 - Fase 10 concluida.
 
 ## 16. Fase 12 - Relatorios E Fechamento Diario
+
+Status: concluida e ampliada. Relatorios diario, mensal, por cliente, por produto, controle de
+caminhoes, fechamento de faturas e relatorio de vendas, com exportacao PDF/Excel. O envio agendado
+roda na nuvem (pg_cron de hora em hora) por e-mail, e existe canal de WhatsApp por pedreira.
 
 ### Objetivo
 
@@ -679,6 +716,11 @@ Implementar relatorios operacionais e gerenciais conforme PRD.
 
 ## 17. Fase 13 - Fretes
 
+Status: implementada. Quatro modalidades de frete no seletor (valor na nota, valor so no sistema,
+so o transportador na nota, sem ocorrencia), mais duas legadas so para leitura; frete separado do
+produto no cupom e nos relatorios, e envio no formato do OMIE. A formula por distancia continua
+parametrizavel por cliente/produto, sem formula unica fechada comercialmente.
+
 ### Objetivo
 
 Implementar o modulo de fretes com base nas decisoes comerciais iniciais, mantendo pontos pendentes parametrizaveis.
@@ -712,6 +754,11 @@ Implementar o modulo de fretes com base nas decisoes comerciais iniciais, manten
 - Fase 11 concluida.
 
 ## 18. Fase 14 - Seguranca, Backup, Observabilidade E Hardening
+
+Status: implementada, com hardening continuo. Segredos fora do banco e do Git, escopo derivado do
+registro do dispositivo, cofre de senhas cifrado, backup automatico e restauracao com
+`integrity_check`, telas de pendencia de sync separadas por alvo. Checklist atual em
+`docs/phase-1/security-and-operations.md`.
 
 ### Objetivo
 
@@ -749,6 +796,11 @@ Reforcar seguranca, confiabilidade, diagnostico e suporte antes do piloto real.
 
 ## 19. Fase 15 - Instalador, Atualizacao E Operacao Local
 
+Status: implementada e substituida por um fluxo mais conservador. O instalador NSIS e o
+auto-update existem, mas distribuir deixou de ser automatico: a release nasce em rascunho e e
+promovida em dois aneis (teste e producao) pela aba Atualizacoes do painel. Ver `AGENTS.md`,
+secao "Desktop versioning".
+
 ### Objetivo
 
 Preparar o desktop para instalacao real no Windows da pedreira, com configuracao, atualizacao e recuperacao operacional.
@@ -784,6 +836,8 @@ Preparar o desktop para instalacao real no Windows da pedreira, com configuracao
 
 ## 20. Fase 16 - Operacao Assistida E Piloto Na Pedreira
 
+Status: concluida. O sistema roda em pedreira real, com mais de uma balanca por unidade.
+
 ### Objetivo
 
 Rodar o KyberRock em ambiente real controlado antes da substituicao total do sistema antigo.
@@ -817,6 +871,11 @@ Rodar o KyberRock em ambiente real controlado antes da substituicao total do sis
 - Fase 15 concluida.
 
 ## 21. Fase 17 - Entrada Em Producao
+
+Status: em producao. Alem do previsto nesta fase, a plataforma ganhou multiempresa com backoffice
+de cobranca (`docs/financeiro.md`), painel administrativo com gestao de frota e central de ajuda
+com assistente. Esses modulos nao tem fase propria neste plano; a descricao atual esta em
+`docs/ARCHITECTURE.md`.
 
 ### Objetivo
 

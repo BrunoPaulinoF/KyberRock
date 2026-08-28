@@ -1,6 +1,6 @@
 # Fase 3.1 - Instalador E Atualizacoes
 
-Status: pipeline automatico implementado.
+Status: implementada. O fluxo de distribuicao evoluiu depois desta fase — ver a nota abaixo.
 
 ## Entregue
 
@@ -11,24 +11,39 @@ Status: pipeline automatico implementado.
 - botoes de verificar / instalar agora continuam disponiveis como override manual;
 - provider **GitHub Releases** (repo privado) configurado no `build.publish` do
   `apps/desktop/package.json`;
-- **pipeline CI** `.github/workflows/desktop-release.yml` que gera e publica o instalador
-  automaticamente a cada push na `main`.
+- **pipeline CI** `.github/workflows/desktop-release.yml` que gera o instalador a cada push na
+  `main` (hoje como **rascunho**; a publicacao passou a ser um passo separado —
+  `desktop-promote.yml`).
 
 ## Como O Update Funciona Hoje
 
-1. Merge/push na `main` (tocando `apps/desktop/**`, `packages/**` ou o manifest raiz).
-2. O workflow define a versao como `MAJOR.MINOR.<run_number>` (sempre crescente, sem bump manual).
-3. Injeta o token de leitura (`GH_UPDATER_TOKEN`) no app e roda `npm run dist:win:publish` num
-   runner Windows.
-4. O `electron-builder --publish always` cria um GitHub Release `vX.Y.Z` (publicado, nao draft)
-   com `latest.yml` + `.exe` + `.blockmap`, usando o `GITHUB_TOKEN` automatico do Actions. Uma
-   copia tambem fica como artefato do run.
-5. O desktop instalado verifica a cada 30 min, autentica com o token de leitura embutido e detecta
-   a versao nova.
-6. Baixa em segundo plano automaticamente.
-7. Instala na proxima vez que o operador fechar o app (sem interromper a operacao).
+> Atualizado: **compilar deixou de ser distribuir**. O fluxo descrito na entrega original — todo
+> push na `main` virando atualizacao automatica em todas as pedreiras — foi substituido por
+> release em rascunho + promocao explicita em dois aneis. O passo a passo completo (workflows,
+> armadilhas do `latest.yml`, regras da tela) esta em `AGENTS.md`, secao "Desktop versioning".
 
-O gatilho e **todo push na `main`** (ou seja, todo merge de PR gera uma versao nova).
+1. Push na `main` tocando `apps/desktop/**`, `packages/**` ou o manifesto da raiz dispara o
+   `desktop-release.yml`.
+2. A versao e derivada como `MAJOR.MINOR.<run_number>` (sempre crescente, sem bump manual) e o
+   token de leitura (`GH_UPDATER_TOKEN`) e injetado no build.
+3. A Release `vX.Y.Z` nasce **como rascunho** — estado que updater nenhum enxerga. O build
+   compila com `--publish never` e os assets (`.exe`, `.blockmap`, `latest.yml`) sobem depois,
+   ja conferido que o `better_sqlite3.node` entrou no pacote.
+4. Distribuir e um ato explicito, pela aba **Atualizacoes** do painel (ou pelo
+   `desktop-promote.yml`), em dois aneis:
+
+   | Anel       | Estado da release           | Quem recebe                                       |
+   | ---------- | --------------------------- | ------------------------------------------------- |
+   | _(nenhum)_ | rascunho                    | ninguem — o build so existe                       |
+   | teste      | publicada como _prerelease_ | so as balancas marcadas como teste (canal `beta`) |
+   | producao   | publicada como estavel      | todas as balancas (canal `latest`, o padrao)      |
+
+5. O desktop instalado verifica periodicamente, autentica com o token embutido e detecta a versao
+   nova do seu anel; o anel de cada balanca fica em `device_registrations.update_channel`.
+6. Baixa em segundo plano e instala na proxima vez que o operador fechar o app.
+
+Consequencia boa do modelo: tres merges seguidos geram tres builds parados; ao liberar so o
+ultimo, a balanca da um salto unico em vez de instalar tres vezes.
 
 ## Secret Necessario (GitHub Actions)
 
@@ -71,5 +86,4 @@ workflow. A publicacao (escrita) usa o `GITHUB_TOKEN` do Actions, que nunca sai 
 
 ## Pendente Para Release Real
 
-- Criar o secret `GH_UPDATER_TOKEN`;
-- decidir assinatura de codigo Windows antes do piloto externo.
+- Decidir assinatura de codigo Windows antes de distribuicao externa mais ampla.

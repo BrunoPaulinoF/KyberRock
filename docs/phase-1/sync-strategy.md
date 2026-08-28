@@ -1,6 +1,7 @@
-# Sync Strategy - Fase 1
+# Sync Strategy
 
-Status: draft inicial.
+Status: documento vivo. Os fluxos marcados como "(implementado)" descrevem o comportamento
+atual do codigo; o resto e a regra de desenho que ele segue.
 
 ## Objetivo
 
@@ -17,10 +18,15 @@ Garantir que o desktop opere offline, preserve dados localmente e sincronize com
 
 ## Alvos De Sync
 
-| Target   | Responsabilidade                                        | Frequencia                     |
-| -------- | ------------------------------------------------------- | ------------------------------ |
-| Supabase | Operacoes abertas/fechadas/canceladas para cloud e site | A cada poucos minutos e manual |
-| OMIE     | Cadastros, pedidos, OS e financeiro                     | A cada 30 minutos e manual     |
+| Target           | Responsabilidade                                          | Frequencia                           |
+| ---------------- | --------------------------------------------------------- | ------------------------------------ |
+| Supabase (push)  | Operacoes, cupons e cadastro compartilhado                | 30 min por padrao (5 a 720) e manual |
+| Supabase (pull)  | Cadastro das outras balancas e historico da unidade       | Mesmo ciclo do push                  |
+| OMIE             | Cadastros, pedidos, OS e financeiro                       | 30 min por padrao (5 a 720) e manual |
+| `desktop-status` | Heartbeat: bloqueio, nome/cor, canal, balancas principais | A cada 5 s                           |
+
+Os intervalos ficam em `local_settings` e sao editaveis na tela (`cloud-scheduler.ts` e
+`omie-scheduler.ts`).
 
 ## Ciclo Da Fila
 
@@ -354,16 +360,68 @@ como o pedido de venda, e o faturamento (NFS-e) e feito dentro do OMIE.
   tentativa a mais alimenta o mesmo bloqueio. A fila (`OmieQueueManager`) guarda o horario
   da liberacao e recusa localmente o que sobrou da passada, sem sair para a rede.
 
+## Cadastro Compartilhado Entre Balancas (implementado)
+
+Numa pedreira com mais de um computador, o cadastro nao vive so na maquina que digitou. Cada
+balanca publica o que cadastrou e recebe o das outras.
+
+**Push** (`CADASTRO_PUSH_ENTITIES` em `apps/desktop/src/services/supabase-sync.ts`), incremental
+por cursor de `updated_at`, uma entidade por vez: `customers`, `products`, `carriers`, `drivers`,
+`vehicles`, os quatro vinculos (`customerCarriers`, `customerVehicles`, `driverCarriers`,
+`vehicleCarriers`), preco (`productDefaultPrices`, `customerSpecialPrices`, `priceTables`,
+`priceTableItems`, `customerPriceTables`), `customerFreightRules`,
+`customerFutureBillingInvoices`, `paymentTerms`, `paymentMethods`, `accounts` e
+`customerCreditMovements`.
+
+**Pull** (`desktop-pull`): as mesmas entidades por empresa, mais operacoes, solicitacoes de
+carregamento, cupons, dispositivos e destinatarios de relatorio por unidade. `cadastroSince` e
+`historySince` fazem o incremental; omiti-los pede a passada completa, que se autocorrige. A
+paginacao ordena por `id` para nao pular nem repetir linha.
+
+Tres cuidados que o codigo mantem de proposito:
+
+- **Exclusao logica vira `is_active = false`** na nuvem: as tabelas espelhadas nao tem
+  `deleted_at`.
+- **Ordem de gravacao no desktop**: `carriers` e `payment_methods` entram **antes** de
+  `customers`, porque o bloco comercial do cliente aponta para esses ids. Do lado da nuvem, os
+  clientes sao publicados antes das transportadoras e das formas de pagamento — por isso as duas
+  colunas de id em `public.customers` **nao tem FOREIGN KEY**: com FK, o primeiro cliente
+  apontando para uma transportadora ainda nao publicada derrubaria o lote inteiro. Quem le
+  resolve o id ausente mantendo o vinculo local anterior (`resolveMirroredId`).
+- **Preco e bloco comercial tem dono** (proxima secao).
+
+## Dono Do Cadastro De Preco E Do Bloco Comercial (implementado)
+
+As balancas marcadas como principais no painel (`device_registrations.is_price_master`, pode ser
+mais de uma por empresa) sao donas do cadastro de preco e do bloco comercial/credito do cliente.
+A secundaria exibe e nao publica (`PRICE_MASTERED_CADASTRO_KEYS`, `masteredColumns`), e a edicao
+e recusada no **runtime**, nao so na tela.
+
+O desempate segue a `priceConflictPolicy`: `cloud` na secundaria, `newest` entre principais,
+`local` sem principal eleita. O `newest` compara o `updated_at` da propria linha (empate no maior
+`id`), de modo que as duas pontas decidem igual seja qual for a ordem do sync — "quem publica por
+ultimo" faria duas principais se derrubarem alternadamente. A mesma regra vive nos dois runtimes:
+`cloudRowWins` no desktop, `winsConflict` na nuvem.
+
+O empate tambem existe do lado da nuvem (mesmo indice unico, e o `desktop-sync` grava por `id`):
+quando quem publica e uma principal, a linha concorrente cede antes do upsert e a linha perdedora
+**sai do payload** (`_shared/price-master-conflicts.ts`) — tenta-la seria um 23505 derrubando o
+lote a cada ciclo. E o pull **nao apaga** preco: quem tira o par disputado e o tombstone, que
+chega junto com o preco novo.
+
+Guia completo, incluindo troca de papel e migracoes: `docs/preco-balanca-principal.md`.
+
 ## Conflitos
 
-| Caso                                     | Resolucao                                        |
-| ---------------------------------------- | ------------------------------------------------ |
-| Campo OMIE alterado localmente           | OMIE vence; campo local bloqueado                |
-| Campo KyberRock alterado em dois lugares | Versao mais recente vence, com auditoria         |
-| Operacao fechada alterada                | Exige motivo e auditoria                         |
-| Operacao enviada ao OMIE alterada        | Exige fluxo especifico de cancelamento/alteracao |
-| Supabase fora do ar                      | Mantem fila local pendente                       |
-| OMIE fora do ar                          | Mantem fila local pendente                       |
+| Caso                                      | Resolucao                                        |
+| ----------------------------------------- | ------------------------------------------------ |
+| Campo OMIE alterado localmente            | OMIE vence; campo local bloqueado                |
+| Preco ou bloco comercial em duas balancas | Principal vence; entre principais, `updated_at`  |
+| Campo KyberRock alterado em dois lugares  | Versao mais recente vence, com auditoria         |
+| Operacao fechada alterada                 | Exige motivo e auditoria                         |
+| Operacao enviada ao OMIE alterada         | Exige fluxo especifico de cancelamento/alteracao |
+| Supabase fora do ar                       | Mantem fila local pendente                       |
+| OMIE fora do ar                           | Mantem fila local pendente                       |
 
 ## Retry
 

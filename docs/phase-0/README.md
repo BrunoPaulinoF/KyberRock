@@ -4,18 +4,20 @@ Objetivo: validar cedo os pontos que podem inviabilizar ou alterar a arquitetura
 
 ## Status Atual
 
-| Item                        | Status  | Observacao                                                                                      |
-| --------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
-| Node.js                     | OK      | `v24.13.0` no ambiente atual                                                                    |
-| npm                         | OK      | `11.8.0` no ambiente atual                                                                      |
-| Git                         | OK      | Repositorio inicializado em `main`                                                              |
-| Inventario do PC da balanca | Parcial | Inventario atual registrado; este ambiente nao e o PC real da balanca                           |
-| Spike da balanca            | Parcial | Estrategia de adapters configuraveis iniciada; leitura real pendente                            |
-| Spike de impressao          | Parcial | Estrategia de impressoras Windows configuraveis iniciada; cupom 80 mm ainda precisa ser testado |
-| Spike OMIE                  | Parcial | Documentacao publica mapeada; autenticacao real pendente                                        |
-| Politica de segredos        | Inicial | `.gitignore` criado e politica documentada                                                      |
-| Pendencias de frete         | Parcial | Respostas iniciais registradas; formula exata ainda pendente                                    |
-| Riscos restantes            | Inicial | Lista inicial registrada                                                                        |
+> **Registro historico.** Esta fase existiu para destravar decisoes de arquitetura antes da
+> implementacao. Os spikes que estavam pendentes foram resolvidos pelo produto em producao — a
+> tabela abaixo registra onde cada um parou.
+
+| Item                        | Status    | Onde ficou                                                                   |
+| --------------------------- | --------- | ---------------------------------------------------------------------------- |
+| Node.js / npm / Git         | OK        | Ambiente de desenvolvimento                                                  |
+| Inventario do PC da balanca | Resolvido | Balancas reais em operacao                                                   |
+| Spike da balanca            | Resolvido | Adapters Toledo serial e TCP em `packages/scale-adapters`                    |
+| Spike de impressao          | Resolvido | Impressao Windows e ESC-POS bruto em `apps/desktop/src/services`             |
+| Spike OMIE                  | Resolvido | Integracao completa na Edge Function `omie-sync`                             |
+| Politica de segredos        | Em uso    | `docs/phase-1/security-and-operations.md`                                    |
+| Pendencias de frete         | Parcial   | Quatro modalidades implementadas; formula por distancia segue parametrizavel |
+| Riscos restantes            | Historico | `risks.md`                                                                   |
 
 ## Arquivos Da Fase
 
@@ -30,9 +32,6 @@ Objetivo: validar cedo os pontos que podem inviabilizar ou alterar a arquitetura
 
 ## Proximo Passo Pratico
 
-Executar os spikes no computador real da balanca, diferente do ambiente atual, com acesso a:
-
-- uma balanca real conectada, sendo Toledo 950 IDLCG 2 o primeiro modelo conhecido;
-- impressora termica instalada no Windows;
-- credenciais OMIE reais em ambiente seguro;
-- permissao para testar leitura, impressao e chamadas controladas ao OMIE.
+Concluido. O sistema roda em pedreira real, com balanca Toledo conectada, impressora termica
+instalada e credenciais OMIE em ambiente seguro. O estado atual do sistema esta em
+`docs/ARCHITECTURE.md`.
