@@ -207,4 +207,34 @@ describe("cache store query", () => {
       database.close();
     }
   });
+
+  /**
+   * A ordem alfabetica em repouso passou a usar um `Intl.Collator` unico em vez de
+   * `localeCompare` por comparacao. Sao a mesma comparacao por especificacao, e este teste
+   * e o que trava isso: se alguem trocar o colator por outra locale ou por comparacao de
+   * bytes, os acentos saem de lugar e o teste cai.
+   */
+  it("ordena igual ao localeCompare pt-BR, inclusive com acento", () => {
+    const database = createDatabase();
+    const names = [
+      "Areia Zul",
+      "Acougue Central",
+      "Agua Limpa",
+      "Ácido Ltda",
+      "Águia Transportes",
+      "Zebu Pedreira",
+      "Óbito Mineracao",
+      "Obra Nova"
+    ];
+    names.forEach((name, index) => insertCustomer(database, `c-${index}`, name));
+
+    const store = loadedStore(database);
+    const got = store
+      .query({ entityType: "customer", limit: 100 })
+      .rows.map((row: { tradeName: string }) => row.tradeName);
+
+    const expected = [...names].sort((a, b) => a.localeCompare(b, "pt-BR"));
+    expect(got).toEqual(expected);
+    database.close();
+  });
 });

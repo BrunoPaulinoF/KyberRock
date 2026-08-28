@@ -4,6 +4,17 @@ import type { SearchFieldSpec } from "@kyberrock/shared";
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { isSellableProduct } from "./product-classification.js";
 
+/**
+ * O colator da ordem alfabetica das listagens, criado UMA vez.
+ *
+ * `a.localeCompare(b, "pt-BR")` monta um colator novo a cada comparacao, e a ordenacao da
+ * lista em repouso e O(n log n) comparacoes: abrir o seletor de clientes de uma pedreira
+ * grande pagava milhares de construcoes do mesmo objeto. `Intl.Collator.prototype.compare`
+ * e definido como a mesma comparacao que `localeCompare` delega — a ordem resultante e
+ * identica, muda so quantas vezes o colator e construido.
+ */
+const PT_BR_COLLATOR = new Intl.Collator("pt-BR");
+
 export interface CustomerCacheEntry {
   id: string;
   omieCustomerId: number | null;
@@ -688,9 +699,9 @@ export class CacheStore {
     const labelField = this.getSortLabelField(entityType);
     const byLabel = labelField
       ? (a: unknown, b: unknown) =>
-          String((a as Record<string, unknown>)[labelField] ?? "").localeCompare(
-            String((b as Record<string, unknown>)[labelField] ?? ""),
-            "pt-BR"
+          PT_BR_COLLATOR.compare(
+            String((a as Record<string, unknown>)[labelField] ?? ""),
+            String((b as Record<string, unknown>)[labelField] ?? "")
           )
       : undefined;
 
