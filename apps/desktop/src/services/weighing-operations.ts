@@ -3,6 +3,7 @@ import type { ScaleStatus } from "@kyberrock/scale-adapters";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
+import { existingLocalReference } from "./local-references.js";
 import { FinancialBlockService } from "./financial-block.js";
 import {
   FREIGHT_MODALITY_DEFAULT,
@@ -3536,9 +3537,13 @@ function insertAuditLog(
     )
     .run(
       randomUUID(),
-      identity?.companyId ?? null,
-      identity?.unitId ?? null,
-      identity?.deviceId ?? null,
+      // Mesmo motivo da impressao: a trilha de auditoria nao pode impedir a
+      // operacao de fechar. Sem identidade estes campos ja iam `null`; id cuja
+      // linha sumiu passa a ir tambem, em vez de estourar a FK e deixar o
+      // caminhao carregado sobre a balanca sem conseguir fechar a saida.
+      existingLocalReference(database, "companies", identity?.companyId),
+      existingLocalReference(database, "units", identity?.unitId),
+      existingLocalReference(database, "devices", identity?.deviceId),
       operationId,
       action,
       before ? JSON.stringify(before) : null,

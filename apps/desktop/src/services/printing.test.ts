@@ -1012,22 +1012,144 @@ describe("linha do dispositivo ausente", () => {
       database.pragma("foreign_keys = ON");
 
       // `audit_logs.device_id` referencia devices(id) e e gravado DENTRO da
-      // transacao do cupom: o papel ate sai (a impressao acontece antes), mas a
-      // transacao volta atras e nenhuma via fica registrada.
-      await expect(
-        printWeighingReceipt(database, { operationId: operation.id, identity }, printer)
-      ).rejects.toThrow(/FOREIGN KEY constraint failed/);
-      expect(listPrintReceipts(database)).toHaveLength(0);
+      // transacao do cupom. Antes isso derrubava a transacao inteira: o papel
+      // saia (a impressao acontece antes) e nenhuma via ficava registrada.
+      // Agora a auditoria cede a atribuicao e o cupom fica registrado.
+      const antesDoReparo = await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer
+      );
+      expect(antesDoReparo.status).toBe("printed");
+      expect(listPrintReceipts(database).length).toBeGreaterThan(0);
 
-      ensureLocalDeviceRow(database, identity);
+      // E o reparo continua sendo feito: a partir dele a auditoria volta a
+      // dizer QUAL computador imprimiu, em vez de deixar a coluna nula.
+      expect(ensureLocalDeviceRow(database, identity)).toBe(true);
+
+      await printWeighingReceipt(database, { operationId: operation.id, identity }, printer);
+      expect(
+        database
+          .prepare(
+            "SELECT device_id FROM audit_logs WHERE action = 'receipt_printed' ORDER BY created_at DESC LIMIT 1"
+          )
+          .pluck()
+          .get()
+      ).toBe(identity.deviceId);
+    } finally {
+      database.close();
+    }
+  });
+});
+
+describe("cupom de teste repetido", () => {
+  // O erro que parou a pedreira, na tela do operador:
+  //   Error invoking remote method 'desktop:print-test-receipt':
+  //   SqliteError: FOREIGN KEY constraint failed
+  //
+  // `print_receipts.operation_id` referencia `weighing_operations(id)`, e a
+  // limpeza apagava a OPERACAO antes da VIA que aponta para ela. O primeiro
+  // teste de uma instalacao passava (nao havia via anterior) e todos os
+  // seguintes estouravam -- para sempre. Nenhum teste pegava porque cada um
+  // abria um banco novo e imprimia uma vez so; quem testa impressora imprime
+  // de novo.
+  it("testar a impressora varias vezes seguidas continua funcionando", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        paperWidthMm: 80
+      });
+
+      await printTestReceipt(database, { identity }, printer);
+      await printTestReceipt(database, { identity }, printer);
+      const terceira = await printTestReceipt(database, { identity }, printer);
+
+      expect(printer.calls).toHaveLength(3);
+      expect(terceira.status).toBe("printed");
+
+      // A limpeza continua fazendo o que prometia: o teste nao acumula lixo.
+      expect(
+        database
+          .prepare("SELECT count(*) FROM print_receipts WHERE operation_id = 'test'")
+          .pluck()
+          .get()
+      ).toBe(1);
+      expect(
+        database.prepare("SELECT count(*) FROM weighing_operations WHERE id = 'test'").pluck().get()
+      ).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+});
+
+describe("identidade local incompleta", () => {
+  // A pedreira parou assim: fechar operacao E imprimir cupom estouravam
+  // `FOREIGN KEY constraint failed`. As duas coisas gravam `audit_logs` com os
+  // ids da identidade, e uma dessas linhas nao existia mais no banco local.
+  // A auditoria acompanha a operacao -- ela nao pode ser quem impede a operacao.
+  it("cupom sai e fica registrado mesmo sem a linha do dispositivo", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        paperWidthMm: 80
+      });
+      const operation = createClosedOperation(database, identity);
+
+      // Some com a linha mantendo tudo o que aponta para ela, que e o estado
+      // real do banco da balanca.
+      database.pragma("foreign_keys = OFF");
+      database.prepare("DELETE FROM devices WHERE id = ?").run(identity.deviceId);
+      database.pragma("foreign_keys = ON");
 
       const receipt = await printWeighingReceipt(
         database,
         { operationId: operation.id, identity },
         printer
       );
+
       expect(receipt.status).toBe("printed");
       expect(listPrintReceipts(database).length).toBeGreaterThan(0);
+
+      // A trilha continua existindo: acao, entidade e hora. So a atribuicao,
+      // que o banco nao consegue provar, vai nula.
+      const auditoria = database
+        .prepare(
+          "SELECT company_id, device_id FROM audit_logs WHERE action = 'receipt_printed' LIMIT 1"
+        )
+        .get() as { company_id: string | null; device_id: string | null };
+      expect(auditoria.device_id).toBeNull();
+      expect(auditoria.company_id).toBe(identity.companyId);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("o reparo do dispositivo nunca vira um erro novo", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      // Sem empresa E sem dispositivo, recriar a linha de `devices` e
+      // impossivel (ela referencia `companies`). O reparo tem que desistir em
+      // silencio -- ele roda em todo caminho de gravacao.
+      database.pragma("foreign_keys = OFF");
+      database.prepare("DELETE FROM devices WHERE id = ?").run(identity.deviceId);
+      database.prepare("DELETE FROM companies WHERE id = ?").run(identity.companyId);
+      database.pragma("foreign_keys = ON");
+
+      expect(() => ensureLocalDeviceRow(database, identity)).not.toThrow();
+      expect(ensureLocalDeviceRow(database, identity)).toBe(false);
     } finally {
       database.close();
     }
