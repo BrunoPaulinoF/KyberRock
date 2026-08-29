@@ -12,6 +12,7 @@ import {
 } from "@kyberrock/print-templates";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
+import { existingLocalReference } from "./local-references.js";
 import {
   normalizePrinterType,
   printerTypeUsesWindowsQueue,
@@ -929,9 +930,14 @@ function insertAuditLog(
     )
     .run(
       randomUUID(),
-      identity.companyId,
-      identity.unitId,
-      identity.deviceId,
+      // A auditoria acompanha o cupom; ela nao pode derrubar o cupom. Id cuja
+      // linha sumiu vira `null` (a coluna e anulavel e o codigo ja gravava
+      // `null` sem identidade) em vez de estourar a FK DENTRO da transacao da
+      // impressao -- que e o que fazia o papel sair e a via nao ficar
+      // registrada, levando o operador a imprimir de novo.
+      existingLocalReference(database, "companies", identity.companyId),
+      existingLocalReference(database, "units", identity.unitId),
+      existingLocalReference(database, "devices", identity.deviceId),
       operationId,
       action,
       before ? JSON.stringify(before) : null,

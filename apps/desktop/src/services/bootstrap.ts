@@ -166,6 +166,26 @@ export function ensureLocalDeviceRow(
   identity: LocalDesktopIdentity,
   now: Date = new Date()
 ): boolean {
+  try {
+    return repairLocalDeviceRow(database, identity, now);
+  } catch {
+    // BEST-EFFORT, E ESTE `catch` NAO E ENFEITE: a linha de `devices` referencia
+    // `companies` e `units`, entao quando a identidade perde MAIS de uma linha o
+    // proprio reparo estoura `FOREIGN KEY constraint failed`. Como ele roda em
+    // `ensureIdentity()`, por onde passa todo caminho de gravacao, deixar a
+    // excecao subir transformaria um reparo que nao pode ser feito em um erro
+    // NOVO em fechar operacao e imprimir cupom -- pior do que nao reparar.
+    // O que segue depende do reparo falha do mesmo jeito que falhava antes; o
+    // que nao depende (auditoria, ver `local-references.ts`) passa a funcionar.
+    return false;
+  }
+}
+
+function repairLocalDeviceRow(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  now: Date
+): boolean {
   const current = database.prepare("SELECT id FROM devices WHERE id = ?").get(identity.deviceId) as
     | { id: string }
     | undefined;
