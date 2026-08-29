@@ -16,6 +16,7 @@ import {
 } from "./backup.js";
 import {
   ensureInitialDesktopIdentity,
+  ensureLocalDeviceRow,
   getLocalDesktopIdentity,
   type LocalDesktopIdentity
 } from "./bootstrap.js";
@@ -4572,6 +4573,18 @@ export class DesktopRuntime {
   }
 
   private ensureIdentity(): LocalDesktopIdentity {
+    const stored = getLocalDesktopIdentity(this.database);
+    if (stored) {
+      // A identidade vem de `local_settings`, que sobrevive a qualquer coisa —
+      // inclusive a linha de `devices` que ela aponta ter sumido. Sem esta
+      // conferencia, o que o operador ve e `FOREIGN KEY constraint failed` ao
+      // imprimir ou ao abrir pesagem, com a balanca parada e nenhuma pista do
+      // que fazer. Reparar aqui cobre TODOS os caminhos de gravacao de uma vez:
+      // este metodo e por onde a identidade entra em todos eles.
+      ensureLocalDeviceRow(this.database, stored);
+      return stored;
+    }
+
     return (
       getLocalDesktopIdentity(this.database) ??
       ensureInitialDesktopIdentity(this.database, {

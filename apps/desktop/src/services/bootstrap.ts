@@ -132,6 +132,86 @@ export function ensureInitialDesktopIdentity(
   return identity;
 }
 
+/**
+ * Garante que a linha de `devices` da identidade ativa exista.
+ *
+ * A identidade mora em `local_settings` (`active_device_id`), e ate aqui NADA
+ * conferia se o `devices` correspondente ainda estava la. Quando ele some, o
+ * banco continua abrindo, a tela continua carregando e o ping continua saindo —
+ * mas toda gravacao que referencia `devices(id)` passa a estourar
+ * `FOREIGN KEY constraint failed`:
+ *
+ * - `weighing_operations.device_id` — abrir pesagem e o cupom de TESTE (que
+ *   grava uma operacao de exemplo);
+ * - `audit_logs.device_id` — a auditoria que acompanha CADA cupom impresso,
+ *   dentro da mesma transacao do `print_receipts`. O cupom sai no papel (a
+ *   impressao acontece antes) e a transacao inteira volta atras: nenhuma via
+ *   fica registrada e a operacao nao tem como saber que imprimiu.
+ *
+ * A linha some por caminho conhecido: `remapLocalDeviceId` APAGA o espelho
+ * remoto que ocupava o id novo antes de renomear o desta instalacao. Se a
+ * renomeacao nao encontra a linha por `installation_id` (instalacao restaurada
+ * de backup, banco copiado de outra maquina, ativacao interrompida), o DELETE
+ * ja aconteceu e a UPDATE nao repoe nada.
+ *
+ * Curar e barato e o custo de nao curar e a balanca parada: sem a linha, nem
+ * pesar nem imprimir funciona, e a mensagem que chega ao operador e um erro de
+ * SQLite que nao diz o que fazer.
+ *
+ * Devolve `true` quando precisou reparar — o chamador nao depende disso, mas os
+ * testes e o log de suporte sim.
+ */
+export function ensureLocalDeviceRow(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  now: Date = new Date()
+): boolean {
+  const current = database.prepare("SELECT id FROM devices WHERE id = ?").get(identity.deviceId) as
+    | { id: string }
+    | undefined;
+  if (current) return false;
+
+  const timestamp = now.toISOString();
+
+  // Caso 1: a linha desta instalacao existe com OUTRO id — a ativacao adotou o
+  // id da nuvem e o remapeamento nao chegou ao fim. Renomear (e levar junto as
+  // referencias) preserva historico, operacoes e perfil de impressao desta
+  // maquina; inserir uma linha nova os deixaria orfaos.
+  const byInstallation = database
+    .prepare("SELECT id FROM devices WHERE installation_id = ?")
+    .get(identity.installationId) as { id: string } | undefined;
+  if (byInstallation) {
+    // Precisa ser UMA transacao: `remapLocalDeviceId` se apoia em
+    // `defer_foreign_keys`, e esse pragma so adia a checagem ATE O COMMIT --
+    // solto, ele nao adia nada e renomear um dispositivo que ja tem operacoes
+    // apontando para ele estoura na hora. (Em `ensureInitialDesktopIdentity` o
+    // remapeamento ja roda dentro da transacao da identidade; aqui a transacao
+    // precisava vir junto.)
+    database.transaction(() => {
+      remapLocalDeviceId(database, byInstallation.id, identity.deviceId, identity.installationId);
+    })();
+    return true;
+  }
+
+  // Caso 2: nao ha linha nenhuma. Recria o minimo para o banco voltar a aceitar
+  // gravacao. O nome generico dura segundos: o `desktop-status` responde a cada
+  // 5 s com o nome de verdade e o `upsertUnitDevices` o sobrescreve.
+  database
+    .prepare(
+      `INSERT INTO devices (id, company_id, unit_id, name, device_type, installation_id, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, 'Computador', 'desktop_scale', ?, 1, ?, ?)`
+    )
+    .run(
+      identity.deviceId,
+      identity.companyId,
+      identity.unitId,
+      identity.installationId,
+      timestamp,
+      timestamp
+    );
+  return true;
+}
+
 export function getLocalDesktopIdentity(database: DesktopDatabase): LocalDesktopIdentity | null {
   const companyId = readStringLocalSetting(database, "active_company_id");
   const unitId = readStringLocalSetting(database, "active_unit_id");
