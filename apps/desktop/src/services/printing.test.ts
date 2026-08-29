@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
-import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
+import {
+  ensureInitialDesktopIdentity,
+  ensureLocalDeviceRow,
+  type LocalDesktopIdentity
+} from "./bootstrap";
 import { setCustomerFutureBillingInvoice } from "./customer-future-billing";
 import {
   closeWeighingOperation,
@@ -947,6 +951,88 @@ function createDatabase(): DesktopDatabase {
   runDesktopMigrations(database);
   return database;
 }
+
+describe("linha do dispositivo ausente", () => {
+  // O que a pedreira relatou: "Error invoking remote method
+  // 'desktop:print-test-receipt': SqliteError: FOREIGN KEY constraint failed".
+  // A identidade continua em `local_settings`, mas o `devices` que ela aponta
+  // sumiu -- e nesse estado a balanca nao imprime nem pesa.
+  it("e a causa do FOREIGN KEY no cupom de teste, e o reparo devolve a impressao", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        paperWidthMm: 80
+      });
+      // Reproduz o estado em que a balanca ficou: a linha sumiu e tudo o que
+      // aponta para ela continua la (perfil de impressao, config da balanca,
+      // operacoes). Com a checagem ligada nem daria para chegar nesse estado
+      // por aqui -- na maquina real quem chegou foi o `remapLocalDeviceId`,
+      // que apaga sob `defer_foreign_keys`.
+      database.pragma("foreign_keys = OFF");
+      database.prepare("DELETE FROM devices WHERE id = ?").run(identity.deviceId);
+      database.pragma("foreign_keys = ON");
+
+      await expect(printTestReceipt(database, { identity }, printer)).rejects.toThrow(
+        /FOREIGN KEY constraint failed/
+      );
+
+      expect(ensureLocalDeviceRow(database, identity)).toBe(true);
+
+      const receipt = await printTestReceipt(database, { identity }, printer);
+      expect(receipt.status).toBe("printed");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("derruba tambem o cupom da operacao, pela auditoria na mesma transacao", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        paperWidthMm: 80
+      });
+      const operation = createClosedOperation(database, identity);
+      // Reproduz o estado em que a balanca ficou: a linha sumiu e tudo o que
+      // aponta para ela continua la (perfil de impressao, config da balanca,
+      // operacoes). Com a checagem ligada nem daria para chegar nesse estado
+      // por aqui -- na maquina real quem chegou foi o `remapLocalDeviceId`,
+      // que apaga sob `defer_foreign_keys`.
+      database.pragma("foreign_keys = OFF");
+      database.prepare("DELETE FROM devices WHERE id = ?").run(identity.deviceId);
+      database.pragma("foreign_keys = ON");
+
+      // `audit_logs.device_id` referencia devices(id) e e gravado DENTRO da
+      // transacao do cupom: o papel ate sai (a impressao acontece antes), mas a
+      // transacao volta atras e nenhuma via fica registrada.
+      await expect(
+        printWeighingReceipt(database, { operationId: operation.id, identity }, printer)
+      ).rejects.toThrow(/FOREIGN KEY constraint failed/);
+      expect(listPrintReceipts(database)).toHaveLength(0);
+
+      ensureLocalDeviceRow(database, identity);
+
+      const receipt = await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer
+      );
+      expect(receipt.status).toBe("printed");
+      expect(listPrintReceipts(database).length).toBeGreaterThan(0);
+    } finally {
+      database.close();
+    }
+  });
+});
 
 function createIdentity(database: DesktopDatabase): LocalDesktopIdentity {
   return ensureInitialDesktopIdentity(database, {
