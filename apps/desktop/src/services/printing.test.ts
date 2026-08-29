@@ -1034,6 +1034,52 @@ describe("linha do dispositivo ausente", () => {
   });
 });
 
+describe("cupom de teste repetido", () => {
+  // O erro que parou a pedreira, na tela do operador:
+  //   Error invoking remote method 'desktop:print-test-receipt':
+  //   SqliteError: FOREIGN KEY constraint failed
+  //
+  // `print_receipts.operation_id` referencia `weighing_operations(id)`, e a
+  // limpeza apagava a OPERACAO antes da VIA que aponta para ela. O primeiro
+  // teste de uma instalacao passava (nao havia via anterior) e todos os
+  // seguintes estouravam -- para sempre. Nenhum teste pegava porque cada um
+  // abria um banco novo e imprimia uma vez so; quem testa impressora imprime
+  // de novo.
+  it("testar a impressora varias vezes seguidas continua funcionando", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        paperWidthMm: 80
+      });
+
+      await printTestReceipt(database, { identity }, printer);
+      await printTestReceipt(database, { identity }, printer);
+      const terceira = await printTestReceipt(database, { identity }, printer);
+
+      expect(printer.calls).toHaveLength(3);
+      expect(terceira.status).toBe("printed");
+
+      // A limpeza continua fazendo o que prometia: o teste nao acumula lixo.
+      expect(
+        database
+          .prepare("SELECT count(*) FROM print_receipts WHERE operation_id = 'test'")
+          .pluck()
+          .get()
+      ).toBe(1);
+      expect(
+        database.prepare("SELECT count(*) FROM weighing_operations WHERE id = 'test'").pluck().get()
+      ).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+});
+
 function createIdentity(database: DesktopDatabase): LocalDesktopIdentity {
   return ensureInitialDesktopIdentity(database, {
     companyId: "company-1",

@@ -422,8 +422,20 @@ export async function printTestReceipt(
 
   // Insert a placeholder test operation to satisfy FK
   const testOperationId = "test";
-  // Delete any previous test operation first to avoid PK conflict
-  database.prepare("DELETE FROM weighing_operations WHERE id = ?").run(testOperationId);
+  // A ORDEM AQUI E O BUG QUE ESTA LINHA CORRIGE: `print_receipts.operation_id`
+  // referencia `weighing_operations(id)`, entao a via do teste ANTERIOR precisa
+  // sair antes da operacao que ela aponta. Apagando a operacao primeiro, o
+  // primeiro teste de uma instalacao passava (nao havia via anterior) e TODOS os
+  // seguintes estouravam `FOREIGN KEY constraint failed` -- para sempre, porque
+  // a via que trava a exclusao e justamente a que ficou do teste bem-sucedido.
+  //
+  // Os testes existentes nao pegavam: cada um abria um banco novo e imprimia UMA
+  // vez. Quem testa impressora, por definicao, imprime de novo.
+  const cleanUpPreviousTest = database.transaction(() => {
+    database.prepare("DELETE FROM print_receipts WHERE operation_id = ?").run(testOperationId);
+    database.prepare("DELETE FROM weighing_operations WHERE id = ?").run(testOperationId);
+  });
+  cleanUpPreviousTest();
   database
     .prepare(
       `INSERT INTO weighing_operations (
@@ -452,9 +464,8 @@ export async function printTestReceipt(
       timestamp
     );
 
-  // Delete any previous test receipt first to avoid PK conflict on repeated tests
-  database.prepare("DELETE FROM print_receipts WHERE operation_id = ?").run(testOperationId);
-
+  // A via anterior ja saiu junto com a operacao anterior, la em cima: as duas
+  // exclusoes precisam andar juntas e nessa ordem.
   database
     .prepare(
       `INSERT INTO print_receipts (
