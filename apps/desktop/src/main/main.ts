@@ -43,7 +43,11 @@ import type {
 } from "../services/printing.js";
 import { NetworkEscPosPrinter } from "../services/network-printer.js";
 import type { ReceiptLogoRasterizer } from "../services/escpos-receipt.js";
-import { WindowsRawEscPosPrinter } from "../services/windows-raw-printer.js";
+import {
+  describeRawSpoolProblem,
+  parseRawSpoolPrinterState,
+  WindowsRawEscPosPrinter
+} from "../services/windows-raw-printer.js";
 import {
   isRasterBlank,
   packRasterImage,
@@ -2281,6 +2285,22 @@ public static class KyberRockRawPrinter {
 }
 '@
 [KyberRockRawPrinter]::Send($PrinterName, $Path, $DocumentName)
+
+# Entregar na fila NAO e imprimir: o spooler aceita os bytes com a impressora pausada,
+# offline, sem papel ou com a tampa aberta. Perguntar o estado aqui e o que separa
+# "impresso" de "a impressora recebeu e nao vai imprimir". BEST-EFFORT: se o Windows nao
+# souber responder, sai 'unknown' e o cupom segue como antes -- diagnostico que falha nao
+# pode reprovar impressao que deu certo.
+$state = 'unknown'
+$jobs = -1
+try {
+  $printer = Get-Printer -Name $PrinterName -ErrorAction Stop
+  $state = [string]$printer.PrinterStatus
+  $jobs = @(Get-PrintJob -PrinterName $PrinterName -ErrorAction SilentlyContinue).Count
+} catch {
+  $state = 'unknown'
+}
+Write-Output ('KYBERROCK-PRINTER-STATE ' + $state + ' ' + $jobs)
 `;
 
 /**
@@ -2325,8 +2345,21 @@ async function sendRawToWindowsPrinter(
           documentName
         ],
         { timeout: RAW_SPOOL_TIMEOUT_MS, windowsHide: true },
-        (error, _stdout, stderr) => {
+        (error, stdout, stderr) => {
           if (!error) {
+            // O spooler aceitou os bytes. Isso ainda nao e papel: se a impressora estiver
+            // pausada, offline ou sem papel, o cupom fica na fila e o operador nao recebe
+            // aviso nenhum -- era assim que o sistema dizia "impresso" com a bandeja parada.
+            const problema = describeRawSpoolProblem(
+              printerName,
+              parseRawSpoolPrinterState(String(stdout ?? ""))
+            );
+            if (problema) {
+              writeStartupLog("receipt-print:printer-not-ready", { printerName, problema });
+              reject(new Error(problema));
+              return;
+            }
+
             resolve();
             return;
           }

@@ -9,7 +9,12 @@ import {
 
 import type { EscPosRasterImage } from "./escpos-encoder";
 import { buildReceiptEscPosData } from "./escpos-receipt";
-import { WindowsRawEscPosPrinter, receiptDocumentName } from "./windows-raw-printer";
+import {
+  describeRawSpoolProblem,
+  parseRawSpoolPrinterState,
+  WindowsRawEscPosPrinter,
+  receiptDocumentName
+} from "./windows-raw-printer";
 import type { ReceiptLogoConfig, ReceiptPrintPayload } from "./printing";
 
 const LOGO_DATA_URL = "data:image/png;base64,AAAA";
@@ -205,3 +210,52 @@ function payload(
     }
   };
 }
+
+describe("estado da impressora do Windows", () => {
+  it("le o estado e a fila da saida do script", () => {
+    expect(parseRawSpoolPrinterState("KYBERROCK-PRINTER-STATE Paused 3")).toEqual({
+      state: "Paused",
+      queuedJobs: 3
+    });
+  });
+
+  it("saida sem a linha de estado nao vira diagnostico", () => {
+    // Script antigo ou saida truncada: ausencia de diagnostico nao pode virar
+    // diagnostico de problema, senao toda impressao boa passaria a reprovar.
+    expect(parseRawSpoolPrinterState("")).toBeNull();
+    expect(parseRawSpoolPrinterState("outra coisa qualquer")).toBeNull();
+    expect(describeRawSpoolProblem("MP-4200 TH", null)).toBeNull();
+  });
+
+  it("contagem de fila ausente ou invalida vira nulo, e nao zero", () => {
+    expect(parseRawSpoolPrinterState("KYBERROCK-PRINTER-STATE Offline -1")?.queuedJobs).toBeNull();
+    expect(parseRawSpoolPrinterState("KYBERROCK-PRINTER-STATE Offline")?.queuedJobs).toBeNull();
+  });
+
+  it("impressora pausada explica o papel que nao saiu", () => {
+    const problema = describeRawSpoolProblem("MP-4200 TH", {
+      state: "Paused",
+      queuedJobs: 6
+    });
+
+    expect(problema).toContain("MP-4200 TH");
+    expect(problema).toContain("pausa");
+    expect(problema).toContain("6 trabalho(s)");
+  });
+
+  it("reconhece o estado com espaco, hifen ou caixa diferente", () => {
+    expect(describeRawSpoolProblem("X", { state: "Paper Out", queuedJobs: null })).toContain(
+      "sem papel"
+    );
+    expect(describeRawSpoolProblem("X", { state: "DOOR_OPEN", queuedJobs: null })).toContain(
+      "tampa aberta"
+    );
+  });
+
+  it("impressora trabalhando nao e problema", () => {
+    // Acusar estes estados transformaria impressao normal em erro na cara do operador.
+    for (const state of ["Normal", "Printing", "Busy", "Processing", "Warming Up", "unknown"]) {
+      expect(describeRawSpoolProblem("MP-4200 TH", { state, queuedJobs: 1 })).toBeNull();
+    }
+  });
+});
