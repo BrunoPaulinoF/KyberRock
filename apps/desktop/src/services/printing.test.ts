@@ -8,10 +8,13 @@ import {
   type LocalDesktopIdentity
 } from "./bootstrap";
 import { setCustomerFutureBillingInvoice } from "./customer-future-billing";
+import { PRINTER_TEST_OPERATION_ID } from "./printer-test-operation";
+import { listOperationsPendingCloudPush } from "./supabase-sync";
 import {
   closeWeighingOperation,
   createSimulatedWeighingOperation,
-  createWeighingOperation
+  createWeighingOperation,
+  listCanceledWeighingOperations
 } from "./weighing-operations";
 import {
   configureReceiptPrintProfile,
@@ -1150,6 +1153,57 @@ describe("identidade local incompleta", () => {
 
       expect(() => ensureLocalDeviceRow(database, identity)).not.toThrow();
       expect(ensureLocalDeviceRow(database, identity)).toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+});
+
+describe("operacao-fantasma do teste de impressora", () => {
+  it("nao aparece na aba Canceladas nem viaja para a nuvem", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        paperWidthMm: 80
+      });
+
+      await printTestReceipt(database, { identity }, printer);
+
+      // Ela existe -- e o que satisfaz a FK da via de teste.
+      expect(
+        database
+          .prepare("SELECT status FROM weighing_operations WHERE id = ?")
+          .pluck()
+          .get(PRINTER_TEST_OPERATION_ID)
+      ).toBe("cancelled");
+
+      // Mas e detalhe LOCAL: um clique em "testar impressora" nao pode virar carga de
+      // 12.000 kg cancelada na tela de todas as balancas da pedreira.
+      expect(listCanceledWeighingOperations(database)).toHaveLength(0);
+      expect(
+        listOperationsPendingCloudPush(database).map((operation) => operation.id)
+      ).not.toContain(PRINTER_TEST_OPERATION_ID);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("uma pesagem cancelada de verdade continua aparecendo", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      const operation = createClosedOperation(database, identity);
+      database
+        .prepare("UPDATE weighing_operations SET status = 'cancelled' WHERE id = ?")
+        .run(operation.id);
+
+      expect(listCanceledWeighingOperations(database).map((row) => row.id)).toEqual([operation.id]);
     } finally {
       database.close();
     }

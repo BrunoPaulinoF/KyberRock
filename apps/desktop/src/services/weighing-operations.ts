@@ -4,6 +4,7 @@ import type { ScaleStatus } from "@kyberrock/scale-adapters";
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { existingLocalReference } from "./local-references.js";
+import { PRINTER_TEST_OPERATION_ID } from "./printer-test-operation.js";
 import { FinancialBlockService } from "./financial-block.js";
 import {
   FREIGHT_MODALITY_DEFAULT,
@@ -2323,6 +2324,10 @@ export function listCanceledWeighingOperations(
        LEFT JOIN devices dv ON dv.id = o.device_id
        WHERE o.status = 'cancelled'
          AND o.deleted_at IS NULL
+         -- A operacao-fantasma do teste de impressora nasce 'cancelled' so para
+         -- satisfazer a FK da via de teste: ela nao e uma pesagem e nao pode aparecer
+         -- na aba Canceladas como se fosse uma carga de 12.000 kg.
+         AND o.id <> '${PRINTER_TEST_OPERATION_ID}'
        ORDER BY o.updated_at DESC`
     )
     .all()

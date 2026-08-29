@@ -13,6 +13,7 @@ import {
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { existingLocalReference } from "./local-references.js";
+import { PRINTER_TEST_OPERATION_ID } from "./printer-test-operation.js";
 import {
   normalizePrinterType,
   printerTypeUsesWindowsQueue,
@@ -421,8 +422,9 @@ export async function printTestReceipt(
     errorMessage = sanitizeErrorMessage(error);
   }
 
-  // Insert a placeholder test operation to satisfy FK
-  const testOperationId = "test";
+  // Operacao-fantasma que existe so para satisfazer a FK da via de teste. E um detalhe
+  // LOCAL: quem a mantem fora da nuvem e das listagens e `printer-test-operation.ts`.
+  const testOperationId = PRINTER_TEST_OPERATION_ID;
   // A ORDEM AQUI E O BUG QUE ESTA LINHA CORRIGE: `print_receipts.operation_id`
   // referencia `weighing_operations(id)`, entao a via do teste ANTERIOR precisa
   // sair antes da operacao que ela aponta. Apagando a operacao primeiro, o

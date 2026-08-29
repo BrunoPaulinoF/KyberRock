@@ -12,6 +12,7 @@ import {
   supabaseConfig
 } from "../config/supabase-config.js";
 import type { DesktopDatabase } from "../database/sqlite.js";
+import { PRINTER_TEST_OPERATION_ID } from "./printer-test-operation.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { readLocalSetting, readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
 import { readOmieAdvanceConfig, rememberDetectedAdvanceConfig } from "./omie-advance-config.js";
@@ -605,6 +606,10 @@ export function listOperationsPendingCloudPush(
        FROM weighing_operations o
        LEFT JOIN loading_requests lr ON lr.operation_id = o.id
        WHERE o.deleted_at IS NULL
+         -- A operacao-fantasma do teste de impressora e detalhe local da maquina. Sem esta
+         -- linha ela viajava: um clique em "testar impressora" virava operacao cancelada de
+         -- 12.000 kg na nuvem, visivel na aba Canceladas de TODAS as balancas da pedreira.
+         AND o.id <> ?
          AND REPLACE(o.updated_at, ' ', 'T') >= ?
          AND (
            o.cloud_synced_at IS NULL
@@ -613,7 +618,7 @@ export function listOperationsPendingCloudPush(
        ORDER BY o.updated_at ASC
        LIMIT ?`
     )
-    .all(windowStart, CLOUD_RECONCILE_LIMIT) as Array<{
+    .all(PRINTER_TEST_OPERATION_ID, windowStart, CLOUD_RECONCILE_LIMIT) as Array<{
     id: string;
     loading_request_id: string | null;
   }>;
