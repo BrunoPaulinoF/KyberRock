@@ -44,6 +44,7 @@ import type {
   WindowsPrinterSummary
 } from "../services/printing";
 import {
+  describePrinterTypeMismatch,
   printerTypeUsesEscPos,
   printerTypeUsesWindowsQueue,
   type PrinterType
@@ -566,6 +567,11 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [printReceipts, setPrintReceipts] = useState<PrintReceiptSummary[]>([]);
   const [printerType, setPrinterType] = useState<PrinterType>("windows");
   const [selectedPrinterName, setSelectedPrinterName] = useState("");
+  /** Termica escolhida no modo grafico: o caso que aceita o cupom e nao imprime. */
+  const printerTypeMismatch = useMemo(
+    () => describePrinterTypeMismatch(printerType, selectedPrinterName),
+    [printerType, selectedPrinterName]
+  );
   const [networkPrinterHost, setNetworkPrinterHost] = useState("");
   const [networkPrinterPort, setNetworkPrinterPort] = useState("9100");
   const [receiptLogoDataUrl, setReceiptLogoDataUrl] = useState<string | null>(null);
@@ -4236,6 +4242,20 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         ? "Modo texto direto: a impressora recebe o cupom pronto (ESC/POS), sem o driver redesenhar nada. E o modo certo para termica de cupom (Bematech MP-4200, Elgin, Epson TM...) e o unico que garante logo, numero do cupom e telefone no papel."
                         : "A impressora de rede recebe o mesmo cupom pronto (ESC/POS) do modo texto direto, so que por TCP/IP."}
                   </p>
+                  {/*
+                    O modo grafico e o PADRAO em todo lugar (schema, normalizacao e este
+                    formulario), entao um perfil recriado ou salvo sem escolher o tipo cai
+                    nele calado. Numa termica isso nao da erro: a impressora ACEITA o cupom
+                    e nao imprime, enquanto as outras impressoras do mesmo Windows imprimem
+                    normal -- foi assim que uma pedreira ficou parada reimprimindo no escuro.
+                    O texto acima ja explicava a regra; ninguem le regra geral quando o campo
+                    parece certo. Este aviso fala do que ESTA selecionado, pelo nome.
+                  */}
+                  {printerTypeMismatch ? (
+                    <p style={{ ...styles.muted, marginTop: 0, color: "var(--kr-danger)" }}>
+                      {printerTypeMismatch}
+                    </p>
+                  ) : null}
                   {printerTypeUsesWindowsQueue(printerType) ? (
                     <>
                       <label style={styles.fieldLabel} title={TIPS.printing.selectPrinter}>
