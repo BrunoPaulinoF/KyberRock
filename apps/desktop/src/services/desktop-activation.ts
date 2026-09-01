@@ -18,7 +18,11 @@ import {
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
 import { writeUpdateChannel } from "./update-channel.js";
 import { applyPriceMasterFromCloud } from "./price-authority.js";
-import { upsertUnitDevices, type CloudUnitDevice } from "./unit-devices.js";
+import {
+  pruneMissingUnitDevices,
+  upsertUnitDevices,
+  type CloudUnitDevice
+} from "./unit-devices.js";
 
 export const DESKTOP_ACCESS_GRACE_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
 export const DESKTOP_ACCESS_CHECK_INTERVAL_MS = 30 * 1000; // 30 segundos quando online para detectar bloqueio em tempo real
@@ -405,6 +409,11 @@ export async function validateDesktopAccess(
             { companyId: credentials.companyId, unitId: credentials.unitId },
             data.unitDevices
           );
+          // O `desktop-status` manda a unidade INTEIRA (uma consulta so, sem
+          // paginacao e sem filtro de data), entao quem nao esta nela nao
+          // existe mais: e por aqui que a balanca apagada no painel sai da
+          // legenda em segundos, sem esperar o pull do cadastro.
+          pruneMissingUnitDevices(database, credentials, data.unitDevices);
         } catch {
           // Ignora falha do espelho de dispositivos.
         }

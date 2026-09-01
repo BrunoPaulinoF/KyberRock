@@ -264,6 +264,20 @@ offending link of the chain, not above the `return`.
   espaços colapsados, limite de 60 caracteres para a legenda caber em uma linha) é pura e testada
   em `_shared/device-name.ts`; `apps/loader-web/src/lib/device-name.ts` repete a mesma regra de
   propósito — o loader-web não importa módulo Deno —, então mudar uma exige mudar a outra.
+- **Apagar balança (`delete_device`) chega às outras máquinas**: o espelho local `devices` só
+  sabia somar. Balança de teste, máquina trocada e ativação duplicada — tudo o que o painel apaga
+  — continuava na legenda de cores de **cada** desktop para sempre (várias delas com o nome
+  genérico da ativação, "Desktop balanca"), e não havia como limpar sem mexer no SQLite. Agora o
+  `pruneMissingUnitDevices` (`services/unit-devices.ts`) tira da legenda quem a nuvem não lista
+  mais, nos dois caminhos em que ela manda a unidade **inteira**: o `desktop-status` (a cada 5 s,
+  é o que faz sumir em segundos) e a lista de dispositivos do `desktop-pull` — que vem completa
+  de propósito, sem o `cadastroSince`. A remoção é **lógica** (`deleted_at`), nunca um DELETE: a
+  FK `weighing_operations.device_id` continua de pé e o detalhe da operação antiga segue mostrando
+  em que computador ela foi feita; quem filtra `deleted_at` é só a legenda. Duas travas contra
+  apagar a frota por causa de uma resposta ruim — a lista precisa conter **esta** máquina (toda
+  lista de unidade contém o dispositivo que a pediu; sem ele, não é a lista da unidade) e o pull
+  pula o corte quando a nuvem avisou falha na consulta de dispositivos (o que veio é um pedaço) —,
+  mais a rede de segurança: o upsert limpa o `deleted_at` de quem voltar a ser listado.
 
 ## Backoffice financeiro
 

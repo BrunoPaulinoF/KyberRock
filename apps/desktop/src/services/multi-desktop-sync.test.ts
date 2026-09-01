@@ -14,7 +14,7 @@ import {
   pullDesktopDataFromCloud,
   syncOperationToSupabase
 } from "./supabase-sync";
-import { listUnitDevices, upsertUnitDevices } from "./unit-devices";
+import { listUnitDevices, pruneMissingUnitDevices, upsertUnitDevices } from "./unit-devices";
 import { getWalletReport, reopenWalletOperations, settleWalletOperations } from "./wallet";
 import {
   closeWeighingOperation,
@@ -923,6 +923,146 @@ describe("multi-desktop na mesma pedreira", () => {
 
       expect(listOpenWeighingOperations(database).map((op) => op.id)).toEqual(["op-good"]);
       expect(pulled.warnings.join(" ")).toContain("print_receipts");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("pull tira da legenda o computador que a nuvem nao lista mais", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      // Ontem a unidade tinha tres maquinas; hoje o painel apagou a balanca de
+      // teste. Ate aqui o espelho so somava e ela ficava na legenda para sempre.
+      upsertUnitDevices(database, identity, [
+        { id: "desktop-a", name: "Balanca 1", color: "#2563eb", is_active: true },
+        { id: "desktop-b", name: "Balanca 2", color: "#ea580c", is_active: true },
+        { id: "desktop-teste", name: "Desktop balanca", color: "#16a34a", is_active: true }
+      ]);
+      createSimulatedWeighingOperation(database, {
+        identity: { ...identity, deviceId: "desktop-teste" },
+        customerName: "Cliente Teste",
+        plate: "ABC1D23",
+        driverName: "Motorista Teste",
+        productDescription: "Brita 1",
+        entryWeightKg: 12_000
+      });
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          devices: [
+            { id: "desktop-a", name: "Balanca 1", color: "#2563eb", is_active: true },
+            { id: "desktop-b", name: "Balanca 2", color: "#ea580c", is_active: true }
+          ]
+        },
+        error: null
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(listUnitDevices(database, identity).map((device) => device.id)).toEqual([
+        "desktop-a",
+        "desktop-b"
+      ]);
+      // A operacao que a balanca apagada deixou continua sabendo em que
+      // computador foi feita: a remocao e logica, a FK segue de pe.
+      const operation = listOpenWeighingOperations(database).find(
+        (op) => op.deviceId === "desktop-teste"
+      );
+      expect(operation?.deviceName).toBe("Desktop balanca");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("pull devolve a legenda o computador que a nuvem voltou a listar", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      upsertUnitDevices(database, identity, [
+        { id: "desktop-a", name: "Balanca 1", is_active: true },
+        { id: "desktop-b", name: "Balanca 2", is_active: true }
+      ]);
+
+      invokeMock.mockResolvedValueOnce({
+        data: { devices: [{ id: "desktop-a", name: "Balanca 1", is_active: true }] },
+        error: null
+      });
+      await pullDesktopDataFromCloud(database, identity);
+      expect(listUnitDevices(database, identity).map((device) => device.id)).toEqual(["desktop-a"]);
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          devices: [
+            { id: "desktop-a", name: "Balanca 1", is_active: true },
+            { id: "desktop-b", name: "Balanca 2", is_active: true }
+          ]
+        },
+        error: null
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(listUnitDevices(database, identity).map((device) => device.id)).toEqual([
+        "desktop-a",
+        "desktop-b"
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("pull nao mexe na legenda quando a nuvem avisou falha na consulta de dispositivos", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      upsertUnitDevices(database, identity, [
+        { id: "desktop-a", name: "Balanca 1", is_active: true },
+        { id: "desktop-b", name: "Balanca 2", is_active: true }
+      ]);
+
+      // Consulta dos dispositivos quebrada na nuvem: o que veio e um pedaco da
+      // unidade, e um pedaco nunca pode apagar o resto da frota.
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          devices: [{ id: "desktop-a", name: "Balanca 1", is_active: true }],
+          warnings: ["device_registrations: timeout (code=57014)"]
+        },
+        error: null
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(listUnitDevices(database, identity).map((device) => device.id)).toEqual([
+        "desktop-a",
+        "desktop-b"
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("legenda intacta quando a lista da nuvem nao traz esta propria maquina", () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      upsertUnitDevices(database, identity, [
+        { id: "desktop-a", name: "Balanca 1", is_active: true },
+        { id: "desktop-b", name: "Balanca 2", is_active: true }
+      ]);
+
+      // Toda lista de unidade contem o dispositivo que a pediu. Sem ele, o que
+      // chegou nao e a lista desta unidade — e nao se apaga nada por causa dela.
+      const removed = pruneMissingUnitDevices(database, identity, [
+        { id: "desktop-b", name: "Balanca 2", is_active: true }
+      ]);
+
+      expect(removed).toBe(0);
+      expect(listUnitDevices(database, identity).map((device) => device.id)).toEqual([
+        "desktop-a",
+        "desktop-b"
+      ]);
     } finally {
       database.close();
     }
