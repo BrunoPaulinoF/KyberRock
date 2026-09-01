@@ -47,6 +47,11 @@ export function upsertUnitDevices(
       color = COALESCE(excluded.color, devices.color),
       device_number = COALESCE(excluded.device_number, devices.device_number),
       is_active = excluded.is_active,
+      -- A nuvem listou o computador: se ele estava fora da legenda por uma
+      -- remocao anterior (ver pruneMissingUnitDevices), volta. Sem isto, uma
+      -- lista incompleta que escapasse das travas do prune deixaria uma
+      -- balanca de verdade escondida para sempre.
+      deleted_at = NULL,
       updated_at = excluded.updated_at
   `);
 
@@ -109,4 +114,51 @@ export function listUnitDevices(
     isActive: row.is_active === 1,
     isSelf: row.id === identity.deviceId
   }));
+}
+
+/**
+ * Tira da legenda os computadores que a nuvem NAO lista mais.
+ *
+ * O espelho so sabia somar. Balanca de teste, maquina trocada e ativacao
+ * duplicada — tudo o que o painel apaga (`delete_device`) — continuava na
+ * legenda de cada desktop para sempre, porque o pull nunca dizia "esta sumiu".
+ * A tela do operador acumulava computador que nao existe (varios deles com o
+ * nome generico da ativacao), e nao havia como limpar sem mexer no SQLite.
+ *
+ * A remocao e LOGICA (`deleted_at`), nunca um DELETE: a FK
+ * `weighing_operations.device_id` continua valendo e o detalhe da operacao
+ * antiga segue mostrando em que computador ela foi feita — quem filtra
+ * `deleted_at` e so a legenda (`listUnitDevices`).
+ *
+ * Duas travas contra apagar a frota inteira por causa de uma resposta ruim:
+ * a lista precisa vir com ESTA maquina dentro (o `desktop-status` e o
+ * `desktop-pull` autenticam este dispositivo na unidade, entao a lista da
+ * unidade sempre o contem — sem ele, o que chegou nao e a lista da unidade), e
+ * o chamador so passa por aqui quando a nuvem entregou a lista inteira.
+ */
+export function pruneMissingUnitDevices(
+  database: DesktopDatabase,
+  identity: Pick<LocalDesktopIdentity, "unitId" | "deviceId">,
+  devices: CloudUnitDevice[]
+): number {
+  const cloudIds = new Set<string>();
+  for (const device of devices) {
+    const id = typeof device.id === "string" ? device.id.trim() : "";
+    if (id) cloudIds.add(id);
+  }
+  if (!cloudIds.has(identity.deviceId)) return 0;
+
+  const timestamp = new Date().toISOString();
+  const placeholders = Array.from(cloudIds, () => "?").join(", ");
+  const result = database
+    .prepare(
+      `UPDATE devices
+          SET deleted_at = ?, updated_at = ?
+        WHERE unit_id = ?
+          AND deleted_at IS NULL
+          AND id NOT IN (${placeholders})`
+    )
+    .run(timestamp, timestamp, identity.unitId, ...cloudIds);
+
+  return result.changes;
 }

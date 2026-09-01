@@ -73,7 +73,7 @@ import {
   isOmieAlreadyBilledFault
 } from "./omie-fault-classifier.js";
 import { provisionPaymentTermsFromOmieMirror } from "./payment-terms.js";
-import { upsertUnitDevices } from "./unit-devices.js";
+import { pruneMissingUnitDevices, upsertUnitDevices } from "./unit-devices.js";
 
 let client: SupabaseClient | null = null;
 let clientConfigKey: string | null = null;
@@ -724,6 +724,12 @@ export const SETUP_COMPANY_ID = "setup-company";
 export const CADASTRO_LAST_PULL_KEY = "cloud_cadastro_last_pull_at";
 /** Janela de sobreposicao do pull incremental, para absorver diferenca de relogio. */
 const CADASTRO_INCREMENTAL_OVERLAP_MS = 5 * 60 * 1000;
+/**
+ * Nome da tabela de dispositivos NA NUVEM. Aqui ele so serve para reconhecer o
+ * aviso que o `desktop-pull` emite (`device_registrations: ...`) quando a
+ * consulta dos dispositivos falha: e o sinal de que a lista veio incompleta.
+ */
+const CLOUD_DEVICES_TABLE = "device_registrations";
 
 /**
  * Traz da nuvem o que as outras maquinas da pedreira registraram.
@@ -766,16 +772,28 @@ export async function pullDesktopDataFromCloud(
   // Avisos locais (linha que nao pode ser gravada) somam aos avisos por tabela
   // que vieram do desktop-pull.
   const warnings = [...(payload.warnings ?? [])];
+  // A lista de dispositivos vem SEMPRE inteira (o `desktop-pull` nao aplica o
+  // `cadastroSince` nela), e e isso que autoriza tirar da legenda quem sumiu.
+  // Se a nuvem avisou que essa consulta falhou, o que chegou e um pedaco: nesse
+  // ciclo o espelho so soma, como antes.
+  const devicesComplete = !warnings.some((warning) =>
+    warning.startsWith(`${CLOUD_DEVICES_TABLE}:`)
+  );
   const apply = database.transaction(() => {
     // Dispositivos primeiro: operacoes criadas em outras maquinas referenciam
     // o device delas (FK weighing_operations.device_id) e a legenda usa nome/cor.
-    applySection(warnings, "devices", () =>
-      upsertUnitDevices(
+    applySection(warnings, "devices", () => {
+      const devices = payload.devices ?? [];
+      const mirrored = upsertUnitDevices(
         database,
         { companyId: settings.companyId, unitId: settings.unitId },
-        payload.devices ?? []
-      )
-    );
+        devices
+      );
+      // Espelho de ida e volta: sem isto a balanca apagada no painel ficava na
+      // legenda desta maquina para sempre.
+      if (devicesComplete) pruneMissingUnitDevices(database, settings, devices);
+      return mirrored;
+    });
     // Transportadoras e formas de pagamento antes dos clientes: e delas que o bloco
     // comercial do cliente depende para traduzir os padroes (ver a funcao).
     const customerReferences = upsertCloudCustomerReferences(
