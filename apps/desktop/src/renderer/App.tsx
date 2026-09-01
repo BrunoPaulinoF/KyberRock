@@ -8618,8 +8618,23 @@ function CloseOperationWeighingDialog({
 
   return (
     <div style={modalOverlayStyle}>
-      <div style={{ ...modalContentStyle, maxWidth: "720px", width: "90%" }}>
-        <h3 style={{ margin: "0 0 8px 0", color: "var(--kr-text-strong)", fontSize: "18px" }}>
+      {/*
+       * O modal do fechamento e o mais alto do sistema (dados, balanca, resumo do valor,
+       * tipo e acoes). Em tela de balanca — notebook 768 px de altura, com a barra do
+       * Windows — ele passava do rodape e o "Confirmar fechamento" ficava fora do alcance,
+       * travando a saida do caminhao. O teto em vh com rolagem propria e a garantia: por
+       * mais que o conteudo cresca, os botoes continuam acessiveis.
+       */}
+      <div
+        style={{
+          ...modalContentStyle,
+          maxWidth: "720px",
+          width: "90%",
+          maxHeight: "92vh",
+          overflowY: "auto"
+        }}
+      >
+        <h3 style={{ margin: "0 0 6px 0", color: "var(--kr-text-strong)", fontSize: "16px" }}>
           Fechar operação - Captura de peso de saída
         </h3>
 
@@ -8627,9 +8642,9 @@ function CloseOperationWeighingDialog({
         <div
           style={{
             background: "var(--kr-surface-soft)",
-            padding: "12px",
+            padding: "8px 10px",
             borderRadius: "10px",
-            marginBottom: "12px",
+            marginBottom: "8px",
             border: "1px solid var(--kr-border)"
           }}
         >
@@ -8637,8 +8652,8 @@ function CloseOperationWeighingDialog({
             style={{
               display: "grid",
               gridTemplateColumns: "1fr 1fr 1fr",
-              gap: "12px",
-              fontSize: "13px"
+              gap: "6px 12px",
+              fontSize: "12px"
             }}
           >
             <div>
@@ -8671,11 +8686,11 @@ function CloseOperationWeighingDialog({
         </div>
 
         {/* Balança - peso ao vivo e capturado */}
-        <div style={{ display: "flex", gap: "16px", marginBottom: "16px" }}>
+        <div style={{ display: "flex", gap: "12px", marginBottom: "10px" }}>
           <div
             style={{
               flex: 1,
-              padding: "12px",
+              padding: "10px",
               background: "var(--kr-surface-soft)",
               borderRadius: "12px",
               border: "1px solid var(--kr-border)",
@@ -8688,10 +8703,10 @@ function CloseOperationWeighingDialog({
                 alignItems: "center",
                 justifyContent: "center",
                 gap: "8px",
-                marginBottom: "8px"
+                marginBottom: "4px"
               }}
             >
-              <span style={{ fontSize: "13px", color: "#64748b" }}>Peso ao vivo</span>
+              <span style={{ fontSize: "12px", color: "#64748b" }}>Peso ao vivo</span>
               <span
                 style={{
                   width: "10px",
@@ -8707,11 +8722,11 @@ function CloseOperationWeighingDialog({
               />
             </div>
             <strong
-              style={{ fontSize: "28px", color: "var(--kr-text-strong)", fontFamily: "monospace" }}
+              style={{ fontSize: "24px", color: "var(--kr-text-strong)", fontFamily: "monospace" }}
             >
               {liveWeight !== null ? formatWeightKg(liveWeight) : "-- kg"}
             </strong>
-            <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
+            <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>
               {scaleMessage}
             </div>
             {scaleLink.showReconnect ? (
@@ -8746,26 +8761,26 @@ function CloseOperationWeighingDialog({
           <div
             style={{
               flex: 1,
-              padding: "16px",
+              padding: "10px",
               background: capturedExitWeight !== null ? "#f0fdf4" : "#f8fafc",
               borderRadius: "12px",
               border: `2px solid ${capturedExitWeight !== null ? "#86efac" : "#e2e8f0"}`,
               textAlign: "center"
             }}
           >
-            <div style={{ fontSize: "13px", color: "#64748b", marginBottom: "8px" }}>
+            <div style={{ fontSize: "12px", color: "#64748b", marginBottom: "4px" }}>
               Peso de saida capturado
             </div>
             <strong
               style={{
-                fontSize: "32px",
+                fontSize: "26px",
                 color: capturedExitWeight !== null ? "#15803d" : "#0f172a",
                 fontFamily: "monospace"
               }}
             >
               {capturedExitWeight !== null ? formatWeightKg(capturedExitWeight) : "-- kg"}
             </strong>
-            <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "4px" }}>
+            <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>
               {capturedExitWeight !== null
                 ? `Leitura estavel capturada${capturedExitAt ? ` as ${formatClockTime(capturedExitAt)}` : ""} — o peso fica guardado ate confirmar`
                 : "Clique em 'Capturar peso'"}
@@ -8775,7 +8790,7 @@ function CloseOperationWeighingDialog({
 
         {isVirtual && scaleLink.usable ? (
           <div
-            style={{ marginBottom: "16px", display: "flex", gap: "8px", alignItems: "flex-end" }}
+            style={{ marginBottom: "10px", display: "flex", gap: "8px", alignItems: "flex-end" }}
           >
             <div style={{ flex: 1 }}>
               <label
@@ -8853,132 +8868,127 @@ function CloseOperationWeighingDialog({
           </div>
         ) : null}
 
-        {/* Peso líquido */}
+        {/*
+         * Peso liquido e valor a cobrar no MESMO cartao: os dois sao a conferencia que o
+         * operador faz com o motorista, e separados empurravam o "Confirmar fechamento"
+         * para fora da tela do notebook da balanca.
+         */}
         {netWeight !== null ? (
           <div
             style={{
-              textAlign: "center",
-              padding: "12px",
-              background: "var(--kr-info-bg)",
-              border: "1px solid var(--kr-info-border)",
-              borderRadius: "10px",
-              marginBottom: "16px"
-            }}
-          >
-            <span
-              style={{
-                fontSize: "14px",
-                color: invalidNetWeight ? "var(--kr-danger)" : "var(--kr-info-text)"
-              }}
-            >
-              Peso líquido:{" "}
-              <strong style={{ fontSize: "20px" }}>{formatWeightKg(netWeight)}</strong>
-            </span>
-          </div>
-        ) : null}
-
-        {/* Valor total da operacao — o que o operador confere com o cliente antes de fechar */}
-        {totalPreview ? (
-          <div
-            style={{
-              padding: "12px 14px",
+              padding: "8px 12px",
               background: "var(--kr-surface-soft)",
               border: "1px solid var(--kr-border)",
               borderRadius: "10px",
-              marginBottom: "16px"
+              marginBottom: "10px"
             }}
           >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: "13px",
-                color: "var(--kr-text)",
-                marginBottom: "4px"
-              }}
-            >
-              <span>
-                Produto ({formatTonsForClosing(netWeight ?? 0)} t x{" "}
-                {formatMoney(operation.unitPriceCents)}/ton)
-              </span>
-              <strong>
-                {totalPreview.productTotalCents === null
-                  ? "sem preço lançado"
-                  : formatMoney(totalPreview.productTotalCents)}
-              </strong>
-            </div>
-            {showFreightLine ? (
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  fontSize: "13px",
-                  color: "var(--kr-text)",
-                  marginBottom: "4px"
-                }}
-              >
-                <span>Frete</span>
-                <strong>
-                  {totalPreview.freightPending
-                    ? "calculado no fechamento"
-                    : formatMoney(totalPreview.freightTotalCents)}
-                </strong>
-              </div>
-            ) : null}
             <div
               style={{
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "baseline",
-                borderTop: "1px solid var(--kr-border)",
-                paddingTop: "8px",
-                marginTop: "8px"
+                gap: "12px",
+                flexWrap: "wrap"
               }}
             >
-              <span style={{ fontSize: "14px", color: "var(--kr-text-strong)", fontWeight: 600 }}>
-                Valor total da operação
+              <span
+                style={{
+                  fontSize: "13px",
+                  color: invalidNetWeight ? "var(--kr-danger)" : "var(--kr-text)"
+                }}
+              >
+                Peso líquido:{" "}
+                <strong style={{ fontSize: "18px" }}>{formatWeightKg(netWeight)}</strong>
               </span>
-              <strong style={{ fontSize: "22px", color: "var(--kr-success)" }}>
-                {totalPreview.totalCents === null ? "—" : formatMoney(totalPreview.totalCents)}
-              </strong>
+              {totalPreview ? (
+                <span style={{ fontSize: "13px", color: "var(--kr-text-strong)", fontWeight: 600 }}>
+                  Valor total:{" "}
+                  <strong style={{ fontSize: "20px", color: "var(--kr-success)" }}>
+                    {totalPreview.totalCents === null ? "—" : formatMoney(totalPreview.totalCents)}
+                  </strong>
+                </span>
+              ) : null}
             </div>
-            {totalPreview.productTotalCents === null ? (
-              <div style={{ fontSize: "12px", color: "var(--kr-warning)", marginTop: "6px" }}>
-                Esta operação está sem preço lançado — o valor não pode ser calculado aqui.
-              </div>
+
+            {totalPreview ? (
+              <>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    fontSize: "12px",
+                    color: "var(--kr-muted)",
+                    marginTop: "4px"
+                  }}
+                >
+                  <span>
+                    Produto ({formatTonsForClosing(netWeight)} t x{" "}
+                    {formatMoney(operation.unitPriceCents)}/ton)
+                  </span>
+                  <span>
+                    {totalPreview.productTotalCents === null
+                      ? "sem preço lançado"
+                      : formatMoney(totalPreview.productTotalCents)}
+                  </span>
+                </div>
+                {showFreightLine ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: "12px",
+                      color: "var(--kr-muted)",
+                      marginTop: "2px"
+                    }}
+                  >
+                    <span>Frete</span>
+                    <span>
+                      {totalPreview.freightPending
+                        ? "calculado no fechamento"
+                        : formatMoney(totalPreview.freightTotalCents)}
+                    </span>
+                  </div>
+                ) : null}
+                {totalPreview.productTotalCents === null ? (
+                  <div style={{ fontSize: "11px", color: "var(--kr-warning)", marginTop: "4px" }}>
+                    Esta operação está sem preço lançado — o valor não pode ser calculado aqui.
+                  </div>
+                ) : null}
+                {totalPreview.freightPending ? (
+                  <div style={{ fontSize: "11px", color: "var(--kr-warning)", marginTop: "4px" }}>
+                    O frete será calculado no fechamento e ainda não está somado acima.
+                  </div>
+                ) : null}
+                {totalPreview.freightError ? (
+                  <div style={{ fontSize: "11px", color: "var(--kr-danger)", marginTop: "4px" }}>
+                    Não foi possível calcular o frete: {totalPreview.freightError}
+                  </div>
+                ) : null}
+                <div
+                  style={{
+                    marginTop: "6px",
+                    padding: "5px 8px",
+                    background: "var(--kr-warning-soft)",
+                    border: "1px solid var(--kr-warning-border)",
+                    borderRadius: "8px",
+                    fontSize: "12px",
+                    color: "var(--kr-warning)",
+                    fontWeight: 600,
+                    textAlign: "center"
+                  }}
+                >
+                  Confirme o peso e o valor com o cliente antes de concluir o fechamento.
+                </div>
+              </>
             ) : null}
-            {totalPreview.freightPending ? (
-              <div style={{ fontSize: "12px", color: "var(--kr-warning)", marginTop: "6px" }}>
-                O frete desta operação será calculado no fechamento e ainda não está somado acima.
-              </div>
-            ) : null}
-            {totalPreview.freightError ? (
-              <div style={{ fontSize: "12px", color: "var(--kr-danger)", marginTop: "6px" }}>
-                Não foi possível calcular o frete: {totalPreview.freightError}
-              </div>
-            ) : null}
-            <div
-              style={{
-                marginTop: "10px",
-                padding: "8px 10px",
-                background: "var(--kr-warning-soft)",
-                border: "1px solid var(--kr-warning-border)",
-                borderRadius: "8px",
-                fontSize: "13px",
-                color: "var(--kr-warning)",
-                fontWeight: 600,
-                textAlign: "center"
-              }}
-            >
-              Confirme o peso e o valor com o cliente antes de concluir o fechamento.
-            </div>
           </div>
         ) : null}
 
         {captureError ? <p style={styles.errorMessage}>{captureError}</p> : null}
 
         {/* Botão capturar peso */}
-        <div style={{ textAlign: "center", marginBottom: "16px" }}>
+        <div style={{ textAlign: "center", marginBottom: "10px" }}>
           <button
             type="button"
             onClick={handleCaptureExitWeight}
@@ -8986,11 +8996,11 @@ function CloseOperationWeighingDialog({
             style={{
               ...styles.captureButton,
               opacity: isCapturing || !scaleLink.usable ? 0.5 : 1,
-              fontSize: "16px",
-              padding: "12px 24px"
+              fontSize: "15px",
+              padding: "9px 20px"
             }}
           >
-            <Scale size={20} strokeWidth={2.4} />
+            <Scale size={18} strokeWidth={2.4} />
             {isCapturing ? "Capturando..." : "Capturar peso de saída"}
           </button>
         </div>
@@ -9009,7 +9019,7 @@ function CloseOperationWeighingDialog({
         </label>
 
         {/* Ações */}
-        <div style={{ display: "flex", gap: "8px", marginTop: "16px", justifyContent: "center" }}>
+        <div style={{ display: "flex", gap: "8px", marginTop: "12px", justifyContent: "center" }}>
           <button
             type="button"
             onClick={() => {
