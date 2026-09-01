@@ -86,6 +86,7 @@ import {
   validateOperationEditForm
 } from "./operation-details";
 import type { OperationEditFormState } from "./operation-details";
+import { buildClosingTotalPreview } from "./closing-total";
 import type {
   OperationFreightInput,
   OperationOmieIssue,
@@ -8600,6 +8601,20 @@ function CloseOperationWeighingDialog({
       ? capturedExitWeight - operation.entryWeightKg
       : null;
   const invalidNetWeight = netWeight !== null && netWeight <= 0;
+  // Quanto esta carga vai custar, ja com o preco daquele cliente e o frete da operacao.
+  // E previa: quem grava o valor continua sendo o fechamento — a conta aqui e o espelho
+  // dele (ver closing-total.ts) para o numero combinado com o cliente ser o do cupom.
+  const totalPreview =
+    netWeight !== null && !invalidNetWeight
+      ? buildClosingTotalPreview({
+          netWeightKg: netWeight,
+          unitPriceCents: operation.unitPriceCents,
+          freightJson: operation.freightJson,
+          freightModality: operation.freightModality
+        })
+      : null;
+  const showFreightLine =
+    totalPreview !== null && (totalPreview.freightTotalCents > 0 || totalPreview.freightPending);
 
   return (
     <div style={modalOverlayStyle}>
@@ -8859,6 +8874,104 @@ function CloseOperationWeighingDialog({
               Peso líquido:{" "}
               <strong style={{ fontSize: "20px" }}>{formatWeightKg(netWeight)}</strong>
             </span>
+          </div>
+        ) : null}
+
+        {/* Valor total da operacao — o que o operador confere com o cliente antes de fechar */}
+        {totalPreview ? (
+          <div
+            style={{
+              padding: "12px 14px",
+              background: "var(--kr-surface-soft)",
+              border: "1px solid var(--kr-border)",
+              borderRadius: "10px",
+              marginBottom: "16px"
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: "13px",
+                color: "var(--kr-text)",
+                marginBottom: "4px"
+              }}
+            >
+              <span>
+                Produto ({formatTonsForClosing(netWeight ?? 0)} t x{" "}
+                {formatMoney(operation.unitPriceCents)}/ton)
+              </span>
+              <strong>
+                {totalPreview.productTotalCents === null
+                  ? "sem preço lançado"
+                  : formatMoney(totalPreview.productTotalCents)}
+              </strong>
+            </div>
+            {showFreightLine ? (
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontSize: "13px",
+                  color: "var(--kr-text)",
+                  marginBottom: "4px"
+                }}
+              >
+                <span>Frete</span>
+                <strong>
+                  {totalPreview.freightPending
+                    ? "calculado no fechamento"
+                    : formatMoney(totalPreview.freightTotalCents)}
+                </strong>
+              </div>
+            ) : null}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "baseline",
+                borderTop: "1px solid var(--kr-border)",
+                paddingTop: "8px",
+                marginTop: "8px"
+              }}
+            >
+              <span style={{ fontSize: "14px", color: "var(--kr-text-strong)", fontWeight: 600 }}>
+                Valor total da operação
+              </span>
+              <strong style={{ fontSize: "22px", color: "var(--kr-success)" }}>
+                {totalPreview.totalCents === null ? "—" : formatMoney(totalPreview.totalCents)}
+              </strong>
+            </div>
+            {totalPreview.productTotalCents === null ? (
+              <div style={{ fontSize: "12px", color: "var(--kr-warning)", marginTop: "6px" }}>
+                Esta operação está sem preço lançado — o valor não pode ser calculado aqui.
+              </div>
+            ) : null}
+            {totalPreview.freightPending ? (
+              <div style={{ fontSize: "12px", color: "var(--kr-warning)", marginTop: "6px" }}>
+                O frete desta operação será calculado no fechamento e ainda não está somado acima.
+              </div>
+            ) : null}
+            {totalPreview.freightError ? (
+              <div style={{ fontSize: "12px", color: "var(--kr-danger)", marginTop: "6px" }}>
+                Não foi possível calcular o frete: {totalPreview.freightError}
+              </div>
+            ) : null}
+            <div
+              style={{
+                marginTop: "10px",
+                padding: "8px 10px",
+                background: "var(--kr-warning-soft)",
+                border: "1px solid var(--kr-warning-border)",
+                borderRadius: "8px",
+                fontSize: "13px",
+                color: "var(--kr-warning)",
+                fontWeight: 600,
+                textAlign: "center"
+              }}
+            >
+              Confirme o peso e o valor com o cliente antes de concluir o fechamento.
+            </div>
           </div>
         ) : null}
 
@@ -9355,6 +9468,15 @@ function formatClockTime(value: string): string {
 // aquilo e um peso, e o "kg" repetido em cada linha so atrapalhava a leitura.
 function formatWeightNumber(value: number): string {
   return value.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
+// Peso em toneladas com as tres casas do quilo (22.910 kg -> "22,910"): e assim que a
+// conta do valor e lida em voz alta para o cliente no fechamento.
+function formatTonsForClosing(weightKg: number): string {
+  return (weightKg / 1000).toLocaleString("pt-BR", {
+    minimumFractionDigits: 3,
+    maximumFractionDigits: 3
+  });
 }
 
 // Na tela da balanca o numero E a leitura do mostrador: ali a unidade fica, ao lado do
