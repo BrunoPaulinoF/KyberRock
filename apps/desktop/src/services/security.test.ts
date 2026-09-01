@@ -18,6 +18,7 @@ describe("InputValidator", () => {
     const validator = new InputValidator();
 
     expect(validator.validateDocument("12345678000195")).toBe(true); // CNPJ
+    expect(validator.validateDocument("12ABC34501DE35")).toBe(true); // CNPJ alfanumerico
     expect(validator.validateDocument("12345678901")).toBe(true); // CPF
     expect(validator.validateDocument("123")).toBe(false);
     expect(validator.validateDocument("")).toBe(false);

@@ -33,11 +33,15 @@ export function DocumentInput({
       <input
         id={id}
         type="text"
-        inputMode="numeric"
+        // `numeric` nao vale mais: o CNPJ alfanumerico (IN RFB 2.229/2024) tem letras nas
+        // 12 primeiras posicoes, e o teclado numerico esconderia justamente as teclas que
+        // o operador precisa para digitar o documento novo.
+        inputMode="text"
+        autoCapitalize="characters"
         autoComplete="off"
         disabled={disabled}
         value={formatDocument(value)}
-        placeholder={placeholder ?? "000.000.000-00 ou 00.000.000/0000-00"}
+        placeholder={placeholder ?? "000.000.000-00, 00.000.000/0000-00 ou 00.AAA.000/0000-00"}
         onChange={(e) => onChange(normalizeDocument(e.target.value))}
         onBlur={() => {
           setTouched(true);

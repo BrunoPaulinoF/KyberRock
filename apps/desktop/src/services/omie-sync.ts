@@ -20,7 +20,7 @@ import {
 } from "@kyberrock/omie-client";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
-import { DOCUMENT_DIGITS_SQL } from "./customer-identity.js";
+import { DOCUMENT_KEY_SQL, documentKey } from "./customer-identity.js";
 import { normalizeMatchKey } from "./customer-import-sheet.js";
 import { isSellableProduct } from "./product-classification.js";
 import {
@@ -192,15 +192,15 @@ export class OmieSyncService {
       `SELECT id FROM customers
        WHERE company_id = ?
          AND deleted_at IS NULL
-         AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?`
+         AND ${DOCUMENT_KEY_SQL} = ?`
     );
 
     const removedIds = new Set<string>();
     for (const supplier of nonCustomers) {
       const rows = byOmieId.all(companyId, supplier.id) as Array<{ id: string }>;
-      const digits = (supplier.document ?? "").replace(/\D/g, "");
-      if (digits) {
-        rows.push(...(byDocument.all(companyId, digits) as Array<{ id: string }>));
+      const key = documentKey(supplier.document);
+      if (key) {
+        rows.push(...(byDocument.all(companyId, key) as Array<{ id: string }>));
       }
       for (const row of rows) {
         if (removedIds.has(row.id)) continue;
@@ -410,7 +410,7 @@ export class OmieSyncService {
         const matchingOmieId =
           carrier.omie_customer_id ??
           (carrier.document
-            ? (omieCustomersByDocument?.get(normalizeDocument(carrier.document))?.id ?? null)
+            ? (omieCustomersByDocument?.get(documentKey(carrier.document))?.id ?? null)
             : null);
 
         if (matchingOmieId) {
@@ -481,7 +481,7 @@ export class OmieSyncService {
     const customers = await this.customersService.listAll();
     for (const customer of customers) {
       if (!customer.document) continue;
-      const normalized = normalizeDocument(customer.document);
+      const normalized = documentKey(customer.document);
       if (normalized) byDocument.set(normalized, customer);
     }
     return byDocument;
@@ -499,7 +499,7 @@ export class OmieSyncService {
       .all(companyId) as Array<{ id: string; document: string }>;
 
     for (const row of localRows) {
-      const normalized = normalizeDocument(row.document);
+      const normalized = documentKey(row.document);
       if (normalized) localDocs.set(normalized, row.id);
     }
 
@@ -513,7 +513,7 @@ export class OmieSyncService {
 
     for (const omieCustomer of omieCustomers) {
       if (!omieCustomer.document) continue;
-      const normalizedOmie = normalizeDocument(omieCustomer.document);
+      const normalizedOmie = documentKey(omieCustomer.document);
       if (!normalizedOmie) continue;
 
       if (!localDocs.has(normalizedOmie)) {
@@ -1113,7 +1113,7 @@ export class OmieSyncService {
          WHERE company_id = ?
            AND deleted_at IS NULL
            AND omie_customer_id IS NULL
-           AND ${DOCUMENT_DIGITS_SQL} = ''`
+           AND ${DOCUMENT_KEY_SQL} = ''`
       )
       .all(companyId) as Array<Record<string, string | null>>;
 
@@ -1185,17 +1185,17 @@ export class OmieSyncService {
       .get(companyId, customer.id) as { id: string } | undefined;
     if (byOmieId) return byOmieId.id;
 
-    const digits = (customer.document ?? "").replace(/\D/g, "");
-    if (digits) {
+    const key = documentKey(customer.document);
+    if (key) {
       const byDocument = this.db
         .prepare(
           `SELECT id FROM customers
            WHERE company_id = ?
              AND deleted_at IS NULL
-             AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
+             AND ${DOCUMENT_KEY_SQL} = ?
            LIMIT 1`
         )
-        .get(companyId, digits) as { id: string } | undefined;
+        .get(companyId, key) as { id: string } | undefined;
       if (byDocument) return byDocument.id;
     }
 
@@ -1222,17 +1222,17 @@ export class OmieSyncService {
       .get(companyId, carrier.id) as { id: string } | undefined;
     if (byOmieId) return byOmieId.id;
 
-    const digits = (carrier.document ?? "").replace(/\D/g, "");
-    if (digits) {
+    const key = documentKey(carrier.document);
+    if (key) {
       const byDocument = this.db
         .prepare(
           `SELECT id FROM carriers
            WHERE company_id = ?
              AND deleted_at IS NULL
-             AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
+             AND ${DOCUMENT_KEY_SQL} = ?
            LIMIT 1`
         )
-        .get(companyId, digits) as { id: string } | undefined;
+        .get(companyId, key) as { id: string } | undefined;
       if (byDocument) return byDocument.id;
     }
 
@@ -1388,10 +1388,6 @@ function isSellableOmieProduct(product: Product): boolean {
     isActive: product.isActive !== false,
     blocked: product.blocked === true
   });
-}
-
-function normalizeDocument(doc: string): string {
-  return doc.replace(/\D/g, "");
 }
 
 // Formas padrao do seed local -> codigo NFe/OMIE correspondente. Na primeira

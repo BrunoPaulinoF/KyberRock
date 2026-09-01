@@ -30,6 +30,6 @@ describe("cadastro na hora pela Nova entrada", () => {
     // O botao vive na config de campos do CarrierCrud, entao ele acompanha o
     // formulario tambem quando a Nova entrada o abre.
     expect(appSource).toContain("<CarrierCnpjAutoFillButton");
-    expect(appSource).toContain("desktopApi.lookupCnpj(digits)");
+    expect(appSource).toContain("desktopApi.lookupCnpj(document)");
   });
 });

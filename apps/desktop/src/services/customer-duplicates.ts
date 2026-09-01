@@ -1,5 +1,5 @@
 import type { DesktopDatabase } from "../database/sqlite.js";
-import { customerIdentityKey, documentDigits } from "./customer-identity.js";
+import { customerIdentityKey, documentKey } from "./customer-identity.js";
 import { normalizeMatchKey } from "./customer-import-sheet.js";
 
 /**
@@ -144,7 +144,7 @@ export function findDuplicateCustomerCadastros(
   for (const [key, bucket] of byName) {
     if (bucket.length < 2) continue;
     // Duas linhas que JA tem documento e nome igual sao matriz e filial, nao duplicata.
-    if (!bucket.some((row) => documentDigits(row.document) === "")) continue;
+    if (!bucket.some((row) => documentKey(row.document) === "")) continue;
     // Um cadastro cujos dois nomes casam com o mesmo grupo entraria duas vezes.
     const unique = [...new Map(bucket.map((row) => [row.id, row])).values()];
     if (unique.length < 2) continue;

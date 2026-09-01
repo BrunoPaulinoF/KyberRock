@@ -51,6 +51,20 @@ describe("customerIdentityKey", () => {
     ).toBe(customerIdentityKey({ id: "b", document: "06020284000164", omie_customer_id: 2 }));
   });
 
+  it("nao confunde dois CNPJs alfanumericos que so diferem nas letras", () => {
+    // Guardar "so os digitos" colapsaria os dois em "1234501"/"1245601": dois clientes
+    // distintos cairiam na mesma fatura, e o pull adotaria o cadastro do outro.
+    expect(
+      customerIdentityKey({ id: "a", document: "12.ABC.345/01DE-35", omie_customer_id: null })
+    ).not.toBe(
+      customerIdentityKey({ id: "b", document: "12.DEF.456/01AB-72", omie_customer_id: null })
+    );
+    // A mascara e a caixa continuam nao importando.
+    expect(
+      customerIdentityKey({ id: "a", document: "12.abc.345/01de-35", omie_customer_id: null })
+    ).toBe(customerIdentityKey({ id: "b", document: "12ABC34501DE35", omie_customer_id: null }));
+  });
+
   it("sem documento, o codigo OMIE amarra os dois cadastros", () => {
     expect(customerIdentityKey({ id: "a", document: null, omie_customer_id: 99 })).toBe(
       customerIdentityKey({ id: "b", document: "", omie_customer_id: 99 })

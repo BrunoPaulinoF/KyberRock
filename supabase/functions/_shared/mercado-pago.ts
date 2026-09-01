@@ -7,6 +7,8 @@
 // O `fetch` e injetavel para o teste (`mercado-pago_test.ts`, vitest) exercitar
 // payload, cabecalho de idempotencia e tratamento de erro sem rede.
 
+import { documentKind, normalizeDocument } from "./document.ts";
+
 export const MERCADO_PAGO_API_BASE = "https://api.mercadopago.com";
 
 /** `payment_method_id` do boleto bancario no Mercado Pago. */
@@ -18,7 +20,7 @@ export interface MercadoPagoPayer {
   email: string;
   /** Razao social (PJ) ou nome completo (PF). */
   name: string;
-  /** So digitos: 11 (CPF) ou 14 (CNPJ). */
+  /** Sem mascara: CPF (11 digitos) ou CNPJ (14 posicoes, numerico ou alfanumerico). */
   document: string;
   zipCode: string;
   streetName: string;
@@ -67,11 +69,19 @@ export class MercadoPagoError extends Error {
   }
 }
 
-/** Boleto so aceita pessoa fisica ou juridica; o resto e recusado na API. */
+/**
+ * Boleto so aceita pessoa fisica ou juridica; o resto e recusado na API.
+ *
+ * O documento vai como esta no cadastro, inclusive o CNPJ alfanumerico: recortar as letras
+ * mandaria ao Mercado Pago um CNPJ que nao e o da pedreira, e o boleto sairia no nome de
+ * outra empresa. Se a API ainda nao aceitar o formato novo, ela recusa e o erro aparece no
+ * fechamento — melhor do que um boleto emitido com o documento errado.
+ */
 function identificationFor(document: string): { type: string; number: string } | null {
-  const digits = document.replace(/\D/g, "");
-  if (digits.length === 11) return { type: "CPF", number: digits };
-  if (digits.length === 14) return { type: "CNPJ", number: digits };
+  const value = normalizeDocument(document);
+  const kind = documentKind(value);
+  if (kind === "cpf") return { type: "CPF", number: value };
+  if (kind === "cnpj") return { type: "CNPJ", number: value };
   return null;
 }
 

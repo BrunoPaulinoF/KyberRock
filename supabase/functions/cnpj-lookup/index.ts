@@ -1,6 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
+import { documentKind, normalizeDocument } from "../_shared/document.ts";
 
 type DeviceRow = {
   id: string;
@@ -97,7 +98,7 @@ Deno.serve(async (req) => {
 
   const deviceId = String(body.deviceId ?? "");
   const deviceToken = String(body.deviceToken ?? "");
-  const cnpj = onlyDigits(String(body.cnpj ?? ""));
+  const cnpj = normalizeDocument(String(body.cnpj ?? ""));
 
   const { data: device, error: deviceError } = await supabase
     .from("device_registrations")
@@ -116,8 +117,11 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Dispositivo bloqueado" }, 401);
   }
 
-  if (cnpj.length !== 14) {
-    return jsonResponse({ error: "CNPJ invalido. Informe os 14 digitos." }, 400);
+  // 14 posicoes, numerico ou alfanumerico (IN RFB 2.229/2024). A consulta segue com o
+  // documento como ele foi digitado: quem nao existe na base volta como "nao encontrado",
+  // e isso e melhor do que recusar aqui um CNPJ novo que o operador tem no papel.
+  if (documentKind(cnpj) !== "cnpj") {
+    return jsonResponse({ error: "CNPJ invalido. Informe as 14 posicoes." }, 400);
   }
 
   try {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { isOmieCustomerCadastro } from "@kyberrock/omie-client";
+import { documentKind, normalizeDocument } from "@kyberrock/shared";
 
 import {
   getDefaultSupabasePublishableKey,
@@ -63,7 +64,7 @@ import {
   enqueueOmieBillingJob,
   validateOperationFiscalReadiness
 } from "./weighing-operations.js";
-import { DOCUMENT_DIGITS_SQL, documentDigits } from "./customer-identity.js";
+import { DOCUMENT_KEY_SQL, documentKey } from "./customer-identity.js";
 import {
   isCadastroIncompleteFault,
   isOmieCustomerRegistrationFault,
@@ -1632,18 +1633,18 @@ function findLocalCadastroWithDocument(
   document: string | null,
   cloudId: string
 ): { id: string; omie_customer_id: number | null } | null {
-  const digits = (document ?? "").replace(/\D/g, "");
-  if (!digits) return null;
+  const key = documentKey(document);
+  if (!key) return null;
   const row = database
     .prepare(
       `SELECT id, omie_customer_id FROM ${table}
        WHERE company_id = ?
          AND id <> ?
          AND deleted_at IS NULL
-         AND replace(replace(replace(replace(COALESCE(document, ''), '.', ''), '-', ''), '/', ''), ' ', '') = ?
+         AND ${DOCUMENT_KEY_SQL} = ?
        LIMIT 1`
     )
-    .get(companyId, cloudId, digits) as { id: string; omie_customer_id: number | null } | undefined;
+    .get(companyId, cloudId, key) as { id: string; omie_customer_id: number | null } | undefined;
   return row ?? null;
 }
 
@@ -2193,15 +2194,15 @@ export async function lookupCnpjFromCloud(
   identity: LocalDesktopIdentity,
   cnpj: string
 ): Promise<CnpjLookupResult> {
-  const digits = String(cnpj ?? "").replace(/\D/g, "");
-  if (digits.length !== 14) {
-    throw new Error("CNPJ invalido. Informe os 14 digitos.");
+  const value = normalizeDocument(String(cnpj ?? ""));
+  if (documentKind(value) !== "cnpj") {
+    throw new Error("CNPJ invalido. Informe as 14 posicoes.");
   }
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.functions.invoke<CnpjLookupResult & { message?: string }>(
     "cnpj-lookup",
-    { body: { deviceId: settings.deviceId, deviceToken: settings.deviceToken, cnpj: digits } }
+    { body: { deviceId: settings.deviceId, deviceToken: settings.deviceToken, cnpj: value } }
   );
   if (error) throw new Error(await getFunctionErrorMessage(error));
   if (!data) throw new Error("Consulta de CNPJ nao retornou dados.");
@@ -4275,10 +4276,10 @@ function isOmieConsumidorIntegrationCode(code: string | null): boolean {
   return (code ?? "").trim().toUpperCase() === "CONSUMIDOR";
 }
 
-// OMIE exige CPF (11 digitos) ou CNPJ (14 digitos) para incluir cliente/transportadora.
+// OMIE exige CPF (11 digitos) ou CNPJ (14 posicoes, numerico ou alfanumerico) para
+// incluir cliente/transportadora.
 function hasValidCnpjCpf(document: string | null): boolean {
-  const digits = (document ?? "").replace(/\D/g, "");
-  return digits.length === 11 || digits.length === 14;
+  return documentKind(document ?? "") !== null;
 }
 
 export async function pushOmieCarriersToCloud(
@@ -6603,7 +6604,7 @@ function upsertOmieCustomers(
   // dois cadastros, com as pesagens divididas entre eles.
   const findByDocument = database.prepare(
     `SELECT id FROM customers
-     WHERE company_id = ? AND ${DOCUMENT_DIGITS_SQL} = ? AND deleted_at IS NULL
+     WHERE company_id = ? AND ${DOCUMENT_KEY_SQL} = ? AND deleted_at IS NULL
      LIMIT 1`
   );
   const upsert = database.prepare(`
@@ -6658,9 +6659,9 @@ ${OMIE_CUSTOMER_SET_SQL},
           | { id: string }
           | undefined)
       : undefined;
-    const customerDigits = documentDigits(customer.document);
-    const byDocument = customerDigits
-      ? (findByDocument.get(companyId, customerDigits) as { id: string } | undefined)
+    const customerDocumentKey = documentKey(customer.document);
+    const byDocument = customerDocumentKey
+      ? (findByDocument.get(companyId, customerDocumentKey) as { id: string } | undefined)
       : undefined;
     const localId =
       existing?.id ??
@@ -7112,15 +7113,15 @@ function findCarrierLocalId(
 
   // Mesma normalizacao do cliente, e pelo mesmo motivo: o documento do OMIE vem com
   // mascara e o daqui sem, e a comparacao literal duplicava a transportadora.
-  const supplierDigits = documentDigits(supplier.document);
-  if (supplierDigits) {
+  const supplierDocumentKey = documentKey(supplier.document);
+  if (supplierDocumentKey) {
     const byDocument = database
       .prepare(
         `SELECT id FROM carriers
-         WHERE company_id = ? AND ${DOCUMENT_DIGITS_SQL} = ? AND deleted_at IS NULL
+         WHERE company_id = ? AND ${DOCUMENT_KEY_SQL} = ? AND deleted_at IS NULL
          LIMIT 1`
       )
-      .get(companyId, supplierDigits) as { id: string } | undefined;
+      .get(companyId, supplierDocumentKey) as { id: string } | undefined;
 
     if (byDocument?.id) return byDocument.id;
   }

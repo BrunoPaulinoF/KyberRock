@@ -18,6 +18,7 @@ import {
   type OmieCustomerRecommendations,
   type OmieRequester
 } from "./omie-sync-core.ts";
+import { normalizeDocument } from "../_shared/document.ts";
 import { classifyOmieCustomer } from "../_shared/omie-customer-classification.ts";
 import {
   formatOmieDate,
@@ -2363,7 +2364,7 @@ async function findCustomerByDocument(
         registros_por_pagina: 200,
         // A tag do filtro e `clientesFiltro`; com `filtro` o OMIE recusa a estrutura e
         // a busca nunca achava ninguem (todo cliente ja existente caia no IncluirCliente).
-        clientesFiltro: { cnpj_cpf: document.replace(/\D/g, "") }
+        clientesFiltro: { cnpj_cpf: normalizeDocument(document) }
       }
     );
     const customers = (response.clientes ?? []) as Array<Record<string, unknown>>;

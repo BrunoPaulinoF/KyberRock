@@ -110,6 +110,7 @@ import {
 import type { PriceDetails } from "../services/pricing";
 import type { CacheEntityType } from "../services/cache-store";
 import {
+  documentKind,
   isValidDocument,
   isValidPlate,
   normalizeDocument,
@@ -10589,15 +10590,15 @@ function CarrierCnpjAutoFillButton({
   const [busy, setBusy] = useState(false);
 
   async function handleLookup(): Promise<void> {
-    const digits = (ctx.formData.document ?? "").replace(/\D/g, "");
-    if (digits.length !== 14) {
-      ctx.setFormError("Informe um CNPJ com 14 digitos para buscar.");
+    const document = normalizeDocument(ctx.formData.document ?? "");
+    if (documentKind(document) !== "cnpj") {
+      ctx.setFormError("Informe um CNPJ com 14 posicoes para buscar.");
       return;
     }
     setBusy(true);
     ctx.setFormError(null);
     try {
-      const data = await desktopApi.lookupCnpj(digits);
+      const data = await desktopApi.lookupCnpj(document);
       if (!data.found) {
         ctx.setFormError("CNPJ nao encontrado na base da Receita.");
         return;

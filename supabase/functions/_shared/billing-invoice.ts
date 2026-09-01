@@ -5,6 +5,8 @@
 // `billing-invoice_test.ts` roda no vitest. O que fala com rede vive em
 // `mercado-pago.ts` e `billing-engine.ts`.
 
+import { documentKind, normalizeDocument } from "./document.ts";
+
 export type InvoiceStatus = "draft" | "open" | "paid" | "overdue" | "canceled";
 
 export const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
@@ -68,7 +70,9 @@ export function resolveBillingCustomer(company: BillingCustomerSource): BillingC
   return {
     companyName: text(company.name),
     legalName: text(company.billing_legal_name) || text(company.legal_name) || text(company.name),
-    document: onlyDigits(company.billing_document) || onlyDigits(company.document),
+    // Documento normalizado, nao "so digitos": o CNPJ alfanumerico perderia as letras e a
+    // pedreira apareceria na fatura e no boleto com outro CNPJ.
+    document: normalizeDocument(company.billing_document) || normalizeDocument(company.document),
     email: text(company.billing_email).toLowerCase(),
     phone: onlyDigits(company.billing_phone),
     contactName: text(company.billing_contact_name),
@@ -99,9 +103,7 @@ export interface MissingBillingFields {
 export function missingBillingFields(customer: BillingCustomer): MissingBillingFields {
   const boleto: string[] = [];
   if (!customer.legalName) boleto.push("Razao social");
-  if (customer.document.length !== 11 && customer.document.length !== 14) {
-    boleto.push("CNPJ/CPF");
-  }
+  if (documentKind(customer.document) === null) boleto.push("CNPJ/CPF");
   if (!customer.email.includes("@")) boleto.push("E-mail de cobranca");
   if (customer.zipcode.length !== 8) boleto.push("CEP");
   if (!customer.addressStreet) boleto.push("Endereco");

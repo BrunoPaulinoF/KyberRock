@@ -343,6 +343,21 @@ Deno.test("buildCustomerPayload completa o cadastro que o OMIE exige no IncluirC
   assert(!("tags" in pessoaJuridica));
 });
 
+Deno.test("buildCustomerPayload manda o CNPJ alfanumerico inteiro ao OMIE", () => {
+  const payload = buildCustomerPayload({
+    localCustomerId: "cliente-cnpj-alfanumerico",
+    razaoSocial: "Pedreira Nova LTDA",
+    cnpjCpf: "12.abc.345/01de-35",
+    city: "Campinas",
+    state: "SP"
+  });
+
+  // So os digitos ("1234501" + "35") seriam OUTRO documento, gravado no cadastro do OMIE
+  // e impresso na NF-e. E, com 11 digitos, o cadastro ainda subiria como pessoa fisica.
+  assertEquals(payload.cnpj_cpf, "12ABC34501DE35");
+  assertEquals(payload.pessoa_fisica, "N");
+});
+
 Deno.test("customerRegistrationFaultMessage diz qual campo do cliente falta preencher", () => {
   const fault = new Error(
     "OMIE HTTP 500 em IncluirCliente (/geral/clientes/) - ERROR: O preenchimento da tag [email] e obrigatorio!"

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
-import { DOCUMENT_DIGITS_SQL, documentDigits } from "./customer-identity.js";
+import { DOCUMENT_KEY_SQL, documentKey } from "./customer-identity.js";
 
 export interface CreateCarrierInput {
   companyId: string;
@@ -37,9 +37,6 @@ export interface UpdateCarrierInput {
   isActive?: boolean;
 }
 
-/** Alias local de `documentDigits`: o mesmo criterio usado pelo sync e pelas telas. */
-const onlyDigits = documentDigits;
-
 /**
  * Transportadora ativa com o mesmo CNPJ/CPF na empresa, ignorando mascara. E o mesmo
  * criterio que o OMIE usa para identificar o cadastro (find-or-create por CNPJ/CPF),
@@ -51,18 +48,18 @@ export function findCarrierByDocument(
   document: string,
   excludeId?: string
 ): { id: string; name: string } | null {
-  const digits = onlyDigits(document);
-  if (!digits) return null;
+  const key = documentKey(document);
+  if (!key) return null;
   const row = database
     .prepare(
       `SELECT id, name FROM carriers
        WHERE company_id = ?
          AND deleted_at IS NULL
-         AND ${DOCUMENT_DIGITS_SQL} = ?
+         AND ${DOCUMENT_KEY_SQL} = ?
          AND (? IS NULL OR id <> ?)
        LIMIT 1`
     )
-    .get(companyId, digits, excludeId ?? null, excludeId ?? null) as
+    .get(companyId, key, excludeId ?? null, excludeId ?? null) as
     | { id: string; name: string }
     | undefined;
   return row ?? null;
@@ -138,7 +135,7 @@ export function updateCarrier(
   // ja tem duplicata (ver mesma regra em updateCustomer).
   if (
     input.document !== undefined &&
-    onlyDigits(input.document) !== onlyDigits(existing.document as string | null)
+    documentKey(input.document) !== documentKey(existing.document as string | null)
   ) {
     assertCarrierDocumentIsFree(database, String(existing.company_id), input.document, id);
   }
