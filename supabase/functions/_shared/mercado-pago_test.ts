@@ -100,6 +100,17 @@ describe("buildBoletoPayload", () => {
     expect(payer.identification).toEqual({ type: "CPF", number: "39053344705" });
   });
 
+  it("keeps the letters of an alphanumeric CNPJ", () => {
+    const payload = buildBoletoPayload({
+      ...BOLETO_INPUT,
+      payer: { ...PAYER, document: "12.ABC.345/01DE-35" }
+    });
+    const payer = payload.payer as Record<string, unknown>;
+    // So os digitos dariam "123450135" — o boleto sairia com o CNPJ de outra empresa.
+    expect(payer.identification).toEqual({ type: "CNPJ", number: "12ABC34501DE35" });
+    expect(payer.entity_type).toBe("association");
+  });
+
   it("includes the notification url only when there is one", () => {
     expect(buildBoletoPayload(BOLETO_INPUT).notification_url).toBeUndefined();
     expect(

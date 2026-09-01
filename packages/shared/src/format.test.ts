@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  documentKind,
   formatCep,
   formatDocument,
   formatEmailListForOmie,
@@ -8,6 +9,7 @@ import {
   formatPhone,
   formatPlate,
   invalidEmailsInList,
+  isAlphanumericCnpj,
   isValidCep,
   isValidCnpj,
   isValidCpf,
@@ -49,6 +51,10 @@ describe("normalizePlate", () => {
 describe("normalizeDocument", () => {
   it("keeps only digits", () => {
     expect(normalizeDocument("123.456.789-09")).toBe("12345678909");
+  });
+
+  it("keeps the letters of an alphanumeric CNPJ, in upper case", () => {
+    expect(normalizeDocument("12.abc.345/01de-35")).toBe("12ABC34501DE35");
   });
 
   it("caps length at 14", () => {
@@ -96,10 +102,44 @@ describe("document validation", () => {
     expect(isValidCnpj("11.111.111/1111-11")).toBe(false);
   });
 
-  it("isValidDocument dispatches by length", () => {
+  it("accepts the alphanumeric CNPJ (IN RFB 2.229/2024)", () => {
+    expect(isValidCnpj("12.ABC.345/01DE-35")).toBe(true);
+    expect(isValidCnpj("12abc34501de35")).toBe(true);
+  });
+
+  it("rejects an alphanumeric CNPJ with the wrong check digits", () => {
+    expect(isValidCnpj("12.ABC.345/01DE-36")).toBe(false);
+  });
+
+  it("rejects letters in the two check digits", () => {
+    expect(isValidCnpj("12ABC34501DEA5")).toBe(false);
+  });
+
+  it("isValidDocument dispatches by shape", () => {
     expect(isValidDocument("529.982.247-25")).toBe(true);
     expect(isValidDocument("11.222.333/0001-81")).toBe(true);
+    expect(isValidDocument("12.ABC.345/01DE-35")).toBe(true);
     expect(isValidDocument("123")).toBe(false);
+    // 11 posicoes com letra nao e CPF: antes as letras eram jogadas fora e um CNPJ
+    // alfanumerico truncado passava como se fosse.
+    expect(isValidDocument("5299822472A")).toBe(false);
+  });
+});
+
+describe("documentKind", () => {
+  it("tells CPF from CNPJ by shape, not by digit count", () => {
+    expect(documentKind("529.982.247-25")).toBe("cpf");
+    expect(documentKind("11.222.333/0001-81")).toBe("cnpj");
+    expect(documentKind("12.ABC.345/01DE-35")).toBe("cnpj");
+    expect(documentKind("123")).toBe(null);
+  });
+});
+
+describe("isAlphanumericCnpj", () => {
+  it("only flags the new format", () => {
+    expect(isAlphanumericCnpj("12.ABC.345/01DE-35")).toBe(true);
+    expect(isAlphanumericCnpj("11.222.333/0001-81")).toBe(false);
+    expect(isAlphanumericCnpj("529.982.247-25")).toBe(false);
   });
 });
 
@@ -120,6 +160,10 @@ describe("formatDocument", () => {
 
   it("formats CNPJ", () => {
     expect(formatDocument("11222333000181")).toBe("11.222.333/0001-81");
+  });
+
+  it("formats the alphanumeric CNPJ with the same mask", () => {
+    expect(formatDocument("12abc34501de35")).toBe("12.ABC.345/01DE-35");
   });
 
   it("returns digits when length is not CPF/CNPJ", () => {

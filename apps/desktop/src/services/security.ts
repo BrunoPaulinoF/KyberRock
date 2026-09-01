@@ -1,3 +1,5 @@
+import { documentKind } from "@kyberrock/shared";
+
 export interface ValidationResult {
   valid: boolean;
   errors: string[];
@@ -15,9 +17,10 @@ export class InputValidator {
     return mercosulPattern.test(sanitized) || oldPattern.test(sanitized);
   }
 
+  // CPF (11 digitos) ou CNPJ (14 posicoes) — o CNPJ alfanumerico entra por aqui tambem:
+  // conferir so a quantidade de DIGITOS reprovaria "12ABC34501DE35", que tem 11.
   validateDocument(document: string): boolean {
-    const digits = document.replace(/\D/g, "");
-    return digits.length === 11 || digits.length === 14;
+    return documentKind(document) !== null;
   }
 
   validateWeight(weight: number): boolean {

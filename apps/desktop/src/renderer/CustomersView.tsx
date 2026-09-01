@@ -2,6 +2,8 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { Lock, Search, Unlock } from "lucide-react";
 
 import {
+  documentKind,
+  formatDocument,
   formatMoneyInput,
   invalidEmailsInList,
   isValidDocument,
@@ -1569,15 +1571,15 @@ export function CustomersView({
   // formulario. Nao sobrescreve campos ja preenchidos com valor vazio da consulta.
   async function handleCnpjLookup(): Promise<void> {
     if (!desktopApi) return;
-    const digits = form.document.replace(/\D/g, "");
-    if (digits.length !== 14) {
-      setFormError("Informe um CNPJ com 14 digitos para buscar.");
+    const document = normalizeDocument(form.document);
+    if (documentKind(document) !== "cnpj") {
+      setFormError("Informe um CNPJ com 14 posicoes para buscar.");
       return;
     }
     setCnpjBusy(true);
     setFormError(null);
     try {
-      const data = await desktopApi.lookupCnpj(digits);
+      const data = await desktopApi.lookupCnpj(document);
       if (!data.found) {
         showFlash("error", "CNPJ nao encontrado na base da Receita.");
         return;
@@ -3345,18 +3347,6 @@ export function CustomersView({
  */
 function numberOrNaN(value: string): number {
   return value.trim() === "" ? Number.NaN : Number(value);
-}
-
-function formatDocument(value: string): string {
-  if (!value) return "";
-  const digits = value.replace(/\D/g, "").slice(0, 14);
-  if (digits.length === 11) {
-    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
-  }
-  if (digits.length === 14) {
-    return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
-  }
-  return digits;
 }
 
 function formatPhone(value: string): string {

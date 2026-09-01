@@ -70,6 +70,17 @@ These recur across the codebase and are easy to violate accidentally:
   (used across SQLite ↔ Supabase ↔ queues) plus an optional SQLite integer `localId` for
   internal performance only — `localId` is **never** an external identifier. OMIE IDs live in
   dedicated fields (`omieCustomerId`, `omieProductId`, `omieSalesOrderId`, …).
+- **CNPJ alfanumerico** (IN RFB 2.229/2024): o CNPJ continua com 14 posicoes e a mesma mascara,
+  mas as 12 primeiras aceitam **letras** alem de digitos (os dois verificadores do fim continuam
+  numericos, e a conta deles e a mesma — cada caractere vale `ASCII - 48`, o que faz digito valer
+  o proprio numero). Por isso documento **nunca** e normalizado por `replace(/\D/g, "")`: jogar a
+  letra fora grava OUTRO documento, que sobe ao OMIE, sai na NF-e e no boleto — e, com 11 digitos
+  restantes, ainda faria um CNPJ subir como pessoa fisica. A regra vive em
+  `packages/shared/src/format.ts` (`normalizeDocument` / `documentKind` / `isValidCnpj`) e,
+  espelhada para o Deno, em `supabase/functions/_shared/document.ts`; a comparacao entre cadastros
+  usa `documentKey` / `DOCUMENT_KEY_SQL` (`apps/desktop/src/services/customer-identity.ts`), que
+  tira a pontuacao e a caixa mas **nao** as letras. Quem decide "CPF ou CNPJ" pergunta a FORMA
+  (`documentKind`), nunca `length === 11`.
 - **OMIE idempotency**: every OMIE call carries a key `kyberrock:{unitId}:{operationId}:{action}`
   (e.g. `kyberrock:unit_abc:op_123:create_sales_order`). Re-sends must never duplicate orders.
 - **Operation status machine**: an operation moves through `draft` → `entry_registered` →

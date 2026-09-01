@@ -1,5 +1,7 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
+import { documentKind, normalizeDocument } from "@kyberrock/shared";
+
 import {
   initializeDesktopDatabase,
   type InitializedDesktopDatabase
@@ -1205,9 +1207,9 @@ export class DesktopRuntime {
     const patch: Record<string, unknown> = {};
 
     // 1. Completa endereco/razao pelo CNPJ quando ha documento valido.
-    const digits = (customer.document ?? "").replace(/\D/g, "");
-    if (digits.length === 14) {
-      const data = await lookupCnpjFromCloud(this.database, this.ensureIdentity(), digits).catch(
+    const document = normalizeDocument(customer.document ?? "");
+    if (documentKind(document) === "cnpj") {
+      const data = await lookupCnpjFromCloud(this.database, this.ensureIdentity(), document).catch(
         () => null
       );
       if (data?.found) {
@@ -3562,7 +3564,7 @@ export class DesktopRuntime {
 
   /**
    * Executa "buscar CNPJ" (Receita via edge cnpj-lookup) para TODOS os clientes com
-   * CNPJ valido (14 digitos) e grava os dados retornados. Processa em serie para nao
+   * CNPJ valido (14 posicoes, numerico ou alfanumerico) e grava os dados retornados. Processa em serie para nao
    * estourar o limite da BrasilAPI. Cada campo so e sobrescrito quando a consulta traz
    * valor (mesma regra da busca individual). Clientes origem OMIE viram 'hybrid'
    * (overrideOmieFields) para o cadastro ser empurrado ao OMIE no proximo sync.
@@ -3582,13 +3584,13 @@ export class DesktopRuntime {
     const now = new Date();
 
     for (const customer of customers) {
-      const digits = (customer.document ?? "").replace(/\D/g, "");
-      if (digits.length !== 14) continue;
+      const document = normalizeDocument(customer.document ?? "");
+      if (documentKind(document) !== "cnpj") continue;
       summary.withCnpj += 1;
 
       let data: CnpjLookupResult;
       try {
-        data = await lookupCnpjFromCloud(this.database, identity, digits);
+        data = await lookupCnpjFromCloud(this.database, identity, document);
       } catch {
         summary.failed += 1;
         continue;
@@ -3629,7 +3631,7 @@ export class DesktopRuntime {
 
   /**
    * Mesma busca automatica em lote dos clientes, para TODAS as transportadoras com
-   * CNPJ valido (14 digitos): consulta a Receita em serie e grava os dados retornados.
+   * CNPJ valido (14 posicoes, numerico ou alfanumerico): consulta a Receita em serie e grava os dados retornados.
    * Cada campo so e sobrescrito quando a consulta traz valor; o update marca
    * needs_push=1, entao o cadastro atualizado sobe ao OMIE no proximo sync.
    */
@@ -3646,13 +3648,13 @@ export class DesktopRuntime {
     };
 
     for (const carrier of carriers) {
-      const digits = (carrier.document ?? "").replace(/\D/g, "");
-      if (digits.length !== 14) continue;
+      const document = normalizeDocument(carrier.document ?? "");
+      if (documentKind(document) !== "cnpj") continue;
       summary.withCnpj += 1;
 
       let data: CnpjLookupResult;
       try {
-        data = await lookupCnpjFromCloud(this.database, identity, digits);
+        data = await lookupCnpjFromCloud(this.database, identity, document);
       } catch {
         summary.failed += 1;
         continue;

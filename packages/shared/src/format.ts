@@ -2,8 +2,59 @@ export function normalizePlate(plate: string): string {
   return plate.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
 }
 
+/**
+ * CNPJ ALFANUMERICO (IN RFB 2.229/2024): as 12 primeiras posicoes do CNPJ passam a aceitar
+ * LETRAS alem de digitos; so os dois verificadores do fim continuam numericos. A mascara,
+ * o tamanho (14) e a conta do verificador sao os mesmos — um CNPJ ja emitido, so com
+ * digitos, continua passando exatamente pelas regras de antes.
+ *
+ * E por isso que o documento e normalizado por "letras e digitos, em maiuscula" e nao mais
+ * por `replace(/\D/g, "")`: jogar a letra fora transformaria "12.ABC.345/01DE-35" em
+ * "1234501" + "35", um documento ERRADO — e o cadastro seguiria com ele para o OMIE, para a
+ * NF-e e para o boleto. Recusar e sempre melhor do que gravar outro documento (o mesmo
+ * motivo pelo qual o CNPJ/CPF nunca e encurtado para caber num campo do OMIE).
+ */
+
+/** Posicoes de um CNPJ — as mesmas 14 nos dois formatos. */
+export const CNPJ_LENGTH = 14;
+
+/** Forma de um CNPJ (numerico ou alfanumerico): 12 alfanumericos + 2 verificadores. */
+const CNPJ_SHAPE = /^[0-9A-Z]{12}[0-9]{2}$/;
+const CPF_SHAPE = /^[0-9]{11}$/;
+
+const CNPJ_DV1_WEIGHTS = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+const CNPJ_DV2_WEIGHTS = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+
+/**
+ * O documento como e guardado e comparado: so letras e digitos, maiusculo, no maximo 14
+ * posicoes. Serve para CPF e para as duas formas do CNPJ.
+ */
 export function normalizeDocument(document: string): string {
-  return document.replace(/\D/g, "").slice(0, 14);
+  return document
+    .replace(/[^0-9A-Za-z]/g, "")
+    .toUpperCase()
+    .slice(0, CNPJ_LENGTH);
+}
+
+/**
+ * Qual dos dois documentos o valor tem FORMA de ser — sem conferir verificador.
+ *
+ * Existe porque varias decisoes dependem so da forma: o `pessoa_fisica` do cadastro do
+ * OMIE, o tipo de identificacao do boleto, a mascara da tela. Antes essas decisoes eram
+ * tomadas por `digits.length === 11`, o que passa a mentir com CNPJ alfanumerico (um CNPJ
+ * com tres letras tem 11 digitos e viraria "CPF").
+ */
+export function documentKind(document: string): "cpf" | "cnpj" | null {
+  const value = normalizeDocument(document);
+  if (CPF_SHAPE.test(value)) return "cpf";
+  if (CNPJ_SHAPE.test(value)) return "cnpj";
+  return null;
+}
+
+/** CNPJ do formato novo, com pelo menos uma letra. */
+export function isAlphanumericCnpj(document: string): boolean {
+  const value = normalizeDocument(document);
+  return CNPJ_SHAPE.test(value) && /[A-Z]/.test(value);
 }
 
 export function isValidPlate(plate: string): boolean {
@@ -14,7 +65,7 @@ export function isValidPlate(plate: string): boolean {
 
 export function isValidCpf(document: string): boolean {
   const digits = normalizeDocument(document);
-  if (digits.length !== 11) return false;
+  if (!CPF_SHAPE.test(digits)) return false;
   if (/^(\d)\1+$/.test(digits)) return false;
   const dv1 = computeCheckDigit(digits.slice(0, 9), [10, 9, 8, 7, 6, 5, 4, 3, 2]);
   const dv2 = computeCheckDigit(digits.slice(0, 10), [11, 10, 9, 8, 7, 6, 5, 4, 3, 2]);
@@ -22,18 +73,18 @@ export function isValidCpf(document: string): boolean {
 }
 
 export function isValidCnpj(document: string): boolean {
-  const digits = normalizeDocument(document);
-  if (digits.length !== 14) return false;
-  if (/^(\d)\1+$/.test(digits)) return false;
-  const dv1 = computeCheckDigit(digits.slice(0, 12), [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
-  const dv2 = computeCheckDigit(digits.slice(0, 13), [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
-  return digits.slice(12) === `${dv1}${dv2}`;
+  const value = normalizeDocument(document);
+  if (!CNPJ_SHAPE.test(value)) return false;
+  if (/^(.)\1+$/.test(value)) return false;
+  const dv1 = computeCheckDigit(value.slice(0, 12), CNPJ_DV1_WEIGHTS);
+  const dv2 = computeCheckDigit(value.slice(0, 13), CNPJ_DV2_WEIGHTS);
+  return value.slice(12) === `${dv1}${dv2}`;
 }
 
 export function isValidDocument(document: string): boolean {
-  const digits = normalizeDocument(document);
-  if (digits.length === 11) return isValidCpf(document);
-  if (digits.length === 14) return isValidCnpj(document);
+  const kind = documentKind(document);
+  if (kind === "cpf") return isValidCpf(document);
+  if (kind === "cnpj") return isValidCnpj(document);
   return false;
 }
 
@@ -48,15 +99,19 @@ export function formatPlate(plate: string): string {
   return normalized;
 }
 
+/**
+ * Mascara do documento. O CNPJ alfanumerico usa a MESMA mascara do numerico
+ * ("12.ABC.345/01DE-35"): so o conteudo das posicoes mudou.
+ */
 export function formatDocument(document: string): string {
-  const digits = normalizeDocument(document);
-  if (digits.length === 11) {
-    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+  const value = normalizeDocument(document);
+  if (CPF_SHAPE.test(value)) {
+    return `${value.slice(0, 3)}.${value.slice(3, 6)}.${value.slice(6, 9)}-${value.slice(9)}`;
   }
-  if (digits.length === 14) {
-    return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
+  if (value.length === CNPJ_LENGTH) {
+    return `${value.slice(0, 2)}.${value.slice(2, 5)}.${value.slice(5, 8)}/${value.slice(8, 12)}-${value.slice(12)}`;
   }
-  return digits;
+  return value;
 }
 
 export function normalizePhone(phone: string): string {
@@ -247,10 +302,19 @@ export function normalizeIntInput(value: string): string {
   return value.replace(/\D/g, "");
 }
 
+/**
+ * Valor de um caractere no verificador do CNPJ: codigo ASCII menos 48. Para digito da o
+ * proprio numero ('0' -> 0 ... '9' -> 9), o que faz o CNPJ numerico (e o CPF) continuarem
+ * na conta de sempre; para letra vale de 17 ('A') a 42 ('Z'), como manda a Receita.
+ */
+function documentCharValue(char: string): number {
+  return char.charCodeAt(0) - 48;
+}
+
 function computeCheckDigit(base: string, weights: number[]): number {
   let sum = 0;
   for (let i = 0; i < base.length; i++) {
-    sum += Number(base[i]) * weights[i];
+    sum += documentCharValue(base[i]) * weights[i];
   }
   const remainder = sum % 11;
   return remainder < 2 ? 0 : 11 - remainder;

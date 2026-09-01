@@ -446,8 +446,18 @@ export interface ActivationStep {
   target: ActivationTarget;
 }
 
-function digitsOnly(value: string | null | undefined): string {
-  return (value ?? "").replace(/\D/g, "");
+/**
+ * O documento do emitente sem mascara, como o `_shared/document.ts` da nuvem: letras e
+ * digitos em maiuscula. As letras ficam porque o CNPJ alfanumerico (IN RFB 2.229/2024) as
+ * tem nas 12 primeiras posicoes — tirar seria reprovar um CNPJ valido no checklist.
+ */
+function normalizeDocument(value: string | null | undefined): string {
+  return (value ?? "").replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+}
+
+/** CPF (11 digitos) ou CNPJ (12 alfanumericos + 2 verificadores). */
+function hasDocumentShape(value: string): boolean {
+  return /^[0-9]{11}$/.test(value) || /^[0-9A-Z]{12}[0-9]{2}$/.test(value);
 }
 
 /**
@@ -500,8 +510,7 @@ export function buildActivationChecklist(input: {
 
   const issuerMissing: string[] = [];
   if (!settings.issuerName.trim()) issuerMissing.push("Nome do emitente");
-  const issuerDocument = digitsOnly(settings.issuerDocument);
-  if (issuerDocument.length !== 14 && issuerDocument.length !== 11) {
+  if (!hasDocumentShape(normalizeDocument(settings.issuerDocument))) {
     issuerMissing.push("CNPJ do emitente");
   }
   if (!settings.issuerEmail.trim() && !settings.issuerPhone.trim()) {

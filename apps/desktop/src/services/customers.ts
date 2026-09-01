@@ -4,7 +4,7 @@ import { invalidEmailsInList, normalizeEmailList } from "@kyberrock/shared";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
-import { DOCUMENT_DIGITS_SQL, documentDigits } from "./customer-identity.js";
+import { DOCUMENT_KEY_SQL, documentKey } from "./customer-identity.js";
 import {
   CLOSED_OPERATION_STATUS_SQL_LIST,
   OPEN_OPERATION_STATUS_SQL_LIST
@@ -145,27 +145,24 @@ export interface CustomerRow {
  * identifica o cliente no OMIE (find-or-create por CNPJ/CPF), entao dois cadastros
  * com o mesmo documento sao sempre o mesmo cliente — e virariam o mesmo cadastro la.
  */
-/** Alias local de `documentDigits`: o mesmo criterio usado pelo sync e pelas telas. */
-const onlyDigits = documentDigits;
-
 export function findCustomerByDocument(
   database: DesktopDatabase,
   companyId: string,
   document: string,
   excludeId?: string
 ): { id: string; trade_name: string; legal_name: string; is_active: number } | null {
-  const digits = onlyDigits(document);
-  if (!digits) return null;
+  const key = documentKey(document);
+  if (!key) return null;
   const row = database
     .prepare(
       `SELECT id, trade_name, legal_name, is_active FROM customers
        WHERE company_id = ?
          AND deleted_at IS NULL
-         AND ${DOCUMENT_DIGITS_SQL} = ?
+         AND ${DOCUMENT_KEY_SQL} = ?
          AND (? IS NULL OR id <> ?)
        LIMIT 1`
     )
-    .get(companyId, digits, excludeId ?? null, excludeId ?? null) as
+    .get(companyId, key, excludeId ?? null, excludeId ?? null) as
     | { id: string; trade_name: string; legal_name: string; is_active: number }
     | undefined;
   return row ?? null;
@@ -334,7 +331,7 @@ export function updateCustomer(
   // apaga a copia.
   if (
     input.document !== undefined &&
-    onlyDigits(input.document) !== onlyDigits(existing.document)
+    documentKey(input.document) !== documentKey(existing.document)
   ) {
     assertDocumentIsFree(database, existing.company_id, input.document, id);
   }

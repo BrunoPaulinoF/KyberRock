@@ -6,6 +6,7 @@ import { CacheStore } from "./cache-store";
 import {
   applyDefaultNfeEmailToAllCustomers,
   createCustomer,
+  findCustomerByDocument,
   getDefaultNfeEmail,
   updateCustomer
 } from "./customers";
@@ -258,6 +259,30 @@ describe("customers", () => {
       expect(
         cacheStore.query({ entityType: "customer", search: "maria" }).rows.map((row) => row.id)
       ).toEqual(["sem-mascara"]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("reconhece o mesmo CNPJ alfanumerico e nao confunde com outro", () => {
+    const database = createDatabase();
+
+    try {
+      createCustomer(database, {
+        companyId: "company-1",
+        legalName: "Pedreira Nova LTDA",
+        tradeName: "Pedreira Nova",
+        document: "12.abc.345/01de-35"
+      });
+
+      // A tela normaliza, mas o documento tambem chega por planilha e pelo pull da nuvem
+      // com mascara e em minusculas — as tres formas sao o mesmo cadastro.
+      expect(findCustomerByDocument(database, "company-1", "12ABC34501DE35")?.id).toBeTruthy();
+      expect(findCustomerByDocument(database, "company-1", "12.abc.345/01de-35")?.id).toBeTruthy();
+
+      // E um CNPJ que so difere nas letras e OUTRO cliente: comparar por digitos colapsaria
+      // os dois e o segundo cadastro seria recusado como duplicado.
+      expect(findCustomerByDocument(database, "company-1", "12.DEF.456/01AB-72")).toBeNull();
     } finally {
       database.close();
     }

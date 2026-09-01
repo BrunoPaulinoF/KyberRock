@@ -1,3 +1,5 @@
+import { documentKind, normalizeDocument } from "../_shared/document.ts";
+
 export const OMIE_BASE_URL = "https://app.omie.com.br/api/v1";
 export const OMIE_REQUEST_DELAY_MS = 3_000;
 export const OMIE_MAX_RETRIES = 4;
@@ -331,7 +333,7 @@ export function clampOmieText(value: string | undefined, maxLength: number): str
 }
 
 export function buildCustomerPayload(payload: PushCustomerPayload): Record<string, unknown> {
-  const document = onlyDigits(payload.cnpjCpf);
+  const document = omieDocument(payload.cnpjCpf);
   const razaoSocial = clampOmieText(
     payload.razaoSocial,
     OMIE_CUSTOMER_FIELD_MAX_LENGTHS.razao_social
@@ -354,9 +356,11 @@ export function buildCustomerPayload(payload: PushCustomerPayload): Record<strin
       clampOmieText(payload.nomeFantasia, OMIE_CUSTOMER_FIELD_MAX_LENGTHS.nome_fantasia) ??
       razaoSocial,
     cnpj_cpf: document,
-    // 11 digitos = CPF. Sem `pessoa_fisica: "S"` o OMIE valida o documento como CNPJ
-    // e recusa o cadastro de qualquer cliente pessoa fisica.
-    pessoa_fisica: document ? (document.length === 11 ? "S" : "N") : undefined,
+    // CPF -> pessoa fisica. Sem `pessoa_fisica: "S"` o OMIE valida o documento como CNPJ
+    // e recusa o cadastro de qualquer cliente pessoa fisica. A conferencia e pela FORMA do
+    // documento, e nao por `length === 11`: um CNPJ alfanumerico com tres letras tem 11
+    // digitos e subiria como pessoa fisica.
+    pessoa_fisica: document ? (documentKind(document) === "cpf" ? "S" : "N") : undefined,
     // O e-mail tem regra propria (lista de destinatarios cortada por endereco inteiro):
     // ver formatOmieEmailList / OMIE_EMAIL_FIELD_MAX_LENGTH. Este campo entrega so ao
     // primeiro endereco; os demais destinatarios da NF-e/boleto entram no `email_fatura`
@@ -508,9 +512,14 @@ export function formatOmieOrderInvoiceEmailList(value: string | undefined): stri
   return joinOmieEmails(parseOmieEmailList(value), OMIE_ORDER_INVOICE_EMAIL_FIELD_MAX_LENGTH);
 }
 
-function onlyDigits(value: string | undefined): string | undefined {
-  const digits = (value ?? "").replace(/\D/g, "");
-  return digits.length > 0 ? digits : undefined;
+/**
+ * CNPJ/CPF sem mascara para o campo `cnpj_cpf` do OMIE. Preserva as letras do CNPJ
+ * alfanumerico (ver `_shared/document.ts`): so os digitos gravariam OUTRO documento no
+ * cadastro, e a NF-e sairia com ele.
+ */
+function omieDocument(value: string | undefined): string | undefined {
+  const document = normalizeDocument(value);
+  return document.length > 0 ? document : undefined;
 }
 
 /** UF em duas letras maiusculas; qualquer outra coisa nao e UF e fica de fora. */
@@ -949,8 +958,7 @@ export async function resolveDuplicateCustomerId(
     typeof body.codigo_cliente_integracao === "string" && body.codigo_cliente_integracao.trim()
       ? body.codigo_cliente_integracao.trim()
       : null;
-  const document =
-    typeof body.cnpj_cpf === "string" ? body.cnpj_cpf.replace(/\D/g, "") : ("" as string);
+  const document = typeof body.cnpj_cpf === "string" ? normalizeDocument(body.cnpj_cpf) : "";
   const lookups: Array<Record<string, unknown>> = [];
   if (integrationCode) lookups.push({ codigo_cliente_integracao: integrationCode });
   if (document) lookups.push({ cnpj_cpf: document });
