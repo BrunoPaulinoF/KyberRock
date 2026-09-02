@@ -5,11 +5,19 @@
  * o recado no ping que ja existe. As tres saidas possiveis estao aqui porque as
  * duas menos obvias sao as que evitam trabalho manual depois:
  *
- *   entregar -> ha aviso pendente e a balanca ainda nao esta na versao pedida
- *   limpar   -> a balanca JA esta na versao pedida: o aviso cumpriu o papel e
- *               some sozinho, senao o painel acumularia avisos vencidos que
- *               alguem teria de apagar a mao
+ *   entregar -> ha aviso pendente e a balanca ainda esta ATRAS da versao pedida
+ *   limpar   -> a balanca ja alcancou (ou passou) a versao pedida: o aviso
+ *               cumpriu o papel e some sozinho, senao o painel acumularia
+ *               avisos vencidos que alguem teria de apagar a mao
  *   nada     -> nao ha aviso
+ *
+ * O "ou passou" nao e detalhe: um aviso disparado com a producao REGREDIDA pede
+ * uma versao mais VELHA que a instalada, e a balanca de producao nao sabe
+ * voltar atras (`allowDowngrade` fica desligado nela de proposito — ver
+ * `services/update-channel.ts` no desktop). Comparando so por igualdade, esse
+ * aviso nunca era cumprido nem apagado: o operador reabria o KyberRock e era
+ * recebido, todo dia, por um pedido para instalar uma versao que aquele
+ * computador jamais instalaria.
  *
  * `markSeen` distingue "a maquina esta desligada" de "ela recebeu o recado e
  * ninguem clicou" — sem isso o painel nao teria como dizer se o silencio e da
@@ -40,6 +48,23 @@ function text(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+/** Compara versoes numero a numero: 0.8.9 < 0.8.10, que um compare de texto erra. */
+function compareVersions(left: string, right: string): number {
+  const parse = (value: string) =>
+    value
+      .replace(/^v/, "")
+      .split(".")
+      .map((part) => Number.parseInt(part, 10) || 0);
+  const a = parse(left);
+  const b = parse(right);
+  const length = Math.max(a.length, b.length);
+  for (let index = 0; index < length; index++) {
+    const diff = (a[index] ?? 0) - (b[index] ?? 0);
+    if (diff !== 0) return diff < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
 /**
  * O que fazer com o aviso desta balanca neste ping.
  *
@@ -54,7 +79,12 @@ export function resolveUpdateNotice(
 ): UpdateNoticeOutcome {
   const version = text(row.update_notice_version);
   if (!version) return { kind: "none" };
-  if (reportedVersion && reportedVersion === version) return { kind: "clear" };
+  // Alcancou OU passou: a balanca que ja esta a frente nao tem o que fazer com
+  // o recado, e insistir nele e o aviso eterno que esta funcao existe para
+  // evitar.
+  if (reportedVersion && compareVersions(reportedVersion, version) >= 0) {
+    return { kind: "clear" };
+  }
 
   return {
     kind: "deliver",

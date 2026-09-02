@@ -52,6 +52,25 @@ describe("resolveUpdateNotice", () => {
     });
   });
 
+  it("apaga o aviso quando a balanca ja passou da versao pedida", () => {
+    // O caso da VOLTA ATRAS: o painel chamou a frota para uma versao mais velha
+    // do que a instalada. A balanca de producao nao regride (allowDowngrade
+    // desligado), entao a versao pedida nunca seria alcancada — comparando so
+    // por igualdade, o recado ficava eterno na tela do operador.
+    expect(resolveUpdateNotice({ update_notice_version: "0.8.226" }, "0.8.236")).toEqual({
+      kind: "clear"
+    });
+  });
+
+  it("compara numero a numero, e nao como texto", () => {
+    // "0.8.9" > "0.8.10" num compare de texto: a balanca na 0.8.10 acharia que
+    // ainda esta atras e o aviso nunca sairia.
+    expect(resolveUpdateNotice({ update_notice_version: "0.8.9" }, "0.8.10")).toEqual({
+      kind: "clear"
+    });
+    expect(resolveUpdateNotice({ update_notice_version: "0.8.10" }, "0.8.9").kind).toBe("deliver");
+  });
+
   it("desktop que ainda nao reporta versao mantem o aviso de pe", () => {
     // Nao saber onde a balanca esta nao e o mesmo que ela ter atualizado.
     const outcome = resolveUpdateNotice({ update_notice_version: "0.8.201" }, null);

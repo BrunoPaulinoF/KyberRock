@@ -43,6 +43,21 @@ describe("shouldShowUpdateNotice", () => {
     expect(shouldShowUpdateNotice(notice, "0.8.201")).toBe(false);
   });
 
+  it("nao mostra na balanca que ja passou da versao pedida", () => {
+    // O caso da VOLTA ATRAS: o painel chamou a frota para uma versao mais velha
+    // do que a instalada. Como a balanca de producao nao regride, clicar em
+    // "Atualizar agora" nao instalava nada e o recado voltava a cada abertura.
+    expect(shouldShowUpdateNotice({ version: "0.8.226", requestedAt: null }, "0.8.236")).toBe(
+      false
+    );
+  });
+
+  it("compara numero a numero, e nao como texto", () => {
+    // "0.8.9" > "0.8.10" num compare de texto.
+    expect(shouldShowUpdateNotice({ version: "0.8.9", requestedAt: null }, "0.8.10")).toBe(false);
+    expect(shouldShowUpdateNotice({ version: "0.8.10", requestedAt: null }, "0.8.9")).toBe(true);
+  });
+
   it("sem aviso nao ha nada a mostrar", () => {
     expect(shouldShowUpdateNotice(null, "0.8.200")).toBe(false);
   });

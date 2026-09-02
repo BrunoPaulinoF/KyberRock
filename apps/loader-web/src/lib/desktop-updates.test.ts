@@ -431,6 +431,27 @@ describe("devicesNeedingUpdateNotice", () => {
     expect(devicesNeedingUpdateNotice([device("a", "0.8.193")], null)).toEqual([]);
   });
 
+  it("nao chama quem ja esta A FRENTE da versao pedida", () => {
+    // Depois de uma VOLTA ATRAS a producao fica mais velha do que o que a frota
+    // ja instalou. A balanca de producao nao regride, entao esse aviso nunca
+    // seria cumprido — e voltava na tela do operador a cada abertura do app.
+    const alvo = devicesNeedingUpdateNotice(
+      [device("a", "0.8.236"), device("b", "0.8.220")],
+      "0.8.226"
+    );
+
+    expect(alvo.map((row) => row.id)).toEqual(["b"]);
+  });
+
+  it("compara numero a numero, e nao como texto", () => {
+    // "0.8.9" > "0.8.10" num compare de texto: a balanca ja atualizada seria
+    // chamada de novo.
+    expect(devicesNeedingUpdateNotice([device("a", "0.8.10")], "0.8.9")).toEqual([]);
+    expect(devicesNeedingUpdateNotice([device("a", "0.8.9")], "0.8.10").map((r) => r.id)).toEqual([
+      "a"
+    ]);
+  });
+
   it("reenviar para quem ja foi avisado continua valendo", () => {
     // O primeiro pedido pode ter sido ignorado; o disparo novo reabre o aviso
     // na tela do operador.

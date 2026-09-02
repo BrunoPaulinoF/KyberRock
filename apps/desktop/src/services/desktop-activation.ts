@@ -11,6 +11,7 @@ import { readInstalledAppVersion } from "./app-version.js";
 import { readDeviceHealthForHeartbeat } from "./device-health.js";
 import {
   applyUpdateNoticeFromCloud,
+  forgetUpdateNotice,
   readUpdateNotice,
   shouldShowUpdateNotice,
   type DesktopUpdateNotice
@@ -626,11 +627,18 @@ function buildAccessStatus(
  * (ele so apaga no ping seguinte). Sem isto, o app recem-atualizado abriria
  * pedindo para atualizar. Best-effort: leitura de aviso nao derruba o status de
  * acesso.
+ *
+ * O aviso que nao vale mais e APAGADO aqui, e nao apenas escondido: guardado, ele
+ * sobrevive a reinicio e a queda de internet, entao a balanca sem rede voltaria a
+ * mostra-lo na abertura seguinte. Apagar tambem nao perde nada — o pedido que
+ * ainda estiver de pe no painel volta no proximo ping.
  */
 function readPendingUpdateNotice(database: DesktopDatabase): DesktopUpdateNotice | null {
   try {
     const notice = readUpdateNotice(database);
-    return shouldShowUpdateNotice(notice, readInstalledAppVersion()) ? notice : null;
+    if (shouldShowUpdateNotice(notice, readInstalledAppVersion())) return notice;
+    if (notice) forgetUpdateNotice(database);
+    return null;
   } catch {
     return null;
   }
