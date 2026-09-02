@@ -391,10 +391,18 @@ export function groupFleetVersions(
  * aplica quando o operador fecha o app. A que fica dias sem fechar continua na
  * versao velha, e ate agora apressar isso era telefonar para a pedreira.
  *
- * Fica de fora quem ja esta na versao pedida — mandar o recado ali seria
+ * Fica de fora quem ja ALCANCOU a versao pedida — mandar o recado ali seria
  * inofensivo (a nuvem o apaga no primeiro ping), mas apareceria no painel como
  * um aviso pendente que ninguem pediu. Balanca BLOQUEADA tambem fica de fora:
  * ela nao recebe atualizacao nenhuma, entao o pedido nunca sairia de pendente.
+ *
+ * E fica de fora, sobretudo, quem esta A FRENTE da versao pedida. Isso acontece
+ * depois de uma VOLTA ATRAS: a producao passa a ser uma versao mais velha do que
+ * a que a frota ja instalou, e o botao chamava a pedreira inteira para regredir.
+ * A balanca de producao nao sabe regredir (`allowDowngrade` desligado no
+ * desktop), entao esse aviso nunca era cumprido, nunca era apagado e voltava a
+ * cada abertura do KyberRock. Numa regressao quem desce de versao e o instalador,
+ * a mao, e nao um recado de tela.
  *
  * Quem nunca reportou versao ENTRA: nao saber onde a maquina esta e o motivo
  * mais forte para chama-la, nao um motivo para ignora-la.
@@ -404,7 +412,10 @@ export function devicesNeedingUpdateNotice<T extends FleetDeviceLike>(
   version: string | null
 ): T[] {
   if (!version) return [];
-  return devices.filter((device) => device.isActive !== false && device.version !== version);
+  return devices.filter(
+    (device) =>
+      device.isActive !== false && (!device.version || compareVersions(device.version, version) < 0)
+  );
 }
 
 /** Balancas com aviso pendente — as que o botao de cancelar alcanca. */

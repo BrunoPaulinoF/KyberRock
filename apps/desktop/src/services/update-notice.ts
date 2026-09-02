@@ -50,6 +50,36 @@ export function readUpdateNotice(database: DesktopDatabase): DesktopUpdateNotice
 }
 
 /**
+ * Apaga o aviso gravado aqui, sem depender da nuvem.
+ *
+ * A nuvem apaga o recado no ping seguinte, e e assim que um aviso cancelado no
+ * painel some. Mas o aviso que esta maquina NUNCA vai cumprir (ver
+ * `shouldShowUpdateNotice`) nao pode ficar guardado esperando esse ping: ele
+ * sobrevive a reinicio e a queda de internet, entao uma balanca sem rede
+ * continuaria mostrando na abertura um pedido que ninguem mais quer.
+ */
+export function forgetUpdateNotice(database: DesktopDatabase, now: Date = new Date()): void {
+  writeLocalSetting(database, UPDATE_NOTICE_SETTING_KEY, null, now.toISOString());
+}
+
+/** Compara versoes numero a numero: 0.8.9 < 0.8.10, que um compare de texto erra. */
+function compareVersions(left: string, right: string): number {
+  const parse = (value: string) =>
+    value
+      .replace(/^v/, "")
+      .split(".")
+      .map((part) => Number.parseInt(part, 10) || 0);
+  const a = parse(left);
+  const b = parse(right);
+  const length = Math.max(a.length, b.length);
+  for (let index = 0; index < length; index++) {
+    const diff = (a[index] ?? 0) - (b[index] ?? 0);
+    if (diff !== 0) return diff < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
  * Grava (ou apaga) o aviso que a nuvem acabou de mandar.
  *
  * `null` APAGA de proposito: e assim que um aviso ja atendido, ou cancelado no
@@ -70,16 +100,26 @@ export function applyUpdateNoticeFromCloud(
 /**
  * O aviso ainda vale para esta maquina?
  *
- * A balanca que ja esta na versao pedida nao precisa de recado nenhum — e ela
- * chega nesse estado antes de a nuvem apagar o aviso (o `desktop-status` so
- * limpa no ping seguinte a atualizacao). Sem esta conferencia, o operador
- * reabriria o app recem-atualizado e seria recebido por um pedido para
- * atualizar.
+ * Vale so quando a versao pedida esta A FRENTE da instalada. Sao dois casos
+ * diferentes, e os dois terminavam no mesmo aviso eterno:
+ *
+ * - JA CHEGOU na versao pedida: acontece antes de a nuvem apagar o aviso (o
+ *   `desktop-status` so limpa no ping seguinte a atualizacao), e sem esta
+ *   conferencia o app recem-atualizado abriria pedindo para atualizar.
+ * - JA PASSOU da versao pedida: e o aviso disparado com a producao REGREDIDA.
+ *   A balanca de producao nao volta atras (`allowDowngrade` fica desligado
+ *   nela de proposito, ver `update-channel.ts`), entao "Atualizar agora" nao
+ *   instalava nada, a versao pedida nunca era alcancada, a nuvem nunca apagava
+ *   o recado e ele voltava a cada abertura do KyberRock — para sempre.
+ *
+ * Versao instalada desconhecida continua mostrando: nao saber onde a maquina
+ * esta nao e motivo para engolir o recado.
  */
 export function shouldShowUpdateNotice(
   notice: DesktopUpdateNotice | null,
   installedVersion: string | null
 ): boolean {
   if (!notice) return false;
-  return notice.version !== installedVersion;
+  if (!installedVersion) return true;
+  return compareVersions(notice.version, installedVersion) > 0;
 }
