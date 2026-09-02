@@ -1,5 +1,6 @@
 import { invoiceNumberText } from "./invoice-number-label.js";
 import {
+  SPREADSHEET_HTML_ATTRS,
   SPREADSHEET_STYLE,
   documentStyle,
   escapeHtml,
@@ -428,7 +429,7 @@ export function renderInvoiceClosingSpreadsheet(
       : [])
   ];
 
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><style>${SPREADSHEET_STYLE}</style></head><body>
+  return `<!doctype html><html ${SPREADSHEET_HTML_ATTRS}><head><meta charset="utf-8" /><style>${SPREADSHEET_STYLE}</style></head><body>
 <h1>Fechamento de faturas</h1>
 <p class="sub">${escapeHtml(
     `${scopeText(report)} - ${periodText(report)} - gerado em ${generatedAt.toLocaleString("pt-BR")}`

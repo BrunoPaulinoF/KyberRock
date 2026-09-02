@@ -2,6 +2,7 @@ import { scoreTermAgainstText, searchTerms } from "@kyberrock/shared";
 
 import type { TruckControlReport, TruckControlRow, TruckControlTrip } from "./reports.js";
 import {
+  SPREADSHEET_HTML_ATTRS,
   SPREADSHEET_STYLE,
   documentStyle,
   escapeHtml,
@@ -233,7 +234,7 @@ export function renderTruckControlSpreadsheet(
     `Gerado em ${generatedAt.toLocaleString("pt-BR")}`
   ].join(" - ");
 
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><style>${SPREADSHEET_STYLE}</style></head><body>
+  return `<!doctype html><html ${SPREADSHEET_HTML_ATTRS}><head><meta charset="utf-8" /><style>${SPREADSHEET_STYLE}</style></head><body>
 <h1>Controle de caminhoes</h1>
 <p class="sub">${escapeHtml(subtitle)}</p>
 ${blocks.join("\n")}

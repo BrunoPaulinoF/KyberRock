@@ -807,10 +807,21 @@ describe("customer report rendering", () => {
       // Colunas com largura: sem isso a planilha abre com valores em "#####".
       expect(sheet).toMatch(/<th[^>]*style="width:\d+px"/);
       // Peso e valor alinhados a direita; a primeira coluna, que rotula a linha, nao.
-      expect(sheet).toContain('<td class="num">15.000</td>');
-      expect(sheet).toContain('<td class="num">06/06/2026</td>');
-      expect(sheet).toContain("<td>Brita 0</td>");
-      expect(sheet).toContain("<td>06/2026</td>");
+      expect(sheet).toContain(
+        '<td class="num" style=\'mso-number-format:"\\#\\,\\#\\#0"\' x:num="15000">15.000</td>'
+      );
+      expect(sheet).toContain(
+        '<td class="num" style=\'mso-number-format:"dd\\/mm\\/yyyy"\' x:num="46179">06/06/2026</td>'
+      );
+      expect(sheet).toContain("<td style='mso-number-format:\"\\@\"'>Brita 0</td>");
+      // Peso, valor, data e mes sao NUMERO na celula (`x:num`) com o formato de exibicao
+      // ao lado: e o que permite somar a coluna e escrever formula no Excel. Texto de
+      // verdade (nome do produto) continua com o formato de texto.
+      expect(sheet).toContain(
+        '<td style=\'mso-number-format:"mm\\/yyyy"\' x:num="46174">06/2026</td>'
+      );
+      // O documento do cliente nao vira numero em hipotese nenhuma.
+      expect(sheet).toContain("<td style='mso-number-format:\"\\@\"'>11222333000155</td>");
     } finally {
       db.close();
     }

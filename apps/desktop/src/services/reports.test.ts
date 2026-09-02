@@ -407,10 +407,13 @@ describe("ReportService", () => {
       const service = new ReportService(db);
       const csv = service.exportDailyToCSV("2026-06-06", "unit-1");
 
-      expect(csv).toContain("Data,Cliente,Produto,Peso Liquido (kg),Valor Produto,Frete,Total");
-      expect(csv).toContain("2026-06-06");
-      expect(csv).toContain("Cliente A");
-      expect(csv).toContain("Brita 0");
+      // pt-BR: separador ";" e valor com virgula decimal, que e o que o Excel brasileiro
+      // abre como numero (com virgula no separador, o valor quebrava em duas colunas).
+      expect(csv).toContain(
+        "Data;Cliente;Produto;Peso Liquido (kg);Valor Produto (R$);Frete (R$);Total (R$)"
+      );
+      expect(csv).toContain("06/06/2026;Cliente A;Brita 0;15000;7500,00;1500,00;9000,00");
+      expect(csv).toContain("TOTAL;;;25000;13500,00;2700,00;16200,00");
     } finally {
       db.close();
     }
@@ -725,6 +728,41 @@ describe("ReportService com operacoes excluidas", () => {
       const footerCells =
         (html.match(/<tfoot><tr>([\s\S]*?)<\/tr>/)?.[1].match(/<td/g) ?? []).length + 2;
       expect(footerCells).toBe(headerCells);
+    } finally {
+      db.close();
+    }
+  });
+
+  /**
+   * O "Exportar Excel" do painel. O arquivo existe justamente para somar, filtrar e fazer
+   * formula — o que so acontece se peso, valor e data forem numero e data na celula, e nao
+   * texto.
+   */
+  it("a planilha do periodo sai com peso, valor e data tipados para o Excel", () => {
+    const db = createDatabase();
+
+    try {
+      setupBaseData(db);
+      insertOperations(db);
+
+      const service = new ReportService(db);
+      const sheet = service.exportRangeToSpreadsheet(
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1",
+        new Date("2026-07-01T12:00:00Z")
+      );
+
+      // Namespace do Excel: sem ele o `x:num` das celulas nao vale.
+      expect(sheet).toContain('xmlns:x="urn:schemas-microsoft-com:office:excel"');
+      // Peso como numero, valor em reais como numero e data como data.
+      expect(sheet).toContain('x:num="15000">15.000<');
+      // O espaco do "R$" vem do Intl (nao quebravel), entao a comparacao aceita qualquer um.
+      expect(sheet).toMatch(/x:num="9000">R\$\s9\.000,00</);
+      expect(sheet).toContain('x:num="46179">06/06/2026<');
+      // O valor sai em pt-BR ("R$ 9.000,00"), e nao no formato interno "R$ 9000.00".
+      expect(sheet).not.toContain("R$ 9000.00");
+      expect(sheet).toContain("Carregamentos do periodo");
     } finally {
       db.close();
     }
