@@ -882,7 +882,9 @@ function registerIpcHandlers(): void {
     "desktop:export-report-excel",
     async (_event, startDate: string, endDate: string) => {
       if (!runtime) throw new Error("Desktop runtime is not ready.");
-      const html = runtime.getReportHtml(startDate, endDate);
+      // Planilha, e nao o HTML A4 do e-mail: e a versao com as celulas tipadas (numero,
+      // valor e data), a unica em que a coluna soma e aceita formula no Excel.
+      const html = runtime.getReportSpreadsheet(startDate, endDate);
       const filePath = await pickReportFilePath(`relatorio-${startDate}-a-${endDate}.xls`, ["xls"]);
       if (!filePath) return null;
       const fs = await import("node:fs/promises");

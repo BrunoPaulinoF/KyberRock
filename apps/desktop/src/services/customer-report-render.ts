@@ -1,5 +1,6 @@
 import { invoiceNumberText } from "./invoice-number-label.js";
 import {
+  SPREADSHEET_HTML_ATTRS,
   SPREADSHEET_STYLE,
   documentStyle,
   escapeHtml,
@@ -641,7 +642,7 @@ export function renderCustomerReportSpreadsheet(
     .filter(Boolean)
     .join(" · ");
 
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><title>${escapeHtml(
+  return `<!doctype html><html ${SPREADSHEET_HTML_ATTRS}><head><meta charset="utf-8" /><title>${escapeHtml(
     `Relatorio do cliente - ${customer.tradeName || customer.legalName}`
   )}</title><style>${SPREADSHEET_STYLE}</style></head><body>
 <h1>${escapeHtml(customer.tradeName || customer.legalName)}</h1>
@@ -1048,7 +1049,7 @@ export function renderCustomersOverviewSpreadsheet(
     .filter(Boolean)
     .join(" · ");
 
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><title>${escapeHtml(
+  return `<!doctype html><html ${SPREADSHEET_HTML_ATTRS}><head><meta charset="utf-8" /><title>${escapeHtml(
     "Relatorio de clientes no periodo"
   )}</title><style>${SPREADSHEET_STYLE}</style></head><body>
 <h1>Relatorio por cliente - todos os clientes</h1>

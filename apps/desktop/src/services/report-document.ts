@@ -11,6 +11,8 @@
  * `desktop:export-report-excel`), que o Excel abre nativamente sem dependencia nova.
  */
 
+import { SHEET_TEXT_FORMAT, classifySheetCell } from "./sheet-cell.js";
+
 /**
  * Estilo dos documentos A4. `landscape` e para as listas largas (operacao a operacao);
  * `portrait` para os resumos.
@@ -109,18 +111,20 @@ p.note{margin:10px 0 0;font-size:9pt;color:#64748b;font-style:italic}
 h2{font-size:12pt;margin:20px 0 4px;color:#1d4ed8;border-bottom:2px solid #1d4ed8;padding-bottom:2px}
 table{border-collapse:collapse;margin:0 0 4px}
 th{background:#1d4ed8;color:#ffffff;font-weight:bold;border:1px solid #1e40af;padding:5px 8px;text-align:left}
-td{border:1px solid #cbd5e1;padding:4px 8px;mso-number-format:"\\@";vertical-align:top}
+td{border:1px solid #cbd5e1;padding:4px 8px;vertical-align:top}
 tr.alt td{background:#f1f5f9}
 th.num,td.num{text-align:right}
 tr.total td{font-weight:bold;background:#dbeafe;border-top:2px solid #1d4ed8}
 `;
 
 /**
- * Celulas que valem como numero para efeito de ALINHAMENTO (o conteudo continua texto,
- * senao o Excel comeria o zero a esquerda de um codigo e transformaria CNPJ em notacao
- * cientifica): valor, peso, contagem, preco por tonelada, parcela "1/3", duracao, data
- * e mes. Um texto solto na coluna ja a desqualifica — meia coluna alinhada a direita e
- * pior que uma inteira a esquerda.
+ * Celulas que valem como numero para efeito de ALINHAMENTO: valor, peso, contagem, preco
+ * por tonelada, parcela "1/3", duracao, data e mes. Um texto solto na coluna ja a
+ * desqualifica — meia coluna alinhada a direita e pior que uma inteira a esquerda.
+ *
+ * Isto e so o alinhamento, e por isso e mais frouxo que a tipagem de `sheet-cell.ts`: a
+ * coluna de parcela ("1/3") continua a direita como sempre esteve, mesmo saindo como texto
+ * na celula.
  */
 const NUMERIC_SHEET_CELL = /^-?(r\$\s*)?[\d.,]+(\s*(kg|t|%|\/t|min|h)|\/\d+)?$/i;
 const DURATION_SHEET_CELL = /^\d+h\s*\d{1,2}min$/i;
@@ -158,6 +162,32 @@ function sheetColumnWidth(header: string, rows: string[][], index: number): numb
   return Math.min(Math.max(longest * 8 + 22, 72), 360);
 }
 
+/**
+ * Uma celula da planilha. O texto e o mesmo que sai no PDF; o que muda e o que o Excel
+ * guarda ATRAS dele.
+ *
+ * Quando `sheet-cell.ts` reconhece um numero formatado, a celula leva:
+ *
+ * - `x:num` com o valor puro — e ele que faz a celula ser numero de verdade, some, entre
+ *   em formula e ordene por valor. O atributo so vale com o namespace do Excel declarado
+ *   no `<html>` (`SPREADSHEET_HTML_ATTRS`);
+ * - `mso-number-format` com o formato de exibicao, que devolve na tela o "R$", o "kg", o
+ *   "t" e a data como estavam — a planilha continua com a mesma cara de antes.
+ *
+ * O resto (documento, vale, nota, codigo, placa, observacao) sai com o formato de TEXTO,
+ * que e o que impede o Excel de comer o zero a esquerda de um codigo ou de transformar um
+ * CNPJ em notacao cientifica. O formato vai na propria celula, e nao no CSS do `td`, para
+ * nao depender de qual regra o importador do Excel considera mais forte.
+ */
+function sheetCell(cell: string, header: string, alignRight: boolean): string {
+  const className = alignRight ? ' class="num"' : "";
+  const value = classifySheetCell(cell, header);
+  const format = value ? value.format : SHEET_TEXT_FORMAT;
+  // Sem o arredondamento o `x:num` sairia com o lixo do ponto flutuante (0,30000000000004).
+  const number = value ? ` x:num="${Number(value.value.toFixed(10))}"` : "";
+  return `<td${className} style='mso-number-format:"${format}"'${number}>${escapeHtml(cell)}</td>`;
+}
+
 export function sheetTable(
   title: string,
   headers: string[],
@@ -179,7 +209,7 @@ export function sheetTable(
         .map(
           (cells, rowIndex) =>
             `<tr${rowIndex % 2 === 1 ? ' class="alt"' : ""}>${cells
-              .map((cell, index) => `<td${cellClass(index)}>${escapeHtml(cell)}</td>`)
+              .map((cell, index) => sheetCell(cell, headers[index] ?? "", numeric[index] ?? false))
               .join("")}</tr>`
         )
         .join("")
@@ -189,11 +219,19 @@ export function sheetTable(
   const foot =
     footer && rows.length
       ? `<tr class="total">${footer
-          .map((cell, index) => `<td${cellClass(index)}>${escapeHtml(cell)}</td>`)
+          .map((cell, index) => sheetCell(cell, headers[index] ?? "", numeric[index] ?? false))
           .join("")}</tr>`
       : "";
   return `<h2>${escapeHtml(title)}</h2><table><thead><tr>${head}</tr></thead><tbody>${body}${foot}</tbody></table>`;
 }
+
+/**
+ * Atributos do `<html>` das planilhas. O namespace do Excel e o que faz o `x:num` das
+ * celulas valer — sem ele o arquivo abre igual, so que com tudo texto de novo.
+ */
+export const SPREADSHEET_HTML_ATTRS =
+  'lang="pt-BR" xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+  'xmlns:x="urn:schemas-microsoft-com:office:excel"';
 
 export function num(value: number): string {
   return value.toLocaleString("pt-BR", { maximumFractionDigits: 2 });

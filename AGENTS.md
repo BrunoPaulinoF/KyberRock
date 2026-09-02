@@ -124,6 +124,34 @@ npm run dist:win -w @kyberrock/desktop      # NSIS installer -> apps/desktop/rel
 - **A prévia desenha o FORMULÁRIO; quem imprime é o perfil SALVO**: `receiptProfileSignature` (em `App.tsx`) compara os dois e a tela avisa em cima da prévia enquanto houver diferença. Sem isso, digitar o telefone de contato e mandar imprimir mostrava o cupom certo na tela e imprimia o antigo no papel — e não havia nada na tela explicando por quê. Foi essa a causa real do "telefone de contato não sai": nos cupons sincronizados, `templateConfig.companyPhone` estava `""` em **todos** eles.
 - **Largura do cupom impresso**: o HTML do cupom **não pode depender do tamanho da página** que o driver informa. `@page { size: 80mm auto }` é CSS inválido (`size` aceita `auto` sozinho **ou** medidas, nunca medida + `auto`): o Chromium descartava a regra inteira, diagramava o cupom na página padrão da impressora (A4/Carta) e tudo que é centralizado — logo, `COD`, `COPIA NRO`, data/hora, via — ia para o meio de ~210 mm, ou seja, fora do papel de 80 mm; sobrava só o corpo, alinhado à esquerda e ainda com o fim de cada linha cortado. Foi **este** o motivo de "a logo e o número nunca saírem no cupom", e não a conversão da imagem. Agora `buildReceiptHtml` desenha o cupom numa coluna de largura fixa — a faixa útil do papel, `receiptContentWidthMm` (papel − 2 × `RECEIPT_PAPER_MARGIN_MM`) — ancorada à esquerda, e o que é centralizado se centraliza dentro dela. As linhas decorativas (divisor de 48 traços, linha de assinatura) saem com `rule-line`: `white-space: pre` + o corpo de `fitReceiptBodyFontSizePx`, senão as 48 colunas estouram a faixa útil e sobra um toco de traços na linha de baixo. A prévia usa as **mesmas** funções: se elas divergirem, a tela volta a mentir sobre o papel.
 
+## Planilhas dos relatórios (célula tipada)
+
+As planilhas geradas pelos relatórios (`Exportar Excel` do painel, Relatório por cliente,
+Conferência de faturamento, Fechamento de faturas, Controle de caminhões) são **HTML de tabelas
+gravado com extensão `.xls`** — sem dependência nova, o Excel abre nativamente. O estilo trazia
+`mso-number-format:"\@"` no `td` inteiro, então **toda** célula chegava ao Excel como texto: não
+dava para somar coluna, tirar média, ordenar por valor nem escrever fórmula, que é exatamente o
+motivo de se pedir a planilha em vez do PDF.
+
+Agora cada célula sai tipada, em `sheet-cell.ts` (puro) + `sheetTable` (`report-document.ts`):
+
+- o texto exibido **continua o mesmo** do PDF (`R$ 1.234,56`, `15.000 kg`, `1.234,5 t`,
+  `15/07/2026`, `1h 05min`) — quem abre não vê diferença de aparência;
+- a célula leva `x:num` com o **valor puro** (é ele que faz a célula ser número) e
+  `mso-number-format` com o formato de exibição, que devolve na tela o `R$`, o `kg`, o `t` e a
+  data. Sem o `xmlns:x` do `<html>` (`SPREADSHEET_HTML_ATTRS`) o `x:num` não vale nada — o
+  arquivo abre igual, só que com tudo texto de novo;
+- **converter demais é pior que converter de menos**: documento, vale, nota fiscal, código,
+  placa e pedido OMIE continuam TEXTO, senão o zero à esquerda some e o CNPJ vira notação
+  científica (a mesma regra do CNPJ alfanumérico do CLAUDE.md). Três travas: cabeçalho de
+  identificador (`isTextSheetHeader`), dígito solto com mais de 3 casas e sem separador de
+  milhar (um `num()` de verdade só passa de 999 com ponto) e número começando com zero.
+
+O `Exportar Excel` do painel tem renderizador **próprio** (`exportRangeToSpreadsheet`): o
+`exportRangeToHtml` continua sendo o A4 que vira PDF no e-mail do fechamento diário, e por isso
+não podia virar planilha. O CSV do relatório do dia é pt-BR (`;` + vírgula decimal + BOM), que é
+o que o Excel brasileiro abre como número.
+
 ## Importação de clientes por planilha
 
 CLI em `apps/desktop/src/scripts/import-customers.ts` (compilado para

@@ -1,4 +1,5 @@
 import type { DesktopDatabase } from "../database/sqlite.js";
+import { SPREADSHEET_HTML_ATTRS, SPREADSHEET_STYLE, sheetTable } from "./report-document.js";
 import { renderTotalBar } from "./report-total-bar.js";
 import { perTonLabel } from "./report-unit-price.js";
 import {
@@ -554,22 +555,60 @@ export class ReportService {
     return mix;
   }
 
+  /**
+   * Relatorio do dia em CSV.
+   *
+   * pt-BR de ponta a ponta: separador ";" e valor com virgula decimal, que e o que o Excel
+   * brasileiro abre como NUMERO. Com a virgula do separador e o "R$" colado no valor, cada
+   * carga quebrava em colunas erradas e o pouco que sobrava entrava como texto.
+   */
   exportDailyToCSV(date: string, unitId: string): string {
     const report = this.getDailyReport(date, unitId);
 
-    const lines: string[] = ["Data,Cliente,Produto,Peso Liquido (kg),Valor Produto,Frete,Total"];
+    const cell = (value: string): string =>
+      /[";\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
+    const money = (cents: number): string => (cents / 100).toFixed(2).replace(".", ",");
+
+    const lines: string[] = [
+      [
+        "Data",
+        "Cliente",
+        "Produto",
+        "Peso Liquido (kg)",
+        "Valor Produto (R$)",
+        "Frete (R$)",
+        "Total (R$)"
+      ].join(";")
+    ];
 
     for (const op of report.operations) {
       lines.push(
-        `${report.date},"${op.customerName}","${op.productDescription}",${op.netWeightKg},${this.formatCurrency(op.productTotalCents)},${this.formatCurrency(op.freightTotalCents)},${this.formatCurrency(op.totalCents)}`
+        [
+          formatDayLabel(report.date),
+          cell(op.customerName),
+          cell(op.productDescription),
+          String(op.netWeightKg),
+          money(op.productTotalCents),
+          money(op.freightTotalCents),
+          money(op.totalCents)
+        ].join(";")
       );
     }
 
     lines.push(
-      `TOTAL,,,${report.totalNetWeightKg},${this.formatCurrency(report.totalProductCents)},${this.formatCurrency(report.totalFreightCents)},${this.formatCurrency(report.totalCents)}`
+      [
+        "TOTAL",
+        "",
+        "",
+        String(report.totalNetWeightKg),
+        money(report.totalProductCents),
+        money(report.totalFreightCents),
+        money(report.totalCents)
+      ].join(";")
     );
 
-    return lines.join("\n");
+    // BOM: sem ele o Excel abre o arquivo como ANSI e todo acento vira lixo.
+    return `\uFEFF${lines.join("\r\n")}`;
   }
 
   // Controle de caminhoes: estatisticas por placa no periodo (tempo dentro da
@@ -765,6 +804,102 @@ export class ReportService {
         { label: "Total", value: this.formatCurrency(total), emphasis: true }
       ]
     )}</body></html>`;
+  }
+
+  /**
+   * O MESMO relatorio do periodo em planilha (`Exportar Excel` do painel).
+   *
+   * Ele nao podia sair do `exportRangeToHtml`: aquele HTML e A4 e vira PDF no e-mail do
+   * relatorio diario. Aqui as colunas passam pelo `sheetTable`, entao peso, preco por
+   * tonelada, valor e data chegam ao Excel como numero e data de verdade — da para somar a
+   * coluna, filtrar e escrever formula, que e o motivo de se pedir a planilha.
+   *
+   * Os valores saem pelo `formatBRL` (pt-BR, "R$ 1.234,56"), e nao pelo `formatCurrency`
+   * interno ("R$ 1234.56"), que ninguem le num fechamento.
+   */
+  exportRangeToSpreadsheet(
+    startDate: string,
+    endDate: string,
+    unitId: string,
+    generatedAt: Date = new Date()
+  ): string {
+    const operations = this.getRangeOperations(startDate, endDate, unitId);
+    const totalWeight = operations.reduce((sum, op) => sum + op.netWeightKg, 0);
+    const totalProduct = operations.reduce((sum, op) => sum + op.productTotalCents, 0);
+    const totalFreight = operations.reduce((sum, op) => sum + op.freightTotalCents, 0);
+    const total = operations.reduce((sum, op) => sum + op.totalCents, 0);
+    const period = `${formatDayLabel(startDate)} a ${formatDayLabel(endDate)}`;
+
+    const headers = [
+      "Data",
+      "Cliente",
+      "Produto",
+      "Peso (kg)",
+      "Produto (R$/t)",
+      "Produto (R$)",
+      "Frete (R$/t)",
+      "Frete (R$)",
+      "Total (R$)"
+    ];
+
+    const blocks = [
+      sheetTable(
+        "Periodo",
+        ["Campo", "Valor"],
+        [
+          ["Periodo", period],
+          ["Carregamentos", operations.length.toLocaleString("pt-BR")],
+          ["Peso liquido (kg)", totalWeight.toLocaleString("pt-BR")],
+          [
+            "Tonelagem (t)",
+            (totalWeight / 1000).toLocaleString("pt-BR", {
+              minimumFractionDigits: 1,
+              maximumFractionDigits: 1
+            })
+          ],
+          ["Valor produto", formatBRL(totalProduct)],
+          ["Valor frete", formatBRL(totalFreight)],
+          ["Total", formatBRL(total)],
+          ["Gerado em", generatedAt.toLocaleString("pt-BR")]
+        ]
+      ),
+      sheetTable(
+        "Carregamentos do periodo",
+        headers,
+        operations.map((op) => [
+          formatDayLabel(op.date),
+          op.customerName,
+          op.productDescription,
+          op.netWeightKg.toLocaleString("pt-BR"),
+          perTonLabel(op.productTotalCents, op.netWeightKg),
+          formatBRL(op.productTotalCents),
+          perTonLabel(op.freightTotalCents, op.netWeightKg),
+          formatBRL(op.freightTotalCents),
+          formatBRL(op.totalCents)
+        ]),
+        operations.length > 0
+          ? [
+              "TOTAL",
+              "",
+              "",
+              totalWeight.toLocaleString("pt-BR"),
+              perTonLabel(totalProduct, totalWeight),
+              formatBRL(totalProduct),
+              perTonLabel(totalFreight, totalWeight),
+              formatBRL(totalFreight),
+              formatBRL(total)
+            ]
+          : null
+      )
+    ];
+
+    return `<!doctype html><html ${SPREADSHEET_HTML_ATTRS}><head><meta charset="utf-8" /><title>${escapeHtml(
+      `Relatorio KyberRock - ${period}`
+    )}</title><style>${SPREADSHEET_STYLE}</style></head><body>
+<h1>Relatorio KyberRock</h1>
+<p class="sub">${escapeHtml(`${period} - gerado em ${generatedAt.toLocaleString("pt-BR")}`)}</p>
+${blocks.join("\n")}
+</body></html>`;
   }
 
   // Relatorio "Painel de Insights": documento A4 estruturado (KPIs, mix de operacoes,

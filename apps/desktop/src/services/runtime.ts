@@ -2288,6 +2288,18 @@ export class DesktopRuntime {
     return this.reportService.exportRangeToHtml(startDate, endDate, this.ensureIdentity().unitId);
   }
 
+  /**
+   * O mesmo relatorio do periodo em planilha. O `getReportHtml` continua sendo o A4 que
+   * vira PDF no e-mail; aqui as celulas saem tipadas para o Excel.
+   */
+  getReportSpreadsheet(startDate: string, endDate: string): string {
+    return this.reportService.exportRangeToSpreadsheet(
+      startDate,
+      endDate,
+      this.ensureIdentity().unitId
+    );
+  }
+
   getInsightsHtml(startDate: string, endDate: string, periodLabel?: string): string {
     return this.reportService.exportInsightsToHtml(
       startDate,
