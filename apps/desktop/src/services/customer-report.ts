@@ -56,6 +56,13 @@ export interface CustomerReportCustomer {
 
 export interface CustomerReportOperation {
   id: string;
+  /**
+   * Numero do CUPOM (`operation_code`, o "COD" impresso no vale que saiu com o motorista).
+   * E por ele que o cliente acha a carga no maco de papel que ele guardou — o `id` desta
+   * lista nao existe fora do sistema, e o pedido/nota do OMIE so aparecem depois do
+   * faturamento. Null nas operacoes antigas, anteriores a numeracao do cupom.
+   */
+  couponNumber: number | null;
   date: string;
   createdAt: string;
   status: string;
@@ -395,6 +402,7 @@ function readCustomerKey(row: CustomerColumns): CustomerReportCustomerKey {
 
 interface OperationRow extends CustomerColumns {
   id: string;
+  operation_code: number | null;
   status: string;
   operation_type: "invoice" | "internal";
   cancel_reason: string | null;
@@ -682,7 +690,7 @@ export class CustomerReportService {
     return this.db
       .prepare(
         `SELECT${CUSTOMER_COLUMNS_SQL},
-           o.id, o.status, o.operation_type, o.cancel_reason, o.created_at,
+           o.id, o.operation_code, o.status, o.operation_type, o.cancel_reason, o.created_at,
            p.code as product_code,
            COALESCE(p.description, o.remote_product_description) as product_description,
            p.unit as product_unit,
@@ -966,6 +974,7 @@ function mapOperation(row: OperationRow): CustomerReportOperation {
 
   return {
     id: row.id,
+    couponNumber: row.operation_code,
     date: row.created_at.slice(0, 10),
     createdAt: row.created_at,
     status: row.status,

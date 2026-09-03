@@ -1,3 +1,4 @@
+import { formatCouponNumber } from "./invoice-closing-cycle.js";
 import { invoiceNumberText } from "./invoice-number-label.js";
 import {
   SPREADSHEET_HTML_ATTRS,
@@ -351,9 +352,10 @@ export function renderCustomerReportHtml(
       section(
         "Operacoes canceladas",
         table(
-          ["Data", "Produto", "Placa", "Motorista", "Liquido (kg)", "Motivo"],
+          ["Data", "Cupom", "Produto", "Placa", "Motorista", "Liquido (kg)", "Motivo"],
           report.cancelledOperations.map((operation) => [
             formatDayLabel(operation.date),
+            formatCouponNumber(operation.couponNumber),
             operation.productDescription,
             operation.plate,
             operation.driverName,
@@ -619,9 +621,10 @@ export function renderCustomerReportSpreadsheet(
     blocks.push(
       sheetTable(
         "Canceladas",
-        ["Data", "Produto", "Placa", "Motorista", "Liquido (kg)", "Motivo"],
+        ["Data", "Cupom", "Produto", "Placa", "Motorista", "Liquido (kg)", "Motivo"],
         report.cancelledOperations.map((operation) => [
           formatDayLabel(operation.date),
+          formatCouponNumber(operation.couponNumber),
           operation.productDescription,
           operation.plate,
           operation.driverName,
@@ -723,6 +726,9 @@ const TRIP_HEADERS = [
   "Placa",
   "Motorista",
   "Data",
+  // O CUPOM vem junto da data porque e o numero que o cliente tem na mao: a conferencia
+  // dele e "este papel esta nesta lista?", e sem a coluna sobrava casar por peso e placa.
+  "Cupom",
   "Produto",
   "Peso (kg)",
   "Preco/t",
@@ -741,6 +747,7 @@ function tripCells(operation: CustomerReportOperation): string[] {
     operation.plate,
     operation.driverName,
     formatDayLabel(operation.date),
+    formatCouponNumber(operation.couponNumber),
     operation.productDescription,
     num(operation.netWeightKg),
     operation.unitPriceCents === null ? "-" : formatBRL(operation.unitPriceCents),
@@ -799,6 +806,7 @@ function periodCells(row: CustomerReportPeriodRow, labelOf: (period: string) => 
  */
 const OPERATION_HEADERS = [
   "Data",
+  "Cupom",
   "Operacao",
   "Tipo",
   "Produto",
@@ -828,6 +836,7 @@ const OPERATION_HEADERS = [
 function operationCells(operation: CustomerReportOperation): string[] {
   return [
     formatDayLabel(operation.date),
+    formatCouponNumber(operation.couponNumber),
     operation.id.slice(0, 8),
     operation.operationTypeLabel,
     operation.productDescription,

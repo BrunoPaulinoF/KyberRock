@@ -14,6 +14,7 @@ import {
 } from "../services/customer-report-render";
 import { IconActionButton } from "./IconActionButton";
 import { HelpTooltip } from "./Tooltip";
+import { formatCouponNumber } from "../services/invoice-closing-cycle";
 import { invoiceNumberText } from "../services/invoice-number-label";
 import { CustomerSearchSelect } from "./CustomerSearchSelect";
 import { useOmieInvoiceNumbers } from "./useOmieInvoiceNumbers";
@@ -788,6 +789,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
                 "Placa",
                 "Motorista",
                 "Data",
+                "Cupom",
                 "Produto",
                 "Peso",
                 "Preco/t",
@@ -801,6 +803,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
                 operation.plate,
                 operation.driverName,
                 formatDayLabel(operation.date),
+                formatCouponNumber(operation.couponNumber),
                 operation.productDescription,
                 formatKg(operation.netWeightKg),
                 operation.unitPriceCents === null ? "-" : formatBRL(operation.unitPriceCents),
@@ -883,6 +886,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
                 <Table
                   headers={[
                     "Data",
+                    "Cupom",
                     "Produto",
                     "Placa",
                     "Motorista",
@@ -902,6 +906,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
                   ]}
                   rows={report.operations.map((operation) => [
                     formatDayLabel(operation.date),
+                    formatCouponNumber(operation.couponNumber),
                     operation.productDescription,
                     operation.plate,
                     operation.driverName,
@@ -929,9 +934,10 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
                 empty={report.cancelledOperations.length === 0}
               >
                 <Table
-                  headers={["Data", "Produto", "Placa", "Motorista", "Liquido", "Motivo"]}
+                  headers={["Data", "Cupom", "Produto", "Placa", "Motorista", "Liquido", "Motivo"]}
                   rows={report.cancelledOperations.map((operation) => [
                     formatDayLabel(operation.date),
+                    formatCouponNumber(operation.couponNumber),
                     operation.productDescription,
                     operation.plate,
                     operation.driverName,
