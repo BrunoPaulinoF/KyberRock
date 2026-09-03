@@ -1568,6 +1568,51 @@ describe("numero da nota fiscal no relatorio do cliente", () => {
     }
   });
 
+  it("mostra o numero do cupom de cada operacao, na tela e nos dois formatos", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      seedCustomerOperations(db);
+      // O cupom e o unico numero que o cliente tem na mao quando liga contestando uma
+      // carga: sem ele na lista, conferir o maco de vales contra o relatorio virava
+      // casamento por peso e placa.
+      db.prepare("UPDATE weighing_operations SET operation_code = 4321 WHERE id = 'op-1'").run();
+
+      const report = new CustomerReportService(db).getCustomerReport(
+        "cust-1",
+        "2026-06-01",
+        "2026-06-30",
+        "unit-1"
+      );
+
+      expect(report.operations.find((operation) => operation.id === "op-1")?.couponNumber).toBe(
+        4321
+      );
+      // Operacao antiga, de antes da numeracao: fica sem cupom em vez de inventar um.
+      expect(
+        report.operations.find((operation) => operation.id === "op-2")?.couponNumber
+      ).toBeNull();
+
+      // O cupom sai como esta impresso no papel ("004321"), nos dois modelos e nos dois
+      // formatos — o simplificado e o que o cliente recebe por e-mail.
+      for (const variant of ["simplified", "complete"] as const) {
+        const html = renderCustomerReportHtml(report, variant, new Date("2026-07-15T12:00:00Z"));
+        expect(html).toContain("Cupom");
+        expect(html).toContain("004321");
+
+        const sheet = renderCustomerReportSpreadsheet(
+          report,
+          variant,
+          new Date("2026-07-15T12:00:00Z")
+        );
+        expect(sheet).toContain("Cupom");
+        expect(sheet).toContain("004321");
+      }
+    } finally {
+      db.close();
+    }
+  });
+
   it("expoe a ordem de servico junto do pedido, para a tela saber o que ainda perguntar", () => {
     const db = createDatabase();
     try {
