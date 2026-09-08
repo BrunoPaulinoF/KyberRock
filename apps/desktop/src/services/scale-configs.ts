@@ -39,7 +39,15 @@ export interface ScaleConnectionConfig {
  * seguros e testados valem para qualquer instalacao.
  */
 export const SCALE_CONNECTION_TUNING = {
-  timeoutMs: 3000,
+  /**
+   * Espera pelo aperto de mao TCP. Estava em 3000ms, que e exatamente o tempo que
+   * o Windows leva para repetir o primeiro SYN: a gente desistia no instante em
+   * que o sistema ia tentar de novo, entao um unico pacote perdido — rotina numa
+   * balanca por Wi-Fi ou num conversor ocupado — virava "Timeout de conexao" na
+   * tela com o indicador ligado e a rede boa. Com 10s cabem as retransmissoes do
+   * sistema; esperar mais nao custa nada, porque a reconexao ja e automatica.
+   */
+  timeoutMs: 10_000,
   reconnectIntervalMs: 5000,
   /**
    * A balanca nunca desiste sozinha. Com o limite anterior de 10 tentativas, um
