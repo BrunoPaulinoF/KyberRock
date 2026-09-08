@@ -18,7 +18,12 @@ export interface ToledoStatusFlags {
 export interface ToledoTcpConfig {
   host: string;
   port: number;
-  /** Tempo maximo de espera por dados no socket (ms). Padrao: 3000 */
+  /**
+   * Tempo maximo de espera pelo aperto de mao TCP (ms). Padrao: 10000.
+   * Vale so ate a conexao abrir; depois quem vigia o silencio e `staleReadingMs`.
+   * Valores curtos demais (3s) desistem no mesmo instante em que o Windows faria
+   * a primeira retransmissao do SYN — ver `DEFAULT_CONNECT_TIMEOUT_MS`.
+   */
   timeoutMs?: number;
   /** Intervalo entre tentativas de reconexao (ms). Padrao: 5000 */
   reconnectIntervalMs?: number;

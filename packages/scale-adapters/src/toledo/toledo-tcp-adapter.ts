@@ -1,6 +1,7 @@
 import { createConnection } from "node:net";
 import type { Socket } from "node:net";
 
+import { describeTcpConnectFailure } from "./connection-diagnostics.js";
 import { reconnectDelayMs } from "./reconnect-backoff.js";
 import { parseToledoLine } from "./toledo-protocol-parser.js";
 import { normalizeParsedReading } from "./toledo-reading.js";
@@ -30,6 +31,20 @@ export interface ToledoTcpAdapterStatus {
   /** Amostra legivel do ultimo trecho bruto recebido, para identificar o protocolo. */
   lastRawSample: string | null;
 }
+
+/**
+ * Tempo maximo de espera pelo aperto de mao TCP.
+ *
+ * NAO baixe para 3s de novo. O Windows manda o primeiro SYN e so o repete depois
+ * de 3s (o RTO inicial padrao dele) — desistir exatamente nesse instante fazia um
+ * unico pacote perdido virar falha definitiva na tela, sem nem uma segunda
+ * tentativa do sistema. Numa balanca ligada por Wi-Fi, ou num conversor ocupado
+ * respondendo ARP, perder o primeiro SYN e rotina: era a "Timeout de conexao
+ * (3000ms)" que a pedreira via com o indicador ligado e a rede boa. Com 10s cabem
+ * as duas retransmissoes do sistema antes de a gente desistir, e desistir custa
+ * pouco — a reconexao automatica continua tentando de qualquer forma.
+ */
+export const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 
 /** Silencio maximo tolerado com a conexao aberta antes de considerar a leitura vencida. */
 export const DEFAULT_STALE_READING_MS = 4000;
@@ -400,7 +415,16 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
 
       sock.on("error", (err: Error) => {
         if (currentGeneration !== generation) return;
-        errorMessage = err.message;
+        // Texto de operacao, nao o do Node: "connect ECONNREFUSED 192.168.5.190:9001"
+        // nao diz a ninguem na balanca o que conferir, e cada codigo pede uma acao
+        // diferente (porta errada, rede errada, sessao ocupada).
+        const failure = describeTcpConnectFailure({
+          host: cfg.host,
+          port: cfg.port,
+          code: (err as NodeJS.ErrnoException).code,
+          originalMessage: err.message
+        });
+        errorMessage = failure;
         state = "error";
         clearLastReading();
         // Encerra de fato o socket com erro. Apenas soltar a referencia deixava a
@@ -410,7 +434,10 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
         // reconexao porque a sessao morta ainda ocupava a porta.
         teardownSocket();
         scheduleReconnect();
-        reject(err);
+        // Mesmo texto que o status mostra. Rejeitar com o erro cru do Node fazia o
+        // clique em "Conectar" exibir "connect ECONNREFUSED 192.168.5.190:9001"
+        // enquanto a faixa de status explicava a mesma falha de outro jeito.
+        reject(new Error(failure, { cause: err }));
       });
 
       sock.on("close", () => {
@@ -428,13 +455,17 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
         }
       });
 
-      const timeout = cfg.timeoutMs ?? 3000;
+      const timeout = cfg.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
       sock.setTimeout(timeout, () => {
         if (currentGeneration !== generation) return;
         if (state === "connecting") {
           teardownSocket();
           state = "error";
-          errorMessage = `Timeout de conexao (${timeout}ms)`;
+          errorMessage = describeTcpConnectFailure({
+            host: cfg.host,
+            port: cfg.port,
+            timeoutMs: timeout
+          });
           // Indicador que demora a responder no boot nao pode deixar a balanca
           // parada ate alguem clicar: a reconexao automatica continua daqui.
           scheduleReconnect();

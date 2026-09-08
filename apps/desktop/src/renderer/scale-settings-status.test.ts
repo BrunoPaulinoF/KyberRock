@@ -63,6 +63,39 @@ describe("Configuracoes > Balanca: status da conexao", () => {
 
     expect(disconnect).toContain("lastScaleReadingAtRef.current = null;");
   });
+
+  it("apaga o diagnostico de conexao quando a balanca volta a pesar", () => {
+    // `if (s.errorMessage) setError(s.errorMessage)` so escrevia, nunca apagava: a
+    // faixa vermelha ("Timeout de conexao...") ficava na tela com a balanca ja
+    // conectada e pesando, e a pedreira ligava para o suporte por um erro que nao
+    // existia mais.
+    const view = scaleViewSource();
+    const poll = view.slice(
+      view.indexOf("// Sonda o status a cada 3s"),
+      view.indexOf("// Atualiza a lista de portas")
+    );
+
+    expect(poll).not.toContain("if (s.errorMessage) setError(s.errorMessage);");
+    expect(poll).toContain("linkErrorRef.current = nextLinkError;");
+    // Balanca entregando peso e a unica prova de que acabou: socket aberto e mudo
+    // mantem o aviso, que ai continua sendo verdade.
+    expect(poll).toContain('s.state === "connected" && !s.stale ? null : (s.errorMessage ?? null)');
+  });
+
+  it("nao deixa a sondagem apagar erro de acao do operador", () => {
+    // A mesma faixa mostra "Informe o IP da balanca antes de conectar." e
+    // "Nenhuma balanca encontrada na rede local.": limpar tudo a cada 3s faria a
+    // resposta ao clique do operador sumir sozinha antes de ele ler.
+    const view = scaleViewSource();
+    const poll = view.slice(
+      view.indexOf("// Sonda o status a cada 3s"),
+      view.indexOf("// Atualiza a lista de portas")
+    );
+
+    expect(poll).toContain(
+      "current === null || current === previousLinkError ? nextLinkError : current"
+    );
+  });
 });
 
 describe("main: encaminhador de leituras da balanca", () => {

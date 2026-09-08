@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createServer } from "node:net";
 import type { AddressInfo, Socket } from "node:net";
 
-import { createToledoTcpAdapter } from "./toledo-tcp-adapter";
+import { createToledoTcpAdapter, DEFAULT_CONNECT_TIMEOUT_MS } from "./toledo-tcp-adapter";
 
 describe("toledo-tcp-adapter readSampled", () => {
   let server: ReturnType<typeof createServer> | null = null;
@@ -452,5 +452,44 @@ describe("toledo-tcp-adapter conexao derrubada por erro", () => {
 
     adapter.disconnect();
     await scale.close();
+  });
+});
+
+describe("toledo-tcp-adapter falha de conexao", () => {
+  /**
+   * NAO baixe este valor. 3000ms era exatamente o tempo que o Windows leva para
+   * repetir o primeiro SYN: o app desistia no instante em que o sistema ia tentar
+   * de novo, entao um unico pacote perdido — rotina numa balanca por Wi-Fi —
+   * virava "Timeout de conexao (3000ms)" na tela com o indicador ligado.
+   */
+  it("espera o suficiente para o sistema retransmitir o SYN", () => {
+    expect(DEFAULT_CONNECT_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
+  });
+
+  it("diz o que conferir em vez de devolver o erro cru do sistema", async () => {
+    // Porta fechada: o sistema recusa na hora, sem depender de rede externa.
+    const probe = createServer();
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    const closedPort = (probe.address() as AddressInfo).port;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+
+    const adapter = createToledoTcpAdapter();
+    const failure = await adapter
+      .connect({
+        host: "127.0.0.1",
+        port: closedPort,
+        maxReconnectAttempts: 0,
+        reconnectIntervalMs: 60_000
+      })
+      .then(
+        () => null,
+        (error: Error) => error
+      );
+    adapter.disconnect();
+
+    expect(failure).not.toBeNull();
+    // "connect ECONNREFUSED 127.0.0.1:54321" nao diz nada a quem opera a balanca.
+    expect(failure?.message).not.toContain("ECONNREFUSED");
+    expect(failure?.message).toContain(`porta ${closedPort}`);
   });
 });

@@ -199,6 +199,7 @@ import {
   trackScaleDegradedSince
 } from "./scale-link-view-model";
 import type { ScaleConnectionState, ScaleLinkViewModel } from "./scale-link-view-model";
+import { scaleErrorText } from "./scale-error-text";
 import { filterClosedOperationsBySearch } from "./closed-operations-search";
 import { countOpenOperationsByProduct } from "./open-operations-product-summary";
 import {
@@ -11930,9 +11931,17 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testProgress, setTestProgress] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [reading, setReading] = useState<{ weightKg: number; stable: boolean } | null>(null);
   const [status, setStatus] = useState<string>("Desconectado");
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Ultimo diagnostico de conexao que esta ocupando a faixa vermelha. Serve para
+   * a sondagem apagar so o que ela mesma escreveu quando a balanca volta: erro de
+   * acao do operador (IP em branco, busca na rede sem resultado) nao pode sumir
+   * sozinho tres segundos depois.
+   */
+  const linkErrorRef = useRef<string | null>(null);
 
   // Estatísticas em tempo real
   const readingsRef = useRef<Array<{ weightKg: number; stable: boolean; at: number }>>([]);
@@ -12050,7 +12059,19 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
         } else {
           setStatus(s.errorMessage ?? "Desconectado");
         }
-        if (s.errorMessage) setError(s.errorMessage);
+
+        // O diagnostico do adaptador tem de sumir sozinho quando a balanca volta.
+        // Antes ele so era escrito e nunca apagado: a linha vermelha ("Timeout de
+        // conexao...") ficava na tela com a balanca ja conectada e pesando, e a
+        // pedreira continuava ligando para o suporte por causa de um erro que nao
+        // existia mais. Balanca entregando peso e a unica prova de que acabou —
+        // socket aberto e mudo mantem o aviso, que ai e verdade.
+        const previousLinkError = linkErrorRef.current;
+        const nextLinkError = s.state === "connected" && !s.stale ? null : (s.errorMessage ?? null);
+        linkErrorRef.current = nextLinkError;
+        setError((current) =>
+          current === null || current === previousLinkError ? nextLinkError : current
+        );
       } catch {
         // Ignore polling errors
       }
@@ -12129,21 +12150,32 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       setError(validation);
       return;
     }
+    setConnecting(true);
     try {
       const config = await desktopApi.scaleSaveConfig(buildScaleConfigInput());
       applyScaleConfig(config);
       await desktopApi.scaleConnect();
+      linkErrorRef.current = null;
       setConnected(true);
       setStatus("Conectado");
       setConfigMessage("Configuracao salva e balanca conectada.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao conectar");
+      const message = scaleErrorText(err, "Falha ao conectar");
+      // Marcado como diagnostico de link para a sondagem poder apaga-lo: a
+      // reconexao automatica segue tentando em segundo plano e costuma conseguir
+      // na tentativa seguinte — o aviso nao pode ficar na tela depois disso.
+      linkErrorRef.current = message;
+      setError(message);
       setConnected(false);
+    } finally {
+      setConnecting(false);
     }
   }
 
   async function handleDisconnect(): Promise<void> {
     await desktopApi.scaleDisconnect();
+    linkErrorRef.current = null;
+    setError(null);
     setConnected(false);
     setStatus("Desconectado");
     // Zera a prova de leitura ao vivo junto: sem isto a sondagem veria a leitura de
@@ -12202,7 +12234,7 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
       );
     } catch (err) {
       setTestProgress(null);
-      setError(err instanceof Error ? err.message : "Falha no teste de captura");
+      setError(scaleErrorText(err, "Falha no teste de captura"));
     } finally {
       setTesting(false);
     }
@@ -12414,10 +12446,10 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           <div style={{ display: "flex", gap: "12px", marginTop: "16px", flexWrap: "wrap" }}>
             <IconActionButton
               icon="power"
-              label="Conectar"
-              tip="Conectar a balanca"
+              label={connecting ? "Conectando..." : "Conectar"}
+              tip={connecting ? "Conectando a balanca..." : "Conectar a balanca"}
               tone="primary"
-              disabled={connected || !configLoaded}
+              disabled={connected || connecting || !configLoaded}
               onClick={handleConnect}
             />
             <IconActionButton
