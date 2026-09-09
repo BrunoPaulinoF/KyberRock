@@ -6396,6 +6396,15 @@ async function getFunctionErrorMessage(error: unknown): Promise<string> {
     return fallback;
   }
 
+  // O status entra na mensagem porque e o que separa "a nuvem esta fora" de "o
+  // payload esta errado": sem ele, os dois chegavam na fila como "Edge Function
+  // returned a non-2xx status code" e um 5xx passageiro gastava as tentativas do
+  // job ate mata-lo. Ver `outage-fault.ts`.
+  const status =
+    "status" in context && typeof (context as { status?: unknown }).status === "number"
+      ? (context as { status: number }).status
+      : null;
+
   try {
     const clone =
       "clone" in context && typeof context.clone === "function" ? context.clone() : context;
@@ -6406,9 +6415,12 @@ async function getFunctionErrorMessage(error: unknown): Promise<string> {
           (body as { error?: unknown; message?: unknown }).error ??
           (body as { error?: unknown; message?: unknown }).message;
         if (typeof candidate === "string" && candidate.trim()) {
-          return withErrorDetails(candidate, (body as { details?: unknown }).details);
+          return withStatus(
+            withErrorDetails(candidate, (body as { details?: unknown }).details),
+            status
+          );
         }
-        return JSON.stringify(body);
+        return withStatus(JSON.stringify(body), status);
       }
     }
   } catch {
@@ -6417,7 +6429,16 @@ async function getFunctionErrorMessage(error: unknown): Promise<string> {
 
   const statusText =
     "statusText" in context ? (context as { statusText?: unknown }).statusText : null;
-  return typeof statusText === "string" && statusText.trim() ? statusText : fallback;
+  return withStatus(
+    typeof statusText === "string" && statusText.trim() ? statusText : fallback,
+    status
+  );
+}
+
+/** Anota o status HTTP no formato que `isOutageFault` reconhece. */
+function withStatus(message: string, status: number | null): string {
+  if (status === null || message.includes(`(HTTP ${status})`)) return message;
+  return `${message} (HTTP ${status})`;
 }
 
 /**

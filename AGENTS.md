@@ -745,6 +745,42 @@ promocao so fica no GitHub ate ele existir.
    `dist:win:ci` (usado pelo CI, `--publish never`) e `dist:win:publish` (`--publish always`,
    mantido para publicacao manual de emergencia).
 
+## Queda longa nao para a fila
+
+A operacao ja nascia e fechava no SQLite local antes de qualquer sincronizacao, e a
+reconciliacao (`listOperationsPendingCloudPush`) reenviava a operacao mesmo depois de o job
+morrer. O que faltava era a propria fila: `markSyncJobFailed` desiste depois de 10 tentativas e
+manda para `dead_letter`, que sai da rotacao automatica (`listRunnableSyncJobs` le so `pending`
+e `failed`) e so volta com um clique do operador na tela Cloud. Com o backoff ate 15 min, 10
+tentativas cobrem cerca de **2 horas** — mais que isso e o pedido do OMIE ficava esperando
+alguem que soubesse que precisava clicar.
+
+A confusao e a mesma da secao anterior: falha do DADO e falha da OUTRA PONTA nao sao a mesma
+coisa. O cadastro incompleto para a NF-e ja tinha tratamento proprio (`markSyncJobBlocked`, que
+nem gasta tentativa); faltava o simetrico para a indisponibilidade, que nao diz nada sobre o
+envio — o mesmo payload, sem mudar um byte, sobe quando a nuvem voltar.
+
+- **`outage-fault.ts`** reconhece a indisponibilidade: sinais de rede (`fetch failed`, `socket
+hang up`, `ECONNREFUSED`, timeout…) e o status HTTP anotado na mensagem. O reconhecimento e
+  conservador: na duvida o job segue o caminho antigo e morre: classificar como queda um erro
+  que e do dado poria o job para re-tentar a cada 15 min para sempre.
+- **O status entra na mensagem** (`getFunctionErrorMessage` -> `(HTTP 503)`). Sem isso, a queda
+  chegava na fila como "Edge Function returned a non-2xx status code", indistinguivel de um 400
+  de payload. 5xx e 429 sao da outra ponta; 4xx e do envio.
+- **`markSyncJobFailed` nunca condena um job por queda**: a tentativa ainda conta (e o que faz o
+  backoff crescer ate o teto, para nao martelar quem ja caiu), mas o status fica em `failed`.
+- **`rearmJobsDeadLetteredByOutage`** roda no comeco de cada sincronizacao e resgata o que ja
+  estava morto de uma queda anterior a esta versao. Nao encosta em quem espera correcao de
+  cadastro (sentinela `BLOCKED_NEXT_ATTEMPT_AT`) nem em job de operacao cancelada
+  (`cancelPendingOmieJobs`) — ressuscitar esse ultimo criaria no OMIE um pedido cancelado aqui.
+
+Vale para as duas filas: o fechamento sobe para a nuvem e o pedido/OS sobe para o OMIE sozinho
+quando a conexao voltar, sem clique nenhum.
+
+**Continua valendo**: o desktop exige internet a cada 7 dias (`DESKTOP_ACCESS_GRACE_PERIOD_MS`).
+Passado o prazo sem falar com a nuvem, a balanca para em `validation_expired`. Isso e licenca,
+nao sincronizacao — mudar o prazo e decisao de produto.
+
 ## Nuvem fora do ar nao bloqueia a frota
 
 Em 09/09/2026 o Postgres do projeto parou de responder (Cloudflare 522 no `/rest/v1`) e as

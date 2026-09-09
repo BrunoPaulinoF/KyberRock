@@ -61,6 +61,7 @@ import {
   listOmieQueueItems,
   listRunnableSyncJobs,
   pruneCompletedSyncJobs,
+  rearmJobsDeadLetteredByOutage,
   resetOmieQueueJobForRetry,
   type OmieQueueItem
 } from "./sync-queue.js";
@@ -1761,6 +1762,27 @@ export class DesktopRuntime {
             "Supabase nao configurado. Defina SUPABASE_PUBLISHABLE_KEY na pedreira no admin (loader-web) e reative o desktop."
           ]
         };
+      }
+
+      // Antes de processar: devolve a fila o que uma queda anterior tinha matado.
+      // Vale para nuvem e OMIE, e cobre as maquinas que ficaram com `dead_letter`
+      // de uma queda longa — dali em diante `markSyncJobFailed` nao deixa mais uma
+      // indisponibilidade condenar job nenhum. Nao mexe em quem espera correcao de
+      // cadastro nem em job de operacao cancelada; ver `rearmJobsDeadLetteredByOutage`.
+      try {
+        const rearmed = rearmJobsDeadLetteredByOutage(this.database);
+        if (rearmed > 0) {
+          this.recordTechnicalLog(
+            "info",
+            "cloud-sync",
+            `Fila: ${rearmed} envio(s) parados por queda de conexao voltaram para a fila.`,
+            { rearmed }
+          );
+        }
+      } catch (error) {
+        errors.push(
+          `Rearme da fila: ${error instanceof Error ? error.message : "erro desconhecido"}`
+        );
       }
 
       const queue = await processCloudSyncQueue(this.database, identity);

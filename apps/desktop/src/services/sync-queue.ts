@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
+import { isOutageFault } from "./outage-fault.js";
 
 export const SYNC_QUEUE_STATUSES = ["pending", "running", "done", "failed", "dead_letter"] as const;
 export const SYNC_TARGETS = ["cloud", "omie"] as const;
@@ -378,6 +379,12 @@ export function markSyncJobFailed(
     retryAfterMs?: number;
     deadLetterAfterAttempts?: number;
     random?: () => number;
+    /**
+     * Falha por indisponibilidade da outra ponta (nuvem ou OMIE fora do ar).
+     * Quem sabe disso por sondagem passa `true`; omitido, a mensagem decide
+     * (`isOutageFault`). Ver `outage-fault.ts` para o porque.
+     */
+    outage?: boolean;
   } = {}
 ): void {
   const now = options.now ?? new Date();
@@ -393,8 +400,13 @@ export function markSyncJobFailed(
   // sabe, ex.: o Retry-After devolvido pelo OMIE).
   const retryAfterMs =
     options.retryAfterMs ?? computeSyncRetryDelayMs(attemptCount, { random: options.random });
+  // A tentativa continua contando (e o que faz o backoff crescer ate o teto de 15 min,
+  // para nao martelar quem ja caiu), mas a nuvem/OMIE fora do ar NUNCA condena o job:
+  // ele fica em 'failed', dentro da rotacao automatica, e sobe sozinho quando a outra
+  // ponta voltar. Ver `outage-fault.ts`.
+  const outage = options.outage ?? isOutageFault(errorMessage);
   const nextStatus: SyncQueueStatus =
-    attemptCount >= deadLetterAfterAttempts ? "dead_letter" : "failed";
+    !outage && attemptCount >= deadLetterAfterAttempts ? "dead_letter" : "failed";
   const nextAttemptAt = new Date(now.getTime() + retryAfterMs).toISOString();
 
   database
@@ -411,6 +423,58 @@ export function markSyncJobFailed(
       now.toISOString(),
       id
     );
+}
+
+/**
+ * Devolve a fila os jobs que morreram por indisponibilidade, e nao pelo dado.
+ *
+ * Existe para as maquinas que ja tinham `dead_letter` de uma queda anterior a esta
+ * versao: dali em diante `markSyncJobFailed` nao deixa mais uma queda matar job
+ * nenhum. Roda no comeco da sincronizacao, quando a nuvem ja respondeu.
+ *
+ * Nao encosta em duas coisas de proposito:
+ * - o job travado por falha DETERMINISTICA, que `markSyncJobBlocked` deixa em 'failed'
+ *   com `next_attempt_at` no ano 9999 — ele espera o operador corrigir o cadastro, e
+ *   re-tentar so repete a recusa;
+ * - o job neutralizado por cancelamento da operacao (`cancelPendingOmieJobs`), cuja
+ *   mensagem nao e de rede — ressuscita-lo criaria no OMIE um pedido cancelado aqui.
+ */
+export function rearmJobsDeadLetteredByOutage(
+  database: DesktopDatabase,
+  options: { now?: Date; target?: SyncTarget; limit?: number } = {}
+): number {
+  const now = options.now ?? new Date();
+  const nowIso = now.toISOString();
+  const limit = options.limit ?? 200;
+
+  const conditions = ["status = 'dead_letter'", "next_attempt_at <> ?"];
+  const params: unknown[] = [BLOCKED_NEXT_ATTEMPT_AT];
+  if (options.target) {
+    conditions.push("target = ?");
+    params.push(options.target);
+  }
+
+  const candidates = database
+    .prepare(
+      `SELECT id, last_error FROM sync_queue
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY created_at ASC
+       LIMIT ?`
+    )
+    .all(...params, limit) as Array<{ id: string; last_error: string | null }>;
+
+  const rearm = database.prepare(
+    `UPDATE sync_queue
+     SET status = 'pending', attempt_count = 0, next_attempt_at = ?, updated_at = ?
+     WHERE id = ? AND status = 'dead_letter'`
+  );
+
+  let rearmed = 0;
+  for (const candidate of candidates) {
+    if (!isOutageFault(candidate.last_error)) continue;
+    rearmed += rearm.run(nowIso, nowIso, candidate.id).changes;
+  }
+  return rearmed;
 }
 
 export function getSyncJobById(database: DesktopDatabase, id: string): SyncQueueJob | null {
