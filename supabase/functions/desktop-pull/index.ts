@@ -1,5 +1,6 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { isReadUnavailable } from "../_shared/db-read-error.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 
 type PullBody = {
@@ -109,6 +110,11 @@ Deno.serve(async (req) => {
       .select("id, company_id, unit_id, token_hash, is_active")
       .eq("id", deviceId)
       .single();
+    // Banco fora do ar nao e balanca sem autorizacao: 503 pede nova tentativa,
+    // 401 diz ao desktop que o cadastro dele nao vale mais.
+    if (isReadUnavailable(deviceError)) {
+      return jsonResponse({ error: "Cadastro indisponivel no momento" }, 503);
+    }
     if (deviceError || !device?.is_active) {
       return jsonResponse({ error: "Dispositivo nao autorizado" }, 401);
     }

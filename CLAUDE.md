@@ -129,6 +129,14 @@ These recur across the codebase and are easy to violate accidentally:
   `carriers` e `payment_methods` **antes** de `customers`. Fora do bloco: condição de pagamento
   padrão e observações internas, que viajam pelo OMIE (as observações passaram a ser **enviadas** no
   `push_customer` — antes eram só lidas, e o que o operador digitava se perdia).
+- **Leitura que falhou nao e bloqueio** (AGENTS.md "Nuvem fora do ar nao bloqueia a frota"): as
+  funcoes de acesso da balanca (`desktop-status`, `-pull`, `-sync`, `-activate`) decidiam com
+  `if (error || !row)`, entao o banco fora do ar virava resposta **200** dizendo bloqueado — e a
+  balanca, que so entra no prazo offline de 7 dias quando NAO fala com a nuvem, gravava o bloqueio
+  e parava. `_shared/db-read-error.ts` separa linha ausente (`PGRST116`, negar e correto) e coluna
+  ausente (migracao pendente, ja tratada) de **qualquer outra coisa**, que vira 5xx. O desconhecido
+  cai no lado seguro de proposito: uma balanca bloqueada operando ate a nuvem voltar custa menos
+  que a frota inteira parada por um soluco de infraestrutura.
 - **Backoffice financeiro** (`docs/financeiro.md`): é a cobrança **da plataforma** — a Kybernan
   fatura cada pedreira (`public.companies`) pela mensalidade acertada caso a caso. Nada a ver com
   o financeiro das operações da balança, que vive no OMIE; por isso a aba **Financeiro** do painel

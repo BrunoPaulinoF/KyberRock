@@ -1,5 +1,6 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { isReadUnavailable, isUnknownColumnError } from "../_shared/db-read-error.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 import { scopeRowsToDevice } from "../_shared/device-scope.ts";
 import {
@@ -104,6 +105,11 @@ async function selectDeviceForSync(
     .single();
   if (!withMaster.error) {
     return { data: withMaster.data as Record<string, unknown> | null, error: null };
+  }
+  // A releitura sem `is_price_master` so faz sentido quando o erro E a coluna que
+  // falta; com o banco fora do ar ela apenas dobra a carga sobre quem ja caiu.
+  if (!isUnknownColumnError(withMaster.error)) {
+    return { data: null, error: withMaster.error };
   }
 
   const fallback = await supabase
@@ -231,6 +237,10 @@ Deno.serve(async (req) => {
 
     const { data: deviceRow, error: deviceError } = await selectDeviceForSync(supabase, deviceId);
     const device = deviceRow as SyncDeviceRow | null;
+    // Ver `desktop-pull`: leitura que falhou nao pode virar "nao autorizado".
+    if (isReadUnavailable(deviceError)) {
+      return jsonResponse({ error: "Cadastro indisponivel no momento" }, 503);
+    }
     if (deviceError || !device?.is_active) {
       return jsonResponse({ error: "Dispositivo nao autorizado" }, 401);
     }
