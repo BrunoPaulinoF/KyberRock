@@ -129,6 +129,14 @@ These recur across the codebase and are easy to violate accidentally:
   `carriers` e `payment_methods` **antes** de `customers`. Fora do bloco: condição de pagamento
   padrão e observações internas, que viajam pelo OMIE (as observações passaram a ser **enviadas** no
   `push_customer` — antes eram só lidas, e o que o operador digitava se perdia).
+- **Queda de conexao nao condena o envio** (AGENTS.md "Queda longa nao para a fila"): a fila
+  desistia do job depois de 10 tentativas e o mandava para `dead_letter`, fora da rotacao
+  automatica — com o backoff ate 15 min isso e ~2h de queda, e dali so um clique do operador
+  fazia o pedido chegar ao OMIE. `outage-fault.ts` separa a falha da OUTRA PONTA (rede, 5xx, 429
+  — o mesmo payload sobe quando ela voltar) da falha do DADO (que ja tinha `markSyncJobBlocked`),
+  e o status HTTP passou a entrar na mensagem porque sem ele os dois casos chegavam iguais.
+  Queda nunca vira `dead_letter`, e `rearmJobsDeadLetteredByOutage` resgata o que morreu antes
+  desta versao — menos quem espera cadastro e quem foi cancelado.
 - **Leitura que falhou nao e bloqueio** (AGENTS.md "Nuvem fora do ar nao bloqueia a frota"): as
   funcoes de acesso da balanca (`desktop-status`, `-pull`, `-sync`, `-activate`) decidiam com
   `if (error || !row)`, entao o banco fora do ar virava resposta **200** dizendo bloqueado — e a

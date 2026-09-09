@@ -15,6 +15,7 @@ import {
   markSyncJobDone,
   markSyncJobFailed,
   pruneCompletedSyncJobs,
+  rearmJobsDeadLetteredByOutage,
   resetOmieQueueJobForRetry,
   SYNC_RETRY_BASE_MS,
   SYNC_RETRY_MAX_MS
@@ -417,6 +418,124 @@ describe("sync queue pruning", () => {
         "omie:old-dead",
         "omie:old-pending"
       ]);
+    } finally {
+      database.close();
+    }
+  });
+});
+
+describe("queda de conexao na fila", () => {
+  it("nunca condena o job: 10 falhas por indisponibilidade ainda deixam ele na rotacao", () => {
+    const database = createMigratedDatabase();
+
+    try {
+      const job = enqueueSyncJob(database, {
+        target: "omie",
+        action: "create_and_bill_order",
+        entityType: "weighing_operation",
+        entityId: "op-1",
+        idempotencyKey: "omie:op-1:bill",
+        payload: { operationId: "op-1" }
+      });
+
+      // Com backoff ate 15 min, 10 tentativas cobrem ~2h. Uma queda mais longa
+      // que isso mandava o fechamento para dead_letter, de onde ele so saia com
+      // um clique do operador — e o pedido nunca chegava no OMIE.
+      for (let attempt = 0; attempt < 12; attempt++) {
+        markSyncJobFailed(database, job.id, "Cadastro indisponivel no momento (HTTP 503)");
+      }
+
+      const afterOutage = getSyncJobById(database, job.id);
+      expect(afterOutage?.status).toBe("failed");
+      expect(afterOutage?.attemptCount).toBe(12);
+
+      // Segue na rotacao automatica: quando a nuvem voltar, sobe sozinho.
+      const runnable = listRunnableSyncJobs(database, {
+        target: "omie",
+        now: new Date(Date.parse(afterOutage!.nextAttemptAt) + 1000)
+      });
+      expect(runnable.map((entry) => entry.id)).toContain(job.id);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("a falha do proprio dado continua morrendo depois das tentativas", () => {
+    const database = createMigratedDatabase();
+
+    try {
+      const job = enqueueSyncJob(database, {
+        target: "cloud",
+        action: "upsert_operation",
+        entityType: "operation",
+        entityId: "op-2",
+        idempotencyKey: "cloud:op-2",
+        payload: { operationId: "op-2" }
+      });
+
+      for (let attempt = 0; attempt < 10; attempt++) {
+        markSyncJobFailed(database, job.id, "violates foreign key constraint");
+      }
+
+      expect(getSyncJobById(database, job.id)?.status).toBe("dead_letter");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("rearma o que morreu por queda, e so isso", () => {
+    const database = createMigratedDatabase();
+
+    try {
+      const enqueue = (entityId: string, key: string) =>
+        enqueueSyncJob(database, {
+          target: "omie",
+          action: "create_and_bill_order",
+          entityType: "weighing_operation",
+          entityId,
+          idempotencyKey: key,
+          payload: { operationId: entityId }
+        });
+
+      // Morto por queda de conexao (maquina que ficou com dead_letter de antes
+      // desta versao): tem de voltar sozinho.
+      const outage = enqueue("op-outage", "omie:op-outage:bill");
+      database
+        .prepare("UPDATE sync_queue SET status = 'dead_letter', last_error = ? WHERE id = ?")
+        .run("fetch failed", outage.id);
+
+      // Morto pelo dado: re-tentar repete a recusa.
+      const data = enqueue("op-data", "omie:op-data:bill");
+      database
+        .prepare("UPDATE sync_queue SET status = 'dead_letter', last_error = ? WHERE id = ?")
+        .run("Cliente nao cadastrado para o Codigo [codigo_cliente]", data.id);
+
+      // Neutralizado porque a operacao foi cancelada aqui: ressuscitar criaria
+      // no OMIE um pedido que nao existe mais.
+      const cancelled = enqueue("op-cancelled", "omie:op-cancelled:bill");
+      database
+        .prepare("UPDATE sync_queue SET status = 'dead_letter', last_error = ? WHERE id = ?")
+        .run("Operacao cancelada localmente antes do envio ao OMIE", cancelled.id);
+
+      // Travado por cadastro incompleto: espera o operador, nao a internet.
+      const blockedJob = enqueue("op-blocked", "omie:op-blocked:bill");
+      markSyncJobBlocked(database, blockedJob.id, "Para emitir a NF-e falta preencher o endereco");
+      database
+        .prepare("UPDATE sync_queue SET status = 'dead_letter' WHERE id = ?")
+        .run(blockedJob.id);
+
+      expect(rearmJobsDeadLetteredByOutage(database)).toBe(1);
+
+      expect(getSyncJobById(database, outage.id)).toMatchObject({
+        status: "pending",
+        attemptCount: 0
+      });
+      expect(getSyncJobById(database, data.id)?.status).toBe("dead_letter");
+      expect(getSyncJobById(database, cancelled.id)?.status).toBe("dead_letter");
+      expect(getSyncJobById(database, blockedJob.id)?.status).toBe("dead_letter");
+
+      // Idempotente: uma segunda passada nao tem mais o que rearmar.
+      expect(rearmJobsDeadLetteredByOutage(database)).toBe(0);
     } finally {
       database.close();
     }
