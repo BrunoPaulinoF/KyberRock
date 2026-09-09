@@ -745,6 +745,35 @@ promocao so fica no GitHub ate ele existir.
    `dist:win:ci` (usado pelo CI, `--publish never`) e `dist:win:publish` (`--publish always`,
    mantido para publicacao manual de emergencia).
 
+## Nuvem fora do ar nao bloqueia a frota
+
+Em 09/09/2026 o Postgres do projeto parou de responder (Cloudflare 522 no `/rest/v1`) e as
+pedreiras apareceram **bloqueadas "do nada"**. Nao houve bloqueio nenhum: o `desktop-status`
+decidia o acesso com `if (error || !row)`, entao uma leitura que FALHOU virava uma resposta
+**200** dizendo `invalid_device` / `unit_blocked` / `company_blocked`. Do lado da balanca isso e
+pior que um erro — resposta valida da nuvem vale como verdade, a balanca **nao** entra no prazo
+offline de 7 dias: grava o bloqueio e para, e `isBlockingStatus` o mantem mesmo sem internet.
+
+A regra, em `_shared/db-read-error.ts`, separa as tres coisas que um erro de leitura pode ser:
+
+- **linha ausente** (`PGRST116`) — resposta legitima: o cadastro sumiu, negar acesso esta certo;
+- **coluna ausente** (`42703` / `PGRST204`) — janela entre o deploy da funcao e a migracao, ja
+  tratada relendo sem a coluna nova (ver a secao anterior);
+- **qualquer outra coisa** — a nuvem nao sabe responder AGORA. A funcao devolve **5xx**, nunca um
+  200 com `allowed: false`, e a balanca cai no prazo offline, que existe exatamente para isso.
+
+O desconhecido cai deliberadamente no ultimo caso: o pior efeito disso e uma balanca de fato
+bloqueada seguir operando ate a nuvem voltar; o pior efeito do contrario e a frota inteira parar
+por um soluco de infraestrutura. Mesma ideia no `desktop-pull`/`desktop-sync` (503, e nao 401
+"dispositivo nao autorizado") e no `desktop-activate` (503, e nao "codigo invalido" — senao o
+operador fica redigitando um codigo certo).
+
+Os fallbacks que releem com menos colunas so descem um degrau quando o erro **e** a coluna que
+falta: com o banco fora do ar, retentar qualquer erro multiplicava a carga sobre quem ja caiu.
+
+Recuperacao: assim que a nuvem volta, o ping de acesso (a cada 30 s) responde `approved` e as
+balancas se liberam sozinhas — nao ha nada a fazer maquina a maquina.
+
 ## Edge Functions deploy
 
 **Automated (default).** `.github/workflows/edge-functions-deploy.yml` deploys the Deno Edge

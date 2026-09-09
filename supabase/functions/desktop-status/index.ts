@@ -1,5 +1,6 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { isReadUnavailable, isUnknownColumnError } from "../_shared/db-read-error.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 import { deviceHealthColumns, normalizeDeviceHealth } from "../_shared/device-health.ts";
 import { orderedTouchAttempts } from "../_shared/device-touch.ts";
@@ -115,11 +116,33 @@ async function selectDeviceRow(
     .eq("id", deviceId)
     .single();
   for (const columns of attempts.slice(1)) {
-    if (!last.error) break;
+    // So desce um degrau quando o erro E a coluna que falta. Antes o retry valia
+    // para QUALQUER erro: com o banco fora do ar, cada ping virava tres leituras
+    // condenadas — tres vezes mais carga justo em quem ja estava caido.
+    if (!last.error || !isUnknownColumnError(last.error)) break;
     last = await supabase.from("device_registrations").select(columns).eq("id", deviceId).single();
   }
 
   return { data: last.data as Record<string, unknown> | null, error: last.error };
+}
+
+/**
+ * A nuvem nao conseguiu consultar o cadastro agora.
+ *
+ * Codigo 5xx de proposito, e nao um 200 com `allowed: false`: o desktop trata
+ * resposta de ERRO como "nao falei com a nuvem" e segue no prazo offline de 7
+ * dias, enquanto uma resposta valida dizendo bloqueado ele grava como decisao do
+ * administrador e para a balanca — inclusive depois, sem internet.
+ */
+function cloudUnavailable(): Response {
+  return jsonResponse(
+    {
+      status: "validation_error",
+      allowed: false,
+      message: "Nao foi possivel validar o acesso na nuvem agora. Tentando novamente."
+    },
+    503
+  );
 }
 
 Deno.serve(async (req) => {
@@ -146,6 +169,9 @@ Deno.serve(async (req) => {
   const deviceToken = String(body.deviceToken ?? "");
 
   const { data: device, error: deviceError } = await selectDeviceRow(supabase, deviceId);
+
+  // Banco fora do ar nao e cadastro apagado: ver `_shared/db-read-error.ts`.
+  if (isReadUnavailable(deviceError)) return cloudUnavailable();
 
   if (deviceError || !device) {
     return jsonResponse({
@@ -181,6 +207,7 @@ Deno.serve(async (req) => {
     .select("id, company_id, name, is_active")
     .eq("id", typedDevice.unit_id)
     .single();
+  if (isReadUnavailable(unitError)) return cloudUnavailable();
   if (unitError || !unit?.is_active) {
     return jsonResponse({
       status: "unit_blocked",
@@ -194,6 +221,7 @@ Deno.serve(async (req) => {
     .select("id, name, is_active, payment_blocked")
     .eq("id", typedDevice.company_id)
     .single();
+  if (isReadUnavailable(companyError)) return cloudUnavailable();
   if (companyError || !company?.is_active) {
     return jsonResponse({
       status: "company_blocked",

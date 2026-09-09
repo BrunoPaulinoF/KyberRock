@@ -1,6 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { resolveActivationUnit } from "../_shared/activation-unit.ts";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { isReadUnavailable } from "../_shared/db-read-error.ts";
 import { sha256Hex } from "../_shared/crypto.ts";
 import { pickNextDeviceColor } from "../_shared/device-colors.ts";
 import { selectDeviceRegistration } from "../_shared/device-registration.ts";
@@ -60,6 +61,12 @@ Deno.serve(async (req) => {
     .eq("desktop_activation_code_hash", activationCodeHash)
     .single();
 
+  // Sem conseguir ler o cadastro nao da para dizer que o codigo esta errado: o
+  // operador ficaria digitando de novo um codigo certo enquanto a nuvem se
+  // recupera.
+  if (isReadUnavailable(companyError)) {
+    return jsonResponse({ error: "Cadastro indisponivel no momento. Tente novamente." }, 503);
+  }
   if (companyError || !company) {
     return jsonResponse({ error: "Codigo de ativacao invalido ou expirado" }, 401);
   }
