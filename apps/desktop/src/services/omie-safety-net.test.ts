@@ -3,13 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
-import { enqueueSyncJob, getSyncJobById } from "./sync-queue";
+import { enqueueSyncJob } from "./sync-queue";
 import { closeWeighingOperation, createSimulatedWeighingOperation } from "./weighing-operations";
 import {
   listOperationsPendingOmiePush,
   rearmOmieBillingForCustomer,
   reenqueueOperationsMissingOmieJob,
-  OMIE_BILLING_STATUS_DO_NOT_SEND
+  setOmiePushOptOut
 } from "./supabase-sync";
 
 vi.mock("@supabase/supabase-js", () => ({
@@ -31,9 +31,11 @@ describe("rede de seguranca do OMIE", () => {
       // O fechamento cria o job; simula o job apagado por engano na tela Cloud.
       expect(jobsOmieDaOperacao(database, operacao).length).toBe(1);
       database.prepare("DELETE FROM sync_queue WHERE target = 'omie'").run();
-      expect(listOperationsPendingOmiePush(database).map((o) => o.id)).toContain(operacao);
+      expect(listOperationsPendingOmiePush(database, "device-1").map((o) => o.id)).toContain(
+        operacao
+      );
 
-      expect(reenqueueOperationsMissingOmieJob(database)).toBe(1);
+      expect(reenqueueOperationsMissingOmieJob(database, "device-1")).toBe(1);
       expect(jobsOmieDaOperacao(database, operacao).length).toBe(1);
     } finally {
       database.close();
@@ -44,8 +46,10 @@ describe("rede de seguranca do OMIE", () => {
     const { database, identity } = criarBase();
     try {
       const operacao = fecharPesagem(database, identity, { documento: "12345678000199" });
-      expect(listOperationsPendingOmiePush(database).map((o) => o.id)).not.toContain(operacao);
-      expect(reenqueueOperationsMissingOmieJob(database)).toBe(0);
+      expect(listOperationsPendingOmiePush(database, "device-1").map((o) => o.id)).not.toContain(
+        operacao
+      );
+      expect(reenqueueOperationsMissingOmieJob(database, "device-1")).toBe(0);
       expect(jobsOmieDaOperacao(database, operacao).length).toBe(1);
     } finally {
       database.close();
@@ -64,7 +68,7 @@ describe("rede de seguranca do OMIE", () => {
 
       // O job existe (mesmo morto), entao a rede nao toca nele: re-tentar repetiria a
       // mesma recusa a cada ciclo, que e a tempestade de retry.
-      expect(reenqueueOperationsMissingOmieJob(database)).toBe(0);
+      expect(reenqueueOperationsMissingOmieJob(database, "device-1")).toBe(0);
     } finally {
       database.close();
     }
@@ -75,12 +79,12 @@ describe("rede de seguranca do OMIE", () => {
     try {
       const operacao = fecharPesagem(database, identity, { documento: "12345678000199" });
       database.prepare("DELETE FROM sync_queue WHERE target = 'omie'").run();
-      database
-        .prepare("UPDATE weighing_operations SET omie_billing_status = ? WHERE id = ?")
-        .run(OMIE_BILLING_STATUS_DO_NOT_SEND, operacao);
+      setOmiePushOptOut(database, operacao, true);
 
-      expect(listOperationsPendingOmiePush(database).map((o) => o.id)).not.toContain(operacao);
-      expect(reenqueueOperationsMissingOmieJob(database)).toBe(0);
+      expect(listOperationsPendingOmiePush(database, "device-1").map((o) => o.id)).not.toContain(
+        operacao
+      );
+      expect(reenqueueOperationsMissingOmieJob(database, "device-1")).toBe(0);
     } finally {
       database.close();
     }
@@ -99,9 +103,7 @@ describe("rede de seguranca do OMIE", () => {
         .pluck()
         .get(operacao) as string;
       database.prepare("DELETE FROM sync_queue WHERE target = 'omie'").run();
-      database
-        .prepare("UPDATE weighing_operations SET omie_billing_status = ? WHERE id = ?")
-        .run(OMIE_BILLING_STATUS_DO_NOT_SEND, operacao);
+      setOmiePushOptOut(database, operacao, true);
 
       expect(rearmOmieBillingForCustomer(database, clienteId)).toBe(0);
       expect(jobsOmieDaOperacao(database, operacao)).toHaveLength(0);
@@ -123,7 +125,7 @@ describe("rede de seguranca do OMIE", () => {
         .prepare("UPDATE weighing_operations SET status = 'cancelled' WHERE id = ?")
         .run(cancelada);
 
-      const pendentes = listOperationsPendingOmiePush(database).map((o) => o.id);
+      const pendentes = listOperationsPendingOmiePush(database, "device-1").map((o) => o.id);
       expect(pendentes).not.toContain(comPedido);
       expect(pendentes).not.toContain(cancelada);
     } finally {
@@ -152,7 +154,7 @@ describe("rede de seguranca do OMIE", () => {
         )
         .run(operacao);
 
-      expect(reenqueueOperationsMissingOmieJob(database)).toBe(1);
+      expect(reenqueueOperationsMissingOmieJob(database, "device-1")).toBe(1);
       expect(jobsOmieDaOperacao(database, operacao).length).toBe(1);
       expect(
         database
@@ -180,8 +182,36 @@ describe("rede de seguranca do OMIE", () => {
         payload: { operationId: "outra-operacao" }
       });
 
-      expect(reenqueueOperationsMissingOmieJob(database)).toBe(1);
+      expect(reenqueueOperationsMissingOmieJob(database, "device-1")).toBe(1);
       expect(jobsOmieDaOperacao(database, operacao).length).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("nao mexe no que outra balanca fechou: o job nasce em quem pesou", () => {
+    const { database, identity } = criarBase();
+    try {
+      // A operacao chegou aqui pelo espelho da nuvem: esta maquina nunca teve job dela,
+      // e a marca de "nao enviar" do operador e local — nao viaja. Sem o escopo por
+      // dispositivo, esta balanca refazia no OMIE o pedido que a outra excluiu.
+      const operacao = fecharPesagem(database, identity, { documento: "12345678000199" });
+      database.prepare("DELETE FROM sync_queue WHERE target = 'omie'").run();
+      const agora = new Date().toISOString();
+      database
+        .prepare(
+          `INSERT INTO devices (id, company_id, unit_id, name, device_type, installation_id, created_at, updated_at)
+           VALUES ('device-2', ?, ?, 'PC Portaria', 'desktop_scale', 'install-2', ?, ?)`
+        )
+        .run(identity.companyId, identity.unitId, agora, agora);
+      database
+        .prepare("UPDATE weighing_operations SET device_id = ? WHERE id = ?")
+        .run("device-2", operacao);
+
+      expect(listOperationsPendingOmiePush(database, "device-1").map((o) => o.id)).not.toContain(
+        operacao
+      );
+      expect(reenqueueOperationsMissingOmieJob(database, "device-1")).toBe(0);
     } finally {
       database.close();
     }
@@ -201,7 +231,9 @@ describe("rede de seguranca do OMIE", () => {
         )
         .run("2020-01-01T00:00:00.000Z", "2020-01-01T00:00:00.000Z", operacao);
 
-      expect(listOperationsPendingOmiePush(database).map((o) => o.id)).not.toContain(operacao);
+      expect(listOperationsPendingOmiePush(database, "device-1").map((o) => o.id)).not.toContain(
+        operacao
+      );
 
       // E o `updated_at` renovado NAO a traz de volta: a baixa de carteira carimba
       // vendas de meses atras de uma vez, e sem esta ancora a rede despejaria no OMIE
@@ -209,7 +241,9 @@ describe("rede de seguranca do OMIE", () => {
       database
         .prepare("UPDATE weighing_operations SET updated_at = ? WHERE id = ?")
         .run(new Date().toISOString(), operacao);
-      expect(listOperationsPendingOmiePush(database).map((o) => o.id)).not.toContain(operacao);
+      expect(listOperationsPendingOmiePush(database, "device-1").map((o) => o.id)).not.toContain(
+        operacao
+      );
     } finally {
       database.close();
     }
@@ -264,6 +298,3 @@ function jobsOmieDaOperacao(database: DesktopDatabase, operationId: string): str
     .pluck()
     .all(operationId) as string[];
 }
-
-// Mantem a importacao usada acima viva para o typecheck do workspace.
-void getSyncJobById;

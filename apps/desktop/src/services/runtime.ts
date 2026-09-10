@@ -158,8 +158,8 @@ import {
   listOperationsPendingCloudPush,
   reenqueueOperationsMissingOmieJob,
   recordOmieCadastroPushRun,
+  setOmiePushOptOut,
   shouldPushOmieCadastroNow,
-  OMIE_BILLING_STATUS_DO_NOT_SEND,
   syncOmieReferenceDataFromCloud,
   syncCustomerAdvancesFromCloud,
   type CustomerAdvancesSyncResult,
@@ -1635,14 +1635,25 @@ export class DesktopRuntime {
     );
   }
 
-  processFiscalBilling(operationId: string): Promise<FiscalBillingResult> {
+  async processFiscalBilling(operationId: string): Promise<FiscalBillingResult> {
     this.assertDesktopAccess();
-    return processFiscalBillingNow(
+    const result = await processFiscalBillingNow(
       this.database,
       this.ensureIdentity(),
       operationId,
       (documentUrl) => this.fiscalDocumentPrinter.printDocument(documentUrl)
     );
+    // Desfaz a exclusao SO aqui, e so quando o envio foi de fato aceito. Este e o unico
+    // caminho em que o operador pediu explicitamente para reenviar ESTA carga — o
+    // Fechamento de faturas em lote passa pelo mesmo `processFiscalBillingNow` e
+    // desfaria a decisao dele sem ninguem pedir. E um reenvio RECUSADO pelo gate de
+    // cadastro nao pode apagar a marca: para quem olha a tela nada aconteceu, mas a
+    // carga voltaria a ser presa da rede de seguranca no dia em que alguem completasse
+    // o cadastro do cliente.
+    if (!result.blocked) {
+      setOmiePushOptOut(this.database, operationId, false);
+    }
+    return result;
   }
 
   lookupCnpj(cnpj: string): Promise<CnpjLookupResult> {
@@ -1845,7 +1856,7 @@ export class DesktopRuntime {
       // corrigido. E o simetrico do que `listOperationsPendingCloudPush` faz para a
       // nuvem: quem sabe se o pedido existe la e a OPERACAO, nao o job.
       try {
-        const reenfileiradas = reenqueueOperationsMissingOmieJob(this.database);
+        const reenfileiradas = reenqueueOperationsMissingOmieJob(this.database, identity.deviceId);
         if (reenfileiradas > 0) {
           this.recordTechnicalLog(
             "info",
@@ -4360,22 +4371,7 @@ export class DesktopRuntime {
         job?.entityId &&
         (job.action === "create_order" || job.action === "create_and_bill_order")
       ) {
-        this.database
-          .prepare(
-            `UPDATE weighing_operations
-                SET omie_billing_status = ?,
-                    omie_billing_message = ?,
-                    updated_at = ?
-              WHERE id = ?
-                AND omie_sales_order_id IS NULL
-                AND omie_service_order_id IS NULL`
-          )
-          .run(
-            OMIE_BILLING_STATUS_DO_NOT_SEND,
-            "Envio ao OMIE removido da fila pelo operador.",
-            new Date().toISOString(),
-            job.entityId
-          );
+        setOmiePushOptOut(this.database, job.entityId, true);
       }
       this.recordTechnicalLog("info", "omie-sync", "Item removido da fila OMIE pelo operador.", {
         jobId,

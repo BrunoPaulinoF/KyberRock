@@ -4236,6 +4236,7 @@ export function rearmOmieBillingForCustomer(
           AND o.exit_weight_captured_at IS NOT NULL
           AND o.omie_sales_order_id IS NULL
           AND o.omie_service_order_id IS NULL
+          AND o.omie_push_opt_out = 0
           AND (o.omie_billing_status IS NULL OR o.omie_billing_status NOT IN (${placeholders}))`
     )
     .all(customerId, ...OMIE_REENQUEUE_BLOCKED_STATUSES) as Array<{ id: string }>;
@@ -4293,22 +4294,19 @@ const OMIE_RECONCILE_WINDOW_DAYS = 30;
 const OMIE_RECONCILE_LIMIT = 200;
 
 /**
- * Situacoes em que a pesagem NAO deve voltar para a fila do OMIE.
+ * Situacoes em que a pesagem NAO deve voltar para a fila do OMIE: o documento ja existe
+ * la, ou o cancelamento esta em curso.
  *
- * `nao_enviar` e a decisao explicita do operador ao excluir o item da fila ("este
- * fechamento nao sera mais enviado"): a rede de seguranca nao pode desfazer isso.
- * As demais dizem que o documento ja existe la, ou que o cancelamento esta em curso.
+ * A decisao do operador ("este fechamento nao sera mais enviado") NAO mora aqui — ela tem
+ * coluna propria, `omie_push_opt_out`. Enfia-la em `omie_billing_status` fazia cinco
+ * leitores diferentes mentirem, cada um do seu jeito.
  */
 const OMIE_REENQUEUE_BLOCKED_STATUSES = [
-  "nao_enviar",
   "billed",
   "service_order_created",
   "cancelled_in_omie",
   "cancel_blocked"
 ];
-
-/** Marca gravada quando o operador exclui o item da fila OMIE. */
-export const OMIE_BILLING_STATUS_DO_NOT_SEND = "nao_enviar";
 
 /**
  * Pesagens fechadas que nao chegaram ao OMIE e nao tem mais nenhum job que as leve.
@@ -4326,10 +4324,15 @@ export const OMIE_BILLING_STATUS_DO_NOT_SEND = "nao_enviar";
  *
  * Deliberadamente conservadora: so entra a operacao que nao tem job NENHUM (de qualquer
  * situacao). Job vivo segue seu caminho; job morto por falha do dado continua morto, para
- * nao virar tempestade de retry; e `nao_enviar` respeita a exclusao feita pelo operador.
+ * nao virar tempestade de retry; e `omie_push_opt_out` respeita a exclusao feita pelo
+ * operador. Alem disso, so entra o que ESTA maquina fechou (`device_id`): o job nasceu na
+ * balanca que fez a pesagem, e a operacao espelhada pelo pull chega na outra sem job
+ * nenhum — sem esse escopo a segunda balanca refazia no OMIE o pedido que a primeira
+ * tinha acabado de excluir, porque a marca do operador e local e nao viaja.
  */
 export function listOperationsPendingOmiePush(
   database: DesktopDatabase,
+  deviceId: string,
   now: Date = new Date()
 ): Array<{ id: string }> {
   const windowStart = new Date(
@@ -4352,6 +4355,8 @@ export function listOperationsPendingOmiePush(
           AND o.exit_weight_captured_at IS NOT NULL
           AND o.omie_sales_order_id IS NULL
           AND o.omie_service_order_id IS NULL
+          AND o.device_id = ?
+          AND o.omie_push_opt_out = 0
           AND (o.omie_billing_status IS NULL OR o.omie_billing_status NOT IN (${placeholders}))
           AND REPLACE(o.exit_weight_captured_at, ' ', 'T') >= ?
           AND NOT EXISTS (
@@ -4364,7 +4369,7 @@ export function listOperationsPendingOmiePush(
         ORDER BY o.updated_at ASC
         LIMIT ?`
     )
-    .all(...OMIE_REENQUEUE_BLOCKED_STATUSES, windowStart, OMIE_RECONCILE_LIMIT) as Array<{
+    .all(deviceId, ...OMIE_REENQUEUE_BLOCKED_STATUSES, windowStart, OMIE_RECONCILE_LIMIT) as Array<{
     id: string;
   }>;
 }
@@ -4377,9 +4382,10 @@ export function listOperationsPendingOmiePush(
  */
 export function reenqueueOperationsMissingOmieJob(
   database: DesktopDatabase,
+  deviceId: string,
   now: Date = new Date()
 ): number {
-  const pendentes = listOperationsPendingOmiePush(database, now);
+  const pendentes = listOperationsPendingOmiePush(database, deviceId, now);
   const nowIso = now.toISOString();
   let reenfileiradas = 0;
 
@@ -6055,22 +6061,27 @@ function internalServiceOrderResult(orderId: number | null, message: string): Fi
 }
 
 /**
- * Tira da operacao a marca de "nao sera enviada ao OMIE".
+ * Grava/desfaz "este fechamento nao sera enviado ao OMIE".
  *
- * A marca e a decisao do operador ao excluir o item da fila, e por isso a rede de
- * seguranca a respeita. Quem pode desfaze-la e so outra acao explicita dele — o botao
- * de reenviar —, nunca um caminho automatico.
+ * Quem liga e o operador ao excluir o item da fila; quem desliga e so outra acao
+ * explicita dele — o botao de reenviar, DEPOIS de o envio ser aceito. Nunca um caminho
+ * automatico: o Fechamento de faturas em lote passa pelo mesmo `processFiscalBillingNow`
+ * e desfaria a decisao sem ninguem pedir, criando no OMIE o pedido de uma carga cuja
+ * nota ja foi lancada a mao.
  */
-function clearDoNotSendMark(database: DesktopDatabase, operationId: string): void {
+export function setOmiePushOptOut(
+  database: DesktopDatabase,
+  operationId: string,
+  optOut: boolean,
+  now: Date = new Date()
+): void {
   database
     .prepare(
       `UPDATE weighing_operations
-          SET omie_billing_status = NULL,
-              omie_billing_message = NULL,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        WHERE id = ? AND omie_billing_status = ?`
+          SET omie_push_opt_out = ?, updated_at = ?
+        WHERE id = ?`
     )
-    .run(operationId, OMIE_BILLING_STATUS_DO_NOT_SEND);
+    .run(optOut ? 1 : 0, now.toISOString(), operationId);
 }
 
 export async function processFiscalBillingNow(
@@ -6086,11 +6097,6 @@ export async function processFiscalBillingNow(
 ): Promise<FiscalBillingResult> {
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
-
-  // O operador clicou em reenviar: e a acao explicita que desfaz a exclusao feita
-  // antes na tela Cloud. Sem limpar a marca aqui, o pedido ate seria reenviado agora,
-  // mas a rede de seguranca voltaria a ignorar essa operacao para sempre.
-  clearDoNotSendMark(database, operationId);
 
   // Operacao interna: nao ha NF-e a faturar, mas ha ordem de servico a (re)enviar. Depois
   // de completar o CNPJ/CPF do cliente, este e o caminho para tirar a operacao do estado
@@ -8116,54 +8122,80 @@ async function sendCadastroBatch(
   // a frente e a proxima consulta pede `cursor_at > @cursorAt`.
   let settled = 0;
   /**
-   * Indice da linha que falhou parecendo queda e ainda nao foi julgada.
+   * Linha que falhou parecendo queda e ainda nao foi julgada.
    *
-   * A mensagem sozinha NAO decide isto: o `desktop-sync` responde 500 para qualquer
-   * recusa de gravacao — chave duplicada (23505), FK que ainda nao existe (23503),
-   * valor estourado (22001) — e `isOutageFault` le todo 5xx como indisponibilidade.
-   * Confiar nela travaria o cursor daquela entidade PARA SEMPRE na primeira linha
-   * ruim, e ai NENHUM cadastro posterior chegaria as outras balancas: uma perda
-   * silenciosa e permanente, pior que a que este trecho veio consertar.
+   * A mensagem sozinha NAO decide: o `desktop-sync` responde 500 para qualquer recusa de
+   * gravacao — chave duplicada (23505), FK que ainda nao existe (23503), valor estourado
+   * (22001) — e `isOutageFault` le todo 5xx como indisponibilidade. Acreditar nela
+   * travaria o cursor da entidade na primeira linha ruim PARA SEMPRE, e nenhum cadastro
+   * posterior chegaria as outras balancas: perda silenciosa e permanente.
    *
-   * Entao a duvida e resolvida por EXPERIMENTO, nao por heuristica: sonda-se a linha
-   * seguinte. Se ela passar, a queda nao existe e a anterior e que era ruim (segue
-   * como recusa, reportada em `errors`); se ela tambem cair, a outra ponta esta
-   * mesmo fora e a rodada para na PRIMEIRA das duas, sem passar por cima de nada.
+   * A duvida e resolvida perguntando a PROPRIA outra ponta (`pingSupabase`), nao inferindo
+   * do vizinho. Inferir errava nos dois sentidos: duas linhas ruins ADJACENTES — o caso
+   * comum quando um pull do OMIE carimba varias no mesmo minuto — eram lidas como queda e
+   * congelavam a entidade; e um 429/504 passageiro numa linha isolada era lido como dado
+   * ruim e a linha sumia para sempre.
    */
-  let quedaSuspeita = -1;
+  let suspeitaIndex = -1;
+  let suspeitaRow: Record<string, unknown> | null = null;
+
+  /**
+   * Julga a suspeita pendente dando a ela UMA segunda chance.
+   *
+   * O retry unico e o que separa o 429/504 passageiro (passa na segunda) do 23505 estavel
+   * (cai de novo). Sem ele, uma linha derrubada por um solucinho da Edge Function no meio
+   * da rajada seria declarada "dado ruim" e nunca mais tentada.
+   */
+  const julgarSuspeita = async (): Promise<void> => {
+    if (suspeitaIndex < 0 || !suspeitaRow) return;
+    try {
+      await invokeDesktopSync(settings, { [entity.key]: [suspeitaRow] });
+      pushed++;
+    } catch {
+      failed++;
+    }
+    settled = suspeitaIndex + 1;
+    suspeitaIndex = -1;
+    suspeitaRow = null;
+  };
 
   for (let index = 0; index < payload.length; index++) {
     const row = payload[index];
     try {
       await invokeDesktopSync(settings, { [entity.key]: [row] });
+      // Esta passou, logo a nuvem esta de pe: a suspeita anterior tem seu julgamento.
+      await julgarSuspeita();
       pushed++;
-      if (quedaSuspeita >= 0) {
-        // A seguinte passou: nao era queda. A anterior foi recusa do proprio dado.
-        failed++;
-        quedaSuspeita = -1;
-      }
       settled = index + 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "falha ao enviar";
       errors.push(`Cadastro ${entity.label} (${String(row.id)}): ${message}`);
 
       if (isOutageFault(message)) {
-        if (quedaSuspeita >= 0) {
-          // Duas seguidas: e a outra ponta. O cursor para antes da primeira delas.
-          return { pushed, systemicFailure: true, settled: quedaSuspeita };
+        if (suspeitaIndex >= 0) {
+          // Duas seguidas. Em vez de concluir "e queda" pelo vizinho, pergunta a ponta.
+          if (await pingSupabase()) {
+            await julgarSuspeita();
+            failed++;
+            settled = index + 1;
+            if (pushed === 0 && failed >= CADASTRO_PUSH_SYSTEMIC_PROBE) {
+              return { pushed, systemicFailure: true, settled: 0 };
+            }
+            continue;
+          }
+          // A nuvem nao respondeu: e queda mesmo. O cursor para antes da primeira delas.
+          return { pushed, systemicFailure: true, settled: suspeitaIndex };
         }
-        quedaSuspeita = index;
+        suspeitaIndex = index;
+        suspeitaRow = row;
         continue;
       }
 
-      // Recusa que a propria mensagem identifica como do dado: a linha esta
-      // reportada em `errors` e o cursor pode passar por ela, senao o cadastro
-      // inteiro trava atras de um registro ruim.
+      // Recusa que a propria mensagem identifica como do dado: a linha esta reportada em
+      // `errors` e o cursor pode passar por ela, senao o cadastro inteiro trava atras de
+      // um registro ruim.
+      await julgarSuspeita();
       failed++;
-      if (quedaSuspeita >= 0) {
-        failed++;
-        quedaSuspeita = -1;
-      }
       settled = index + 1;
       // Nada passou ate agora: e falha sistemica, nao adianta insistir linha a linha.
       if (pushed === 0 && failed >= CADASTRO_PUSH_SYSTEMIC_PROBE) {
@@ -8172,11 +8204,12 @@ async function sendCadastroBatch(
     }
   }
 
-  // A ultima linha caiu parecendo queda e nao houve seguinte para desempatar: o
-  // cursor nao passa por ela. No proximo ciclo ela e a primeira, e a duvida se
-  // resolve com a linha depois dela.
-  if (quedaSuspeita >= 0) {
-    return { pushed, systemicFailure: true, settled: quedaSuspeita };
+  // A ultima linha caiu parecendo queda e nao ha seguinte para desempatar: pergunta a ponta.
+  if (suspeitaIndex >= 0) {
+    if (!(await pingSupabase())) {
+      return { pushed, systemicFailure: true, settled: suspeitaIndex };
+    }
+    await julgarSuspeita();
   }
 
   return { pushed, systemicFailure: pushed === 0, settled };

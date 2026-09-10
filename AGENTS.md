@@ -766,7 +766,7 @@ carga precisa subir — apagado por engano na tela Cloud, podado, ou banco resta
 a venda ficava pesada, impressa e sem pedido la, sem alarme. `listOperationsPendingOmiePush` /
 `reenqueueOperationsMissingOmieJob` fecham isso, partindo da operacao. Sao conservadores de
 proposito: so entra quem nao tem job NENHUM. Job vivo segue seu caminho, job morto por falha do
-DADO continua morto (senao vira tempestade de retry), e `omie_billing_status = 'nao_enviar'` —
+DADO continua morto (senao vira tempestade de retry), e `omie_push_opt_out` —
 gravado quando o operador exclui o item da fila — respeita a decisao dele. De brinde, o
 fechamento que nasceu sem job por falta de documento do cliente volta sozinho assim que o
 cadastro e corrigido, sem o botao "Refaturar".
@@ -813,7 +813,7 @@ nenhum cadastro posterior chegaria as outras balancas. A duvida passou a ser res
 EXPERIMENTO: ao cair parecendo queda, sonda-se a linha seguinte; se ela passa, a anterior era
 ruim (segue como recusa) e o cursor anda; se ela tambem cai, e queda de verdade e a rodada para
 antes das duas. Na fila o mesmo classificador esta certo — la o 5xx so adia, e o job nunca morre.
-(2) A marca `nao_enviar` precisa do MESMO freio nos dois caminhos: `rearmOmieBillingForCustomer`
+(2) A marca de "nao enviar" precisa do MESMO freio nos dois caminhos: `rearmOmieBillingForCustomer`
 roda no ciclo automatico junto do push de clientes, e sem o freio bastava alguem corrigir o
 e-mail do cliente para o pedido de uma carga excluida de proposito nascer no OMIE — NF-e em
 duplicidade onde a nota ja tinha sido lancada a mao. Ela so e desfeita pelo botao de reenviar
@@ -822,6 +822,34 @@ baixa de carteira em lote carimba vendas de meses atras de uma vez e traria o hi
 de volta para dentro da janela. A migracao 58 fecha a janela de transicao congelando o acervo
 que hoje esta "fechado, sem pedido e sem job" — menos `cadastro_incompleto`, que e justamente
 quem a rede deve destravar sozinha.
+
+**A segunda rodada de revisao derrubou o desenho da marca, nao so os bugs dela.** "Nao enviar
+ao OMIE" tinha virado mais um valor em `omie_billing_status` — um campo que CINCO lugares leem
+(aba Concluidas, Conferencia de faturamento, Fechamento de faturas, alerta do topo, relatorios).
+Cada um mentia do seu jeito: a linha exibia "nao sera enviada" mesmo com o pedido ja criado, o
+fechamento em lote a tratava como pendente e a refaturava, o alerta deixava de conta-la. A marca
+agora tem coluna propria (`omie_push_opt_out`), invisivel para todos eles, e quem a desfaz e so o
+botao de reenviar — DEPOIS de o envio ser aceito, porque um reenvio recusado pelo gate de cadastro
+apagava a decisao sem que nada aparecesse na tela.
+
+**A rede de seguranca so age sobre o que ESTA maquina fechou** (`device_id`). O job nasce na
+balanca que fez a pesagem; a operacao espelhada pelo pull chega na outra sem job nenhum. Sem esse
+escopo, a segunda balanca refazia no OMIE o pedido que a primeira tinha acabado de excluir — a
+marca do operador e local e nao viaja. E uma decisao cluster-wide nao pode ser protegida por
+estado maquina-local.
+
+**A duvida "queda ou dado ruim" e resolvida perguntando a ponta, nao ao vizinho.** A primeira
+versao inferia: se a linha seguinte passasse, a anterior era ruim. Errava nos dois sentidos —
+duas linhas ruins ADJACENTES (comum quando um pull do OMIE carimba varias no mesmo minuto) eram
+lidas como queda e congelavam a entidade para sempre, e um 429/504 passageiro numa linha isolada
+era lido como dado ruim e a linha sumia. Agora, na segunda suspeita seguida, `sendCadastroBatch`
+chama `pingSupabase`; e a linha absolvida ainda ganha UM retry, que e o que separa o soluco
+passageiro do 23505 estavel.
+
+**Um teste que passa sem cobrir nada e pior que teste nenhum.** O ensaio da queda passava mesmo
+com a protecao contra `dead_letter` desligada: sem o tempo andar entre os ciclos, o backoff
+empurrava o `next_attempt_at` e as 15 passadas viravam uma so. Ele agora avanca o relogio da fila
+e cobra `attempt_count >= 10`; verificado por mutacao (com `outage = false` ele falha).
 
 **Cada ponta libera a propria fila.** `releaseOutageBackoff` recebe o alvo: a fila da nuvem sai
 do backoff depois do `pingSupabase`, a do OMIE so depois do `probeOmie`. Liberar a fila do OMIE

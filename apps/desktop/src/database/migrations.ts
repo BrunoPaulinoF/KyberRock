@@ -2113,28 +2113,31 @@ ON CONFLICT(key) DO UPDATE SET
   },
   {
     version: 58,
-    name: "omie_safety_net_freeze_existing",
+    name: "omie_push_opt_out",
     sql: `
--- A rede de seguranca do OMIE (\`listOperationsPendingOmiePush\`) procura fechamento que
--- nao chegou ao OMIE e ficou SEM job nenhum, e o recoloca na fila. Isso e o que se quer
--- daqui para a frente, mas o acervo que ja existe hoje nesse estado tem outra historia:
--- sao os jobs que alguem apagou de proposito na tela Cloud (antes de existir a marca
--- \`nao_enviar\`), os que a migracao 19 removeu, e os de quem so ligou o OMIE depois. Sem
--- esta trava, a PRIMEIRA sincronizacao apos a atualizacao criaria no OMIE ate 200 pedidos
--- por ciclo de cargas antigas, na etapa "Faturar" — e onde a nota ja tivesse sido emitida
--- a mao, sairia NF-e em duplicidade.
+-- "Este fechamento nao sera enviado ao OMIE", gravado quando o operador exclui o item da
+-- fila na tela Cloud. Precisa de coluna PROPRIA, e nao de mais um valor em
+-- \`omie_billing_status\`: aquele campo e lido por cinco lugares (a aba Concluidas, a
+-- Conferencia de faturamento, o Fechamento de faturas, o alerta do topo e os relatorios),
+-- e um valor que eles nao conhecem faz cada um mentir de um jeito — a linha exibindo
+-- "nao sera enviada" mesmo com o pedido ja criado, o fechamento em lote tratando-a como
+-- pendente e a refaturando, o alerta deixando de conta-la.
+ALTER TABLE weighing_operations ADD COLUMN omie_push_opt_out INTEGER NOT NULL DEFAULT 0;
+
+-- A rede de seguranca do OMIE procura fechamento que nao chegou la e ficou SEM job, e o
+-- recoloca na fila. Isso e o que se quer daqui para a frente, mas o acervo que ja existe
+-- nesse estado tem outra historia: sao os jobs que alguem apagou de proposito antes de
+-- existir esta marca, os que a migracao 19 removeu, e os de quem so ligou o OMIE depois.
+-- Sem a trava, a PRIMEIRA sincronizacao apos a atualizacao criaria no OMIE ate 200 pedidos
+-- por ciclo de cargas antigas — e onde a nota ja tivesse sido emitida a mao, NF-e duplicada.
 --
--- \`cadastro_incompleto\` fica de FORA da trava de proposito: e o unico caso em que a
--- pesagem esta esperando exatamente isto — o cadastro do cliente ser corrigido para o
--- envio acontecer sozinho. Congela-lo tiraria o principal ganho da rede.
+-- \`cadastro_incompleto\` fica de FORA de proposito: e o unico caso em que a pesagem espera
+-- exatamente isto — o cadastro ser corrigido para o envio acontecer sozinho.
 --
--- A operacao congelada nao fica sem saida: "Reenviar" limpa a marca (clearDoNotSendMark).
+-- A marca e local (nao viaja para a nuvem) e a rede so olha o que ESTA maquina fechou,
+-- entao carimba-la aqui nao interfere no que outra balanca esta enviando.
 UPDATE weighing_operations
-   SET omie_billing_status = 'nao_enviar',
-       omie_billing_message = COALESCE(
-         omie_billing_message,
-         'Fechamento anterior a rede de seguranca do OMIE. Use reenviar para mandar ao OMIE.'
-       )
+   SET omie_push_opt_out = 1
  WHERE deleted_at IS NULL
    AND status <> 'cancelled'
    AND exit_weight_captured_at IS NOT NULL

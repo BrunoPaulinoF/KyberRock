@@ -76,10 +76,29 @@ describe("a pedreira atravessa a queda e se recupera sozinha", () => {
 
       // Durante a queda, TODA tentativa falha — de proposito, muitas vezes: com o
       // backoff antigo, 10 falhas bastavam para o envio morrer e sair da rotacao.
+      //
+      // O TEMPO precisa andar entre os ciclos. Sem isso o backoff empurra o
+      // `next_attempt_at` para a frente, `listRunnableSyncJobs` nao devolve mais nada e
+      // as 15 passadas viram uma so: o ensaio passava mesmo com a protecao desligada,
+      // que e o pior tipo de teste — o que da confianca sem cobrir nada.
+      const deixarOTempoPassar = () =>
+        database
+          .prepare("UPDATE sync_queue SET next_attempt_at = ? WHERE status = 'failed'")
+          .run(new Date().toISOString());
+
       for (let ciclo = 0; ciclo < 15; ciclo++) {
         await processCloudSyncQueue(database, identity);
         await processOmieSyncQueue(database, identity, { delayMs: 0 });
+        deixarOTempoPassar();
       }
+
+      // A prova de que o tempo andou: os envios acumularam MAIS tentativas do que o
+      // limite que antes os matava.
+      const tentativas = database
+        .prepare("SELECT MAX(attempt_count) FROM sync_queue")
+        .pluck()
+        .get() as number;
+      expect(tentativas).toBeGreaterThanOrEqual(10);
 
       // Nada morreu: os envios continuam na rotacao automatica, esperando a nuvem.
       expect(
@@ -108,7 +127,7 @@ describe("a pedreira atravessa a queda e se recupera sozinha", () => {
       // isto o envio ficava ate 15 min parado depois de a internet voltar.
       releaseOutageBackoff(database);
       await processCloudSyncQueue(database, identity);
-      reenqueueOperationsMissingOmieJob(database);
+      reenqueueOperationsMissingOmieJob(database, "device-1");
       await processOmieSyncQueue(database, identity, { delayMs: 0 });
       for (const pendente of listOperationsPendingCloudPush(database)) {
         await syncOperationToSupabase(database, pendente.id, identity);
@@ -172,7 +191,7 @@ describe("a pedreira atravessa a queda e se recupera sozinha", () => {
         return Promise.resolve({ error: null, data: { orderId: 901, ok: true } });
       });
 
-      reenqueueOperationsMissingOmieJob(database);
+      reenqueueOperationsMissingOmieJob(database, "device-1");
       await processOmieSyncQueue(database, identity, { delayMs: 0 });
 
       expect(enviadasAoOmie).toContain(operacao);
