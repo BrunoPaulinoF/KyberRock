@@ -831,6 +831,66 @@ describe("cadastro compartilhado da pedreira", () => {
     }
   });
 
+  it("linha que a NUVEM recusa nao trava o cursor: a seguinte desempata", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      seedLocalCadastro(database);
+      for (const [id, nome, quando] of [
+        ["carrier-2", "Transportes Gama", "2026-07-27T11:00:00.000Z"],
+        ["carrier-3", "Transportes Delta", "2026-07-27T12:00:00.000Z"]
+      ] as const) {
+        database
+          .prepare(
+            `INSERT INTO carriers (id, company_id, name, source, is_active, created_at, updated_at)
+             VALUES (?, 'company-1', ?, 'local', 1, ?, ?)`
+          )
+          .run(id, nome, quando, quando);
+      }
+
+      // O desktop-sync responde 500 para QUALQUER recusa de gravacao — chave
+      // duplicada, FK ausente, valor estourado — e `isOutageFault` le todo 5xx como
+      // queda. Se a fila acreditasse nisso, o cursor desta entidade ficaria cravado
+      // na carrier-2 para sempre e NENHUM cadastro posterior chegaria as outras
+      // balancas. A carrier-3 e quem prova que a nuvem esta de pe.
+      invokeMock.mockImplementation((_name: string, options: { body: Record<string, unknown> }) => {
+        const carriers = options.body.carriers as Array<{ id: string }> | undefined;
+        if (!carriers) return Promise.resolve({ data: { ok: true }, error: null });
+        if (carriers.length > 1) {
+          return Promise.resolve({ data: null, error: new Error("Failed to fetch") });
+        }
+        if (carriers[0].id === "carrier-2") {
+          return Promise.resolve({
+            data: null,
+            error: new Error(
+              "Falha ao persistir alguns payloads: carriers: duplicate key value violates unique constraint (code=23505) (HTTP 500)"
+            )
+          });
+        }
+        return Promise.resolve({ data: { ok: true }, error: null });
+      });
+
+      const primeira = await pushSharedCadastroToCloud(database, identity);
+      // A linha ruim virou erro visivel, e a carrier-3 passou.
+      expect(primeira.errors.join(" ")).toContain("carrier-2");
+
+      // O cursor andou: a proxima passada nao repete o lote nem fica presa nela.
+      const enviadas: string[] = [];
+      invokeMock.mockImplementation((_name: string, options: { body: Record<string, unknown> }) => {
+        for (const carrier of (options.body.carriers as Array<{ id: string }> | undefined) ?? []) {
+          enviadas.push(carrier.id);
+        }
+        return Promise.resolve({ data: { ok: true }, error: null });
+      });
+      await pushSharedCadastroToCloud(database, identity);
+      expect(enviadas).not.toContain("carrier-2");
+      expect(enviadas).not.toContain("carrier-3");
+    } finally {
+      database.close();
+    }
+  });
+
   it("queda no MEIO do lote nao deixa o cursor passar por cima do que ficou para tras", async () => {
     const database = createMachine("desktop-a");
 

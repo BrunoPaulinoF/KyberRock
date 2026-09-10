@@ -9668,6 +9668,21 @@ export function getFiscalBillingStatus(operation: WeighingOperationSummary): {
     };
   }
 
+  // Envio removido da fila pelo operador. Precisa de ramo proprio: sem ele a operacao
+  // caia no rotulo generico de "vai ser enviada", que MENTE (ela nao vai), e perdia os
+  // dois botoes de recuperacao — a unica volta era editar o cliente, o que ninguem
+  // adivinha. `canRetry` deixa o mesmo botao que ja existe desfazer a decisao.
+  if (operation.omieBillingStatus === "nao_enviar") {
+    return {
+      label: "Nao sera enviada",
+      detail:
+        operation.omieBillingMessage ??
+        "O envio ao OMIE foi removido da fila pelo operador. Use reenviar para desfazer.",
+      tone: "warning",
+      canRetry: true
+    };
+  }
+
   // Operacao interna (venda sem nota): vira ordem de servico no OMIE, na mesma etapa
   // "Faturar" do pedido de venda — so em outro modulo. O estado do envio precisa ficar
   // visivel aqui; antes toda interna aparecia como "Sem nota fiscal de venda" e uma OS

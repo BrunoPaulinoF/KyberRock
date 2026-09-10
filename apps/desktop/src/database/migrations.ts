@@ -2110,5 +2110,43 @@ ON CONFLICT(key) DO UPDATE SET
   value_json = excluded.value_json,
   updated_at = excluded.updated_at;
 `
+  },
+  {
+    version: 58,
+    name: "omie_safety_net_freeze_existing",
+    sql: `
+-- A rede de seguranca do OMIE (\`listOperationsPendingOmiePush\`) procura fechamento que
+-- nao chegou ao OMIE e ficou SEM job nenhum, e o recoloca na fila. Isso e o que se quer
+-- daqui para a frente, mas o acervo que ja existe hoje nesse estado tem outra historia:
+-- sao os jobs que alguem apagou de proposito na tela Cloud (antes de existir a marca
+-- \`nao_enviar\`), os que a migracao 19 removeu, e os de quem so ligou o OMIE depois. Sem
+-- esta trava, a PRIMEIRA sincronizacao apos a atualizacao criaria no OMIE ate 200 pedidos
+-- por ciclo de cargas antigas, na etapa "Faturar" — e onde a nota ja tivesse sido emitida
+-- a mao, sairia NF-e em duplicidade.
+--
+-- \`cadastro_incompleto\` fica de FORA da trava de proposito: e o unico caso em que a
+-- pesagem esta esperando exatamente isto — o cadastro do cliente ser corrigido para o
+-- envio acontecer sozinho. Congela-lo tiraria o principal ganho da rede.
+--
+-- A operacao congelada nao fica sem saida: "Reenviar" limpa a marca (clearDoNotSendMark).
+UPDATE weighing_operations
+   SET omie_billing_status = 'nao_enviar',
+       omie_billing_message = COALESCE(
+         omie_billing_message,
+         'Fechamento anterior a rede de seguranca do OMIE. Use reenviar para mandar ao OMIE.'
+       )
+ WHERE deleted_at IS NULL
+   AND status <> 'cancelled'
+   AND exit_weight_captured_at IS NOT NULL
+   AND omie_sales_order_id IS NULL
+   AND omie_service_order_id IS NULL
+   AND (omie_billing_status IS NULL OR omie_billing_status <> 'cadastro_incompleto')
+   AND NOT EXISTS (
+         SELECT 1 FROM sync_queue q
+          WHERE q.target = 'omie'
+            AND q.entity_id = weighing_operations.id
+            AND q.action IN ('create_order', 'create_and_bill_order')
+       );
+`
   }
 ];

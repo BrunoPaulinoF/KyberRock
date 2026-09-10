@@ -805,6 +805,38 @@ travado, o peso de saida capturado se perde. O `.catch` tratava ERRO; faltava te
 LATENCIA. `withCloudPrecheckTimeout` (5 s) fecha isso sem cancelar a promessa, que segue em
 segundo plano.
 
+**A revisao do proprio diff cobrou tres coisas que quase viraram bug pior.** (1) O
+classificador de queda NAO pode decidir sozinho num CURSOR: o `desktop-sync` responde 500 para
+qualquer recusa de gravacao (23505, 23503, 22001) e `isOutageFault` le todo 5xx como
+indisponibilidade — o cursor daquela entidade travaria na primeira linha ruim PARA SEMPRE, e
+nenhum cadastro posterior chegaria as outras balancas. A duvida passou a ser resolvida por
+EXPERIMENTO: ao cair parecendo queda, sonda-se a linha seguinte; se ela passa, a anterior era
+ruim (segue como recusa) e o cursor anda; se ela tambem cai, e queda de verdade e a rodada para
+antes das duas. Na fila o mesmo classificador esta certo — la o 5xx so adia, e o job nunca morre.
+(2) A marca `nao_enviar` precisa do MESMO freio nos dois caminhos: `rearmOmieBillingForCustomer`
+roda no ciclo automatico junto do push de clientes, e sem o freio bastava alguem corrigir o
+e-mail do cliente para o pedido de uma carga excluida de proposito nascer no OMIE — NF-e em
+duplicidade onde a nota ja tinha sido lancada a mao. Ela so e desfeita pelo botao de reenviar
+(`clearDoNotSendMark`). (3) A janela de 30 dias ancora no FECHAMENTO, nunca no `updated_at`: a
+baixa de carteira em lote carimba vendas de meses atras de uma vez e traria o historico inteiro
+de volta para dentro da janela. A migracao 58 fecha a janela de transicao congelando o acervo
+que hoje esta "fechado, sem pedido e sem job" — menos `cadastro_incompleto`, que e justamente
+quem a rede deve destravar sozinha.
+
+**Cada ponta libera a propria fila.** `releaseOutageBackoff` recebe o alvo: a fila da nuvem sai
+do backoff depois do `pingSupabase`, a do OMIE so depois do `probeOmie`. Liberar a fila do OMIE
+porque o Supabase respondeu anularia o backoff justamente contra quem ainda esta caido — e o
+OMIE ja bloqueou a integracao inteira por consumo indevido. Pelo mesmo motivo o push de cadastro
+ao OMIE ganhou freio de 15 min no ciclo automatico (`shouldPushOmieCadastroNow`): o ciclo dispara
+a cada pesagem, e um cadastro que o OMIE recusa por motivo nao reconhecido repetiria o
+`AlterarCliente` em todas elas, disputando o limite de requisicoes com os PEDIDOS. O botao
+"Sincronizar OMIE" continua sem freio.
+
+**O teto de 5 s e so para o que roda ANTES da gravacao local.** Ele foi aplicado tambem ao
+`autoCompleteCustomerForNfe`, que roda DEPOIS: cortar ali manda o snapshot velho ao OMIE, que
+recusa e acende um "cadastro incompleto" falso — ou aceita, e a NF-e sai com o endereco pela
+metade.
+
 **Fora de escopo, registrado:** o desktop continua exigindo internet a cada 7 dias
 (`DESKTOP_ACCESS_GRACE_PERIOD_MS`). Isso e licenca, nao sincronizacao.
 

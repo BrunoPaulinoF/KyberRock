@@ -447,16 +447,21 @@ export function markSyncJobFailed(
  */
 export function countJobsWaitingOnOutage(
   database: DesktopDatabase,
-  now: Date = new Date()
+  options: { now?: Date; target?: SyncTarget } = {}
 ): number {
+  const now = options.now ?? new Date();
+  const clausulaAlvo = options.target ? " AND target = ?" : "";
+  const parametros: unknown[] = options.target
+    ? [now.toISOString(), BLOCKED_NEXT_ATTEMPT_AT, options.target]
+    : [now.toISOString(), BLOCKED_NEXT_ATTEMPT_AT];
   const row = database
     .prepare(
       `SELECT COUNT(*) AS total FROM sync_queue
        WHERE status = 'failed'
          AND next_attempt_at > ?
-         AND next_attempt_at <> ?`
+         AND next_attempt_at <> ?${clausulaAlvo}`
     )
-    .get(now.toISOString(), BLOCKED_NEXT_ATTEMPT_AT) as { total: number } | undefined;
+    .get(...parametros) as { total: number } | undefined;
   return row?.total ?? 0;
 }
 
@@ -478,22 +483,30 @@ export function countJobsWaitingOnOutage(
  */
 export function releaseOutageBackoff(
   database: DesktopDatabase,
-  options: { now?: Date; limit?: number } = {}
+  options: { now?: Date; limit?: number; target?: SyncTarget } = {}
 ): number {
   const now = options.now ?? new Date();
   const nowIso = now.toISOString();
   const limit = options.limit ?? MAX_OUTAGE_REARM_SCAN;
+
+  // O alvo importa: quem provou estar de pe foi UMA das pontas. Liberar a fila do
+  // OMIE porque o Supabase respondeu ao ping anula o backoff justamente contra quem
+  // ainda esta caido — e o OMIE ja bloqueou a integracao inteira por consumo indevido.
+  const clausulaAlvo = options.target ? " AND target = ?" : "";
+  const parametros: unknown[] = options.target
+    ? [nowIso, BLOCKED_NEXT_ATTEMPT_AT, options.target, limit]
+    : [nowIso, BLOCKED_NEXT_ATTEMPT_AT, limit];
 
   const candidates = database
     .prepare(
       `SELECT id, last_error FROM sync_queue
        WHERE status = 'failed'
          AND next_attempt_at > ?
-         AND next_attempt_at <> ?
+         AND next_attempt_at <> ?${clausulaAlvo}
        ORDER BY next_attempt_at ASC
        LIMIT ?`
     )
-    .all(nowIso, BLOCKED_NEXT_ATTEMPT_AT, limit) as Array<{
+    .all(...parametros) as Array<{
     id: string;
     last_error: string | null;
   }>;

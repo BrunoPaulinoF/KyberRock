@@ -96,7 +96,15 @@ export function BlockedScreen({ desktopApi, onUnlocked, onRequireActivation }: B
    * conseguir o codigo de 6 digitos E a internet voltar". Enquanto houver erro de
    * comunicacao, o problema nao e a credencial desta maquina.
    */
-  const podeLimparAtivacao = !staleStatus;
+  const podeLimparAtivacao = !staleStatus || status?.status === "invalid_device";
+  /**
+   * Bloqueio administrativo (empresa, unidade, dispositivo, pagamento) sai sozinho
+   * quando a nuvem responde de novo. `invalid_device` NAO: a nuvem vai repetir o mesmo
+   * veredito, porque o registro desta maquina e que nao vale mais. Dar a mesma frase
+   * aos dois casos deixava o operador esperando por algo que nunca ia acontecer — e
+   * sem o botao que resolve.
+   */
+  const saiSozinhoQuandoVoltar = staleStatus && status?.status !== "invalid_device";
 
   return (
     <main style={styles.page}>
@@ -122,9 +130,15 @@ export function BlockedScreen({ desktopApi, onUnlocked, onRequireActivation }: B
         )}
         {checking && <p style={styles.checking}>Verificando status...</p>}
         {feedback && <p style={styles.checking}>{feedback}</p>}
-        {staleStatus && (
+        {saiSozinhoQuandoVoltar && (
           <p style={styles.checking}>
             Assim que a nuvem responder, esta tela sai sozinha — nao e preciso fazer nada.
+          </p>
+        )}
+        {staleStatus && status?.status === "invalid_device" && (
+          <p style={styles.checking}>
+            Quando a internet voltar, este computador vai precisar ser reativado com o codigo da
+            pedreira.
           </p>
         )}
         <div style={styles.actions}>

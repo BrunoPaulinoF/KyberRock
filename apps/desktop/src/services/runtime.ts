@@ -157,6 +157,8 @@ import {
   syncLoadingRequestToSupabase,
   listOperationsPendingCloudPush,
   reenqueueOperationsMissingOmieJob,
+  recordOmieCadastroPushRun,
+  shouldPushOmieCadastroNow,
   OMIE_BILLING_STATUS_DO_NOT_SEND,
   syncOmieReferenceDataFromCloud,
   syncCustomerAdvancesFromCloud,
@@ -998,7 +1000,12 @@ export class DesktopRuntime {
     // Best-effort: completa o cadastro do cliente para NF-e (busca por CNPJ + e-mail
     // padrao) em vez de deixar o faturamento pendente por falta de dados. Nao bloqueia
     // nem falha o fechamento se a busca nao der certo.
-    await withCloudPrecheckTimeout(this.autoCompleteCustomerForNfe(operationId));
+    // Sem teto aqui de proposito: esta busca roda DEPOIS da gravacao local (a regra
+    // guia ja esta cumprida) e o efeito dela e completar o cadastro que vai junto do
+    // pedido. Cortar em 5 s manda o snapshot velho ao OMIE, que recusa e acende um
+    // "cadastro incompleto" falso na tela — ou aceita, e a NF-e sai com o endereco
+    // pela metade.
+    await this.autoCompleteCustomerForNfe(operationId).catch(() => undefined);
     this.triggerOperationCloudPush("exit_registered", operationId);
     // O pedido/OS do fechamento vai para o OMIE imediatamente (apenas os jobs desta
     // operacao), sem esperar a varredura completa de sincronizacao.
@@ -1795,16 +1802,30 @@ export class DesktopRuntime {
       // gasto quando ha alguem esperando, e e ele que separa "a nuvem respondeu" de
       // "estou adivinhando".
       try {
-        if (countJobsWaitingOnOutage(this.database) > 0 && (await pingSupabase())) {
-          const liberados = releaseOutageBackoff(this.database);
-          if (liberados > 0) {
-            this.recordTechnicalLog(
-              "info",
-              "cloud-sync",
-              `Conexao restabelecida: ${liberados} envio(s) saem do backoff agora.`,
-              { liberados }
-            );
+        // Cada fila e liberada pela ponta que ELA usa: a nuvem pelo ping do Supabase,
+        // o OMIE pela sonda do OMIE. Liberar a fila do OMIE porque o Supabase
+        // respondeu anularia o backoff contra quem ainda esta fora — e o OMIE ja
+        // bloqueou a integracao inteira por consumo indevido.
+        let liberados = 0;
+        if (
+          countJobsWaitingOnOutage(this.database, { target: "cloud" }) > 0 &&
+          (await pingSupabase())
+        ) {
+          liberados += releaseOutageBackoff(this.database, { target: "cloud" });
+        }
+        if (countJobsWaitingOnOutage(this.database, { target: "omie" }) > 0) {
+          const omie = await probeOmie();
+          if (omie.online) {
+            liberados += releaseOutageBackoff(this.database, { target: "omie" });
           }
+        }
+        if (liberados > 0) {
+          this.recordTechnicalLog(
+            "info",
+            "cloud-sync",
+            `Conexao restabelecida: ${liberados} envio(s) saem do backoff agora.`,
+            { liberados }
+          );
         }
       } catch (error) {
         errors.push(
@@ -1844,25 +1865,32 @@ export class DesktopRuntime {
       // cadastrado durante a queda so entrava la quando um caminhao dele pesava, e a
       // correcao de endereco de um cliente que JA existe no OMIE nunca chegava — a
       // NF-e continuava saindo com o dado velho. Best-effort, como os demais passos.
-      try {
-        const customerPush = await pushOmieCustomersToCloud(this.database, identity);
-        synced += customerPush.pushed;
-        failed += customerPush.failed;
-        errors.push(...customerPush.errors);
-      } catch (error) {
-        errors.push(
-          `Cadastro de clientes no OMIE: ${error instanceof Error ? error.message : "erro desconhecido"}`
-        );
-      }
-      try {
-        const carrierPush = await pushOmieCarriersToCloud(this.database, identity);
-        synced += carrierPush.pushed;
-        failed += carrierPush.failed;
-        errors.push(...carrierPush.errors);
-      } catch (error) {
-        errors.push(
-          `Cadastro de transportadoras no OMIE: ${error instanceof Error ? error.message : "erro desconhecido"}`
-        );
+      // Com freio: o ciclo dispara a cada pesagem, e um cadastro cuja recusa o
+      // classificador nao reconhece repetiria o AlterarCliente em todas elas,
+      // disputando o limite de requisicoes com os PEDIDOS. O botao "Sincronizar OMIE"
+      // continua sem freio.
+      if (shouldPushOmieCadastroNow(this.database)) {
+        recordOmieCadastroPushRun(this.database);
+        try {
+          const customerPush = await pushOmieCustomersToCloud(this.database, identity);
+          synced += customerPush.pushed;
+          failed += customerPush.failed;
+          errors.push(...customerPush.errors);
+        } catch (error) {
+          errors.push(
+            `Cadastro de clientes no OMIE: ${error instanceof Error ? error.message : "erro desconhecido"}`
+          );
+        }
+        try {
+          const carrierPush = await pushOmieCarriersToCloud(this.database, identity);
+          synced += carrierPush.pushed;
+          failed += carrierPush.failed;
+          errors.push(...carrierPush.errors);
+        } catch (error) {
+          errors.push(
+            `Cadastro de transportadoras no OMIE: ${error instanceof Error ? error.message : "erro desconhecido"}`
+          );
+        }
       }
 
       // Fila OMIE (pedidos/OS dos fechamentos): processada junto da sincronizacao

@@ -4217,6 +4217,16 @@ export function rearmOmieBillingForCustomer(
 ): number {
   if (!customerId) return 0;
 
+  // Respeita a exclusao feita pelo operador na tela Cloud. Sem isto, este caminho —
+  // que passou a rodar em TODO ciclo automatico junto do push de clientes — desfazia
+  // aquela decisao: bastava alguem corrigir o e-mail do cliente para o pedido nascer
+  // no OMIE na etapa "Faturar" e a NF-e sair de uma carga tirada de proposito (ou
+  // lancada a mao la, virando nota em duplicidade).
+  //
+  // Sem janela de tempo, ao contrario da rede de seguranca: aqui o gatilho e o
+  // cadastro do cliente ter sido COMPLETADO, e corrigir um documento semanas depois da
+  // pesagem e o caso normal — foi para ele que este caminho existe.
+  const placeholders = OMIE_REENQUEUE_BLOCKED_STATUSES.map(() => "?").join(", ");
   const operations = database
     .prepare(
       `SELECT o.id
@@ -4225,9 +4235,10 @@ export function rearmOmieBillingForCustomer(
           AND o.status NOT IN ('cancelled', 'synced')
           AND o.exit_weight_captured_at IS NOT NULL
           AND o.omie_sales_order_id IS NULL
-          AND o.omie_service_order_id IS NULL`
+          AND o.omie_service_order_id IS NULL
+          AND (o.omie_billing_status IS NULL OR o.omie_billing_status NOT IN (${placeholders}))`
     )
-    .all(customerId) as Array<{ id: string }>;
+    .all(customerId, ...OMIE_REENQUEUE_BLOCKED_STATUSES) as Array<{ id: string }>;
 
   const nowIso = now.toISOString();
   let rearmed = 0;
@@ -4326,6 +4337,12 @@ export function listOperationsPendingOmiePush(
   ).toISOString();
   const placeholders = OMIE_REENQUEUE_BLOCKED_STATUSES.map(() => "?").join(", ");
 
+  // A janela e ancorada no FECHAMENTO (`exit_weight_captured_at`), nao no
+  // `updated_at`: qualquer evento posterior renova o `updated_at` e traria o
+  // historico de volta para dentro dela. A baixa de carteira em lote
+  // (`settleWalletOperations`) carimba vendas de meses atras de uma vez — e ai a rede
+  // despejaria no OMIE 200 pedidos antigos na etapa "Faturar", que e exatamente o que
+  // a janela existe para impedir.
   return database
     .prepare(
       `SELECT o.id AS id
@@ -4336,7 +4353,7 @@ export function listOperationsPendingOmiePush(
           AND o.omie_sales_order_id IS NULL
           AND o.omie_service_order_id IS NULL
           AND (o.omie_billing_status IS NULL OR o.omie_billing_status NOT IN (${placeholders}))
-          AND REPLACE(o.updated_at, ' ', 'T') >= ?
+          AND REPLACE(o.exit_weight_captured_at, ' ', 'T') >= ?
           AND NOT EXISTS (
                 SELECT 1
                   FROM sync_queue q
@@ -5902,6 +5919,40 @@ function hasWindowElapsed(
   return Date.now() - lastRun >= intervalMs;
 }
 
+/**
+ * Freio do push de cadastro ao OMIE dentro do ciclo automatico.
+ *
+ * O ciclo dispara a cada entrada, cada fechamento, cada alteracao e cada baixa de
+ * carteira: numa pedreira de 100 pesagens por dia sao centenas de passadas. Um cadastro
+ * cuja recusa o classificador nao reconhece fica com `needs_push = 1` para sempre, e sem
+ * freio ele repetiria o `AlterarCliente` em TODAS elas — consumindo o limite de
+ * requisicoes do mesmo app key de que os PEDIDOS dependem, no sistema que ja registrou o
+ * OMIE bloqueando a integracao por consumo indevido.
+ *
+ * Quinze minutos e o mesmo teto do backoff da fila: o cadastro novo continua chegando la
+ * no mesmo dia, sem transformar cada caminhao numa rodada de chamadas.
+ */
+export const OMIE_CADASTRO_PUSH_MIN_INTERVAL_MS = 15 * 60 * 1000;
+const OMIE_CADASTRO_PUSH_LAST_RUN_KEY = "omie_cadastro_push_last_run_at";
+
+/** O ciclo automatico ja pode chamar o OMIE para publicar cadastro? */
+export function shouldPushOmieCadastroNow(
+  database: DesktopDatabase,
+  intervalMs: number = OMIE_CADASTRO_PUSH_MIN_INTERVAL_MS
+): boolean {
+  return hasWindowElapsed(database, OMIE_CADASTRO_PUSH_LAST_RUN_KEY, intervalMs);
+}
+
+/** Marca a passada; o botao "Sincronizar OMIE" nao passa por aqui e nunca e freado. */
+export function recordOmieCadastroPushRun(database: DesktopDatabase, now: Date = new Date()): void {
+  writeLocalSetting(
+    database,
+    OMIE_CADASTRO_PUSH_LAST_RUN_KEY,
+    now.toISOString(),
+    now.toISOString()
+  );
+}
+
 /** O texto da linha faturada: cita a nota quando o OMIE ja devolveu o numero dela. */
 function buildBilledMessage(result: OmieOrderBillingState): string {
   const document = result.orderType === "sales" ? "NF-e" : "NFS-e";
@@ -6003,6 +6054,25 @@ function internalServiceOrderResult(orderId: number | null, message: string): Fi
   };
 }
 
+/**
+ * Tira da operacao a marca de "nao sera enviada ao OMIE".
+ *
+ * A marca e a decisao do operador ao excluir o item da fila, e por isso a rede de
+ * seguranca a respeita. Quem pode desfaze-la e so outra acao explicita dele — o botao
+ * de reenviar —, nunca um caminho automatico.
+ */
+function clearDoNotSendMark(database: DesktopDatabase, operationId: string): void {
+  database
+    .prepare(
+      `UPDATE weighing_operations
+          SET omie_billing_status = NULL,
+              omie_billing_message = NULL,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE id = ? AND omie_billing_status = ?`
+    )
+    .run(operationId, OMIE_BILLING_STATUS_DO_NOT_SEND);
+}
+
 export async function processFiscalBillingNow(
   database: DesktopDatabase,
   identity: LocalDesktopIdentity,
@@ -6016,6 +6086,11 @@ export async function processFiscalBillingNow(
 ): Promise<FiscalBillingResult> {
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
+
+  // O operador clicou em reenviar: e a acao explicita que desfaz a exclusao feita
+  // antes na tela Cloud. Sem limpar a marca aqui, o pedido ate seria reenviado agora,
+  // mas a rede de seguranca voltaria a ignorar essa operacao para sempre.
+  clearDoNotSendMark(database, operationId);
 
   // Operacao interna: nao ha NF-e a faturar, mas ha ordem de servico a (re)enviar. Depois
   // de completar o CNPJ/CPF do cliente, este e o caminho para tirar a operacao do estado
@@ -8040,30 +8115,68 @@ async function sendCadastroBatch(
   // que a QUEDA derrubou seria abandona-la para sempre, porque o cursor so anda para
   // a frente e a proxima consulta pede `cursor_at > @cursorAt`.
   let settled = 0;
-  for (const row of payload) {
+  /**
+   * Indice da linha que falhou parecendo queda e ainda nao foi julgada.
+   *
+   * A mensagem sozinha NAO decide isto: o `desktop-sync` responde 500 para qualquer
+   * recusa de gravacao — chave duplicada (23505), FK que ainda nao existe (23503),
+   * valor estourado (22001) — e `isOutageFault` le todo 5xx como indisponibilidade.
+   * Confiar nela travaria o cursor daquela entidade PARA SEMPRE na primeira linha
+   * ruim, e ai NENHUM cadastro posterior chegaria as outras balancas: uma perda
+   * silenciosa e permanente, pior que a que este trecho veio consertar.
+   *
+   * Entao a duvida e resolvida por EXPERIMENTO, nao por heuristica: sonda-se a linha
+   * seguinte. Se ela passar, a queda nao existe e a anterior e que era ruim (segue
+   * como recusa, reportada em `errors`); se ela tambem cair, a outra ponta esta
+   * mesmo fora e a rodada para na PRIMEIRA das duas, sem passar por cima de nada.
+   */
+  let quedaSuspeita = -1;
+
+  for (let index = 0; index < payload.length; index++) {
+    const row = payload[index];
     try {
       await invokeDesktopSync(settings, { [entity.key]: [row] });
       pushed++;
-      settled++;
+      if (quedaSuspeita >= 0) {
+        // A seguinte passou: nao era queda. A anterior foi recusa do proprio dado.
+        failed++;
+        quedaSuspeita = -1;
+      }
+      settled = index + 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "falha ao enviar";
       errors.push(`Cadastro ${entity.label} (${String(row.id)}): ${message}`);
-      // A outra ponta caiu no meio do lote: para a rodada AQUI. A mesma linha sobe
-      // intacta no proximo ciclo — o dado nao tem nada de errado. Sem isto, bastava
-      // uma linha passar para o cursor pular todo o resto do lote: o preco cadastrado
-      // durante a queda ficava so na balanca que o digitou, para sempre e em silencio.
+
       if (isOutageFault(message)) {
-        return { pushed, systemicFailure: true, settled };
+        if (quedaSuspeita >= 0) {
+          // Duas seguidas: e a outra ponta. O cursor para antes da primeira delas.
+          return { pushed, systemicFailure: true, settled: quedaSuspeita };
+        }
+        quedaSuspeita = index;
+        continue;
       }
+
+      // Recusa que a propria mensagem identifica como do dado: a linha esta
+      // reportada em `errors` e o cursor pode passar por ela, senao o cadastro
+      // inteiro trava atras de um registro ruim.
       failed++;
-      // Recusa do proprio dado (4xx): a linha esta reportada em `errors` e o cursor
-      // pode passar por ela, senao o cadastro inteiro trava atras de um registro ruim.
-      settled++;
+      if (quedaSuspeita >= 0) {
+        failed++;
+        quedaSuspeita = -1;
+      }
+      settled = index + 1;
       // Nada passou ate agora: e falha sistemica, nao adianta insistir linha a linha.
       if (pushed === 0 && failed >= CADASTRO_PUSH_SYSTEMIC_PROBE) {
         return { pushed, systemicFailure: true, settled: 0 };
       }
     }
+  }
+
+  // A ultima linha caiu parecendo queda e nao houve seguinte para desempatar: o
+  // cursor nao passa por ela. No proximo ciclo ela e a primeira, e a duvida se
+  // resolve com a linha depois dela.
+  if (quedaSuspeita >= 0) {
+    return { pushed, systemicFailure: true, settled: quedaSuspeita };
   }
 
   return { pushed, systemicFailure: pushed === 0, settled };
@@ -8145,8 +8258,12 @@ export async function pushSharedCadastroToCloud(
       // queda interrompe o lote no meio, o que ficou para tras continua atras do
       // cursor e volta no proximo ciclo.
       const avancados = Math.min(sent.settled, pares.length);
-      if (avancados > 0) {
-        const ultima = pares[avancados - 1].row;
+      // Quando TODA linha mapeada teve desfecho, as que o filtro descartou estao
+      // provadamente atras da fronteira: o cursor pode ir ate o fim do lote lido. Sem
+      // isso, um lote inteiro descartado pelo filtro (`pares` vazio) congelava a
+      // entidade em silencio — nem erro, nem `failed`, e nada mais publicava.
+      const ultima = avancados === pares.length ? rows[rows.length - 1] : pares[avancados - 1]?.row;
+      if (ultima) {
         cursor = { at: String(ultima.cursor_at ?? ""), id: String(ultima.id ?? "") };
         writeCadastroPushCursor(database, entity.key, cursor);
       }

@@ -7,6 +7,7 @@ import { enqueueSyncJob, getSyncJobById } from "./sync-queue";
 import { closeWeighingOperation, createSimulatedWeighingOperation } from "./weighing-operations";
 import {
   listOperationsPendingOmiePush,
+  rearmOmieBillingForCustomer,
   reenqueueOperationsMissingOmieJob,
   OMIE_BILLING_STATUS_DO_NOT_SEND
 } from "./supabase-sync";
@@ -80,6 +81,30 @@ describe("rede de seguranca do OMIE", () => {
 
       expect(listOperationsPendingOmiePush(database).map((o) => o.id)).not.toContain(operacao);
       expect(reenqueueOperationsMissingOmieJob(database)).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("editar o cliente nao desfaz a exclusao feita pelo operador", () => {
+    const { database, identity } = criarBase();
+    try {
+      // O contador lancou o pedido desta carga a mao no OMIE, entao o operador
+      // excluiu o item da fila. Dias depois alguem corrige o e-mail do cliente — o
+      // que reenfileira os fechamentos dele. Sem o freio, o pedido nascia no OMIE na
+      // etapa "Faturar" e a NF-e saia em DUPLICIDADE.
+      const operacao = fecharPesagem(database, identity, { documento: "12345678000199" });
+      const clienteId = database
+        .prepare("SELECT customer_id FROM weighing_operations WHERE id = ?")
+        .pluck()
+        .get(operacao) as string;
+      database.prepare("DELETE FROM sync_queue WHERE target = 'omie'").run();
+      database
+        .prepare("UPDATE weighing_operations SET omie_billing_status = ? WHERE id = ?")
+        .run(OMIE_BILLING_STATUS_DO_NOT_SEND, operacao);
+
+      expect(rearmOmieBillingForCustomer(database, clienteId)).toBe(0);
+      expect(jobsOmieDaOperacao(database, operacao)).toHaveLength(0);
     } finally {
       database.close();
     }
@@ -167,10 +192,23 @@ describe("rede de seguranca do OMIE", () => {
     try {
       const operacao = fecharPesagem(database, identity, { documento: "12345678000199" });
       database.prepare("DELETE FROM sync_queue WHERE target = 'omie'").run();
+      // A janela ancora no FECHAMENTO: `updated_at` e renovado por qualquer evento
+      // posterior (a baixa de carteira em lote, por exemplo) e traria de volta o
+      // historico inteiro.
+      database
+        .prepare(
+          "UPDATE weighing_operations SET exit_weight_captured_at = ?, updated_at = ? WHERE id = ?"
+        )
+        .run("2020-01-01T00:00:00.000Z", "2020-01-01T00:00:00.000Z", operacao);
+
+      expect(listOperationsPendingOmiePush(database).map((o) => o.id)).not.toContain(operacao);
+
+      // E o `updated_at` renovado NAO a traz de volta: a baixa de carteira carimba
+      // vendas de meses atras de uma vez, e sem esta ancora a rede despejaria no OMIE
+      // 200 pedidos antigos na etapa "Faturar".
       database
         .prepare("UPDATE weighing_operations SET updated_at = ? WHERE id = ?")
-        .run("2020-01-01T00:00:00.000Z", operacao);
-
+        .run(new Date().toISOString(), operacao);
       expect(listOperationsPendingOmiePush(database).map((o) => o.id)).not.toContain(operacao);
     } finally {
       database.close();
