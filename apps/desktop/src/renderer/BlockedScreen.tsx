@@ -14,6 +14,8 @@ export function BlockedScreen({ desktopApi, onUnlocked, onRequireActivation }: B
   const [checking, setChecking] = useState(true);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  // Limpar a ativacao e irreversivel sem internet: pede confirmacao em dois passos.
+  const [confirmarLimpeza, setConfirmarLimpeza] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -86,6 +88,15 @@ export function BlockedScreen({ desktopApi, onUnlocked, onRequireActivation }: B
   // nesta maquina — nao uma decisao do administrador tomada agora. Dizer isso
   // evita a caca ao fantasma de um bloqueio que ja foi liberado no admin.
   const staleStatus = Boolean(status?.lastError);
+  /**
+   * "Limpar ativacao" apaga a credencial E o `last_license_check_at`, ou seja, apaga o
+   * prazo offline de 7 dias — e a tela de ativacao seguinte EXIGE internet. Oferecer
+   * esse botao justamente quando a nuvem nao respondeu era uma armadilha: um clique do
+   * operador durante a queda transformava "parada ate a nuvem voltar" em "parada ate
+   * conseguir o codigo de 6 digitos E a internet voltar". Enquanto houver erro de
+   * comunicacao, o problema nao e a credencial desta maquina.
+   */
+  const podeLimparAtivacao = !staleStatus;
 
   return (
     <main style={styles.page}>
@@ -111,15 +122,42 @@ export function BlockedScreen({ desktopApi, onUnlocked, onRequireActivation }: B
         )}
         {checking && <p style={styles.checking}>Verificando status...</p>}
         {feedback && <p style={styles.checking}>{feedback}</p>}
+        {staleStatus && (
+          <p style={styles.checking}>
+            Assim que a nuvem responder, esta tela sai sozinha — nao e preciso fazer nada.
+          </p>
+        )}
         <div style={styles.actions}>
-          <button
-            type="button"
-            onClick={handleClearActivation}
-            disabled={busy}
-            style={{ ...styles.primaryButton, opacity: busy ? 0.6 : 1 }}
-          >
-            Limpar ativacao e ativar de novo
-          </button>
+          {podeLimparAtivacao &&
+            (confirmarLimpeza ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleClearActivation}
+                  disabled={busy}
+                  style={{ ...styles.primaryButton, opacity: busy ? 0.6 : 1 }}
+                >
+                  Confirmar: apagar a ativacao (precisa de internet e do codigo)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmarLimpeza(false)}
+                  disabled={busy}
+                  style={{ ...styles.secondaryButton, opacity: busy ? 0.6 : 1 }}
+                >
+                  Cancelar
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmarLimpeza(true)}
+                disabled={busy}
+                style={{ ...styles.primaryButton, opacity: busy ? 0.6 : 1 }}
+              >
+                Limpar ativacao e ativar de novo
+              </button>
+            ))}
           <button
             type="button"
             onClick={handleExportBackup}

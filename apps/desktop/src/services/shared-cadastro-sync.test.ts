@@ -831,6 +831,65 @@ describe("cadastro compartilhado da pedreira", () => {
     }
   });
 
+  it("queda no MEIO do lote nao deixa o cursor passar por cima do que ficou para tras", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      seedLocalCadastro(database);
+      // Tres transportadoras cadastradas durante a queda. carrier-1 ja vem do seed.
+      for (const [id, nome, quando] of [
+        ["carrier-2", "Transportes Gama", "2026-07-27T11:00:00.000Z"],
+        ["carrier-3", "Transportes Delta", "2026-07-27T12:00:00.000Z"]
+      ] as const) {
+        database
+          .prepare(
+            `INSERT INTO carriers (id, company_id, name, source, is_active, created_at, updated_at)
+             VALUES (?, 'company-1', ?, 'local', 1, ?, ?)`
+          )
+          .run(id, nome, quando, quando);
+      }
+
+      // O lote inteiro falha (link oscilando) e o envio cai para linha a linha.
+      // A primeira passa; da segunda em diante o banco da nuvem responde 503.
+      let carrierLotes = 0;
+      invokeMock.mockImplementation((_name: string, options: { body: Record<string, unknown> }) => {
+        const carriers = options.body.carriers as Array<{ id: string }> | undefined;
+        if (!carriers) return Promise.resolve({ data: { ok: true }, error: null });
+        carrierLotes++;
+        if (carriers.length > 1) {
+          return Promise.resolve({ data: null, error: new Error("Failed to fetch") });
+        }
+        if (carriers[0].id === "carrier-1") {
+          return Promise.resolve({ data: { ok: true }, error: null });
+        }
+        return Promise.resolve({
+          data: null,
+          error: new Error("Cadastro indisponivel no momento (HTTP 503)")
+        });
+      });
+
+      await pushSharedCadastroToCloud(database, identity);
+      expect(carrierLotes).toBeGreaterThan(0);
+
+      // A nuvem volta: as duas que a queda derrubou TEM de subir sozinhas.
+      // Antes, o cursor pulava para a ultima linha do lote e elas ficavam so nesta
+      // balanca — sem alerta, sem nova tentativa e sem comando de recuperacao.
+      const enviadas: string[] = [];
+      invokeMock.mockImplementation((_name: string, options: { body: Record<string, unknown> }) => {
+        const carriers = options.body.carriers as Array<{ id: string }> | undefined;
+        for (const carrier of carriers ?? []) enviadas.push(carrier.id);
+        return Promise.resolve({ data: { ok: true }, error: null });
+      });
+
+      await pushSharedCadastroToCloud(database, identity);
+      expect(enviadas).toContain("carrier-2");
+      expect(enviadas).toContain("carrier-3");
+    } finally {
+      database.close();
+    }
+  });
+
   it("nao avanca o cursor quando a nuvem esta indisponivel", async () => {
     const database = createMachine("desktop-a");
 

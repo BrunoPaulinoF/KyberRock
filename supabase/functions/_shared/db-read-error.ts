@@ -44,11 +44,26 @@ export function isMissingRowError(error: PostgrestLikeError | null | undefined):
   );
 }
 
-/** Coluna pedida no select que a tabela ainda nao tem (migracao pendente). */
+/**
+ * Coluna pedida no select que a tabela ainda nao tem (migracao pendente).
+ *
+ * O reconhecimento por mensagem exige a palavra **column**. Um `/does not exist/`
+ * solto engolia o incidente de infraestrutura: `relation "device_registrations"
+ * does not exist` (42P01, restauracao ou troca de schema), `database "postgres"
+ * does not exist` (3D000) e `role "authenticator" does not exist` casavam, e ai
+ * `isReadUnavailable` devolvia false — a funcao respondia 200 dizendo
+ * `invalid_device` e a pedreira parava. Ou seja: reabria, por outra porta, o
+ * exato bug de 09/09 que este arquivo existe para fechar, e no cenario mais
+ * provavel de todos (o incidente logo depois de uma queda).
+ */
 export function isUnknownColumnError(error: PostgrestLikeError | null | undefined): boolean {
   if (!error) return false;
   if (error.code === "42703" || error.code === "PGRST204") return true;
-  return /does not exist|column .* of .* in the schema cache/i.test(error.message ?? "");
+  const message = error.message ?? "";
+  return (
+    /column\s+[^\s]*\s*does not exist/i.test(message) ||
+    /could not find the '[^']+' column of/i.test(message)
+  );
 }
 
 /**

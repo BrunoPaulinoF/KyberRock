@@ -65,6 +65,7 @@ import {
   validateOperationFiscalReadiness
 } from "./weighing-operations.js";
 import { DOCUMENT_KEY_SQL, documentKey } from "./customer-identity.js";
+import { isOutageFault } from "./outage-fault.js";
 import {
   isCadastroIncompleteFault,
   isOmieCustomerRegistrationFault,
@@ -4271,6 +4272,124 @@ export function rearmOmieBillingForCustomer(
   return rearmed;
 }
 
+/**
+ * Janela da rede de seguranca do OMIE. Mesma escolha da reconciliacao da nuvem
+ * (`CLOUD_RECONCILE_WINDOW_DAYS`): o que ficou para tras ha mais de um mes nao volta
+ * sozinho, para uma instalacao que acabou de ligar o OMIE nao despejar la o historico
+ * inteiro da pedreira.
+ */
+const OMIE_RECONCILE_WINDOW_DAYS = 30;
+const OMIE_RECONCILE_LIMIT = 200;
+
+/**
+ * Situacoes em que a pesagem NAO deve voltar para a fila do OMIE.
+ *
+ * `nao_enviar` e a decisao explicita do operador ao excluir o item da fila ("este
+ * fechamento nao sera mais enviado"): a rede de seguranca nao pode desfazer isso.
+ * As demais dizem que o documento ja existe la, ou que o cancelamento esta em curso.
+ */
+const OMIE_REENQUEUE_BLOCKED_STATUSES = [
+  "nao_enviar",
+  "billed",
+  "service_order_created",
+  "cancelled_in_omie",
+  "cancel_blocked"
+];
+
+/** Marca gravada quando o operador exclui o item da fila OMIE. */
+export const OMIE_BILLING_STATUS_DO_NOT_SEND = "nao_enviar";
+
+/**
+ * Pesagens fechadas que nao chegaram ao OMIE e nao tem mais nenhum job que as leve.
+ *
+ * E o simetrico de `listOperationsPendingCloudPush`, e existia so para a nuvem. Para o
+ * OMIE, o job da fila era o UNICO registro de que a carga precisa subir: some o job
+ * (apagado por engano na tela Cloud, podado, banco restaurado de backup) e a venda fica
+ * pesada, impressa e sem pedido la — sem alarme e sem recuperacao. A operacao, e nao o
+ * job, e quem sabe se o pedido existe (`omie_sales_order_id` / `omie_service_order_id`),
+ * entao e dela que a rede tem de partir.
+ *
+ * Cobre tambem o fechamento que nasceu sem job por falta de documento do cliente
+ * (`cadastro_incompleto`): assim que o cadastro e corrigido em QUALQUER maquina, a
+ * proxima passada monta o job sozinha — antes isso exigia o botao "Refaturar".
+ *
+ * Deliberadamente conservadora: so entra a operacao que nao tem job NENHUM (de qualquer
+ * situacao). Job vivo segue seu caminho; job morto por falha do dado continua morto, para
+ * nao virar tempestade de retry; e `nao_enviar` respeita a exclusao feita pelo operador.
+ */
+export function listOperationsPendingOmiePush(
+  database: DesktopDatabase,
+  now: Date = new Date()
+): Array<{ id: string }> {
+  const windowStart = new Date(
+    now.getTime() - OMIE_RECONCILE_WINDOW_DAYS * 24 * 60 * 60 * 1000
+  ).toISOString();
+  const placeholders = OMIE_REENQUEUE_BLOCKED_STATUSES.map(() => "?").join(", ");
+
+  return database
+    .prepare(
+      `SELECT o.id AS id
+         FROM weighing_operations o
+        WHERE o.deleted_at IS NULL
+          AND o.status <> 'cancelled'
+          AND o.exit_weight_captured_at IS NOT NULL
+          AND o.omie_sales_order_id IS NULL
+          AND o.omie_service_order_id IS NULL
+          AND (o.omie_billing_status IS NULL OR o.omie_billing_status NOT IN (${placeholders}))
+          AND REPLACE(o.updated_at, ' ', 'T') >= ?
+          AND NOT EXISTS (
+                SELECT 1
+                  FROM sync_queue q
+                 WHERE q.target = 'omie'
+                   AND q.entity_id = o.id
+                   AND q.action IN ('create_order', 'create_and_bill_order')
+              )
+        ORDER BY o.updated_at ASC
+        LIMIT ?`
+    )
+    .all(...OMIE_REENQUEUE_BLOCKED_STATUSES, windowStart, OMIE_RECONCILE_LIMIT) as Array<{
+    id: string;
+  }>;
+}
+
+/**
+ * Recoloca na fila do OMIE as pesagens que `listOperationsPendingOmiePush` encontrou.
+ *
+ * Sem envio de rede: so monta o job e enfileira, exatamente como o fechamento faz. Quem
+ * envia e a passada da fila logo em seguida. Devolve quantas voltaram.
+ */
+export function reenqueueOperationsMissingOmieJob(
+  database: DesktopDatabase,
+  now: Date = new Date()
+): number {
+  const pendentes = listOperationsPendingOmiePush(database, now);
+  const nowIso = now.toISOString();
+  let reenfileiradas = 0;
+
+  for (const pendente of pendentes) {
+    const built = buildOmieBillingJob(database, pendente.id);
+    // Ainda sem o que enviar (cliente sem codigo OMIE e sem documento): segue esperando
+    // a correcao do cadastro, marcada na propria operacao.
+    if (!built) continue;
+
+    enqueueOmieBillingJob(database, pendente.id, built, now);
+    // A pesagem podia estar exibida como "cadastro incompleto" na Conferencia de
+    // faturamento; agora ha job, entao a tela precisa dizer que ela voltou a andar.
+    database
+      .prepare(
+        `UPDATE weighing_operations
+            SET omie_billing_status = NULL,
+                omie_billing_message = ?,
+                updated_at = ?
+          WHERE id = ? AND omie_billing_status = 'cadastro_incompleto'`
+      )
+      .run("Cadastro completo. O fechamento sera reenviado na sincronizacao.", nowIso, pendente.id);
+    reenfileiradas++;
+  }
+
+  return reenfileiradas;
+}
+
 // Codigo de integracao do consumidor final padrao do OMIE (registro protegido).
 function isOmieConsumidorIntegrationCode(code: string | null): boolean {
   return (code ?? "").trim().toUpperCase() === "CONSUMIDOR";
@@ -7897,12 +8016,12 @@ async function sendCadastroBatch(
   entity: CadastroPushEntity,
   payload: Array<Record<string, unknown>>,
   errors: string[]
-): Promise<{ pushed: number; systemicFailure: boolean }> {
-  if (payload.length === 0) return { pushed: 0, systemicFailure: false };
+): Promise<{ pushed: number; systemicFailure: boolean; settled: number }> {
+  if (payload.length === 0) return { pushed: 0, systemicFailure: false, settled: 0 };
 
   try {
     await invokeDesktopSync(settings, { [entity.key]: payload });
-    return { pushed: payload.length, systemicFailure: false };
+    return { pushed: payload.length, systemicFailure: false, settled: payload.length };
   } catch (error) {
     if (payload.length === 1) {
       errors.push(
@@ -7910,31 +8029,44 @@ async function sendCadastroBatch(
           error instanceof Error ? error.message : "falha ao enviar"
         }`
       );
-      return { pushed: 0, systemicFailure: true };
+      return { pushed: 0, systemicFailure: true, settled: 0 };
     }
   }
 
   let pushed = 0;
   let failed = 0;
+  // Quantas linhas do INICIO do lote ja tiveram desfecho definitivo — entregues, ou
+  // recusadas pelo proprio dado. So ate aqui o cursor pode andar: passar de uma linha
+  // que a QUEDA derrubou seria abandona-la para sempre, porque o cursor so anda para
+  // a frente e a proxima consulta pede `cursor_at > @cursorAt`.
+  let settled = 0;
   for (const row of payload) {
     try {
       await invokeDesktopSync(settings, { [entity.key]: [row] });
       pushed++;
+      settled++;
     } catch (error) {
+      const message = error instanceof Error ? error.message : "falha ao enviar";
+      errors.push(`Cadastro ${entity.label} (${String(row.id)}): ${message}`);
+      // A outra ponta caiu no meio do lote: para a rodada AQUI. A mesma linha sobe
+      // intacta no proximo ciclo — o dado nao tem nada de errado. Sem isto, bastava
+      // uma linha passar para o cursor pular todo o resto do lote: o preco cadastrado
+      // durante a queda ficava so na balanca que o digitou, para sempre e em silencio.
+      if (isOutageFault(message)) {
+        return { pushed, systemicFailure: true, settled };
+      }
       failed++;
-      errors.push(
-        `Cadastro ${entity.label} (${String(row.id)}): ${
-          error instanceof Error ? error.message : "falha ao enviar"
-        }`
-      );
+      // Recusa do proprio dado (4xx): a linha esta reportada em `errors` e o cursor
+      // pode passar por ela, senao o cadastro inteiro trava atras de um registro ruim.
+      settled++;
       // Nada passou ate agora: e falha sistemica, nao adianta insistir linha a linha.
       if (pushed === 0 && failed >= CADASTRO_PUSH_SYSTEMIC_PROBE) {
-        return { pushed, systemicFailure: true };
+        return { pushed, systemicFailure: true, settled: 0 };
       }
     }
   }
 
-  return { pushed, systemicFailure: pushed === 0 };
+  return { pushed, systemicFailure: pushed === 0, settled };
 }
 
 /**
@@ -7996,20 +8128,32 @@ export async function pushSharedCadastroToCloud(
 
       if (rows.length === 0) break;
 
-      const mapped = rows
-        .map((row) => entity.map(row, settings.companyId))
-        .filter((row) => Boolean(row.id));
+      // Linha local e payload andam em PAR: `sendCadastroBatch` devolve ate onde o
+      // cursor pode ir contando posicoes do payload, e o cursor e gravado a partir da
+      // linha local correspondente. Mapear e filtrar separado desalinharia os dois
+      // assim que uma linha caisse no filtro.
+      const pares = rows
+        .map((row) => ({ row, mapped: entity.map(row, settings.companyId) }))
+        .filter((par) => Boolean(par.mapped.id));
+      const mapped = pares.map((par) => par.mapped);
       const payload = stripColumns ? stripMasteredColumns(mapped, stripColumns) : mapped;
 
       const sent = await sendCadastroBatch(settings, entity, payload, errors);
       pushed += sent.pushed;
-      // Falha sistemica (nuvem fora do ar, tabela ausente): mantem o cursor onde
-      // esta para o proximo ciclo tentar o mesmo lote de novo.
-      if (sent.systemicFailure) break;
 
-      const last = rows[rows.length - 1];
-      cursor = { at: String(last.cursor_at ?? ""), id: String(last.id ?? "") };
-      writeCadastroPushCursor(database, entity.key, cursor);
+      // O cursor anda somente ate a ultima linha com desfecho definitivo. Quando a
+      // queda interrompe o lote no meio, o que ficou para tras continua atras do
+      // cursor e volta no proximo ciclo.
+      const avancados = Math.min(sent.settled, pares.length);
+      if (avancados > 0) {
+        const ultima = pares[avancados - 1].row;
+        cursor = { at: String(ultima.cursor_at ?? ""), id: String(ultima.id ?? "") };
+        writeCadastroPushCursor(database, entity.key, cursor);
+      }
+
+      // Falha sistemica (nuvem fora do ar, tabela ausente): o proximo ciclo repete
+      // dali para a frente.
+      if (sent.systemicFailure) break;
 
       if (rows.length < batchSize) break;
     }

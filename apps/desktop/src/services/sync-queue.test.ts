@@ -16,6 +16,7 @@ import {
   markSyncJobFailed,
   pruneCompletedSyncJobs,
   rearmJobsDeadLetteredByOutage,
+  releaseOutageBackoff,
   resetOmieQueueJobForRetry,
   SYNC_RETRY_BASE_MS,
   SYNC_RETRY_MAX_MS
@@ -478,6 +479,91 @@ describe("queda de conexao na fila", () => {
       }
 
       expect(getSyncJobById(database, job.id)?.status).toBe("dead_letter");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("o resgate nao e sufocado por uma multidao de jobs mortos pelo dado", () => {
+    const database = createMigratedDatabase();
+
+    try {
+      // 250 jobs mortos por falha do DADO (mais que a pagina interna de 200) e, no
+      // fim da ordenacao por id, UM morto por queda. Com um LIMIT cru no topo, os
+      // primeiros ocupavam todas as vagas e o de queda nunca era alcancado.
+      for (let i = 0; i < 250; i++) {
+        const job = enqueueSyncJob(database, {
+          id: `job-dado-${String(i).padStart(4, "0")}`,
+          target: "omie",
+          action: "create_and_bill_order",
+          entityType: "weighing_operation",
+          entityId: `op-dado-${i}`,
+          idempotencyKey: `omie:op-dado-${i}:bill`,
+          payload: { operationId: `op-dado-${i}` }
+        });
+        database
+          .prepare("UPDATE sync_queue SET status = 'dead_letter', last_error = ? WHERE id = ?")
+          .run("Cliente nao cadastrado para o Codigo [codigo_cliente]", job.id);
+      }
+      const queda = enqueueSyncJob(database, {
+        id: "job-zz-queda",
+        target: "omie",
+        action: "create_and_bill_order",
+        entityType: "weighing_operation",
+        entityId: "op-queda",
+        idempotencyKey: "omie:op-queda:bill",
+        payload: { operationId: "op-queda" }
+      });
+      database
+        .prepare("UPDATE sync_queue SET status = 'dead_letter', last_error = ? WHERE id = ?")
+        .run("Cadastro indisponivel no momento (HTTP 503)", queda.id);
+
+      expect(rearmJobsDeadLetteredByOutage(database)).toBe(1);
+      expect(getSyncJobById(database, queda.id)?.status).toBe("pending");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("quando a conexao volta, o backoff da queda perde o motivo — e so ele", () => {
+    const database = createMigratedDatabase();
+
+    try {
+      const criar = (id: string, erro: string) => {
+        const job = enqueueSyncJob(database, {
+          id,
+          target: "cloud",
+          action: "upsert_operation",
+          entityType: "operation",
+          entityId: id,
+          idempotencyKey: `cloud:${id}`,
+          payload: { operationId: id }
+        });
+        markSyncJobFailed(database, job.id, erro);
+        return job.id;
+      };
+
+      // Esperando so a nuvem voltar: tem de ser liberado.
+      const queda = criar("job-queda", "Cadastro indisponivel no momento (HTTP 503)");
+      // Falhou pelo proprio dado: esperar nao muda nada, o backoff continua.
+      const dado = criar("job-dado", "violates foreign key constraint");
+      // Travado esperando o operador corrigir o cadastro: nao e da internet.
+      const travado = criar("job-travado", "Cadastro indisponivel no momento (HTTP 503)");
+      markSyncJobBlocked(database, travado, "Para emitir a NF-e falta preencher o endereco");
+
+      const antesDaLiberacao = getSyncJobById(database, queda);
+      expect(Date.parse(antesDaLiberacao!.nextAttemptAt)).toBeGreaterThan(Date.now());
+
+      expect(releaseOutageBackoff(database)).toBe(1);
+
+      const liberado = getSyncJobById(database, queda);
+      expect(Date.parse(liberado!.nextAttemptAt)).toBeLessThanOrEqual(Date.now());
+      // A tentativa NAO e zerada: se a queda nao acabou, o backoff segue de onde parou.
+      expect(liberado!.attemptCount).toBe(antesDaLiberacao!.attemptCount);
+      expect(listRunnableSyncJobs(database, { target: "cloud" }).map((j) => j.id)).toContain(queda);
+
+      expect(Date.parse(getSyncJobById(database, dado)!.nextAttemptAt)).toBeGreaterThan(Date.now());
+      expect(getSyncJobById(database, travado)!.nextAttemptAt).toBe(BLOCKED_NEXT_ATTEMPT_AT);
     } finally {
       database.close();
     }

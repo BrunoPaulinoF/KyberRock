@@ -61,7 +61,9 @@ import {
   listOmieQueueItems,
   listRunnableSyncJobs,
   pruneCompletedSyncJobs,
+  countJobsWaitingOnOutage,
   rearmJobsDeadLetteredByOutage,
+  releaseOutageBackoff,
   resetOmieQueueJobForRetry,
   type OmieQueueItem
 } from "./sync-queue.js";
@@ -154,6 +156,8 @@ import {
   syncOperationToSupabase,
   syncLoadingRequestToSupabase,
   listOperationsPendingCloudPush,
+  reenqueueOperationsMissingOmieJob,
+  OMIE_BILLING_STATUS_DO_NOT_SEND,
   syncOmieReferenceDataFromCloud,
   syncCustomerAdvancesFromCloud,
   type CustomerAdvancesSyncResult,
@@ -910,7 +914,7 @@ export class DesktopRuntime {
     const entryReading =
       this.pendingScaleCaptures.consume(input.scaleCaptureId, { operationType: "entry" }) ??
       (await this.captureStableWeight({ operationType: "entry" }));
-    await advanceSync;
+    await withCloudPrecheckTimeout(advanceSync);
 
     const operation = createWeighingOperation(this.database, {
       identity: this.ensureIdentity(),
@@ -983,7 +987,7 @@ export class DesktopRuntime {
     const exitReading =
       this.pendingScaleCaptures.consume(scaleCaptureId, { operationType: "exit", operationId }) ??
       (await this.captureStableWeight({ operationType: "exit" }));
-    await advanceSync;
+    await withCloudPrecheckTimeout(advanceSync);
 
     const operation = closeWeighingOperation(this.database, {
       operationId,
@@ -994,7 +998,7 @@ export class DesktopRuntime {
     // Best-effort: completa o cadastro do cliente para NF-e (busca por CNPJ + e-mail
     // padrao) em vez de deixar o faturamento pendente por falta de dados. Nao bloqueia
     // nem falha o fechamento se a busca nao der certo.
-    await this.autoCompleteCustomerForNfe(operationId).catch(() => undefined);
+    await withCloudPrecheckTimeout(this.autoCompleteCustomerForNfe(operationId));
     this.triggerOperationCloudPush("exit_registered", operationId);
     // O pedido/OS do fechamento vai para o OMIE imediatamente (apenas os jobs desta
     // operacao), sem esperar a varredura completa de sincronizacao.
@@ -1785,10 +1789,81 @@ export class DesktopRuntime {
         );
       }
 
+      // A conexao voltou? Entao o backoff nao tem mais motivo. Sem isto, o envio que
+      // acumulou tentativas durante a queda ficava ate 15 minutos parado depois de a
+      // internet voltar — para a pedreira, "voltou e nao subiu nada". O ping so e
+      // gasto quando ha alguem esperando, e e ele que separa "a nuvem respondeu" de
+      // "estou adivinhando".
+      try {
+        if (countJobsWaitingOnOutage(this.database) > 0 && (await pingSupabase())) {
+          const liberados = releaseOutageBackoff(this.database);
+          if (liberados > 0) {
+            this.recordTechnicalLog(
+              "info",
+              "cloud-sync",
+              `Conexao restabelecida: ${liberados} envio(s) saem do backoff agora.`,
+              { liberados }
+            );
+          }
+        }
+      } catch (error) {
+        errors.push(
+          `Liberacao do backoff: ${error instanceof Error ? error.message : "erro desconhecido"}`
+        );
+      }
+
       const queue = await processCloudSyncQueue(this.database, identity);
       synced += queue.processed;
       failed += queue.failed;
       errors.push(...queue.errors);
+
+      // Rede de seguranca do OMIE, ANTES de drenar a fila para o que voltar hoje
+      // subir no mesmo ciclo. Recoloca na fila o fechamento que nao chegou ao OMIE e
+      // ficou sem job nenhum (apagado por engano na tela Cloud, podado, banco
+      // restaurado) e o que nasceu sem job por falta de documento do cliente e ja foi
+      // corrigido. E o simetrico do que `listOperationsPendingCloudPush` faz para a
+      // nuvem: quem sabe se o pedido existe la e a OPERACAO, nao o job.
+      try {
+        const reenfileiradas = reenqueueOperationsMissingOmieJob(this.database);
+        if (reenfileiradas > 0) {
+          this.recordTechnicalLog(
+            "info",
+            "omie-sync",
+            `Fila OMIE: ${reenfileiradas} fechamento(s) sem job voltaram para a fila.`,
+            { reenfileiradas }
+          );
+        }
+      } catch (error) {
+        errors.push(
+          `Rede de seguranca OMIE: ${error instanceof Error ? error.message : "erro desconhecido"}`
+        );
+      }
+
+      // Cadastro que o OMIE precisa conhecer (cliente e transportadora com
+      // `needs_push`). Antes so subia no botao "Sincronizar OMIE": o cliente
+      // cadastrado durante a queda so entrava la quando um caminhao dele pesava, e a
+      // correcao de endereco de um cliente que JA existe no OMIE nunca chegava — a
+      // NF-e continuava saindo com o dado velho. Best-effort, como os demais passos.
+      try {
+        const customerPush = await pushOmieCustomersToCloud(this.database, identity);
+        synced += customerPush.pushed;
+        failed += customerPush.failed;
+        errors.push(...customerPush.errors);
+      } catch (error) {
+        errors.push(
+          `Cadastro de clientes no OMIE: ${error instanceof Error ? error.message : "erro desconhecido"}`
+        );
+      }
+      try {
+        const carrierPush = await pushOmieCarriersToCloud(this.database, identity);
+        synced += carrierPush.pushed;
+        failed += carrierPush.failed;
+        errors.push(...carrierPush.errors);
+      } catch (error) {
+        errors.push(
+          `Cadastro de transportadoras no OMIE: ${error instanceof Error ? error.message : "erro desconhecido"}`
+        );
+      }
 
       // Fila OMIE (pedidos/OS dos fechamentos): processada junto da sincronizacao
       // cloud — que roda logo apos cada fechamento e no agendador — para o envio ao
@@ -1913,8 +1988,15 @@ export class DesktopRuntime {
       try {
         const cadastroPush = await pushSharedCadastroToCloud(this.database, identity);
         synced += cadastroPush.pushed;
+        // O cadastro e a UNICA rede de 20 entidades (transportadora, motorista,
+        // veiculo, vinculos, precos, movimentos de credito). Enquanto o erro dele nao
+        // contava como falha, `success` continuava true, o log tecnico de
+        // `triggerBackgroundCloudSync` nunca disparava e o unico lugar onde a falha
+        // aparecia era o retorno do botao "Sincronizar agora" — ou seja, ninguem via.
+        failed += cadastroPush.errors.length;
         errors.push(...cadastroPush.errors);
       } catch (error) {
+        failed++;
         errors.push(
           `Cadastro compartilhado: ${error instanceof Error ? error.message : "Unknown error"}`
         );
@@ -4242,6 +4324,31 @@ export class DesktopRuntime {
     const job = getSyncJobById(this.database, jobId);
     const deleted = deleteOmieQueueJob(this.database, jobId);
     if (deleted) {
+      // A decisao precisa ficar na OPERACAO, nao so na ausencia do job: a rede de
+      // seguranca do OMIE (`reenqueueOperationsMissingOmieJob`) procura exatamente
+      // por fechamento sem job, e sem esta marca ela desfaria a exclusao no ciclo
+      // seguinte — o operador clicaria de novo, e de novo.
+      if (
+        job?.entityId &&
+        (job.action === "create_order" || job.action === "create_and_bill_order")
+      ) {
+        this.database
+          .prepare(
+            `UPDATE weighing_operations
+                SET omie_billing_status = ?,
+                    omie_billing_message = ?,
+                    updated_at = ?
+              WHERE id = ?
+                AND omie_sales_order_id IS NULL
+                AND omie_service_order_id IS NULL`
+          )
+          .run(
+            OMIE_BILLING_STATUS_DO_NOT_SEND,
+            "Envio ao OMIE removido da fila pelo operador.",
+            new Date().toISOString(),
+            job.entityId
+          );
+      }
       this.recordTechnicalLog("info", "omie-sync", "Item removido da fila OMIE pelo operador.", {
         jobId,
         action: job?.action ?? null,
@@ -4977,6 +5084,43 @@ function escapeHtml(value: string): string {
  */
 function resolveReadinessType(operationType?: OperationType): OmieReadinessOperationType {
   return operationType === "internal" ? "internal" : "invoice";
+}
+
+/**
+ * Teto de espera para a conferencia que roda ANTES da gravacao local.
+ *
+ * A regra guia do sistema (`docs/ARCHITECTURE.md`) e que a pesagem nasce e fecha no
+ * SQLite ANTES de qualquer sincronizacao. Duas conferencias de nuvem furavam isso: com
+ * o banco da nuvem degradado, a Edge Function fica pendurada e o `fetch` do Electron so
+ * desiste no timeout padrao do undici — MINUTOS. Nesse tempo a operacao nao existe no
+ * SQLite, o caminhao esta em cima da balanca e a tela diz "Fechando operacao...". Se o
+ * operador achar que travou e matar o app, o peso de saida capturado se perde: ele so
+ * existe em memoria ate o fechamento gravar.
+ *
+ * O `.catch` de quem chama ja tratava ERRO; o que faltava era teto para LATENCIA. A
+ * promessa NAO e cancelada — ela segue em segundo plano com o proprio catch e, se
+ * responder depois, o efeito dela (o abatimento) e idempotente por operacao.
+ */
+const CLOUD_PRECHECK_TIMEOUT_MS = 5_000;
+
+function withCloudPrecheckTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs = CLOUD_PRECHECK_TIMEOUT_MS
+): Promise<T | undefined> {
+  return new Promise<T | undefined>((resolve) => {
+    const timer = setTimeout(() => resolve(undefined), timeoutMs);
+    // `unref` existe no Node/Electron: um teto pendente nao pode segurar o encerramento.
+    (timer as unknown as { unref?: () => void }).unref?.();
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        resolve(undefined);
+      });
+  });
 }
 
 function buildScaleCaptureAudit(reading: ScaleReading): ScaleCaptureAudit {

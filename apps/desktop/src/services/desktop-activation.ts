@@ -384,6 +384,31 @@ export async function validateDesktopAccess(
       throw new Error(error.message || "Falha ao validar acesso.");
     }
 
+    // Resposta 200 nao e, por si so, veredito da nuvem. Com o link caido e o 4G
+    // com portal cativo (ou um proxy do provedor no meio), `navigator.onLine`
+    // continua true e a chamada volta 200 com uma pagina HTML. Sem esta checagem
+    // isso virava `canOperate: false`, a tela travava em BLOQUEADO e — pior — o
+    // `clearAccessLastError` logo abaixo apagava o unico sinal de que quem nao
+    // respondeu foi a nuvem, entao a tela ainda mandava o operador REATIVAR.
+    // Veredito e so o que traz `allowed` booleano, que e o contrato do
+    // `desktop-status`. Qualquer outra coisa segue o mesmo caminho do `catch`:
+    // prazo offline de 7 dias.
+    const verdict =
+      data &&
+      typeof data === "object" &&
+      typeof (data as DesktopStatusResponse).allowed === "boolean"
+        ? (data as DesktopStatusResponse)
+        : null;
+    if (!verdict) {
+      writeLocalSetting(
+        database,
+        ACCESS_LAST_ERROR_KEY,
+        "Resposta inesperada da nuvem ao validar o acesso.",
+        now.toISOString()
+      );
+      return buildOfflineStatus(database, stored, now);
+    }
+
     const status = data?.status ?? "validation_error";
     const message = data?.message ?? "Falha ao validar acesso.";
     // Resposta da nuvem obtida: o bloqueio (ou a liberacao) vale como verdade.

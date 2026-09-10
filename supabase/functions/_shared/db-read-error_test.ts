@@ -45,6 +45,39 @@ describe("isUnknownColumnError", () => {
   });
 });
 
+describe("isUnknownColumnError nao engole incidente de infraestrutura", () => {
+  // Um `/does not exist/` solto casava com estes tres e fazia isReadUnavailable
+  // devolver false — a funcao respondia 200 "invalid_device" e a pedreira parava.
+  it("tabela ausente e indisponibilidade, nao coluna pendente", () => {
+    const erro = {
+      code: "42P01",
+      message: 'relation "public.device_registrations" does not exist'
+    };
+    expect(isUnknownColumnError(erro)).toBe(false);
+    expect(isReadUnavailable(erro)).toBe(true);
+  });
+
+  it("banco ausente e indisponibilidade", () => {
+    const erro = { code: "3D000", message: 'database "postgres" does not exist' };
+    expect(isUnknownColumnError(erro)).toBe(false);
+    expect(isReadUnavailable(erro)).toBe(true);
+  });
+
+  it("role ausente e indisponibilidade", () => {
+    const erro = { message: 'role "authenticator" does not exist' };
+    expect(isUnknownColumnError(erro)).toBe(false);
+    expect(isReadUnavailable(erro)).toBe(true);
+  });
+
+  it("mas a coluna pendente de migracao continua reconhecida pela mensagem", () => {
+    expect(
+      isUnknownColumnError({
+        message: "column device_registrations.is_price_master does not exist"
+      })
+    ).toBe(true);
+  });
+});
+
 describe("isReadUnavailable", () => {
   it("sem erro nao ha indisponibilidade", () => {
     expect(isReadUnavailable(null)).toBe(false);
