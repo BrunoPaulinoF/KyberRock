@@ -5962,3 +5962,71 @@ Deno.test("check_order_billing busca as notas antes de conferir os pedidos", asy
   const calls = omieQueue.requests.map((request) => request.call);
   assertEquals(calls.indexOf("ListarNF") < calls.indexOf("ListarPedidos"), true);
 });
+
+/**
+ * A porta do OMIE tem de saber a diferenca entre "nao consegui ler o cadastro" e
+ * "esta balanca nao vale mais". Enquanto a leitura que falhava virava 401, a fila do
+ * desktop contava a tentativa e o pedido morria em `dead_letter` depois de ~2h de
+ * banco fora — justamente o cenario que o envio automatico existe para atravessar.
+ */
+Deno.test("leitura de cadastro que falha responde 503, e nao 401", async () => {
+  const quedaDoBanco = { message: "Connection terminated due to connection timeout" };
+  const createClient = () => ({
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          single: () => Promise.resolve({ data: null, error: quedaDoBanco })
+        })
+      })
+    })
+  });
+
+  const response = await handleOmieSyncRequest(
+    new Request("http://localhost/omie-sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        deviceId: "device-1",
+        deviceToken: "token-1",
+        action: "create_order",
+        payload: {}
+      })
+    }),
+    { createClient } as unknown as OmieSyncHandlerDependencies
+  );
+
+  assertEquals(response.status, 503);
+  const body = (await response.json()) as { error?: string };
+  // A frase importa: e um dos sinais que `outage-fault.ts` reconhece no desktop.
+  assertEquals(body.error, "Cadastro indisponivel no momento");
+});
+
+/** E o dispositivo que realmente nao existe continua sendo 401. */
+Deno.test("cadastro ausente continua respondendo 401", async () => {
+  const semLinha = { code: "PGRST116", message: "results contain 0 rows" };
+  const createClient = () => ({
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          single: () => Promise.resolve({ data: null, error: semLinha })
+        })
+      })
+    })
+  });
+
+  const response = await handleOmieSyncRequest(
+    new Request("http://localhost/omie-sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        deviceId: "device-1",
+        deviceToken: "token-1",
+        action: "create_order",
+        payload: {}
+      })
+    }),
+    { createClient } as unknown as OmieSyncHandlerDependencies
+  );
+
+  assertEquals(response.status, 401);
+});

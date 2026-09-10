@@ -34,13 +34,33 @@ export interface PostgrestLikeError {
   details?: string;
 }
 
+/**
+ * As tres funcoes recebem `unknown` de proposito.
+ *
+ * O erro chega de lugares com tipagens diferentes — o `omie-sync` injeta o cliente
+ * Supabase por dependencia e ali o erro e `unknown`; noutras funcoes ele vem tipado.
+ * Exigir a interface obrigaria um `as` em cada chamada, e um `as` no caminho que
+ * decide "a nuvem caiu ou o cadastro sumiu" e exatamente onde nao se quer mentir para
+ * o compilador. Aqui a forma e conferida em tempo de execucao, uma vez.
+ */
+function asPostgrestError(error: unknown): PostgrestLikeError | null {
+  if (!error || typeof error !== "object") return null;
+  const candidate = error as { code?: unknown; message?: unknown; details?: unknown };
+  return {
+    code: typeof candidate.code === "string" ? candidate.code : undefined,
+    message: typeof candidate.message === "string" ? candidate.message : undefined,
+    details: typeof candidate.details === "string" ? candidate.details : undefined
+  };
+}
+
 /** `.single()` sem nenhuma linha: o cadastro nao existe mesmo. */
-export function isMissingRowError(error: PostgrestLikeError | null | undefined): boolean {
-  if (!error) return false;
-  if (error.code === "PGRST116") return true;
+export function isMissingRowError(error: unknown): boolean {
+  const parsed = asPostgrestError(error);
+  if (!parsed) return false;
+  if (parsed.code === "PGRST116") return true;
   // Instalacoes antigas do PostgREST descrevem o mesmo caso na mensagem.
   return /0 rows|no rows|results contain 0 rows/i.test(
-    `${error.message ?? ""} ${error.details ?? ""}`
+    `${parsed.message ?? ""} ${parsed.details ?? ""}`
   );
 }
 
@@ -56,10 +76,11 @@ export function isMissingRowError(error: PostgrestLikeError | null | undefined):
  * exato bug de 09/09 que este arquivo existe para fechar, e no cenario mais
  * provavel de todos (o incidente logo depois de uma queda).
  */
-export function isUnknownColumnError(error: PostgrestLikeError | null | undefined): boolean {
-  if (!error) return false;
-  if (error.code === "42703" || error.code === "PGRST204") return true;
-  const message = error.message ?? "";
+export function isUnknownColumnError(error: unknown): boolean {
+  const parsed = asPostgrestError(error);
+  if (!parsed) return false;
+  if (parsed.code === "42703" || parsed.code === "PGRST204") return true;
+  const message = parsed.message ?? "";
   return (
     /column\s+[^\s]*\s*does not exist/i.test(message) ||
     /could not find the '[^']+' column of/i.test(message)
@@ -72,7 +93,7 @@ export function isUnknownColumnError(error: PostgrestLikeError | null | undefine
  * Vale para queda de conexao, timeout, 5xx do gateway e tambem para erro sem
  * codigo conhecido — ver a nota do topo sobre por que o desconhecido cai aqui.
  */
-export function isReadUnavailable(error: PostgrestLikeError | null | undefined): boolean {
+export function isReadUnavailable(error: unknown): boolean {
   if (!error) return false;
   return !isMissingRowError(error) && !isUnknownColumnError(error);
 }
