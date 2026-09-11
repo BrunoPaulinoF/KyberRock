@@ -2069,6 +2069,8 @@ export class DesktopRuntime {
         reconnectIntervalMs: SCALE_CONNECTION_TUNING.reconnectIntervalMs,
         maxReconnectAttempts: SCALE_CONNECTION_TUNING.maxReconnectAttempts,
         reconnectBackoffMaxMs: SCALE_CONNECTION_TUNING.reconnectBackoffMaxMs,
+        reconnectFastAttempts: SCALE_CONNECTION_TUNING.reconnectFastAttempts,
+        reconnectFastIntervalMs: SCALE_CONNECTION_TUNING.reconnectFastIntervalMs,
         staleReadingMs: SCALE_CONNECTION_TUNING.staleReadingMs,
         silenceRotateMs: SCALE_CONNECTION_TUNING.silenceRotateMs
       });
@@ -2083,6 +2085,8 @@ export class DesktopRuntime {
       reconnectIntervalMs: SCALE_CONNECTION_TUNING.reconnectIntervalMs,
       maxReconnectAttempts: SCALE_CONNECTION_TUNING.maxReconnectAttempts,
       reconnectBackoffMaxMs: SCALE_CONNECTION_TUNING.reconnectBackoffMaxMs,
+      reconnectFastAttempts: SCALE_CONNECTION_TUNING.reconnectFastAttempts,
+      reconnectFastIntervalMs: SCALE_CONNECTION_TUNING.reconnectFastIntervalMs,
       staleReadingMs: SCALE_CONNECTION_TUNING.staleReadingMs,
       silenceRotateMs: SCALE_CONNECTION_TUNING.silenceRotateMs
     });

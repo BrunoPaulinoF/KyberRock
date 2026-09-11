@@ -41,6 +41,16 @@ export interface ToledoTcpConfig {
    */
   reconnectBackoffMaxMs?: number;
   /**
+   * Quantas primeiras tentativas de reconexao usam `reconnectFastIntervalMs` antes
+   * de o backoff exponencial assumir. Padrao: nenhuma (curva historica).
+   * Existe porque a queda do meio do expediente quase sempre dura poucos segundos
+   * — o conversor segurando a sessao antiga — e a curva que comeca em 5s e dobra
+   * deixava o app dormindo 20s ou 30s com a balanca ja livre. Ver `reconnectDelayMs`.
+   */
+  reconnectFastAttempts?: number;
+  /** Intervalo constante dentro da janela rapida (ms). */
+  reconnectFastIntervalMs?: number;
+  /**
    * Silencio maximo tolerado com o socket aberto (ms). Padrao: 4000.
    * Indicadores em transmissao continua enviam varios quadros por segundo; passar
    * deste tempo sem quadro significa conexao morta (socket meio-aberto ou sessao
@@ -85,6 +95,16 @@ export interface ToledoSerialConfig {
    * tentativa ate este limite; omitido, fica constante em `reconnectIntervalMs`.
    */
   reconnectBackoffMaxMs?: number;
+  /**
+   * Quantas primeiras tentativas de reconexao usam `reconnectFastIntervalMs` antes
+   * de o backoff exponencial assumir. Padrao: nenhuma (curva historica).
+   * Existe porque a queda do meio do expediente quase sempre dura poucos segundos
+   * — o conversor segurando a sessao antiga — e a curva que comeca em 5s e dobra
+   * deixava o app dormindo 20s ou 30s com a balanca ja livre. Ver `reconnectDelayMs`.
+   */
+  reconnectFastAttempts?: number;
+  /** Intervalo constante dentro da janela rapida (ms). */
+  reconnectFastIntervalMs?: number;
   /** Silencio maximo tolerado com a porta aberta (ms). Padrao: 4000. */
   staleReadingMs?: number;
   /**

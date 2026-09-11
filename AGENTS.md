@@ -745,6 +745,32 @@ promocao so fica no GitHub ate ele existir.
    `dist:win:ci` (usado pelo CI, `--publish never`) e `dist:win:publish` (`--publish always`,
    mantido para publicacao manual de emergencia).
 
+## Balanca por IP: a espera entre tentativas era o que parava a pesagem
+
+O caminho de recuperacao da balanca por rede ja existia inteiro — watchdog de silencio,
+rotacao da sessao, reconexao sem limite de tentativas. O que faltava era o COMECO da curva de
+espera. O conversor serial<->TCP aceita **uma sessao por vez** e, depois de a rede piscar, segura
+a sessao antiga por alguns segundos antes de liberar; ate la ele recusa o app. Com a curva
+comecando em 5s e dobrando (5, 10, 20, 30), a terceira recusa ja marcava a proxima tentativa para
+20s depois — e o app dormia a soneca inteira com o conversor livre desde muito antes. Medido num
+conversor simulado: porta liberada aos 23s, reconexao so aos 38s. Com o caminhao em cima da
+balanca, esses segundos sao a pesagem indo para o papel, e um dia de rede instavel deixa o app a
+maior parte do tempo esperando — porque `reconnectCount` so zera quando byte de verdade chega,
+nunca quando a sessao apenas abre.
+
+`reconnectDelayMs` ganhou uma **janela de tentativas rapidas** (`reconnectFastAttempts` /
+`reconnectFastIntervalMs`, 15 x 2s no desktop) antes de o backoff engatar: numa rede local um SYN
+a cada 2s nao custa nada, e 30s de janela cobrem a folga de qualquer conversor liberando a sessao.
+Passada a janela a curva de sempre assume **do intervalo base** — contar o expoente desde a
+tentativa 1 cobraria a janela em dobro e saltaria direto para o teto, devolvendo o problema — e
+chega aos mesmos 30s em pouco mais de um minuto: balanca desligada a noite toda continua sendo
+tentada de 30 em 30s. Sem as opcoes, a curva historica nao muda (a varredura da rede depende disso).
+
+O socket tambem passou a ligar o **keepalive do TCP** (10s). Quando o outro lado SOME sem fechar a
+sessao — switch reiniciando, Wi-Fi piscando, conversor reiniciado — o sistema operacional nunca
+descobria sozinho: o socket ficava meio-aberto e mudo, e a unica coisa que resgatava a balanca era
+a rotacao de 45s do watchdog. Com a sonda do sistema a queda vira erro de socket em segundos.
+
 ## Porta serial muda nao trava mais a balanca
 
 O adaptador TCP ja vigiava o silencio em dois estagios (`staleReadingMs` mata o peso exibido,

@@ -247,7 +247,10 @@ export function createToledoSerialAdapter(
           });
         }
       },
-      reconnectDelayMs(reconnectCount, interval, config.reconnectBackoffMaxMs)
+      reconnectDelayMs(reconnectCount, interval, config.reconnectBackoffMaxMs, {
+        fastAttempts: config.reconnectFastAttempts,
+        fastIntervalMs: config.reconnectFastIntervalMs
+      })
     );
   }
 

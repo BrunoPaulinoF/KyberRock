@@ -64,6 +64,21 @@ export const SCALE_CONNECTION_TUNING = {
    */
   reconnectBackoffMaxMs: 30_000,
   /**
+   * Janela de tentativas rapidas antes de o backoff engatar. A queda do meio do
+   * expediente quase sempre dura poucos segundos — o conversor serial<->TCP aceita
+   * uma sessao por vez e segura a antiga por um tempo depois de a rede piscar,
+   * recusando o app ate liberar. Com a curva comecando em 5s e dobrando, a terceira
+   * recusa ja marcava a proxima tentativa para 20s depois, e o app dormia a soneca
+   * inteira com o conversor livre desde muito antes: medido num conversor simulado,
+   * porta liberada aos 23s e reconexao so aos 38s. Numa rede local tentar de novo
+   * nao custa nada — um SYN a cada 2s —, e 30s de janela cobrem a folga de qualquer
+   * conversor liberando a sessao. Passado isso a queda ja e longa e a curva de
+   * sempre assume, chegando ao mesmo teto de 30s em pouco mais de um minuto: a
+   * balanca desligada a noite toda continua sendo tentada de 30 em 30s, como antes.
+   */
+  reconnectFastAttempts: 15,
+  reconnectFastIntervalMs: 2000,
+  /**
    * Silencio maximo tolerado com a conexao aberta. Passado disso a leitura vence
    * — em vez de a tela seguir exibindo o peso do caminhao anterior.
    */
