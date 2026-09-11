@@ -52,6 +52,7 @@ export interface ScaleCaptureServiceConfig {
 /** Ultima condicao observada enquanto se aguardava a estabilizacao. */
 type WaitCondition =
   | "no_data"
+  | "disconnected"
   | "stale"
   | "unstable"
   | "zero"
@@ -94,9 +95,15 @@ export class ScaleCaptureService {
         reading = normalizeReading(await this.adapter.read(), this.adapterName, this.deviceId);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error("Falha desconhecida na balanca.");
-        // Perdeu a conexao: nao adianta insistir — o operador precisa reconectar.
-        if (isConnectionError(lastError)) throw lastError;
-        lastCondition = "read_error";
+        // Queda no meio da captura nao derruba a captura. Antes ela era abandonada no
+        // primeiro erro de conexao, e o adaptador passa por `connecting` em TODA
+        // reconexao automatica — uma queda de socket de 5s, a rotacao da sessao muda,
+        // um conversor que reabre a porta. O caminhao estava na balanca, o peso voltava
+        // segundos depois, e mesmo assim o operador recebia "balanca nao esta conectada"
+        // e digitava o peso no braco. Agora a espera continua dentro do MESMO tempo
+        // limite que ja existia: se a balanca voltar a tempo, o peso e capturado; se nao
+        // voltar, a mensagem de conexao aparece no fim, como antes.
+        lastCondition = isConnectionError(lastError) ? "disconnected" : "read_error";
       }
 
       const now = Date.now();
@@ -190,6 +197,11 @@ function buildTimeoutMessage(
       return "Balanca em sobrecarga ou fora de alcance. Retire o excesso de peso e capture novamente.";
     case "error":
       return "Balanca informou erro de leitura. Verifique o indicador e a conexao.";
+    case "disconnected":
+      return (
+        `${lastError?.message ?? "Balanca nao esta conectada."} ` +
+        "A reconexao automatica continua tentando em segundo plano."
+      );
     case "read_error":
       return `Nao foi possivel ler a balanca: ${lastError?.message ?? "falha desconhecida"}.`;
     case "stale":

@@ -75,6 +75,13 @@ export const DEFAULT_POLL_COMMANDS = ["\x05", "P\r\n", "W\r\n"];
 /** Intervalo entre comandos de sondagem enquanto nenhum byte chega. */
 export const DEFAULT_POLL_INTERVAL_MS = 1500;
 
+/**
+ * Silencio apos o qual o TCP comeca a sondar o outro lado por conta propria.
+ * E o que transforma "o conversor sumiu da rede" em erro de socket — sem isso a
+ * sessao meio-aberta so era descoberta pela rotacao de `silenceRotateMs`.
+ */
+const KEEPALIVE_IDLE_MS = 10_000;
+
 export interface ToledoTcpAdapter {
   /** Conectar ao indicador Toledo via TCP */
   connect(config: ToledoTcpConfig): Promise<void>;
@@ -351,7 +358,10 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
         // quem a aguarde, e sem tratamento virava unhandled rejection no processo main.
         if (config) void attemptConnect(config).catch(() => undefined);
       },
-      reconnectDelayMs(reconnectCount, interval, config.reconnectBackoffMaxMs)
+      reconnectDelayMs(reconnectCount, interval, config.reconnectBackoffMaxMs, {
+        fastAttempts: config.reconnectFastAttempts,
+        fastIntervalMs: config.reconnectFastIntervalMs
+      })
     );
   }
 
@@ -374,6 +384,16 @@ export function createToledoTcpAdapter(): ToledoTcpAdapter {
         // O timeout de socket cobre so a fase de conexao; a partir daqui quem vigia
         // o silencio e o watchdog de dados, que sabe distinguir conexao morta de peso parado.
         sock.setTimeout(0);
+        // Keepalive do proprio TCP. Sem ele, quando o outro lado SOME sem fechar a
+        // sessao — switch reiniciando, Wi-Fi piscando, conversor reiniciado — o
+        // sistema operacional nunca descobre: o socket fica meio-aberto e mudo, e a
+        // unica coisa que resgatava a balanca era a rotacao de 45s do watchdog. Com
+        // a sonda do sistema a queda vira erro em segundos e a reconexao comeca na
+        // hora. Num link parado e saudavel a sonda so custa um pacote a cada 10s.
+        sock.setKeepAlive(true, KEEPALIVE_IDLE_MS);
+        // Quadro de peso e pequeno e tem hora certa: juntar pacotes so atrasaria os
+        // comandos de sondagem enviados a um indicador em modo sob demanda.
+        sock.setNoDelay(true);
         armDataWatchdog();
         // Cada sessao comeca sem historico de trafego: o que chegou na anterior nao
         // diz nada sobre esta, e a sondagem precisa saber que ainda nao veio nada.

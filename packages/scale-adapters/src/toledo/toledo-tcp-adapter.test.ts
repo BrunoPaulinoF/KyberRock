@@ -493,3 +493,77 @@ describe("toledo-tcp-adapter falha de conexao", () => {
     expect(failure?.message).toContain(`porta ${closedPort}`);
   });
 });
+
+describe("toledo-tcp-adapter conversor que segura a sessao antiga", () => {
+  async function waitFor(check: () => boolean, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (check()) return true;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return check();
+  }
+
+  /**
+   * Conversor serial<->TCP como os de campo: aceita UMA sessao por vez e, depois de
+   * a rede piscar, continua segurando a porta por alguns segundos antes de liberar.
+   * Enquanto isso recusa qualquer cliente novo.
+   */
+  it("reconecta assim que o conversor libera a porta, sem dormir o backoff inteiro", async () => {
+    let live: Socket | null = null;
+    let bloqueado = false;
+    let sessoes = 0;
+
+    const server = createServer((socket) => {
+      socket.on("error", () => undefined);
+      if (live || bloqueado) {
+        socket.destroy();
+        return;
+      }
+      sessoes++;
+      live = socket;
+      const interval = setInterval(() => {
+        if (!socket.destroyed) socket.write("       000015200kg\r\n");
+      }, 30);
+      socket.on("close", () => {
+        clearInterval(interval);
+        if (live === socket) live = null;
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    const adapter = createToledoTcpAdapter();
+    await adapter.connect({
+      host: "127.0.0.1",
+      port,
+      reconnectIntervalMs: 500,
+      reconnectBackoffMaxMs: 3000,
+      reconnectFastAttempts: 60,
+      reconnectFastIntervalMs: 100,
+      maxReconnectAttempts: Number.POSITIVE_INFINITY
+    });
+    expect(await waitFor(() => adapter.getStatus().lastReading !== null, 2000)).toBe(true);
+
+    // A rede pisca: o conversor derruba a sessao e segura a porta.
+    bloqueado = true;
+    live?.destroy();
+    live = null;
+    expect(await waitFor(() => adapter.getStatus().state !== "connected", 2000)).toBe(true);
+
+    // Sem a janela rapida o backoff ja teria marcado a proxima tentativa para muito
+    // depois deste instante (500ms, 1500ms, 3500ms...), e a balanca ficaria parada
+    // com o conversor ja livre desde os 2000ms.
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const liberadoEm = Date.now();
+    bloqueado = false;
+
+    expect(await waitFor(() => adapter.getStatus().state === "connected", 4000)).toBe(true);
+    expect(Date.now() - liberadoEm).toBeLessThan(400);
+    expect(sessoes).toBe(2);
+    expect(await waitFor(() => adapter.getStatus().lastReading !== null, 2000)).toBe(true);
+
+    adapter.disconnect();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }, 20_000);
+});

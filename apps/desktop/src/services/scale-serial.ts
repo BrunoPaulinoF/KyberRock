@@ -119,6 +119,14 @@ export function createDesktopSerialTransportFactory(): SerialTransportFactory {
         instance.on("error", (error) => errorCallback?.(translateSerialError(error, path)));
         instance.on("close", () => closeCallback?.());
 
+        // Guardado ANTES de abrir. Atribuir so depois do sucesso deixava a instancia
+        // orfa quando `open` falhava no meio: `close()` nao tinha o que fechar, o
+        // handle da COM continuava preso a este processo e a tentativa seguinte batia
+        // em "A porta esta em uso por outro programa" — para sempre, ate alguem
+        // reiniciar o KyberRock. Com a reconexao automatica tentando sem limite, era
+        // uma instancia vazada por tentativa.
+        port = instance;
+
         await new Promise<void>((resolve, reject) => {
           instance.open((error) => {
             if (error) {
@@ -128,19 +136,24 @@ export function createDesktopSerialTransportFactory(): SerialTransportFactory {
             resolve();
           });
         });
-
-        port = instance;
       },
 
       close(): void {
         const current = port;
         port = null;
-        if (current?.isOpen) {
-          try {
-            current.close(() => undefined);
-          } catch {
-            // Fechar porta nunca deve derrubar o app
-          }
+        // Sem callbacks: uma porta abandonada nao pode continuar falando com o
+        // adaptador enquanto termina de fechar.
+        dataCallback = null;
+        errorCallback = null;
+        closeCallback = null;
+        if (!current) return;
+        try {
+          // `isOpen` era exigido aqui, e uma porta pega no meio da abertura (ou que o
+          // driver ja considera fechada mas ainda segura o handle) escapava sem nunca
+          // ser fechada. Fechar e idempotente o bastante para tentar sempre.
+          current.close(() => undefined);
+        } catch {
+          // Fechar porta nunca deve derrubar o app
         }
       },
 
