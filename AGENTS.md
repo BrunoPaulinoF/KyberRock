@@ -745,6 +745,21 @@ promocao so fica no GitHub ate ele existir.
    `dist:win:ci` (usado pelo CI, `--publish never`) e `dist:win:publish` (`--publish always`,
    mantido para publicacao manual de emergencia).
 
+## Procurar balanca na rede: porta aberta e muda tambem e achado
+
+A varredura so aceitava host que estivesse **transmitindo** peso dentro da janela, e era por isso
+que ela falhava justamente com quem mais precisa dela. Quem clica em "procurar balanca" e quem nao
+esta conseguindo conectar — e as duas causas mais comuns disso (a conexao unica do conversor
+ocupada por outro computador, e o indicador fora do modo de transmissao continua) produzem
+exatamente uma porta **ABERTA e MUDA**. A tela respondia "nenhuma balanca encontrada na rede local"
+com o conversor ali, respondendo, no endereco certo, e o operador ficava sem pista nenhuma.
+
+A porta aberta agora vira candidata: a varredura **nao para** por causa dela (quem transmite sempre
+ganha e encerra a busca na hora) e so a devolve se terminar o barrido sem achar nenhum transmissor.
+`DiscoveredScale.transmitting` separa os dois casos, porque a tela nao pode anunciar "balanca
+encontrada" para um aparelho que nao mandou peso — ela preenche o endereco e diz exatamente o que
+achou. `reading` passou a ser anulavel pelo mesmo motivo.
+
 ## Balanca por IP: a espera entre tentativas era o que parava a pesagem
 
 O caminho de recuperacao da balanca por rede ja existia inteiro — watchdog de silencio,

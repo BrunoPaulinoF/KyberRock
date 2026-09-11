@@ -2147,10 +2147,16 @@ export class DesktopRuntime {
     return this.captureStableWeight({ operationType: "entry" });
   }
 
-  async discoverScale(): Promise<{ host: string; port: number } | null> {
+  async discoverScale(): Promise<{
+    host: string;
+    port: number;
+    transmitting: boolean;
+  } | null> {
     const result = await discoverScale();
     if (!result) return null;
-    return { host: result.host, port: result.port };
+    // `transmitting` vai junto de proposito: porta aberta que nao mandou peso e uma
+    // pista boa, mas a tela nao pode anunciar isso como "balanca encontrada".
+    return { host: result.host, port: result.port, transmitting: result.transmitting };
   }
 
   getScaleStatus(): ToledoTcpAdapterStatus {

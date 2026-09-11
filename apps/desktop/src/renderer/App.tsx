@@ -12118,12 +12118,27 @@ function ScaleView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     setConfigMessage(null);
     try {
       const result = await desktopApi.scaleDiscover();
-      if (result) {
+      if (result?.transmitting) {
         setHost(result.host);
         setPort(String(result.port));
         setConfigMessage(`Balanca encontrada em ${result.host}:${result.port}`);
+      } else if (result) {
+        // Porta aberta que nao mandou peso. O endereco ja e o achado — dizer
+        // "encontrada" seria mentira, e mandar o operador embora de maos vazias
+        // com o conversor ali respondendo era pior ainda.
+        setHost(result.host);
+        setPort(String(result.port));
+        setConfigMessage(
+          `Aparelho encontrado em ${result.host}:${result.port}, mas ele nao enviou peso ` +
+            "durante a busca. O endereco foi preenchido. Quase sempre e a conexao da balanca " +
+            "ocupada por outro computador (ela aceita um de cada vez) ou o indicador fora do " +
+            "modo de transmissao continua."
+        );
       } else {
-        setError("Nenhuma balanca encontrada na rede local.");
+        setError(
+          "Nenhuma balanca encontrada na rede local. Confira se o indicador (ou o conversor " +
+            "de rede) esta ligado e se este computador esta na mesma rede da balanca."
+        );
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao procurar balanca");
