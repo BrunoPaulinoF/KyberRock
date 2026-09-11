@@ -6,7 +6,14 @@ import type { ScaleReading } from "@kyberrock/scale-adapters";
 export interface DiscoveredScale {
   host: string;
   port: number;
-  reading: ScaleReading;
+  /**
+   * Leitura recebida durante a sondagem, ou `null` quando a porta abriu e nada
+   * chegou dentro da janela. Ver `discoverScale`: o segundo caso tambem e uma
+   * pista util e nao pode continuar sendo descartado em silencio.
+   */
+  reading: ScaleReading | null;
+  /** `true` quando o host entregou peso de verdade — o achado ideal. */
+  transmitting: boolean;
 }
 
 /**
@@ -34,6 +41,23 @@ export function localSubnets(): string[] {
   return [...subnets];
 }
 
+/**
+ * Procura a balanca na rede local.
+ *
+ * A varredura so aceitava host que estivesse TRANSMITINDO peso dentro da janela, e
+ * so isso deixava a busca cega justamente em quem mais precisa dela. Quem clica em
+ * "procurar balanca" e quem nao esta conseguindo conectar — e as duas causas mais
+ * comuns disso (o conversor com a sessao unica ocupada por outro computador, e o
+ * indicador que nao esta em transmissao continua) produzem exatamente uma porta
+ * ABERTA e MUDA. A tela respondia "nenhuma balanca encontrada na rede local" com o
+ * conversor ali, respondendo, no endereco certo, e o operador ficava sem nenhuma
+ * pista para seguir.
+ *
+ * Agora a porta aberta e guardada como candidata: a varredura continua procurando
+ * quem transmite — esse sempre ganha —, e so devolve a candidata muda se terminar
+ * sem achar nenhum. `transmitting` diz qual dos dois casos aconteceu, para a tela
+ * poder falar a verdade em vez de afirmar que achou a balanca.
+ */
 export async function discoverScale(
   options: {
     subnet?: string;
@@ -60,16 +84,23 @@ export async function discoverScale(
     }
   }
 
+  // Primeira porta aberta que nao transmitiu. Vale menos que um host transmitindo,
+  // entao a varredura nao para por causa dela — so e usada se nada melhor aparecer.
+  let silentCandidate: DiscoveredScale | null = null;
+
   for (let i = 0; i < targets.length; i += batchSize) {
     const batch = targets.slice(i, i + batchSize);
     const results = await Promise.all(
       batch.map((target) => probeHost(target.host, target.port, timeoutMs))
     );
-    const found = results.find((r): r is DiscoveredScale => r !== null);
-    if (found) return found;
+    for (const result of results) {
+      if (!result) continue;
+      if (result.transmitting) return result;
+      silentCandidate ??= result;
+    }
   }
 
-  return null;
+  return silentCandidate;
 }
 
 async function probeHost(
@@ -104,10 +135,13 @@ async function probeHost(
     });
 
     adapter.disconnect();
-    return { host, port, reading };
+    return { host, port, reading, transmitting: true };
   } catch {
+    // Nao transmitiu dentro da janela. A conexao TCP em si pode ter dado certo — e
+    // isso ja identifica o aparelho, mesmo que o peso nao tenha vindo.
+    const opened = adapter.getStatus().state === "connected";
     adapter.disconnect();
-    return null;
+    return opened ? { host, port, reading: null, transmitting: false } : null;
   }
 }
 
