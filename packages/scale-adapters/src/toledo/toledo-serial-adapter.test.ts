@@ -210,8 +210,10 @@ describe("createToledoSerialAdapter", () => {
       expect(adapter.getStatus().state).toBe("connecting");
 
       // A balanca volta: a proxima tentativa agendada reconecta sem ninguem clicar.
+      // A janela e menor que o silencio que gira a porta (45s): o transporte falso
+      // nao envia byte nenhum, e passado esse tempo a porta muda e reaberta de proposito.
       openFailures.length = 0;
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(31_000);
 
       expect(transports.length).toBeGreaterThan(tentativasDurantePane);
       expect(adapter.getStatus().state).toBe("connected");
@@ -269,6 +271,59 @@ describe("createToledoSerialAdapter", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("reabre a porta que fica aberta e muda, e volta a pesar quando o indicador fala", async () => {
+    vi.useFakeTimers();
+    try {
+      const { adapter, transports } = createAdapterWithTransports();
+      await adapter.connect({
+        path: "COM3",
+        baudRate: 9600,
+        reconnectIntervalMs: 5000,
+        maxReconnectAttempts: Number.POSITIVE_INFINITY,
+        staleReadingMs: 4000,
+        silenceRotateMs: 45_000
+      });
+
+      transports[0]?.emitData("0000000  00018200k g\r\n");
+      expect(adapter.getStatus().state).toBe("connected");
+
+      // O indicador emudece com a porta ABERTA: cabo solto do lado dele, conversor USB
+      // que perde o canal. Nao ha `close` nem `error` — antes o adaptador ficava
+      // "connected" para sempre, toda captura falhava e so reiniciar o app resolvia.
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(adapter.getStatus().stale).toBe(true);
+      expect(transports).toHaveLength(1);
+
+      // Passado o silencio absoluto a porta e fechada e reaberta sozinha.
+      await vi.advanceTimersByTimeAsync(40_000);
+      expect(transports[0]?.closeCount).toBeGreaterThan(0);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(transports.length).toBeGreaterThan(1);
+
+      const reaberta = transports[transports.length - 1];
+      reaberta?.emitData("0000000  00018200k g\r\n");
+      const status = adapter.getStatus();
+      expect(status.state).toBe("connected");
+      expect(status.stale).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignora bytes de uma porta ja substituida", async () => {
+    const { adapter, transports } = createAdapterWithTransports();
+    await adapter.connect({ path: "COM3", baudRate: 9600 });
+    const antiga = transports[0];
+
+    adapter.disconnect();
+    antiga?.emitData("0000000  00018200k g\r\n");
+
+    // Porta abandonada nao publica peso nem convence o adaptador de que ha trafego.
+    expect(adapter.getStatus().receivingRawData).toBe(false);
+    expect(adapter.getStatus().lastReading).toBeNull();
   });
 
   it("disconnect closes the transport and clears state", async () => {

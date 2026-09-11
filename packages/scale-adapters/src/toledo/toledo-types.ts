@@ -87,6 +87,16 @@ export interface ToledoSerialConfig {
   reconnectBackoffMaxMs?: number;
   /** Silencio maximo tolerado com a porta aberta (ms). Padrao: 4000. */
   staleReadingMs?: number;
+  /**
+   * Silencio absoluto tolerado antes de fechar e reabrir a porta (ms). Padrao:
+   * 45000. Mesma regra do TCP (`ToledoTcpConfig.silenceRotateMs`), e pelo mesmo
+   * motivo: a porta COM continuava ABERTA depois que o indicador parava de
+   * transmitir (cabo solto no lado do indicador, conversor USB que perde o canal,
+   * indicador desligado e religado). Sem esta rotacao o adaptador ficava
+   * `connected` para sempre com leitura vencida, toda captura falhava e so
+   * reiniciar o aplicativo trazia o peso de volta.
+   */
+  silenceRotateMs?: number;
 }
 
 export interface ParsedToledoReading {

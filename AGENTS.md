@@ -745,6 +745,33 @@ promocao so fica no GitHub ate ele existir.
    `dist:win:ci` (usado pelo CI, `--publish never`) e `dist:win:publish` (`--publish always`,
    mantido para publicacao manual de emergencia).
 
+## Porta serial muda nao trava mais a balanca
+
+O adaptador TCP ja vigiava o silencio em dois estagios (`staleReadingMs` mata o peso exibido,
+`silenceRotateMs` fecha e reabre a sessao). O adaptador **serial nao tinha vigilancia nenhuma**, e
+esse era o buraco: uma porta COM/USB que fica **aberta e muda** — cabo solto do lado do indicador,
+conversor USB que perde o canal, indicador desligado e religado — nao emite `close` nem `error`.
+O adaptador ficava `connected` para sempre, `read()` respondia "sem leitura recente" em toda
+captura e a unica saida era reiniciar o aplicativo; ate la a pedreira pesava tudo no braco.
+`armDataWatchdog` agora existe nos dois runtimes e com a mesma regra, e a rotacao da porta e o que
+devolve o canal. Duas consequencias que nao podem ser desfeitas por engano: `clearLastReading` zera
+**so o peso** (o rastro de trafego bruto e o relogio do silencio — apagando junto, o contador
+voltava a zero a cada leitura vencida e a rotacao nunca acontecia), e os callbacks do transporte
+carregam o selo da geracao, porque uma porta que demora a fechar seguia alimentando `lastDataAt` de
+uma sessao ja abandonada.
+
+No transporte (`scale-serial.ts`) a instancia da `SerialPort` passa a ser guardada **antes** de
+abrir. Guardar so no sucesso deixava a instancia orfa quando `open` falhava no meio: `close()` nao
+tinha o que fechar, o handle da COM continuava preso ao processo e a tentativa seguinte batia em
+"a porta esta em uso por outro programa" para sempre. Com a reconexao automatica sem limite, era
+uma instancia vazada por tentativa. `close()` tambem deixou de exigir `isOpen` e solta os callbacks.
+
+E a captura (`scale-capture.ts`) nao desiste mais no primeiro erro de conexao: o adaptador passa
+por `connecting` em **toda** reconexao automatica, e abandonar ali entregava "balanca nao esta
+conectada" com o caminhao em cima da balanca e o peso voltando segundos depois. A espera continua
+dentro do mesmo tempo limite que ja existia — se a balanca nao voltar, a mensagem de conexao
+aparece no fim, como antes.
+
 ## Queda longa nao para a fila
 
 A operacao ja nascia e fechava no SQLite local antes de qualquer sincronizacao, e a
