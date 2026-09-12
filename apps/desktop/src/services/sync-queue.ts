@@ -439,41 +439,145 @@ export function markSyncJobFailed(
  * - o job neutralizado por cancelamento da operacao (`cancelPendingOmieJobs`), cuja
  *   mensagem nao e de rede — ressuscita-lo criaria no OMIE um pedido cancelado aqui.
  */
+/**
+ * Quantos envios estao apenas esperando o backoff passar.
+ *
+ * Barato de proposito (nao classifica mensagem): serve so para decidir se vale gastar
+ * um ping na nuvem antes de chamar `releaseOutageBackoff`, que ai sim classifica.
+ */
+export function countJobsWaitingOnOutage(
+  database: DesktopDatabase,
+  options: { now?: Date; target?: SyncTarget } = {}
+): number {
+  const now = options.now ?? new Date();
+  const clausulaAlvo = options.target ? " AND target = ?" : "";
+  const parametros: unknown[] = options.target
+    ? [now.toISOString(), BLOCKED_NEXT_ATTEMPT_AT, options.target]
+    : [now.toISOString(), BLOCKED_NEXT_ATTEMPT_AT];
+  const row = database
+    .prepare(
+      `SELECT COUNT(*) AS total FROM sync_queue
+       WHERE status = 'failed'
+         AND next_attempt_at > ?
+         AND next_attempt_at <> ?${clausulaAlvo}`
+    )
+    .get(...parametros) as { total: number } | undefined;
+  return row?.total ?? 0;
+}
+
+/**
+ * Libera o backoff dos envios que so estao esperando porque a outra ponta caiu.
+ *
+ * O backoff dobra ate 15 minutos, e e ele que impede a balanca de martelar quem ja
+ * esta fora do ar. Mas quando a conexao VOLTA ele passa a trabalhar contra: o envio
+ * fica ate um quarto de hora parado por um motivo que deixou de existir, e a pedreira
+ * ve "a internet voltou e nao subiu nada". Quem chama so faz isto depois de ter prova
+ * de que a nuvem responde de novo.
+ *
+ * A tentativa NAO e zerada de proposito: se a queda ainda nao acabou de verdade, o
+ * proximo backoff continua de onde parou em vez de recomecar do zero — o alivio e para
+ * o caso bom, sem virar retry rapido infinito no caso ruim.
+ *
+ * Nao encosta em quem espera correcao de cadastro (`BLOCKED_NEXT_ATTEMPT_AT`) nem em
+ * quem falhou pelo proprio dado: para esses, esperar nao muda nada.
+ */
+export function releaseOutageBackoff(
+  database: DesktopDatabase,
+  options: { now?: Date; limit?: number; target?: SyncTarget } = {}
+): number {
+  const now = options.now ?? new Date();
+  const nowIso = now.toISOString();
+  const limit = options.limit ?? MAX_OUTAGE_REARM_SCAN;
+
+  // O alvo importa: quem provou estar de pe foi UMA das pontas. Liberar a fila do
+  // OMIE porque o Supabase respondeu ao ping anula o backoff justamente contra quem
+  // ainda esta caido — e o OMIE ja bloqueou a integracao inteira por consumo indevido.
+  const clausulaAlvo = options.target ? " AND target = ?" : "";
+  const parametros: unknown[] = options.target
+    ? [nowIso, BLOCKED_NEXT_ATTEMPT_AT, options.target, limit]
+    : [nowIso, BLOCKED_NEXT_ATTEMPT_AT, limit];
+
+  const candidates = database
+    .prepare(
+      `SELECT id, last_error FROM sync_queue
+       WHERE status = 'failed'
+         AND next_attempt_at > ?
+         AND next_attempt_at <> ?${clausulaAlvo}
+       ORDER BY next_attempt_at ASC
+       LIMIT ?`
+    )
+    .all(...parametros) as Array<{
+    id: string;
+    last_error: string | null;
+  }>;
+
+  const liberar = database.prepare(
+    `UPDATE sync_queue
+     SET next_attempt_at = ?, updated_at = ?
+     WHERE id = ? AND status = 'failed'`
+  );
+
+  let liberados = 0;
+  for (const candidate of candidates) {
+    if (!isOutageFault(candidate.last_error)) continue;
+    liberados += liberar.run(nowIso, nowIso, candidate.id).changes;
+  }
+  return liberados;
+}
+
+/** Teto de linhas examinadas por passada, so como guarda contra base patologica. */
+export const MAX_OUTAGE_REARM_SCAN = 5000;
+
 export function rearmJobsDeadLetteredByOutage(
   database: DesktopDatabase,
   options: { now?: Date; target?: SyncTarget; limit?: number } = {}
 ): number {
   const now = options.now ?? new Date();
   const nowIso = now.toISOString();
-  const limit = options.limit ?? 200;
+  const limit = options.limit ?? MAX_OUTAGE_REARM_SCAN;
 
-  const conditions = ["status = 'dead_letter'", "next_attempt_at <> ?"];
-  const params: unknown[] = [BLOCKED_NEXT_ATTEMPT_AT];
-  if (options.target) {
-    conditions.push("target = ?");
-    params.push(options.target);
-  }
+  const conditions = ["status = 'dead_letter'", "next_attempt_at <> ?", "id > ?"];
+  const baseParams: unknown[] = [BLOCKED_NEXT_ATTEMPT_AT];
+  const targetClause = options.target ? " AND target = ?" : "";
 
-  const candidates = database
-    .prepare(
-      `SELECT id, last_error FROM sync_queue
-       WHERE ${conditions.join(" AND ")}
-       ORDER BY created_at ASC
-       LIMIT ?`
-    )
-    .all(...params, limit) as Array<{ id: string; last_error: string | null }>;
-
+  // Paginado por `id`, e nao um unico `LIMIT` no topo: a classificacao de queda
+  // acontece em JavaScript (a mensagem e texto livre), entao um LIMIT cru deixava
+  // jobs mortos por falha do DADO — que nunca podem ser rearmados — ocuparem todas
+  // as vagas da varredura e esconderem para sempre os que morreram por queda.
+  const select = database.prepare(
+    `SELECT id, last_error FROM sync_queue
+     WHERE ${conditions.join(" AND ")}${targetClause}
+     ORDER BY id ASC
+     LIMIT ?`
+  );
   const rearm = database.prepare(
     `UPDATE sync_queue
      SET status = 'pending', attempt_count = 0, next_attempt_at = ?, updated_at = ?
      WHERE id = ? AND status = 'dead_letter'`
   );
 
+  const PAGE = 200;
+  let cursor = "";
+  let examinados = 0;
   let rearmed = 0;
-  for (const candidate of candidates) {
-    if (!isOutageFault(candidate.last_error)) continue;
-    rearmed += rearm.run(nowIso, nowIso, candidate.id).changes;
+
+  while (examinados < limit) {
+    const params = options.target
+      ? [...baseParams, cursor, options.target, PAGE]
+      : [...baseParams, cursor, PAGE];
+    const pagina = select.all(...params) as Array<{ id: string; last_error: string | null }>;
+    if (pagina.length === 0) break;
+
+    for (const candidate of pagina) {
+      cursor = candidate.id;
+      examinados++;
+      if (!isOutageFault(candidate.last_error)) continue;
+      rearmed += rearm.run(nowIso, nowIso, candidate.id).changes;
+    }
+
+    if (pagina.length < PAGE) break;
   }
+
   return rearmed;
 }
 

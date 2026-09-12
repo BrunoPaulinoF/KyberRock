@@ -2110,5 +2110,46 @@ ON CONFLICT(key) DO UPDATE SET
   value_json = excluded.value_json,
   updated_at = excluded.updated_at;
 `
+  },
+  {
+    version: 58,
+    name: "omie_push_opt_out",
+    sql: `
+-- "Este fechamento nao sera enviado ao OMIE", gravado quando o operador exclui o item da
+-- fila na tela Cloud. Precisa de coluna PROPRIA, e nao de mais um valor em
+-- \`omie_billing_status\`: aquele campo e lido por cinco lugares (a aba Concluidas, a
+-- Conferencia de faturamento, o Fechamento de faturas, o alerta do topo e os relatorios),
+-- e um valor que eles nao conhecem faz cada um mentir de um jeito — a linha exibindo
+-- "nao sera enviada" mesmo com o pedido ja criado, o fechamento em lote tratando-a como
+-- pendente e a refaturando, o alerta deixando de conta-la.
+ALTER TABLE weighing_operations ADD COLUMN omie_push_opt_out INTEGER NOT NULL DEFAULT 0;
+
+-- A rede de seguranca do OMIE procura fechamento que nao chegou la e ficou SEM job, e o
+-- recoloca na fila. Isso e o que se quer daqui para a frente, mas o acervo que ja existe
+-- nesse estado tem outra historia: sao os jobs que alguem apagou de proposito antes de
+-- existir esta marca, os que a migracao 19 removeu, e os de quem so ligou o OMIE depois.
+-- Sem a trava, a PRIMEIRA sincronizacao apos a atualizacao criaria no OMIE ate 200 pedidos
+-- por ciclo de cargas antigas — e onde a nota ja tivesse sido emitida a mao, NF-e duplicada.
+--
+-- \`cadastro_incompleto\` fica de FORA de proposito: e o unico caso em que a pesagem espera
+-- exatamente isto — o cadastro ser corrigido para o envio acontecer sozinho.
+--
+-- A marca e local (nao viaja para a nuvem) e a rede so olha o que ESTA maquina fechou,
+-- entao carimba-la aqui nao interfere no que outra balanca esta enviando.
+UPDATE weighing_operations
+   SET omie_push_opt_out = 1
+ WHERE deleted_at IS NULL
+   AND status <> 'cancelled'
+   AND exit_weight_captured_at IS NOT NULL
+   AND omie_sales_order_id IS NULL
+   AND omie_service_order_id IS NULL
+   AND (omie_billing_status IS NULL OR omie_billing_status <> 'cadastro_incompleto')
+   AND NOT EXISTS (
+         SELECT 1 FROM sync_queue q
+          WHERE q.target = 'omie'
+            AND q.entity_id = weighing_operations.id
+            AND q.action IN ('create_order', 'create_and_bill_order')
+       );
+`
   }
 ];

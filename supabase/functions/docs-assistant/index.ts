@@ -1,5 +1,6 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { isReadUnavailable } from "../_shared/db-read-error.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 import {
   ASSISTANT_OUTPUT_SCHEMA,
@@ -217,6 +218,10 @@ Deno.serve(async (req) => {
     .select("id, company_id, unit_id, token_hash, is_active")
     .eq("id", deviceId)
     .single();
+  // Leitura que falhou nao e balanca sem autorizacao (ver `_shared/db-read-error.ts`).
+  if (isReadUnavailable(deviceError)) {
+    return jsonResponse({ error: "Cadastro indisponivel no momento" }, 503);
+  }
   if (deviceError || !device) {
     return jsonResponse({ error: "Dispositivo nao autorizado" }, 401);
   }

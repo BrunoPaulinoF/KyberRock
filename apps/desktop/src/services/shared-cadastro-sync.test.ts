@@ -11,12 +11,24 @@ import {
 } from "./supabase-sync";
 
 const invokeMock = vi.fn();
+/**
+ * `pingSupabase` (usado por `sendCadastroBatch` para desempatar "queda ou dado ruim")
+ * consulta a tabela direto, nao a Edge Function. O mock precisa responder aos dois
+ * caminhos, e `nuvemDePe` e o que os testes usam para dizer se a ponta esta viva.
+ */
+let nuvemDePe = true;
 
 vi.mock("@supabase/supabase-js", () => ({
   createClient: vi.fn(() => ({
     functions: {
       invoke: invokeMock
-    }
+    },
+    from: () => ({
+      select: () => ({
+        abortSignal: () =>
+          Promise.resolve(nuvemDePe ? { error: null } : { error: new Error("offline") })
+      })
+    })
   }))
 }));
 
@@ -29,6 +41,7 @@ describe("cadastro compartilhado da pedreira", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     invokeMock.mockResolvedValue({ data: { ok: true }, error: null });
+    nuvemDePe = true;
   });
 
   it("nao reintroduz nem ressuscita um cadastro que ja existe localmente pelo documento", async () => {
@@ -826,6 +839,191 @@ describe("cadastro compartilhado da pedreira", () => {
       invokeMock.mockResolvedValue({ data: { ok: true }, error: null });
       const second = await pushSharedCadastroToCloud(database, identity);
       expect(second.pushed).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("linha que a NUVEM recusa nao trava o cursor: a seguinte desempata", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      seedLocalCadastro(database);
+      for (const [id, nome, quando] of [
+        ["carrier-2", "Transportes Gama", "2026-07-27T11:00:00.000Z"],
+        ["carrier-3", "Transportes Delta", "2026-07-27T12:00:00.000Z"]
+      ] as const) {
+        database
+          .prepare(
+            `INSERT INTO carriers (id, company_id, name, source, is_active, created_at, updated_at)
+             VALUES (?, 'company-1', ?, 'local', 1, ?, ?)`
+          )
+          .run(id, nome, quando, quando);
+      }
+
+      // O desktop-sync responde 500 para QUALQUER recusa de gravacao — chave
+      // duplicada, FK ausente, valor estourado — e `isOutageFault` le todo 5xx como
+      // queda. Se a fila acreditasse nisso, o cursor desta entidade ficaria cravado
+      // na carrier-2 para sempre e NENHUM cadastro posterior chegaria as outras
+      // balancas. A carrier-3 e quem prova que a nuvem esta de pe.
+      invokeMock.mockImplementation((_name: string, options: { body: Record<string, unknown> }) => {
+        const carriers = options.body.carriers as Array<{ id: string }> | undefined;
+        if (!carriers) return Promise.resolve({ data: { ok: true }, error: null });
+        if (carriers.length > 1) {
+          return Promise.resolve({ data: null, error: new Error("Failed to fetch") });
+        }
+        if (carriers[0].id === "carrier-2") {
+          return Promise.resolve({
+            data: null,
+            error: new Error(
+              "Falha ao persistir alguns payloads: carriers: duplicate key value violates unique constraint (code=23505) (HTTP 500)"
+            )
+          });
+        }
+        return Promise.resolve({ data: { ok: true }, error: null });
+      });
+
+      const primeira = await pushSharedCadastroToCloud(database, identity);
+      // A linha ruim virou erro visivel, e a carrier-3 passou.
+      expect(primeira.errors.join(" ")).toContain("carrier-2");
+
+      // O cursor andou: a proxima passada nao repete o lote nem fica presa nela.
+      const enviadas: string[] = [];
+      invokeMock.mockImplementation((_name: string, options: { body: Record<string, unknown> }) => {
+        for (const carrier of (options.body.carriers as Array<{ id: string }> | undefined) ?? []) {
+          enviadas.push(carrier.id);
+        }
+        return Promise.resolve({ data: { ok: true }, error: null });
+      });
+      await pushSharedCadastroToCloud(database, identity);
+      expect(enviadas).not.toContain("carrier-2");
+      expect(enviadas).not.toContain("carrier-3");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("queda no MEIO do lote nao deixa o cursor passar por cima do que ficou para tras", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      seedLocalCadastro(database);
+      // Tres transportadoras cadastradas durante a queda. carrier-1 ja vem do seed.
+      for (const [id, nome, quando] of [
+        ["carrier-2", "Transportes Gama", "2026-07-27T11:00:00.000Z"],
+        ["carrier-3", "Transportes Delta", "2026-07-27T12:00:00.000Z"]
+      ] as const) {
+        database
+          .prepare(
+            `INSERT INTO carriers (id, company_id, name, source, is_active, created_at, updated_at)
+             VALUES (?, 'company-1', ?, 'local', 1, ?, ?)`
+          )
+          .run(id, nome, quando, quando);
+      }
+
+      // O lote inteiro falha (link oscilando) e o envio cai para linha a linha.
+      // A primeira passa; da segunda em diante o banco da nuvem responde 503.
+      let carrierLotes = 0;
+      invokeMock.mockImplementation((_name: string, options: { body: Record<string, unknown> }) => {
+        const carriers = options.body.carriers as Array<{ id: string }> | undefined;
+        if (!carriers) return Promise.resolve({ data: { ok: true }, error: null });
+        carrierLotes++;
+        if (carriers.length > 1) {
+          return Promise.resolve({ data: null, error: new Error("Failed to fetch") });
+        }
+        if (carriers[0].id === "carrier-1") {
+          return Promise.resolve({ data: { ok: true }, error: null });
+        }
+        return Promise.resolve({
+          data: null,
+          error: new Error("Cadastro indisponivel no momento (HTTP 503)")
+        });
+      });
+
+      nuvemDePe = false;
+      await pushSharedCadastroToCloud(database, identity);
+      expect(carrierLotes).toBeGreaterThan(0);
+      nuvemDePe = true;
+
+      // A nuvem volta: as duas que a queda derrubou TEM de subir sozinhas.
+      // Antes, o cursor pulava para a ultima linha do lote e elas ficavam so nesta
+      // balanca — sem alerta, sem nova tentativa e sem comando de recuperacao.
+      const enviadas: string[] = [];
+      invokeMock.mockImplementation((_name: string, options: { body: Record<string, unknown> }) => {
+        const carriers = options.body.carriers as Array<{ id: string }> | undefined;
+        for (const carrier of carriers ?? []) enviadas.push(carrier.id);
+        return Promise.resolve({ data: { ok: true }, error: null });
+      });
+
+      await pushSharedCadastroToCloud(database, identity);
+      expect(enviadas).toContain("carrier-2");
+      expect(enviadas).toContain("carrier-3");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("duas linhas recusadas ADJACENTES nao congelam a entidade", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      seedLocalCadastro(database);
+      for (const [id, nome, quando] of [
+        ["carrier-2", "Transportes Gama", "2026-07-27T11:00:00.000Z"],
+        ["carrier-3", "Transportes Delta", "2026-07-27T12:00:00.000Z"],
+        ["carrier-4", "Transportes Epsilon", "2026-07-27T13:00:00.000Z"]
+      ] as const) {
+        database
+          .prepare(
+            `INSERT INTO carriers (id, company_id, name, source, is_active, created_at, updated_at)
+             VALUES (?, 'company-1', ?, 'local', 1, ?, ?)`
+          )
+          .run(id, nome, quando, quando);
+      }
+
+      // carrier-2 E carrier-3 sao recusadas pela nuvem (FK ausente, documento duplicado):
+      // as duas respondem 500, uma logo depois da outra. Inferir queda pelo vizinho
+      // congelava a entidade AQUI, para sempre — e carrier-4 e tudo o que viesse depois
+      // nunca mais chegava as outras balancas. A nuvem esta de pe, e o ping prova isso.
+      nuvemDePe = true;
+      invokeMock.mockImplementation((_name: string, options: { body: Record<string, unknown> }) => {
+        const carriers = options.body.carriers as Array<{ id: string }> | undefined;
+        if (!carriers) return Promise.resolve({ data: { ok: true }, error: null });
+        if (carriers.length > 1) {
+          return Promise.resolve({ data: null, error: new Error("Failed to fetch") });
+        }
+        if (carriers[0].id === "carrier-2" || carriers[0].id === "carrier-3") {
+          return Promise.resolve({
+            data: null,
+            error: new Error(
+              "Falha ao persistir alguns payloads: carriers: violates foreign key constraint (code=23503) (HTTP 500)"
+            )
+          });
+        }
+        return Promise.resolve({ data: { ok: true }, error: null });
+      });
+
+      await pushSharedCadastroToCloud(database, identity);
+
+      // O cursor passou das duas ruins: o cadastro seguinte volta a fluir.
+      const enviadas: string[] = [];
+      invokeMock.mockImplementation((_name: string, options: { body: Record<string, unknown> }) => {
+        for (const carrier of (options.body.carriers as Array<{ id: string }> | undefined) ?? []) {
+          enviadas.push(carrier.id);
+        }
+        return Promise.resolve({ data: { ok: true }, error: null });
+      });
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, name, source, is_active, created_at, updated_at)
+           VALUES ('carrier-5', 'company-1', 'Transportes Zeta', 'local', 1, ?, ?)`
+        )
+        .run("2026-07-27T14:00:00.000Z", "2026-07-27T14:00:00.000Z");
+      await pushSharedCadastroToCloud(database, identity);
+      expect(enviadas).toContain("carrier-5");
     } finally {
       database.close();
     }

@@ -129,6 +129,19 @@ These recur across the codebase and are easy to violate accidentally:
   `carriers` e `payment_methods` **antes** de `customers`. Fora do bloco: condição de pagamento
   padrão e observações internas, que viajam pelo OMIE (as observações passaram a ser **enviadas** no
   `push_customer` — antes eram só lidas, e o que o operador digitava se perdia).
+- **Offline ponta a ponta** (AGENTS.md "O caminho offline ponta a ponta",
+  `offline-recovery.test.ts`): a operacao nunca chama a rede para gravar, mas o CAMINHO de volta
+  tinha buracos. Quem sabe se o dado chegou e a OPERACAO, nao o job: para a nuvem isso ja valia
+  (`listOperationsPendingCloudPush`), para o OMIE nao — `listOperationsPendingOmiePush` fecha,
+  ignorando quem tem job vivo, quem morreu pelo DADO, quem o operador excluiu
+  (`omie_push_opt_out`, coluna PROPRIA — enfiar isso em `omie_billing_status` fazia cinco leitores
+  mentirem) e o que outra balanca fechou (`device_id`: decisao cluster-wide nao se protege com
+  estado maquina-local). O
+  cursor do cadastro so avanca ate a linha com desfecho DEFINITIVO (`settled`), senao a queda no
+  meio do lote apagava preco e credito em silencio — e "queda ou dado ruim" se decide perguntando
+  a ponta (`pingSupabase`), nunca inferindo do vizinho, que congelava a entidade quando duas
+  linhas ruins caiam adjacentes. E o alivio do backoff (`releaseOutageBackoff`)
+  so acontece depois de o ping confirmar que a nuvem voltou.
 - **Queda de conexao nao condena o envio** (AGENTS.md "Queda longa nao para a fila"): a fila
   desistia do job depois de 10 tentativas e o mandava para `dead_letter`, fora da rotacao
   automatica — com o backoff ate 15 min isso e ~2h de queda, e dali so um clique do operador

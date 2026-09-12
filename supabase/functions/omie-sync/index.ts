@@ -1,4 +1,5 @@
 import { createClient as createSupabaseClient } from "jsr:@supabase/supabase-js@2";
+import { isReadUnavailable } from "../_shared/db-read-error.ts";
 import {
   CUSTOMER_REGISTRATION_FAULT_PREFIX,
   OMIE_CUSTOMER_TAG,
@@ -524,6 +525,15 @@ export async function handleOmieSyncRequest(
     .single();
 
   const deviceRow = device as Partial<DeviceRow> | null;
+  // Esta e a UNICA porta do fechamento para o OMIE, e ela ficou de fora do
+  // tratamento que as outras funcoes ja tinham: a leitura do cadastro falhando
+  // virava 401 "Dispositivo nao autorizado". Um 401 nao e queda — a fila conta a
+  // tentativa e, na decima (~2h de backoff), o pedido vira `dead_letter` e sai da
+  // rotacao automatica. Era exatamente assim que uma queda do banco continuava
+  // impedindo o pedido de subir sozinho quando a conexao voltasse.
+  if (isReadUnavailable(deviceError)) {
+    return jsonResponse({ error: "Cadastro indisponivel no momento" }, 503);
+  }
   if (deviceError || !deviceRow?.is_active) {
     return jsonResponse({ error: "Dispositivo nao autorizado" }, 401);
   }
@@ -541,6 +551,9 @@ export async function handleOmieSyncRequest(
     .single();
 
   const companyRow = company as Partial<CompanyRow> | null;
+  if (isReadUnavailable(companyError)) {
+    return jsonResponse({ error: "Cadastro indisponivel no momento" }, 503);
+  }
   if (companyError || !companyRow?.is_active) {
     return jsonResponse({ error: "Empresa bloqueada ou inexistente" }, 403);
   }

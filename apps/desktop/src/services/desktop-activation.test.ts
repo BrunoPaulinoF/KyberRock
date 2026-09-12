@@ -225,6 +225,76 @@ describe("desktop activation", () => {
     expect(activated.unitName).toBe("Pedreira Ibiuna");
   });
 
+  it("resposta 200 que nao e veredito nao vira bloqueio: portal cativo mantem o prazo offline", async () => {
+    const database = createDatabase();
+    // Maquina ativada e liberada ha pouco: dentro do prazo offline de 7 dias.
+    for (const [key, value] of [
+      ["cloud_company_id", "company-1"],
+      ["cloud_unit_id", "unit-1"],
+      ["cloud_device_id", "desktop-device-1"],
+      ["cloud_device_token", "device-token-1"],
+      ["desktop_access_status", "approved"],
+      ["desktop_access_message", "Sistema liberado."],
+      ["last_license_check_at", new Date().toISOString()]
+    ] as Array<[string, string]>) {
+      database
+        .prepare(
+          `INSERT INTO local_settings (key, value_json, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json`
+        )
+        .run(key, JSON.stringify(value), new Date().toISOString());
+    }
+
+    // O link caiu e entrou o 4G com portal cativo: a LAN esta de pe (navigator.onLine
+    // true) e a chamada volta 200 com uma pagina HTML. Antes, isto virava
+    // `canOperate: false`, a tela travava em BLOQUEADO e o erro tecnico era APAGADO —
+    // entao a tela ainda mandava o operador reativar, o que exige internet.
+    invokeMock.mockResolvedValueOnce({
+      data: "<!DOCTYPE html><html><body>Faca login na rede</body></html>",
+      error: null
+    });
+    const comPortal = await validateDesktopAccess(database, {
+      internetOnline: true,
+      force: true
+    });
+
+    expect(comPortal.canOperate).toBe(true);
+    expect(comPortal.status).toBe("offline_grace");
+    expect(comPortal.lastError).toContain("Resposta inesperada da nuvem");
+    // O status guardado nao pode ter sido sobrescrito pela resposta do portal.
+    expect(
+      database
+        .prepare("SELECT value_json FROM local_settings WHERE key = ?")
+        .pluck()
+        .get("desktop_access_status")
+    ).toBe(JSON.stringify("approved"));
+
+    // JSON valido mas sem `allowed` (nuvem antiga ou proxy que reescreve) idem.
+    invokeMock.mockResolvedValueOnce({ data: { mensagem: "ok" }, error: null });
+    const semAllowed = await validateDesktopAccess(database, {
+      internetOnline: true,
+      force: true
+    });
+    expect(semAllowed.canOperate).toBe(true);
+
+    // E o veredito de verdade continua valendo: bloqueio real bloqueia.
+    invokeMock.mockResolvedValueOnce({
+      data: {
+        status: "payment_blocked",
+        allowed: false,
+        message: "Acesso bloqueado por falta de pagamento."
+      },
+      error: null
+    });
+    const bloqueioReal = await validateDesktopAccess(database, {
+      internetOnline: true,
+      force: true
+    });
+    expect(bloqueioReal.canOperate).toBe(false);
+    expect(bloqueioReal.status).toBe("payment_blocked");
+    expect(bloqueioReal.lastError).toBeNull();
+  });
+
   it("registra o erro tecnico quando a nuvem nao responde e limpa quando volta", async () => {
     const database = createDatabase();
     // Maquina ja ativada e com bloqueio guardado de uma verificacao anterior.

@@ -745,6 +745,129 @@ promocao so fica no GitHub ate ele existir.
    `dist:win:ci` (usado pelo CI, `--publish never`) e `dist:win:publish` (`--publish always`,
    mantido para publicacao manual de emergencia).
 
+## O caminho offline ponta a ponta
+
+O que a pedreira precisa: trabalhar com a internet fora OU com o banco da nuvem com problema,
+gravar tudo local, e quando a conexao voltar ver o que foi feito subir sozinho — para a nuvem e
+para o OMIE, sem clique de operador. A auditoria de 10/09/2026 mostrou que a base disso ja
+existia (a operacao nunca chama a rede para gravar, e o cadastro sobe por varredura de cursor),
+mas que o caminho tinha buracos em cinco pontos. `offline-recovery.test.ts` e o ensaio da queda
+inteira: fecha pesagens com a nuvem fora, devolve a conexao e cobra os tres desfechos.
+
+**A porta do OMIE ficou de fora do tratamento de queda.** `omie-sync` decidia com
+`if (deviceError || ...)` e devolvia 401/403 — que nao e queda, entao a fila contava a tentativa
+e o pedido morria em `dead_letter` depois de ~2 h de banco fora. Era o requisito "sobe ao OMIE
+sozinho" quebrando exatamente no incidente que o motivou. Agora as tres funcoes que a balanca
+usa (`omie-sync`, `cnpj-lookup`, `docs-assistant`) tem o mesmo guard de `desktop-status`.
+
+**O OMIE nao tinha rede de seguranca.** Para a nuvem, quem sabe se o dado chegou e a OPERACAO
+(`listOperationsPendingCloudPush`); para o OMIE, o job da fila era o UNICO registro de que a
+carga precisa subir — apagado por engano na tela Cloud, podado, ou banco restaurado de backup, e
+a venda ficava pesada, impressa e sem pedido la, sem alarme. `listOperationsPendingOmiePush` /
+`reenqueueOperationsMissingOmieJob` fecham isso, partindo da operacao. Sao conservadores de
+proposito: so entra quem nao tem job NENHUM. Job vivo segue seu caminho, job morto por falha do
+DADO continua morto (senao vira tempestade de retry), e `omie_push_opt_out` —
+gravado quando o operador exclui o item da fila — respeita a decisao dele. De brinde, o
+fechamento que nasceu sem job por falta de documento do cliente volta sozinho assim que o
+cadastro e corrigido, sem o botao "Refaturar".
+
+**O cadastro do OMIE so subia no botao.** `pushOmieCustomersToCloud`/`pushOmieCarriersToCloud`
+rodavam apenas em "Sincronizar OMIE": o cliente cadastrado durante a queda so entrava la quando
+um caminhao dele pesava, e a correcao de endereco de um cliente que JA existe no OMIE nunca
+chegava — a NF-e continuava saindo com o dado velho. Agora rodam no ciclo automatico.
+
+**O cursor do cadastro passava por cima do que a queda derrubou.** O envio linha a linha
+avancava o cursor ate a ULTIMA linha do lote desde que UMA passasse; as demais ficavam atras de
+um cursor que so anda para a frente e nunca mais eram selecionadas — preco, transportadora,
+veiculo e movimento de credito sumindo em silencio. `sendCadastroBatch` devolve `settled` (as
+linhas do inicio com desfecho DEFINITIVO: entregues, ou recusadas pelo proprio dado) e o cursor
+para na primeira que a queda interrompeu. Linha local e payload andam em par para os indices nao
+desalinharem no filtro. O erro do cadastro tambem passou a contar como falha da sincronizacao —
+sem isso `success` continuava true e nada chegava ao log tecnico nem ao painel.
+
+**O backoff virava contra a recuperacao.** Depois de uma queda longa o proximo envio estava
+agendado para ate 15 min a frente: a internet voltava e "nao subia nada". `releaseOutageBackoff`
+puxa esses envios para agora, mas so depois de um `pingSupabase` confirmar que a nuvem responde
+— e sem zerar `attempt_count`, para o alivio nao virar retry rapido se a queda ainda nao acabou.
+
+**A tela ainda parava a balanca de dois jeitos.** (1) Resposta HTTP 200 que nao e veredito —
+4G com portal cativo, proxy do provedor — virava `canOperate: false` e ainda APAGAVA o erro
+tecnico, entao a tela mandava reativar. Veredito agora e so o que traz `allowed` booleano;
+qualquer outra coisa segue o caminho do `catch` (prazo offline). (2) "Limpar ativacao" apaga a
+credencial E o `last_license_check_at`, e a ativacao seguinte exige internet: um clique durante
+a queda inutilizava a balanca. O botao some quando ha erro de comunicacao e pede confirmacao em
+dois passos.
+
+**A gravacao local esperava a nuvem.** `await advanceSync` rodava ANTES de
+`createWeighingOperation`/`closeWeighingOperation`: com a nuvem degradada o `fetch` do Electron
+so desiste em MINUTOS, e nesse tempo a operacao nao existe no SQLite — se o operador matar o app
+travado, o peso de saida capturado se perde. O `.catch` tratava ERRO; faltava teto para
+LATENCIA. `withCloudPrecheckTimeout` (5 s) fecha isso sem cancelar a promessa, que segue em
+segundo plano.
+
+**A revisao do proprio diff cobrou tres coisas que quase viraram bug pior.** (1) O
+classificador de queda NAO pode decidir sozinho num CURSOR: o `desktop-sync` responde 500 para
+qualquer recusa de gravacao (23505, 23503, 22001) e `isOutageFault` le todo 5xx como
+indisponibilidade — o cursor daquela entidade travaria na primeira linha ruim PARA SEMPRE, e
+nenhum cadastro posterior chegaria as outras balancas. A duvida passou a ser resolvida por
+EXPERIMENTO: ao cair parecendo queda, sonda-se a linha seguinte; se ela passa, a anterior era
+ruim (segue como recusa) e o cursor anda; se ela tambem cai, e queda de verdade e a rodada para
+antes das duas. Na fila o mesmo classificador esta certo — la o 5xx so adia, e o job nunca morre.
+(2) A marca de "nao enviar" precisa do MESMO freio nos dois caminhos: `rearmOmieBillingForCustomer`
+roda no ciclo automatico junto do push de clientes, e sem o freio bastava alguem corrigir o
+e-mail do cliente para o pedido de uma carga excluida de proposito nascer no OMIE — NF-e em
+duplicidade onde a nota ja tinha sido lancada a mao. Ela so e desfeita pelo botao de reenviar
+(`clearDoNotSendMark`). (3) A janela de 30 dias ancora no FECHAMENTO, nunca no `updated_at`: a
+baixa de carteira em lote carimba vendas de meses atras de uma vez e traria o historico inteiro
+de volta para dentro da janela. A migracao 58 fecha a janela de transicao congelando o acervo
+que hoje esta "fechado, sem pedido e sem job" — menos `cadastro_incompleto`, que e justamente
+quem a rede deve destravar sozinha.
+
+**A segunda rodada de revisao derrubou o desenho da marca, nao so os bugs dela.** "Nao enviar
+ao OMIE" tinha virado mais um valor em `omie_billing_status` — um campo que CINCO lugares leem
+(aba Concluidas, Conferencia de faturamento, Fechamento de faturas, alerta do topo, relatorios).
+Cada um mentia do seu jeito: a linha exibia "nao sera enviada" mesmo com o pedido ja criado, o
+fechamento em lote a tratava como pendente e a refaturava, o alerta deixava de conta-la. A marca
+agora tem coluna propria (`omie_push_opt_out`), invisivel para todos eles, e quem a desfaz e so o
+botao de reenviar — DEPOIS de o envio ser aceito, porque um reenvio recusado pelo gate de cadastro
+apagava a decisao sem que nada aparecesse na tela.
+
+**A rede de seguranca so age sobre o que ESTA maquina fechou** (`device_id`). O job nasce na
+balanca que fez a pesagem; a operacao espelhada pelo pull chega na outra sem job nenhum. Sem esse
+escopo, a segunda balanca refazia no OMIE o pedido que a primeira tinha acabado de excluir — a
+marca do operador e local e nao viaja. E uma decisao cluster-wide nao pode ser protegida por
+estado maquina-local.
+
+**A duvida "queda ou dado ruim" e resolvida perguntando a ponta, nao ao vizinho.** A primeira
+versao inferia: se a linha seguinte passasse, a anterior era ruim. Errava nos dois sentidos —
+duas linhas ruins ADJACENTES (comum quando um pull do OMIE carimba varias no mesmo minuto) eram
+lidas como queda e congelavam a entidade para sempre, e um 429/504 passageiro numa linha isolada
+era lido como dado ruim e a linha sumia. Agora, na segunda suspeita seguida, `sendCadastroBatch`
+chama `pingSupabase`; e a linha absolvida ainda ganha UM retry, que e o que separa o soluco
+passageiro do 23505 estavel.
+
+**Um teste que passa sem cobrir nada e pior que teste nenhum.** O ensaio da queda passava mesmo
+com a protecao contra `dead_letter` desligada: sem o tempo andar entre os ciclos, o backoff
+empurrava o `next_attempt_at` e as 15 passadas viravam uma so. Ele agora avanca o relogio da fila
+e cobra `attempt_count >= 10`; verificado por mutacao (com `outage = false` ele falha).
+
+**Cada ponta libera a propria fila.** `releaseOutageBackoff` recebe o alvo: a fila da nuvem sai
+do backoff depois do `pingSupabase`, a do OMIE so depois do `probeOmie`. Liberar a fila do OMIE
+porque o Supabase respondeu anularia o backoff justamente contra quem ainda esta caido — e o
+OMIE ja bloqueou a integracao inteira por consumo indevido. Pelo mesmo motivo o push de cadastro
+ao OMIE ganhou freio de 15 min no ciclo automatico (`shouldPushOmieCadastroNow`): o ciclo dispara
+a cada pesagem, e um cadastro que o OMIE recusa por motivo nao reconhecido repetiria o
+`AlterarCliente` em todas elas, disputando o limite de requisicoes com os PEDIDOS. O botao
+"Sincronizar OMIE" continua sem freio.
+
+**O teto de 5 s e so para o que roda ANTES da gravacao local.** Ele foi aplicado tambem ao
+`autoCompleteCustomerForNfe`, que roda DEPOIS: cortar ali manda o snapshot velho ao OMIE, que
+recusa e acende um "cadastro incompleto" falso — ou aceita, e a NF-e sai com o endereco pela
+metade.
+
+**Fora de escopo, registrado:** o desktop continua exigindo internet a cada 7 dias
+(`DESKTOP_ACCESS_GRACE_PERIOD_MS`). Isso e licenca, nao sincronizacao.
+
 ## Procurar balanca na rede: porta aberta e muda tambem e achado
 
 A varredura so aceitava host que estivesse **transmitindo** peso dentro da janela, e era por isso
