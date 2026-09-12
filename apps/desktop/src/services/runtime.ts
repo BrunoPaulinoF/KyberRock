@@ -2190,7 +2190,10 @@ export class DesktopRuntime {
         reconnectIntervalMs: SCALE_CONNECTION_TUNING.reconnectIntervalMs,
         maxReconnectAttempts: SCALE_CONNECTION_TUNING.maxReconnectAttempts,
         reconnectBackoffMaxMs: SCALE_CONNECTION_TUNING.reconnectBackoffMaxMs,
-        staleReadingMs: SCALE_CONNECTION_TUNING.staleReadingMs
+        reconnectFastAttempts: SCALE_CONNECTION_TUNING.reconnectFastAttempts,
+        reconnectFastIntervalMs: SCALE_CONNECTION_TUNING.reconnectFastIntervalMs,
+        staleReadingMs: SCALE_CONNECTION_TUNING.staleReadingMs,
+        silenceRotateMs: SCALE_CONNECTION_TUNING.silenceRotateMs
       });
       this.activeScaleSessionKey = sessionKey;
       return;
@@ -2203,6 +2206,8 @@ export class DesktopRuntime {
       reconnectIntervalMs: SCALE_CONNECTION_TUNING.reconnectIntervalMs,
       maxReconnectAttempts: SCALE_CONNECTION_TUNING.maxReconnectAttempts,
       reconnectBackoffMaxMs: SCALE_CONNECTION_TUNING.reconnectBackoffMaxMs,
+      reconnectFastAttempts: SCALE_CONNECTION_TUNING.reconnectFastAttempts,
+      reconnectFastIntervalMs: SCALE_CONNECTION_TUNING.reconnectFastIntervalMs,
       staleReadingMs: SCALE_CONNECTION_TUNING.staleReadingMs,
       silenceRotateMs: SCALE_CONNECTION_TUNING.silenceRotateMs
     });
@@ -2263,10 +2268,16 @@ export class DesktopRuntime {
     return this.captureStableWeight({ operationType: "entry" });
   }
 
-  async discoverScale(): Promise<{ host: string; port: number } | null> {
+  async discoverScale(): Promise<{
+    host: string;
+    port: number;
+    transmitting: boolean;
+  } | null> {
     const result = await discoverScale();
     if (!result) return null;
-    return { host: result.host, port: result.port };
+    // `transmitting` vai junto de proposito: porta aberta que nao mandou peso e uma
+    // pista boa, mas a tela nao pode anunciar isso como "balanca encontrada".
+    return { host: result.host, port: result.port, transmitting: result.transmitting };
   }
 
   getScaleStatus(): ToledoTcpAdapterStatus {

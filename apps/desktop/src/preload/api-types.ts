@@ -710,7 +710,12 @@ export interface KyberRockDesktopApi {
     /** Operacao que sera fechada com este peso (saida). A entrada ainda nao tem uma. */
     operationId?: string;
   }) => Promise<{ captureId: string; reading: ScaleReading }>;
-  scaleDiscover: () => Promise<{ host: string; port: number } | null>;
+  scaleDiscover: () => Promise<{
+    host: string;
+    port: number;
+    /** `false` quando a porta abriu mas nenhum peso chegou dentro da janela. */
+    transmitting: boolean;
+  } | null>;
   scaleGetStatus: () => Promise<ToledoTcpAdapterStatus>;
   scaleGetConfig: () => Promise<ScaleConfiguration>;
   scaleSaveConfig: (input: ScaleConfigurationInput) => Promise<ScaleConfiguration>;

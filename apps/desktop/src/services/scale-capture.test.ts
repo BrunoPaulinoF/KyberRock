@@ -128,8 +128,25 @@ describe("ScaleCaptureService", () => {
     );
   });
 
-  it("fails immediately when the scale reports it is disconnected", async () => {
-    const startedAt = Date.now();
+  it("aguarda a reconexao no meio da captura em vez de desistir no primeiro erro", async () => {
+    // O adaptador passa por "nao esta conectada" em TODA reconexao automatica: queda
+    // de socket, rotacao da sessao muda, conversor reabrindo a porta. Desistir ali
+    // fazia o operador digitar o peso no braco com o caminhao ainda na balanca.
+    let calls = 0;
+    const adapter: ScaleCaptureAdapter = {
+      async read() {
+        calls += 1;
+        if (calls <= 3) throw new Error("Balanca nao esta conectada.");
+        return makeReading({ weightKg: 16_120 });
+      }
+    };
+    const service = new ScaleCaptureService({ adapter, policy: fastPolicy });
+
+    const reading = await service.captureStableWeight({ operationType: "entry" });
+    expect(reading.weightKg).toBe(16_120);
+  });
+
+  it("reporta a desconexao no fim do tempo limite quando a balanca nao volta", async () => {
     const adapter: ScaleCaptureAdapter = {
       async read() {
         throw new Error("Balanca nao esta conectada.");
@@ -140,8 +157,6 @@ describe("ScaleCaptureService", () => {
     await expect(service.captureStableWeight({ operationType: "entry" })).rejects.toThrow(
       "nao esta conectada"
     );
-    // Nao deve esperar o timeout inteiro para reportar desconexao
-    expect(Date.now() - startedAt).toBeLessThan(fastPolicy.timeoutMs);
   });
 
   it("keeps polling through transient read errors until a stable reading arrives", async () => {
