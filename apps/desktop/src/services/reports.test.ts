@@ -768,3 +768,83 @@ describe("ReportService com operacoes excluidas", () => {
     }
   });
 });
+
+describe("ReportService: o dia da pesagem e o do FECHAMENTO", () => {
+  /**
+   * A pesagem pertence ao dia em que a balanca fechou — a mesma data que vai ao OMIE como
+   * emissao do pedido. Pela data de ENTRADA, o caminhao que entra num dia e so fecha no
+   * outro caia num dia no relatorio e no outro no extrato de contas a receber, e a
+   * conferencia acusava lancamento sobrando no OMIE sem nada de errado ter acontecido.
+   */
+  function seedVirouODia(db: ReturnType<typeof createDatabase>) {
+    setupBaseData(db);
+    db.prepare(
+      `INSERT INTO weighing_operations (
+         id, company_id, unit_id, device_id, status, operation_type, customer_id, product_id,
+         entry_weight_kg, exit_weight_kg, net_weight_kg, unit_price_cents, product_total_cents,
+         freight_total_cents, total_cents,
+         entry_weight_captured_at, exit_weight_captured_at, created_at, updated_at
+       ) VALUES (
+         'op-virou', 'comp-1', 'unit-1', 'dev-1', 'closed_local', 'invoice', 'cust-1', 'prod-1',
+         10000, 32000, 22000, 50000, 190000, 7441, 197441,
+         datetime('2026-09-09T13:06:00'), datetime('2026-09-11T17:55:00'),
+         datetime('2026-09-09T13:06:00'), datetime('2026-09-11T17:55:00')
+       )`
+    ).run();
+  }
+
+  it("nao aparece no dia da entrada e aparece no dia do fechamento", () => {
+    const db = createDatabase();
+    try {
+      seedVirouODia(db);
+      const service = new ReportService(db);
+
+      expect(service.getDailyReport("2026-09-09", "unit-1").totalOperations).toBe(0);
+
+      const dia11 = service.getDailyReport("2026-09-11", "unit-1");
+      expect(dia11.totalOperations).toBe(1);
+      expect(dia11.totalCents).toBe(197441);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("a serie diaria e o resumo mensal contam a pesagem no dia do fechamento", () => {
+    const db = createDatabase();
+    try {
+      seedVirouODia(db);
+      const service = new ReportService(db);
+
+      const series = service.getDailySeries("2026-09-09", "2026-09-11", "unit-1");
+      expect(series.find((point) => point.date === "2026-09-09")?.totalCents).toBe(0);
+      expect(series.find((point) => point.date === "2026-09-11")?.totalCents).toBe(197441);
+
+      // Virada de mes: entrou em agosto, fechou em setembro — o faturamento e de setembro.
+      db.prepare(
+        `UPDATE weighing_operations
+           SET created_at = datetime('2026-08-31T22:00:00'),
+               entry_weight_captured_at = datetime('2026-08-31T22:00:00'),
+               exit_weight_captured_at = datetime('2026-09-01T07:00:00')
+         WHERE id = 'op-virou'`
+      ).run();
+      expect(service.getMonthlyReport(2026, 8, "unit-1").totalOperations).toBe(0);
+      expect(service.getMonthlyReport(2026, 9, "unit-1").totalCents).toBe(197441);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("operacao antiga sem horario de saida continua contando pela data de criacao", () => {
+    const db = createDatabase();
+    try {
+      seedVirouODia(db);
+      db.prepare("UPDATE weighing_operations SET exit_weight_captured_at = NULL").run();
+      const service = new ReportService(db);
+
+      expect(service.getDailyReport("2026-09-09", "unit-1").totalOperations).toBe(1);
+      expect(service.getDailyReport("2026-09-11", "unit-1").totalOperations).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+});

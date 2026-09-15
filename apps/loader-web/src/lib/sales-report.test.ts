@@ -8,6 +8,7 @@ import {
   matchesFreightFilter,
   normalizeFreightType,
   SALES_FREIGHT_ALL,
+  saleDayOf,
   toReportDay,
   type SalesOperationRow
 } from "./sales-report";
@@ -164,5 +165,36 @@ describe("buildSalesReportCsv", () => {
     expect(linesOut.at(-1)).toContain("TOTAL;3;35,000");
     // decimal com virgula
     expect(csv).toContain("2500,00");
+  });
+});
+
+describe("saleDayOf", () => {
+  it("usa o dia do FECHAMENTO, nao o da entrada do caminhao", () => {
+    // Entrou dia 09 e so fechou dia 11: a venda — e a conta a receber no OMIE — e do dia 11.
+    expect(
+      saleDayOf({ created_at: "2026-09-09T16:06:00Z", closed_at: "2026-09-11T20:55:00Z" })
+    ).toBe("2026-09-11");
+  });
+
+  it("operacao antiga, sem fechamento gravado, continua no dia da criacao", () => {
+    expect(saleDayOf({ created_at: "2026-09-09T16:06:00Z" })).toBe("2026-09-09");
+    expect(saleDayOf({ created_at: "2026-09-09T16:06:00Z", closed_at: null })).toBe("2026-09-09");
+  });
+
+  it("o agrupamento por dia segue o fechamento", () => {
+    const result = aggregateSalesReport(
+      [
+        {
+          product_description: "Brita 1",
+          net_weight_kg: 22000,
+          product_total_cents: 190000,
+          total_cents: 197441,
+          created_at: "2026-09-09T16:06:00Z",
+          closed_at: "2026-09-11T20:55:00Z"
+        }
+      ],
+      "day"
+    );
+    expect(result.lines.map((line) => line.day)).toEqual(["2026-09-11"]);
   });
 });

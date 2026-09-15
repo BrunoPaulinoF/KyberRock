@@ -5,7 +5,13 @@
  */
 
 /** Mesmo criterio de "venda concluida" do daily-report-email. */
-export const SALES_CLOSED_STATUSES = ["closed_local", "pending_omie", "synced"] as const;
+export const SALES_CLOSED_STATUSES = [
+  "closed_local",
+  "pending_cloud",
+  "pending_omie",
+  "synced",
+  "sync_error"
+] as const;
 
 /** Offset fixo de Brasilia usado nos relatorios (igual a _shared/report-schedule). */
 export const REPORT_UTC_OFFSET_MINUTES = -180;
@@ -63,6 +69,17 @@ export interface SalesOperationRow {
   freight_total_cents?: number | string | null;
   total_cents?: number | string | null;
   created_at: string;
+  /**
+   * Fechamento da pesagem (saida da balanca). E esta a data da venda — a mesma que o
+   * KyberRock manda ao OMIE como emissao do pedido —, e nao `created_at`, que e a
+   * ENTRADA do caminhao. Nulo nas operacoes antigas, gravadas antes da coluna.
+   */
+  closed_at?: string | null;
+}
+
+/** O dia a que a venda pertence: o do fechamento, com a entrada como reserva. */
+export function saleDayOf(row: SalesOperationRow): string | null {
+  return toReportDay(row.closed_at || row.created_at);
 }
 
 /** `all` passa tudo; caso contrario compara com a modalidade normalizada da linha. */
@@ -123,7 +140,7 @@ function groupKey(row: SalesOperationRow, groupBy: SalesGroupBy): string {
   if (groupBy === "product") return `p:${product}`;
   if (groupBy === "customer") return `c:${customer}`;
   if (groupBy === "customer_product") return `cp:${customer}|${product}`;
-  return `d:${toReportDay(row.created_at) ?? "sem-data"}`;
+  return `d:${saleDayOf(row) ?? "sem-data"}`;
 }
 
 export function aggregateSalesReport(
@@ -138,7 +155,7 @@ export function aggregateSalesReport(
     if (!line) {
       line = {
         key,
-        day: groupBy === "day" ? toReportDay(row.created_at) : null,
+        day: groupBy === "day" ? saleDayOf(row) : null,
         customerName:
           groupBy === "customer" || groupBy === "customer_product"
             ? row.customer_name || "Cliente nao informado"

@@ -87,6 +87,17 @@ These recur across the codebase and are easy to violate accidentally:
   `loading_requested` → `awaiting_exit` → `closed_local` → `pending_cloud`/`pending_omie` →
   `synced` (or `sync_error` / `cancelled`). Local close happens before any sync; sync failures
   never erase a closed local operation.
+- **Data da pesagem nos relatorios** (AGENTS.md "Data da pesagem nos relatorios"): todo
+  relatorio de DINHEIRO recorta o periodo pela data em que a pesagem **fechou**
+  (`operationSaleDateSql`, em `weighing-operation-status.ts`), nunca pela de abertura —
+  porque e essa a data que sobe ao OMIE como emissao do pedido (`issueDate`), e dela nascem
+  a NF-e, a conta a receber e o vencimento. Com `created_at`, o caminhao que entra num dia e
+  so fecha no outro caia num dia aqui e no outro no OMIE: em 11/09/2026 o extrato de la
+  mostrava 50 lancamentos / R$ 60.971,18 contra 45 / R$ 53.556,22 na balanca, e as 5
+  diferencas eram exatamente pesagens abertas em 09 e 10/09 e fechadas em 11/09 — nenhuma
+  enviada errada. O `COALESCE` com `created_at` fica: operacao antiga nao tem horario de
+  saida gravado. O **patio** continua pela ENTRADA (`getTruckControlReport`,
+  `getAverageQuarryMinutes`), que ali o assunto e o tempo do caminhao na pedreira.
 - **Data ownership is split**: KyberRock owns operations, coupons, prices, vehicles/drivers and
   loading requests; OMIE owns customer/product/payment cadastros — OMIE-owned fields are locked
   locally. See the ownership table in `docs/ARCHITECTURE.md`.

@@ -112,6 +112,8 @@ interface OperationSeed {
   code?: number | null;
   customer: string;
   createdAt: string;
+  /** Saida da balanca. Sem valor, fecha no mesmo instante em que abriu. */
+  closedAt?: string;
   totalCents?: number;
   productCents?: number;
   freightCents?: number;
@@ -145,8 +147,8 @@ function insertOperation(db: Database, seed: OperationSeed): void {
         product_total_cents, freight_total_cents, total_cents,
         omie_sales_order_id, omie_order_number, omie_invoice_number,
         omie_billing_status, omie_billing_message,
-        created_at, updated_at, deleted_at)
-     VALUES (?, 'comp-1', ?, 'dev-1', ?, ?, ?, ?, ?, ?, ?, 'prod-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        exit_weight_captured_at, created_at, updated_at, deleted_at)
+     VALUES (?, 'comp-1', ?, 'dev-1', ?, ?, ?, ?, ?, ?, ?, 'prod-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     seed.id,
     seed.unitId ?? "unit-1",
@@ -170,6 +172,7 @@ function insertOperation(db: Database, seed: OperationSeed): void {
     seed.invoiceNumber ?? null,
     seed.billingStatus ?? null,
     seed.billingMessage ?? null,
+    seed.closedAt ?? seed.createdAt,
     seed.createdAt,
     seed.createdAt,
     seed.deletedAt ?? null
@@ -1023,6 +1026,49 @@ describe("InvoiceClosingService", () => {
       const result = periodReport(db);
       expect(result.rows.map((line) => line.operationId)).toEqual(["op-1", "op-orfa"]);
       expect(result.rowTotals.operations).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("InvoiceClosingService: a carga entra pela data do FECHAMENTO", () => {
+  /**
+   * A pesagem que vira a data do pedido no OMIE e a que fechou. Pela data de ENTRADA, a
+   * carga que atravessa a virada da quinzena entrava numa fatura e o boleto do OMIE
+   * saia noutra — e o extrato de vencimentos (`loadInstallments`), que ja contava pelo
+   * fechamento, discordava da propria fatura.
+   */
+  it("carga que vira a quinzena fecha na quinzena seguinte", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertCustomer(db, {
+        id: "cust-q",
+        name: "Quinzenal",
+        periodicity: "biweekly",
+        closingDay: 1,
+        secondClosingDay: 16,
+        boletoDays: 10,
+        secondBoletoDays: 10
+      });
+      // Entrou dia 16 (ainda dentro do fechamento do dia 16) e so fechou dia 17.
+      insertOperation(db, {
+        id: "op-virou",
+        code: 101,
+        customer: "cust-q",
+        createdAt: "2026-07-16T23:40:00",
+        closedAt: "2026-07-17T08:10:00"
+      });
+
+      const result = new InvoiceClosingService(db).getReport("2026-07-01", "2026-07-31", "unit-1", {
+        basis: "customer"
+      });
+
+      expect(result.invoices).toHaveLength(1);
+      // Fecha no dia 1o de agosto (proximo fechamento depois do dia 17), nao no dia 16.
+      expect(result.invoices[0].closingDate).toBe("2026-08-01");
+      expect(result.invoices[0].lines[0].date).toBe("2026-07-17");
     } finally {
       db.close();
     }

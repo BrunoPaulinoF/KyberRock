@@ -125,6 +125,36 @@ npm run dist:win -w @kyberrock/desktop      # NSIS installer -> apps/desktop/rel
 - **A prévia desenha o FORMULÁRIO; quem imprime é o perfil SALVO**: `receiptProfileSignature` (em `App.tsx`) compara os dois e a tela avisa em cima da prévia enquanto houver diferença. Sem isso, digitar o telefone de contato e mandar imprimir mostrava o cupom certo na tela e imprimia o antigo no papel — e não havia nada na tela explicando por quê. Foi essa a causa real do "telefone de contato não sai": nos cupons sincronizados, `templateConfig.companyPhone` estava `""` em **todos** eles.
 - **Largura do cupom impresso**: o HTML do cupom **não pode depender do tamanho da página** que o driver informa. `@page { size: 80mm auto }` é CSS inválido (`size` aceita `auto` sozinho **ou** medidas, nunca medida + `auto`): o Chromium descartava a regra inteira, diagramava o cupom na página padrão da impressora (A4/Carta) e tudo que é centralizado — logo, `COD`, `COPIA NRO`, data/hora, via — ia para o meio de ~210 mm, ou seja, fora do papel de 80 mm; sobrava só o corpo, alinhado à esquerda e ainda com o fim de cada linha cortado. Foi **este** o motivo de "a logo e o número nunca saírem no cupom", e não a conversão da imagem. Agora `buildReceiptHtml` desenha o cupom numa coluna de largura fixa — a faixa útil do papel, `receiptContentWidthMm` (papel − 2 × `RECEIPT_PAPER_MARGIN_MM`) — ancorada à esquerda, e o que é centralizado se centraliza dentro dela. As linhas decorativas (divisor de 48 traços, linha de assinatura) saem com `rule-line`: `white-space: pre` + o corpo de `fitReceiptBodyFontSizePx`, senão as 48 colunas estouram a faixa útil e sobra um toco de traços na linha de baixo. A prévia usa as **mesmas** funções: se elas divergirem, a tela volta a mentir sobre o papel.
 
+## Data da pesagem nos relatórios: vale o FECHAMENTO
+
+Toda consulta de relatório que fala de **dinheiro** recorta o período pela data em que a
+pesagem **fechou** (saída da balança), nunca pela data em que ela foi aberta. A expressão
+mora num lugar só — `operationSaleDateSql(alias)`, em
+`apps/desktop/src/services/weighing-operation-status.ts` (reexportada por
+`weighing-operations.ts`) — e vale para `reports.ts` (diário, mensal, produto, cliente,
+tabela dinâmica, série diária, mix, exportações), `weighing-billing-report.ts`,
+`customer-report.ts`, `invoice-closing.ts` e `wallet.ts`. Na nuvem a mesma regra é o
+`closed_at` do `daily-report-email` e do relatório de vendas do loader-web.
+
+O motivo é que essa é a data que o KyberRock manda ao OMIE como **emissão do pedido/OS**
+(`issueDate` em `buildOmieBillingJob`, alimentado por `exit_weight_captured_at`) — dela
+nascem a NF-e, a conta a receber e o vencimento das parcelas. Filtrando por `created_at`,
+o caminhão que entra num dia e só fecha no outro cai num dia no KyberRock e no outro no
+OMIE. Caso real que motivou a correção: em **11/09/2026** o OMIE mostrava 50 lançamentos /
+R$ 60.971,18 e o relatório da balança, 45 / R$ 53.556,22. As 5 diferenças (R$ 7.414,96)
+eram pesagens abertas em 09 e 10/09 e fechadas em 11/09 — nada tinha sido enviado errado,
+nem duplicado: era só a base de data. A conferência cobrava o operador por um fantasma.
+
+Duas coisas que não mudam de base:
+
+- **Pátio pela ENTRADA.** `getTruckControlReport` e `getAverageQuarryMinutes` (e o resumo
+  de caminhões do `daily-report-email`) medem tempo dentro da pedreira: a viagem pertence
+  ao dia em que o caminhão chegou.
+- **`COALESCE` com `created_at` é obrigatório.** Operação antiga, gravada antes de a coluna
+  `exit_weight_captured_at` existir, não tem horário de saída — sem a reserva ela sumiria
+  do histórico. Nunca troque a chamada de `operationSaleDateSql` por
+  `exit_weight_captured_at` cru.
+
 ## Planilhas dos relatórios (célula tipada)
 
 As planilhas geradas pelos relatórios (`Exportar Excel` do painel, Relatório por cliente,
