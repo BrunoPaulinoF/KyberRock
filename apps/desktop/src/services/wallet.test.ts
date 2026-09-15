@@ -574,7 +574,7 @@ describe("wallet service", () => {
     }
   });
 
-  it("o recorte por periodo usa a data da OPERACAO, a mesma do Fechamento de faturas", () => {
+  it("o recorte por periodo usa a data do FECHAMENTO, a mesma do Fechamento de faturas", () => {
     insertOperations(database, [
       {
         id: "op-dentro",
@@ -591,24 +591,32 @@ describe("wallet service", () => {
         soldAt: "2026-08-02"
       }
     ]);
-    // Caminhao que entra dia 31 e sai dia 1: o fechamento conta pela ENTRADA, e a carteira
-    // precisa concordar, senao a mesma quinzena da duas listas diferentes.
+    // Caminhao que entra dia 20 e so FECHA dia 1 do mes seguinte: a venda e do dia 1 — e a
+    // data que vai ao OMIE como emissao do pedido —, entao ela sai da quinzena de julho.
+    // A carteira precisa concordar com o Fechamento de faturas, que usa a mesma base.
     database
       .prepare(
         "UPDATE weighing_operations SET exit_weight_captured_at = '2026-08-01T02:00:00.000Z' WHERE id = 'op-dentro'"
       )
       .run();
 
-    const report = getWalletReport(database, {
+    const quinzenaDeJulho = getWalletReport(database, {
       status: "open",
       startDate: "2026-07-16",
       endDate: "2026-07-31"
     });
+    expect(quinzenaDeJulho.groups).toHaveLength(0);
+
+    // E aparece na quinzena em que fechou, com as duas datas na tela.
+    const report = getWalletReport(database, {
+      status: "open",
+      startDate: "2026-08-01",
+      endDate: "2026-08-01"
+    });
     expect(report.groups.flatMap((group) => group.operations.map((op) => op.operationId))).toEqual([
       "op-dentro"
     ]);
-    // A tela mostra as duas datas: a da operacao (que o filtro usa) e a da saida.
-    expect(report.groups[0].operations[0].operationDate).toBe("2026-07-20");
+    expect(report.groups[0].operations[0].operationDate).toBe("2026-08-01");
     expect(report.groups[0].operations[0].soldAt).toContain("2026-08-01");
   });
 

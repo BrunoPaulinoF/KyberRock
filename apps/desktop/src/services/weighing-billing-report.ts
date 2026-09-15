@@ -7,7 +7,7 @@ import {
   resolveSituationDetail
 } from "./weighing-billing-situation.js";
 import type { WeighingBillingSituation } from "./weighing-billing-situation.js";
-import { CLOSED_OPERATION_STATUS_SQL_LIST } from "./weighing-operations.js";
+import { CLOSED_OPERATION_STATUS_SQL_LIST, operationSaleDateSql } from "./weighing-operations.js";
 
 /**
  * Conferencia de faturamento: a lista PESAGEM A PESAGEM do periodo, uma linha por
@@ -22,9 +22,11 @@ import { CLOSED_OPERATION_STATUS_SQL_LIST } from "./weighing-operations.js";
  *
  * Escopo igual ao dos demais relatorios (`ReportService`, `CustomerReportService`):
  * operacoes CONCLUIDAS da unidade — `closed_local` ate `sync_error` —, sem as excluidas
- * e sem as canceladas, no intervalo de `date(created_at)`. Manter a mesma base de data e
- * o mesmo conjunto de status e o que faz o total daqui bater com o dos outros: um
- * relatorio de conferencia que discorda dos outros nao serve para conferir nada.
+ * e sem as canceladas, no intervalo da DATA DE FECHAMENTO (`operationSaleDateSql`).
+ * Manter a mesma base de data e o mesmo conjunto de status e o que faz o total daqui
+ * bater com o dos outros: um relatorio de conferencia que discorda dos outros nao serve
+ * para conferir nada. E, porque e a mesma data que vai ao OMIE como emissao do pedido,
+ * e tambem o que faz a conferencia bater com o extrato de contas a receber de la.
  */
 
 /** Uma pesagem fechada do periodo. */
@@ -32,7 +34,10 @@ export interface WeighingBillingRow {
   operationId: string;
   /** Numero sequencial da operacao mostrado ao operador (`operation_code`). */
   operationCode: number | null;
-  /** Data da operacao (`created_at`), a mesma base dos demais relatorios. */
+  /**
+   * Data da operacao: o dia em que ela FECHOU (`operationSaleDateSql`), a mesma base dos
+   * demais relatorios e a mesma que o OMIE usa na emissao do pedido.
+   */
   date: string;
   /** Saida da balanca — quando a pesagem de fato fechou. Null nas operacoes antigas. */
   closedAt: string | null;
@@ -212,9 +217,9 @@ export class WeighingBillingReportService {
            AND (? IS NULL OR o.customer_id = ?)
            AND o.deleted_at IS NULL
            AND o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
-           AND date(o.created_at) >= date(?)
-           AND date(o.created_at) <= date(?)
-         ORDER BY o.created_at ASC, o.operation_code ASC`
+           AND date(${operationSaleDateSql("o")}) >= date(?)
+           AND date(${operationSaleDateSql("o")}) <= date(?)
+         ORDER BY ${operationSaleDateSql("o")} ASC, o.operation_code ASC`
       )
       .all(unitId, customerId, customerId, startDate, endDate) as WeighingBillingSourceRow[];
   }
@@ -225,7 +230,7 @@ function mapRow(row: WeighingBillingSourceRow): WeighingBillingRow {
   return {
     operationId: row.id,
     operationCode: row.operation_code,
-    date: row.created_at.slice(0, 10),
+    date: (row.exit_at ?? row.created_at).slice(0, 10),
     closedAt: row.exit_at,
     customerId: row.customer_id,
     customerName:

@@ -6,7 +6,7 @@ import {
 } from "./customer-identity.js";
 import { paymentMethodDisplayName } from "./payment-methods.js";
 import { enqueueSyncJob } from "./sync-queue.js";
-import { CLOSED_OPERATION_STATUS_SQL_LIST } from "./weighing-operations.js";
+import { CLOSED_OPERATION_STATUS_SQL_LIST, operationSaleDateSql } from "./weighing-operations.js";
 
 /**
  * Carteira: vendas fechadas na forma de pagamento "em carteira".
@@ -216,12 +216,12 @@ export function getWalletReport(database: DesktopDatabase, query: WalletQuery = 
   }
   if (query.startDate) {
     assertDate(query.startDate, "Data inicial");
-    conditions.push("date(o.created_at) >= date(?)");
+    conditions.push(`date(${operationSaleDateSql("o")}) >= date(?)`);
     params.push(query.startDate);
   }
   if (query.endDate) {
     assertDate(query.endDate, "Data final");
-    conditions.push("date(o.created_at) <= date(?)");
+    conditions.push(`date(${operationSaleDateSql("o")}) <= date(?)`);
     params.push(query.endDate);
   }
   const search = query.search?.trim();
@@ -239,8 +239,8 @@ export function getWalletReport(database: DesktopDatabase, query: WalletQuery = 
     .prepare(
       `SELECT
          o.id,
-         COALESCE(o.exit_weight_captured_at, o.created_at) AS sold_at,
-         o.created_at AS operation_date,
+         ${operationSaleDateSql("o")} AS sold_at,
+         ${operationSaleDateSql("o")} AS operation_date,
          o.customer_id,
          COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
          COALESCE(v.plate, o.remote_plate) AS plate,

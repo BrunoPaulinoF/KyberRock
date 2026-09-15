@@ -3,6 +3,7 @@ import { getFreightModalityInfo } from "./freight.js";
 import type { FreightModality, FreightRule } from "./freight.js";
 import {
   CLOSED_OPERATION_STATUS_SQL_LIST,
+  operationSaleDateSql,
   isClosedOperationStatus
 } from "./weighing-operations.js";
 import { customerIdentityKey, resolveCustomerIdGroup } from "./customer-identity.js";
@@ -719,9 +720,9 @@ export class CustomerReportService {
            ${customerFilterSql(customerIds)}
            AND o.deleted_at IS NULL
            AND o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST}, 'cancelled')
-           AND date(o.created_at) >= date(?)
-           AND date(o.created_at) <= date(?)
-         ORDER BY o.created_at ASC`
+           AND date(${operationSaleDateSql("o")}) >= date(?)
+           AND date(${operationSaleDateSql("o")}) <= date(?)
+         ORDER BY ${operationSaleDateSql("o")} ASC`
       )
       .all(unitId, ...(customerIds ?? []), startDate, endDate) as OperationRow[];
   }
@@ -768,8 +769,8 @@ export class CustomerReportService {
            ${customerFilterSql(customerIds)}
            AND o.deleted_at IS NULL
            AND o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
-           AND date(COALESCE(o.exit_weight_captured_at, o.created_at)) <= date(?)
-         ORDER BY o.created_at ASC`
+           AND date(${operationSaleDateSql("o")}) <= date(?)
+         ORDER BY ${operationSaleDateSql("o")} ASC`
       )
       .all(unitId, ...(customerIds ?? []), endDate) as InstallmentSourceRow[];
 
@@ -975,7 +976,7 @@ function mapOperation(row: OperationRow): CustomerReportOperation {
   return {
     id: row.id,
     couponNumber: row.operation_code,
-    date: row.created_at.slice(0, 10),
+    date: (row.exit_at ?? row.created_at).slice(0, 10),
     createdAt: row.created_at,
     status: row.status,
     statusLabel: STATUS_LABELS[row.status] ?? row.status,

@@ -35,8 +35,25 @@ function jsonResponse(body: unknown, status = 200): Response {
 type ReportType = "sales" | "trucks" | "both";
 
 // Operacoes fechadas localmente contam no relatorio mesmo depois de avancarem no
-// ciclo de sync (o status do cloud espelha o status local no momento do push).
-const CLOSED_STATUSES = ["closed_local", "pending_omie", "synced"];
+// ciclo de sync (o status do cloud espelha o status local no momento do push). A lista e
+// a mesma de `CLOSED_OPERATION_STATUSES` no desktop: faltavam `pending_cloud` e
+// `sync_error`, e uma pesagem parada em erro de sincronizacao sumia do relatorio do dono
+// mesmo tendo sido fechada e faturada.
+const CLOSED_STATUSES = ["closed_local", "pending_cloud", "pending_omie", "synced", "sync_error"];
+
+/**
+ * Janela do relatorio pela data de FECHAMENTO da pesagem (`closed_at`, o mesmo
+ * `exit_weight_captured_at` que vira emissao do pedido no OMIE), e nao pela data de
+ * criacao. Um caminhao que entra num dia e so fecha no outro pertence ao dia em que
+ * fechou — e o dia em que a venda existe para o OMIE. `closed_at` nulo (operacao antiga,
+ * gravada antes da coluna) cai de volta em `created_at` para nao sumir do relatorio.
+ */
+function saleDateFilter(period: ReportPeriod): string {
+  return [
+    `and(closed_at.gte."${period.startUtc}",closed_at.lt."${period.endUtc}")`,
+    `and(closed_at.is.null,created_at.gte."${period.startUtc}",created_at.lt."${period.endUtc}")`
+  ].join(",");
+}
 
 interface Recipient {
   email: string | null;
@@ -556,8 +573,7 @@ async function buildSalesSummary(
     .eq("company_id", companyId)
     .eq("unit_id", unitId)
     .in("status", CLOSED_STATUSES)
-    .gte("created_at", period.startUtc)
-    .lt("created_at", period.endUtc);
+    .or(saleDateFilter(period));
 
   if (error) return null;
   if (!data || data.length === 0) return null;
@@ -609,6 +625,9 @@ async function buildTruckSummary(
     .eq("unit_id", unitId)
     .in("status", CLOSED_STATUSES)
     .not("closed_at", "is", null)
+    // De proposito pela data de ENTRADA, ao contrario do resumo de vendas: aqui o assunto
+    // e o patio (quanto tempo cada placa ficou na pedreira), e a viagem pertence ao dia em
+    // que o caminhao chegou. E a mesma base do "Controle de caminhoes" do desktop.
     .gte("created_at", period.startUtc)
     .lt("created_at", period.endUtc);
 

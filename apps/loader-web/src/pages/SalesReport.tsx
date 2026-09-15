@@ -153,12 +153,22 @@ export function SalesReport() {
         const { data, error } = await supabase
           .from("weighing_operations")
           .select(
-            "customer_id, customer_name, product_id, product_description, freight_type, net_weight_kg, product_total_cents, freight_total_cents, total_cents, created_at"
+            "customer_id, customer_name, product_id, product_description, freight_type, net_weight_kg, product_total_cents, freight_total_cents, total_cents, created_at, closed_at"
           )
           .eq("company_id", user.companyId)
           .in("status", [...SALES_CLOSED_STATUSES])
-          .gte("created_at", resolvedPeriod.startIso)
-          .lt("created_at", resolvedPeriod.endIso)
+          // Periodo pela data de FECHAMENTO da pesagem (`closed_at`), que e a data da venda
+          // e a que o OMIE usa na emissao do pedido. Pela data de criacao, o caminhao que
+          // entra num dia e fecha no outro caia num dia aqui e no outro no OMIE — e a
+          // conferencia acusava lancamento "sobrando" la sem nada de errado ter havido.
+          // Operacao antiga, sem `closed_at`, continua entrando pela data de criacao.
+          .or(
+            [
+              `and(closed_at.gte."${resolvedPeriod.startIso}",closed_at.lt."${resolvedPeriod.endIso}")`,
+              `and(closed_at.is.null,created_at.gte."${resolvedPeriod.startIso}",created_at.lt."${resolvedPeriod.endIso}")`
+            ].join(",")
+          )
+          .order("closed_at", { ascending: true, nullsFirst: true })
           .order("created_at", { ascending: true })
           .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
         if (error) throw new Error(error.message);

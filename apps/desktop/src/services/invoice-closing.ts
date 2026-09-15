@@ -13,7 +13,7 @@ import {
   WEIGHING_BILLING_SITUATION_LABEL
 } from "./weighing-billing-situation.js";
 import type { WeighingBillingSituation } from "./weighing-billing-situation.js";
-import { CLOSED_OPERATION_STATUS_SQL_LIST } from "./weighing-operations.js";
+import { CLOSED_OPERATION_STATUS_SQL_LIST, operationSaleDateSql } from "./weighing-operations.js";
 import { INVOICE_CLOSING_CYCLE_LABEL, isInvoiceClosingCycle } from "./invoice-closing-cycle.js";
 import type { InvoiceClosingCycle } from "./invoice-closing-cycle.js";
 import { findDuplicateWeighings } from "./weighing-duplicates.js";
@@ -48,8 +48,10 @@ import type { DuplicateWeighingGroup } from "./weighing-duplicates.js";
  *
  * Escopo igual ao dos demais relatorios (`ReportService`, `CustomerReportService`,
  * `WeighingBillingReportService`): operacoes CONCLUIDAS da unidade, sem as excluidas e sem
- * as canceladas, no intervalo de `date(created_at)`. Manter a mesma base de data e o mesmo
- * conjunto de status e o que faz o total daqui bater com o dos outros.
+ * as canceladas, no intervalo da DATA DE FECHAMENTO da pesagem (`operationSaleDateSql`).
+ * Manter a mesma base de data e o mesmo conjunto de status e o que faz o total daqui
+ * bater com o dos outros — e e a mesma data que decide o vencimento das parcelas em
+ * `loadInstallments`, entao a fatura e o extrato de vencimentos nunca discordam.
  *
  * O boleto NAO sai daqui: quem emite e o OMIE, a partir do pedido que o KyberRock ja
  * mandou. Este documento e a conferencia que acompanha a cobranca — a lista de tudo que
@@ -632,9 +634,9 @@ export class InvoiceClosingService {
            ${customerFilter}
            AND o.deleted_at IS NULL
            AND o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
-           AND date(o.created_at) >= date(?)
-           AND date(o.created_at) <= date(?)
-         ORDER BY o.created_at ASC, o.operation_code ASC`
+           AND date(${operationSaleDateSql("o")}) >= date(?)
+           AND date(${operationSaleDateSql("o")}) <= date(?)
+         ORDER BY ${operationSaleDateSql("o")} ASC, o.operation_code ASC`
       )
       .all(unitId, ...(customerIds ?? []), startDate, endDate) as InvoiceClosingSourceRow[];
   }
@@ -648,7 +650,7 @@ function mapLine(row: InvoiceClosingSourceRow): InvoiceClosingLine {
     customerName: customerName(row),
     customerDocument: row.customer_document,
     couponNumber: row.operation_code,
-    date: row.created_at.slice(0, 10),
+    date: (row.exit_at ?? row.created_at).slice(0, 10),
     closedAt: row.exit_at,
     // Preenchidas quando a linha entra numa fatura: e o fechamento que decide as duas datas.
     closingDate: null,

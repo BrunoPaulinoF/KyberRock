@@ -63,3 +63,33 @@ export const OPEN_OPERATION_STATUS_SQL_LIST = OPEN_OPERATION_STATUSES.map(
 export function isOpenOperationStatus(status: string): boolean {
   return (OPEN_OPERATION_STATUSES as readonly string[]).includes(status);
 }
+
+/**
+ * Data CONTABIL de uma pesagem — o dia em que ela FECHOU (peso de saida capturado), nao o
+ * dia em que o caminhao entrou na pedreira.
+ *
+ * Esta e a data que o KyberRock manda para o OMIE como emissao do pedido/OS
+ * (`issueDate` em `buildOmieBillingJob`, alimentado por `exit_weight_captured_at`), e e
+ * dela que nascem a NF-e, a conta a receber e o vencimento das parcelas. Os relatorios
+ * filtravam por `date(created_at)` — a ENTRADA —, e as duas datas so coincidem quando o
+ * caminhao entra e sai no mesmo dia. Um caminhao que entrou na quarta e so fechou na
+ * sexta caia na quarta no KyberRock e na sexta no OMIE: a conferencia acusava pesagem
+ * "sobrando no OMIE" num dia e "faltando" no outro, sem nada de errado ter acontecido.
+ * (Caso real: 11/09/2026 fechou 50 lancamentos / R$ 60.971,18 no OMIE contra 45 /
+ * R$ 53.556,22 no relatorio — as 5 diferencas eram pesagens abertas em 09 e 10/09 e
+ * fechadas em 11/09.)
+ *
+ * O `COALESCE` cuida das operacoes antigas, gravadas antes de a coluna existir: sem
+ * horario de saida a data de criacao continua valendo, entao nenhuma pesagem historica
+ * some do relatorio.
+ *
+ * Vale para dinheiro (faturamento, fatura de fiado, vencimento, conferencia com o OMIE).
+ * O patio continua sendo contado pela ENTRADA — `getTruckControlReport` e
+ * `getAverageQuarryMinutes` medem tempo dentro da pedreira e nao mudam de base.
+ *
+ * @param alias prefixo da tabela na consulta (`"o"`, `"wo"`); vazio quando nao ha alias.
+ */
+export function operationSaleDateSql(alias = ""): string {
+  const prefix = alias ? `${alias}.` : "";
+  return `COALESCE(${prefix}exit_weight_captured_at, ${prefix}created_at)`;
+}

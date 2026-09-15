@@ -68,6 +68,8 @@ interface OperationSeed {
   freightCents: number;
   totalCents: number;
   createdAt: string;
+  /** Saida da balanca. Sem valor, fecha no mesmo instante em que abriu. */
+  closedAt?: string;
   status?: string;
   operationType?: "invoice" | "internal";
   unitId?: string;
@@ -120,7 +122,7 @@ function insertOperations(db: Database, seeds: OperationSeed[]): void {
       seed.billingStatus ?? null,
       seed.billingMessage ?? null,
       seed.createdAt,
-      seed.createdAt,
+      seed.closedAt ?? seed.createdAt,
       seed.deletedAt ?? null,
       seed.createdAt,
       seed.createdAt
@@ -642,6 +644,61 @@ describe("numero da nota fiscal na conferencia de faturamento", () => {
       const html = renderWeighingBillingReportHtml(report, new Date("2026-08-01T12:00:00Z"));
       expect(html).toContain("Nota fiscal");
       expect(html).toContain("28727");
+    } finally {
+      db.close();
+    }
+  });
+  it("a pesagem entra no dia em que FECHOU, nao no dia em que o caminhao entrou", () => {
+    const db = createDatabase();
+    try {
+      setupBaseData(db);
+      insertOperations(db, [
+        // Entrou dia 09, so fechou dia 11 — o pedido saiu para o OMIE com emissao em 11.
+        {
+          id: "op-virou-o-dia",
+          code: 201,
+          customer: "cust-1",
+          product: "prod-1",
+          net: 22000,
+          productCents: 190000,
+          freightCents: 7441,
+          totalCents: 197441,
+          createdAt: "2026-09-09T13:06:00",
+          closedAt: "2026-09-11T17:55:00",
+          salesOrderId: 1224
+        },
+        // Entrou e fechou no mesmo dia 11.
+        {
+          id: "op-mesmo-dia",
+          code: 202,
+          customer: "cust-2",
+          product: "prod-2",
+          net: 16000,
+          productCents: 120000,
+          freightCents: 0,
+          totalCents: 120000,
+          createdAt: "2026-09-11T08:00:00",
+          salesOrderId: 1230
+        }
+      ]);
+
+      const service = new WeighingBillingReportService(db);
+
+      // Dia 09 (entrada) nao tem mais a pesagem: nesse dia nada foi faturado no OMIE.
+      const dia09 = service.getReport("2026-09-09", "2026-09-09", "unit-1");
+      expect(dia09.rows.map((row) => row.operationId)).toEqual([]);
+
+      // Dia 11 (fechamento) tem as duas — o mesmo conjunto que o extrato do OMIE mostra.
+      const dia11 = service.getReport("2026-09-11", "2026-09-11", "unit-1");
+      expect(dia11.rows.map((row) => row.operationId).sort()).toEqual([
+        "op-mesmo-dia",
+        "op-virou-o-dia"
+      ]);
+      expect(dia11.totals.totalCents).toBe(317441);
+
+      // E a data mostrada na linha e a do fechamento, para conferir contra o OMIE.
+      const row = dia11.rows.find((item) => item.operationId === "op-virou-o-dia");
+      expect(row?.date).toBe("2026-09-11");
     } finally {
       db.close();
     }
