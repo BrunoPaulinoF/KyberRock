@@ -908,6 +908,49 @@ falta: com o banco fora do ar, retentar qualquer erro multiplicava a carga sobre
 Recuperacao: assim que a nuvem volta, o ping de acesso (a cada 30 s) responde `approved` e as
 balancas se liberam sozinhas — nao ha nada a fazer maquina a maquina.
 
+## Cadastro de uma maquina chega nas outras
+
+O cadastro que o comercial fazia no computador dele podia **nunca** aparecer no computador da
+expedicao. Eram dois problemas somados, e os dois foram corrigidos.
+
+**1. O cadastro so saia da maquina na varredura completa.** A operacao ja tinha envio imediato
+(`triggerOperationCloudPush`); o cadastro nao — ele esperava o ciclo de 30 min (`DEFAULT_CLOUD_SYNC_INTERVAL_MINUTES`,
+e o operador pode desligar a sincronizacao automatica). Fechar o programa antes disso adiava o
+cadastro para a proxima abertura. Agora todo salvamento de cadastro passa por
+`cadastroChanged`/`triggerCadastroCloudPush` (`services/runtime.ts`), que publica na hora. E
+barato porque `pushSharedCadastroToCloud` anda por cursor — so sobe o que mudou —, e uma rajada
+(salvar um cliente mexe no cliente E na transportadora dele) vira **um** envio; o que for editado
+durante um envio agenda o proximo, em vez de se perder. Falha nao perde nada: o cursor nao
+avanca.
+
+**2. O pull incremental recortava pela hora ERRADA.** O pull de 15 s pede "so o que mudou desde o
+meu ultimo pull", e o recorte era `updated_at` — a hora da maquina que EDITOU o cadastro, nao a
+hora em que a linha chegou na nuvem (o `desktop-sync` grava o `updated_at` do payload como veio).
+Linha criada as 10:00, publicada as 10:28, chega com `updated_at = 10:00`; a balanca que ja puxou
+as 10:28 pede dali para a frente e **nunca mais** ve essa linha, porque o cursor dela so anda para
+a frente. So a varredura completa da outra maquina resgatava o cadastro — mais 30 min, se ela
+estivesse ligada.
+
+O recorte agora e `cloud_synced_at`, a hora da NUVEM no momento em que a linha foi gravada la
+(`_shared/cadastro-window.ts`, usado pelo `desktop-pull`). Quem carimba e um **gatilho**
+(migracao `202609150001_cadastro_cloud_arrival`), nao o payload: alem do `desktop-sync` escrevem
+nessas tabelas o painel, o `omie-sync` e o desligamento da linha perdedora da disputa de preco —
+e esse tombstone precisa chegar nas outras balancas como qualquer outra linha. Carimbar no
+gatilho poe toda escrita dentro da janela, inclusive as que ainda nem existem.
+
+Dois cuidados que nao podem se perder numa mudanca futura:
+
+- A **varredura completa** continua pedindo o cadastro INTEIRO (sem `cadastroSince`). E ela que
+  se auto-corrige quando um pull incremental deixa algo de fora; trocar isso por "sempre
+  incremental" tira a unica rede de seguranca.
+- A folga de 5 min do cursor (`CADASTRO_INCREMENTAL_OVERLAP_MS`) nao e decorativa: a marca
+  guardada e o `serverTime` da Edge Function e o recorte e o `now()` do Postgres (hora de INICIO
+  da transacao). Sao dois relogios, e a folga e o que impede uma linha de cair na fresta entre
+  eles.
+- Enquanto a migracao nao estiver aplicada a coluna nao existe: o `desktop-pull` refaz a consulta
+  com o recorte antigo (pior janela, nunca cadastro nenhum) — e so quando o erro **e** a coluna
+  que falta, pela mesma razao da secao anterior.
+
 ## Edge Functions deploy
 
 **Automated (default).** `.github/workflows/edge-functions-deploy.yml` deploys the Deno Edge

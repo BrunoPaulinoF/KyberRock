@@ -187,7 +187,12 @@ import {
   type ActivateDesktopInput,
   type DesktopAccessStatus
 } from "./desktop-activation.js";
-import { CacheStore, type CacheQueryOptions, type CacheQueryResult } from "./cache-store.js";
+import {
+  CacheStore,
+  type CacheEntityType,
+  type CacheQueryOptions,
+  type CacheQueryResult
+} from "./cache-store.js";
 import { readOmiePullState, writeOmiePullState, SETUP_COMPANY_ID } from "./supabase-sync.js";
 import { listUnitDevices, type UnitDeviceInfo } from "./unit-devices.js";
 import {
@@ -606,6 +611,9 @@ export class DesktopRuntime {
   private cloudSyncRerunRequested = false;
   /** Serializa os envios avulsos de operacao (um de cada vez, em ordem). */
   private operationPushChain: Promise<void> = Promise.resolve();
+  /** O mesmo para o cadastro: um envio de cada vez, com as edicoes da rajada juntas. */
+  private cadastroPushChain: Promise<void> = Promise.resolve();
+  private cadastroPushQueued = false;
   private omieSyncInProgress = false;
   private omieQueueProcessing = false;
   /** Pedido de execucao da fila OMIE que chegou com outra em andamento — roda ao terminar. */
@@ -950,7 +958,7 @@ export class DesktopRuntime {
       }
     }
     // A entrada pode ter gravado condicao/forma como padrao do cliente (primeira escolha).
-    this.cacheStore.invalidate("customer", this.ensureIdentity().companyId);
+    this.cadastroChanged("customer", this.ensureIdentity().companyId);
     this.triggerOperationCloudPush("entry_registered", operation.id);
     return operation;
   }
@@ -1237,7 +1245,7 @@ export class DesktopRuntime {
     // IncluirCliente e recusado ("O preenchimento da tag [email] e obrigatorio!"),
     // derrubando o pedido junto. Reconstroi o payload antes do envio imediato.
     rearmOmieBillingForCustomer(this.database, op.customer_id);
-    this.cacheStore.invalidate("customer", this.ensureIdentity().companyId);
+    this.cadastroChanged("customer", this.ensureIdentity().companyId);
   }
 
   private async captureStableWeight(options: {
@@ -1540,19 +1548,25 @@ export class DesktopRuntime {
   setCustomerFreightRule(input: SetCustomerFreightRuleInput) {
     this.assertDesktopAccess();
     this.assertPriceAuthority();
-    return setCustomerFreightRule(this.database, input);
+    const result = setCustomerFreightRule(this.database, input);
+    this.triggerCadastroCloudPush("customer_freight_rule");
+    return result;
   }
 
   removeCustomerFreightRule(ruleId: string) {
     this.assertDesktopAccess();
     this.assertPriceAuthority();
-    return removeCustomerFreightRule(this.database, ruleId);
+    const result = removeCustomerFreightRule(this.database, ruleId);
+    this.triggerCadastroCloudPush("customer_freight_rule");
+    return result;
   }
 
   removeCustomerFreightModality(ruleId: string, modality: FreightModality) {
     this.assertDesktopAccess();
     this.assertPriceAuthority();
-    return removeCustomerFreightModality(this.database, ruleId, modality);
+    const result = removeCustomerFreightModality(this.database, ruleId, modality);
+    this.triggerCadastroCloudPush("customer_freight_rule");
+    return result;
   }
 
   /** Notas de venda para entrega futura ja emitidas contra o cliente (por produto). */
@@ -3331,7 +3345,7 @@ export class DesktopRuntime {
       ...input,
       companyId: identity.companyId
     });
-    this.cacheStore.invalidate("product", identity.companyId);
+    this.cadastroChanged("product", identity.companyId);
     return result;
   }
 
@@ -3340,7 +3354,7 @@ export class DesktopRuntime {
     this.assertPriceAuthority();
     const identity = this.ensureIdentity();
     removeProductDefaultPrice(this.database, identity.companyId, productId);
-    this.cacheStore.invalidate("product", identity.companyId);
+    this.cadastroChanged("product", identity.companyId);
   }
 
   listCustomerSpecialPrices(customerId: string): CustomerSpecialPriceSummary[] {
@@ -3357,16 +3371,19 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     this.assertPriceAuthority();
     const identity = this.ensureIdentity();
-    return setCustomerSpecialPrice(this.database, {
+    const result = setCustomerSpecialPrice(this.database, {
       ...input,
       companyId: identity.companyId
     });
+    this.triggerCadastroCloudPush("customer_special_price");
+    return result;
   }
 
   removeCustomerSpecialPrice(customerId: string, productId: string): void {
     this.assertDesktopAccess();
     this.assertPriceAuthority();
     removeCustomerSpecialPrice(this.database, customerId, productId);
+    this.triggerCadastroCloudPush("customer_special_price");
   }
 
   listOmieCategories(): OmieCategoryOption[] {
@@ -3552,7 +3569,7 @@ export class DesktopRuntime {
 
   invalidateCache(entityType: CacheQueryOptions["entityType"]): void {
     const identity = this.ensureIdentity();
-    this.cacheStore.invalidate(entityType, identity.companyId);
+    this.cadastroChanged(entityType, identity.companyId);
   }
 
   createCustomer(input: Omit<CreateCustomerInput, "companyId">): unknown {
@@ -3562,8 +3579,8 @@ export class DesktopRuntime {
       ...input,
       companyId: identity.companyId
     });
-    this.cacheStore.invalidate("customer", identity.companyId);
-    this.cacheStore.invalidate("carrier", identity.companyId);
+    this.cadastroChanged("customer", identity.companyId);
+    this.cadastroChanged("carrier", identity.companyId);
     return result;
   }
 
@@ -3584,8 +3601,8 @@ export class DesktopRuntime {
     // mesma recusa, dando a impressao de que a edicao "nao salvou". Rearma os fechamentos
     // que estao presos por causa deste cliente para eles sairem com o cadastro corrigido.
     rearmOmieBillingForCustomer(this.database, id);
-    this.cacheStore.invalidate("customer", identity.companyId);
-    this.cacheStore.invalidate("carrier", identity.companyId);
+    this.cadastroChanged("customer", identity.companyId);
+    this.cadastroChanged("carrier", identity.companyId);
     return result;
   }
 
@@ -3603,7 +3620,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const count = applyDefaultNfeEmailToAllCustomers(this.database, identity.companyId, email);
-    this.cacheStore.invalidate("customer", identity.companyId);
+    this.cadastroChanged("customer", identity.companyId);
     return count;
   }
 
@@ -3670,7 +3687,7 @@ export class DesktopRuntime {
       }
     }
 
-    this.cacheStore.invalidate("customer", identity.companyId);
+    this.cadastroChanged("customer", identity.companyId);
     return summary;
   }
 
@@ -3730,7 +3747,7 @@ export class DesktopRuntime {
       }
     }
 
-    this.cacheStore.invalidate("carrier", identity.companyId);
+    this.cadastroChanged("carrier", identity.companyId);
     return summary;
   }
 
@@ -3738,7 +3755,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     deleteCustomer(this.database, id);
-    this.cacheStore.invalidate("customer", identity.companyId);
+    this.cadastroChanged("customer", identity.companyId);
   }
 
   /** Os cadastros excluidos da empresa — a lista de onde sai o Restaurar. */
@@ -3752,7 +3769,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     restoreCustomer(this.database, id);
-    this.cacheStore.invalidate("customer", identity.companyId);
+    this.cadastroChanged("customer", identity.companyId);
   }
 
   // Meios de pagamento e contas nao sao criados nem excluidos no desktop: o
@@ -3767,7 +3784,7 @@ export class DesktopRuntime {
       isActive: input.isActive,
       sortOrder: input.sortOrder
     });
-    this.cacheStore.invalidate("payment_method", identity.companyId);
+    this.cadastroChanged("payment_method", identity.companyId);
     return result;
   }
 
@@ -3808,7 +3825,7 @@ export class DesktopRuntime {
       isActive: input.isActive,
       sortOrder: input.sortOrder
     });
-    this.cacheStore.invalidate("account", identity.companyId);
+    this.cadastroChanged("account", identity.companyId);
     return result;
   }
 
@@ -3816,7 +3833,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const result = createPaymentTerm(this.database, { ...input, companyId: identity.companyId });
-    this.cacheStore.invalidate("payment_term", identity.companyId);
+    this.cadastroChanged("payment_term", identity.companyId);
     return result;
   }
 
@@ -3824,7 +3841,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const result = updatePaymentTerm(this.database, id, input);
-    this.cacheStore.invalidate("payment_term", identity.companyId);
+    this.cadastroChanged("payment_term", identity.companyId);
     return result;
   }
 
@@ -3832,7 +3849,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     deletePaymentTerm(this.database, id);
-    this.cacheStore.invalidate("payment_term", identity.companyId);
+    this.cadastroChanged("payment_term", identity.companyId);
   }
 
   listOmiePaymentTerms(): unknown {
@@ -3846,7 +3863,7 @@ export class DesktopRuntime {
     this.assertPriceAuthority();
     const identity = this.ensureIdentity();
     const result = createPriceTable(this.database, { ...input, companyId: identity.companyId });
-    this.cacheStore.invalidate("price_table", identity.companyId);
+    this.cadastroChanged("price_table", identity.companyId);
     return result;
   }
 
@@ -3854,7 +3871,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     this.assertPriceAuthority();
     const result = updatePriceTableName(this.database, id, name);
-    this.cacheStore.invalidate("price_table", this.ensureIdentity().companyId);
+    this.cadastroChanged("price_table", this.ensureIdentity().companyId);
     return result;
   }
 
@@ -3862,14 +3879,14 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     this.assertPriceAuthority();
     deletePriceTable(this.database, id);
-    this.cacheStore.invalidate("price_table", this.ensureIdentity().companyId);
+    this.cadastroChanged("price_table", this.ensureIdentity().companyId);
   }
 
   addPriceTableItem(input: AddPriceTableItemInput): unknown {
     this.assertDesktopAccess();
     this.assertPriceAuthority();
     const result = addPriceTableItem(this.database, input);
-    this.cacheStore.invalidate("price_table_item", this.ensureIdentity().companyId);
+    this.cadastroChanged("price_table_item", this.ensureIdentity().companyId);
     return result;
   }
 
@@ -3877,7 +3894,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     this.assertPriceAuthority();
     const result = updatePriceTableItem(this.database, id, input);
-    this.cacheStore.invalidate("price_table_item", this.ensureIdentity().companyId);
+    this.cadastroChanged("price_table_item", this.ensureIdentity().companyId);
     return result;
   }
 
@@ -3885,14 +3902,14 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     this.assertPriceAuthority();
     removePriceTableItem(this.database, id);
-    this.cacheStore.invalidate("price_table_item", this.ensureIdentity().companyId);
+    this.cadastroChanged("price_table_item", this.ensureIdentity().companyId);
   }
 
   linkCustomerToPriceTable(input: LinkCustomerToPriceTableInput): unknown {
     this.assertDesktopAccess();
     this.assertPriceAuthority();
     const result = linkCustomerToPriceTable(this.database, input);
-    this.cacheStore.invalidate("customer_price_table", this.ensureIdentity().companyId);
+    this.cadastroChanged("customer_price_table", this.ensureIdentity().companyId);
     return result;
   }
 
@@ -3900,7 +3917,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     this.assertPriceAuthority();
     unlinkCustomerFromPriceTable(this.database, linkId);
-    this.cacheStore.invalidate("customer_price_table", this.ensureIdentity().companyId);
+    this.cadastroChanged("customer_price_table", this.ensureIdentity().companyId);
   }
 
   listPriceTables(): unknown[] {
@@ -3925,7 +3942,7 @@ export class DesktopRuntime {
     // lista os veiculos VINCULADOS a transportadora, nao os que tem carrier_id) e
     // reaproveita a placa que ja existe em vez de recusar o cadastro.
     const result = createVehicle(this.database, { ...input, companyId: identity.companyId });
-    this.cacheStore.invalidate("vehicle", identity.companyId);
+    this.cadastroChanged("vehicle", identity.companyId);
     return result;
   }
 
@@ -3933,7 +3950,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const result = updateVehicle(this.database, id, input);
-    this.cacheStore.invalidate("vehicle", identity.companyId);
+    this.cadastroChanged("vehicle", identity.companyId);
     return result;
   }
 
@@ -3941,14 +3958,14 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     deleteVehicle(this.database, id);
-    this.cacheStore.invalidate("vehicle", identity.companyId);
+    this.cadastroChanged("vehicle", identity.companyId);
   }
 
   findOrCreateVehicle(plate: string): unknown {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const result = findOrCreateVehicle(this.database, identity.companyId, plate);
-    this.cacheStore.invalidate("vehicle", identity.companyId);
+    this.cadastroChanged("vehicle", identity.companyId);
     return result;
   }
 
@@ -3961,7 +3978,7 @@ export class DesktopRuntime {
   linkVehicleToCarrier(vehicleId: string, carrierId: string): unknown {
     this.assertDesktopAccess();
     const result = linkVehicleToCarrier(this.database, vehicleId, carrierId);
-    this.cacheStore.invalidate("vehicle", this.ensureIdentity().companyId);
+    this.cadastroChanged("vehicle", this.ensureIdentity().companyId);
     return result;
   }
 
@@ -3973,7 +3990,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const result = createDriver(this.database, { ...input, companyId: identity.companyId });
-    this.cacheStore.invalidate("driver", identity.companyId);
+    this.cadastroChanged("driver", identity.companyId);
     return result;
   }
 
@@ -3981,7 +3998,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const result = updateDriver(this.database, id, input);
-    this.cacheStore.invalidate("driver", identity.companyId);
+    this.cadastroChanged("driver", identity.companyId);
     return result;
   }
 
@@ -3989,14 +4006,14 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     deleteDriver(this.database, id);
-    this.cacheStore.invalidate("driver", identity.companyId);
+    this.cadastroChanged("driver", identity.companyId);
   }
 
   findOrCreateDriver(name: string): unknown {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const result = findOrCreateDriver(this.database, identity.companyId, name);
-    this.cacheStore.invalidate("driver", identity.companyId);
+    this.cadastroChanged("driver", identity.companyId);
     return result;
   }
 
@@ -4004,7 +4021,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const result = createCarrier(this.database, { ...input, companyId: identity.companyId });
-    this.cacheStore.invalidate("carrier", identity.companyId);
+    this.cadastroChanged("carrier", identity.companyId);
     return result;
   }
 
@@ -4012,7 +4029,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const result = updateCarrier(this.database, id, input);
-    this.cacheStore.invalidate("carrier", identity.companyId);
+    this.cadastroChanged("carrier", identity.companyId);
     return result;
   }
 
@@ -4020,7 +4037,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     deleteCarrier(this.database, id);
-    this.cacheStore.invalidate("carrier", identity.companyId);
+    this.cadastroChanged("carrier", identity.companyId);
   }
 
   listCarriers(): CarrierRow[] {
@@ -4042,6 +4059,7 @@ export class DesktopRuntime {
   linkCustomerCarrier(customerId: string, carrierId: string): { defaultCarrierId: string | null } {
     this.assertDesktopAccess();
     linkCustomerCarrier(this.database, customerId, carrierId);
+    this.triggerCadastroCloudPush("customer_carrier");
     return { defaultCarrierId: getCustomerDefaultCarrierId(this.database, customerId) };
   }
 
@@ -4051,6 +4069,7 @@ export class DesktopRuntime {
   ): { defaultCarrierId: string | null } {
     this.assertDesktopAccess();
     unlinkCustomerCarrier(this.database, customerId, carrierId);
+    this.triggerCadastroCloudPush("customer_carrier");
     return { defaultCarrierId: getCustomerDefaultCarrierId(this.database, customerId) };
   }
 
@@ -4073,7 +4092,7 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     setCustomerDefaultFreightModality(this.database, customerId, modality);
-    this.cacheStore.invalidate("customer", identity.companyId);
+    this.cadastroChanged("customer", identity.companyId);
     return getCustomerTransport(this.database, identity.companyId, customerId);
   }
 
@@ -4087,8 +4106,8 @@ export class DesktopRuntime {
     useCustomerOwnCarrier(this.database, identity.companyId, customerId);
     // A transportadora pode ter acabado de nascer: sem invalidar, o seletor da nova
     // entrada so a enxergaria no proximo carregamento da tela.
-    this.cacheStore.invalidate("carrier", identity.companyId);
-    this.cacheStore.invalidate("customer", identity.companyId);
+    this.cadastroChanged("carrier", identity.companyId);
+    this.cadastroChanged("customer", identity.companyId);
     return getCustomerTransport(this.database, identity.companyId, customerId);
   }
 
@@ -4097,7 +4116,7 @@ export class DesktopRuntime {
     this.assertCommercialAuthority();
     const identity = this.ensureIdentity();
     clearCustomerOwnCarrier(this.database, identity.companyId, customerId);
-    this.cacheStore.invalidate("customer", identity.companyId);
+    this.cadastroChanged("customer", identity.companyId);
     return getCustomerTransport(this.database, identity.companyId, customerId);
   }
 
@@ -4105,13 +4124,14 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const result = addCustomerPlate(this.database, identity.companyId, customerId, plate);
-    this.cacheStore.invalidate("vehicle", identity.companyId);
+    this.cadastroChanged("vehicle", identity.companyId);
     return result;
   }
 
   removeCustomerPlate(customerId: string, vehicleId: string): void {
     this.assertDesktopAccess();
     removeCustomerPlate(this.database, customerId, vehicleId);
+    this.triggerCadastroCloudPush("customer_vehicle");
   }
 
   /** Placas do cliente — o filtro do campo Placa da nova entrada. */
@@ -4128,12 +4148,15 @@ export class DesktopRuntime {
 
   linkDriverCarrier(driverId: string, carrierId: string): unknown {
     this.assertDesktopAccess();
-    return linkDriverCarrier(this.database, driverId, carrierId);
+    const result = linkDriverCarrier(this.database, driverId, carrierId);
+    this.triggerCadastroCloudPush("driver_carrier");
+    return result;
   }
 
   unlinkDriverCarrier(driverId: string, carrierId: string): void {
     this.assertDesktopAccess();
     unlinkDriverCarrier(this.database, driverId, carrierId);
+    this.triggerCadastroCloudPush("driver_carrier");
   }
 
   listCarriersByDriver(
@@ -4686,6 +4709,62 @@ export class DesktopRuntime {
     // A varredura completa continua sendo disparada: leva o resto (fila OMIE,
     // cadastro compartilhado, pull) quando nao houver outra em andamento.
     this.triggerBackgroundCloudSync(reason, { operationId });
+  }
+
+  /**
+   * Um cadastro desta maquina mudou: atualiza o cache de leitura e publica na nuvem.
+   *
+   * Sem o segundo passo o cadastro so saia daqui na varredura completa — a cada 30 min por
+   * padrao, e ela pode ser desligada nas configuracoes. Era o que fazia o cliente novo
+   * cadastrado no computador do comercial demorar meia hora (ou mais, se a maquina fosse
+   * fechada antes) para existir no computador da expedicao. A operacao ja tinha esse envio
+   * imediato (`triggerOperationCloudPush`); o cadastro nao tinha.
+   */
+  private cadastroChanged(entityType: CacheEntityType, companyId: string): void {
+    this.cacheStore.invalidate(entityType, companyId);
+    this.triggerCadastroCloudPush(entityType);
+  }
+
+  /**
+   * Publica o cadastro desta maquina agora, em serie consigo mesmo.
+   *
+   * `pushSharedCadastroToCloud` anda por cursor: so sobe o que mudou desde o ultimo envio,
+   * entao chamar a cada edicao e barato. Falha nao perde nada — o cursor nao avanca e o
+   * proximo envio (esta chamada ou a varredura) leva a mesma linha de novo.
+   */
+  private triggerCadastroCloudPush(reason: string): void {
+    // Uma publicacao por rajada: salvar um cliente mexe em mais de um cadastro (o cliente e
+    // a transportadora dele) e cada um avisa aqui. A marca cai quando o envio COMECA, entao
+    // o que for editado durante ele agenda o proximo em vez de se perder.
+    if (this.cadastroPushQueued) return;
+    this.cadastroPushQueued = true;
+    this.cadastroPushChain = this.cadastroPushChain
+      .then(async () => {
+        this.cadastroPushQueued = false;
+        await this.pushCadastroToCloud();
+      })
+      .catch((error: unknown) => {
+        this.cadastroPushQueued = false;
+        this.recordTechnicalLog(
+          "warning",
+          "cloud-sync",
+          error instanceof Error ? error.message : "Envio imediato do cadastro falhou.",
+          { reason }
+        );
+      });
+  }
+
+  private async pushCadastroToCloud(): Promise<void> {
+    if (!this.hasCloudCredentials()) return;
+    initializeSupabaseFromSettings(this.database);
+    if (!isSupabaseInitialized()) return;
+    const identity = this.ensureIdentity();
+    const result = await pushSharedCadastroToCloud(this.database, identity);
+    if (result.errors.length > 0) {
+      this.recordTechnicalLog("warning", "cloud-sync", "Envio imediato do cadastro falhou.", {
+        errors: result.errors
+      });
+    }
   }
 
   private async pushOperationToCloud(operationId: string): Promise<void> {

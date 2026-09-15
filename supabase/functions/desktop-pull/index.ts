@@ -1,6 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { isReadUnavailable } from "../_shared/db-read-error.ts";
+import { cadastroWindowColumn, shouldRetryWithLegacyWindow } from "../_shared/cadastro-window.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 
 type PullBody = {
@@ -49,11 +50,18 @@ function isMissingTableError(error: { code?: string | null; message?: string | n
   return /schema cache|does not exist|no such table/i.test(error.message ?? "");
 }
 
-type FetchResult = { rows: Record<string, unknown>[]; warning: string | null };
+type QueryError = { code?: string | null; message?: string | null };
+
+type FetchResult = {
+  rows: Record<string, unknown>[];
+  warning: string | null;
+  /** O erro cru da ultima pagina: e por ele que o cadastro decide se vale reconsultar. */
+  error: QueryError | null;
+};
 
 type QueryOutcome = {
   data: Record<string, unknown>[] | null;
-  error: { code?: string | null; message?: string | null } | null;
+  error: QueryError | null;
 };
 
 /** Executa a consulta em faixas sucessivas ate a ultima pagina parcial. */
@@ -71,16 +79,17 @@ async function fetchAll(
       if (isMissingTableError(error)) {
         return {
           rows,
-          warning: `${table}: tabela ausente na nuvem (aplique as migracoes do Supabase) — ${error.message}`
+          warning: `${table}: tabela ausente na nuvem (aplique as migracoes do Supabase) — ${error.message}`,
+          error
         };
       }
-      return { rows, warning: `${table}: ${error.message} (code=${error.code ?? "n/a"})` };
+      return { rows, warning: `${table}: ${error.message} (code=${error.code ?? "n/a"})`, error };
     }
     const batch = (data ?? []) as Record<string, unknown>[];
     rows.push(...batch);
     if (batch.length < PAGE_SIZE) break;
   }
-  return { rows, warning: null };
+  return { rows, warning: null, error: null };
 }
 
 Deno.serve(async (req) => {
@@ -159,15 +168,39 @@ Deno.serve(async (req) => {
 
     // Ordenacao por id garante paginacao estavel (sem pular/repetir linha entre
     // faixas quando varios registros tem o mesmo created_at).
-    const byCompany = (table: string) =>
-      fetchAll(table, (from, to) => {
+    const cadastroPage =
+      (table: string, sinceColumn: string | null) => (from: number, to: number) => {
         const query = supabase
           .from(table)
           .select("*")
           .eq("company_id", companyId)
           .order("id", { ascending: true });
-        return (cadastroSince ? query.gt("updated_at", cadastroSince) : query).range(from, to);
-      });
+        return (sinceColumn && cadastroSince ? query.gt(sinceColumn, cadastroSince) : query).range(
+          from,
+          to
+        );
+      };
+
+    /**
+     * Cadastro da pedreira. No pull incremental o recorte e a CHEGADA da linha aqui, nunca a
+     * hora em que a maquina de origem a editou — ver `_shared/cadastro-window.ts`, que guarda
+     * o porque e a unica copia dos nomes das duas colunas.
+     *
+     * Enquanto a migracao nao estiver aplicada a coluna da chegada nao existe e a consulta e
+     * refeita com o recorte antigo: pior janela, mas nunca cadastro nenhum. A varredura
+     * completa (sem `cadastroSince`) nao passa por nada disso — ela pede tudo.
+     */
+    const byCompany = async (table: string): Promise<FetchResult> => {
+      const byArrival = await fetchAll(
+        table,
+        cadastroPage(table, cadastroWindowColumn(cadastroSince))
+      );
+      if (!shouldRetryWithLegacyWindow(byArrival.error)) return byArrival;
+      return await fetchAll(
+        table,
+        cadastroPage(table, cadastroWindowColumn(cadastroSince, { legacy: true }))
+      );
+    };
 
     const [
       customers,
