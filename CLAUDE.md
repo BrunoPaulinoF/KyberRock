@@ -140,6 +140,22 @@ These recur across the codebase and are easy to violate accidentally:
   `carriers` e `payment_methods` **antes** de `customers`. Fora do bloco: condição de pagamento
   padrão e observações internas, que viajam pelo OMIE (as observações passaram a ser **enviadas** no
   `push_customer` — antes eram só lidas, e o que o operador digitava se perdia).
+- **Cadastro de uma maquina chega nas outras** (AGENTS.md "Cadastro de uma maquina chega nas
+  outras"): o cliente cadastrado no computador do comercial podia **nunca** aparecer no da
+  expedicao. Duas causas somadas. (1) O cadastro so saia da maquina na varredura completa — 30 min
+  por padrao, desligavel, e fechar o programa antes adiava tudo; a operacao ja tinha envio imediato,
+  o cadastro nao. Agora todo salvamento passa por `cadastroChanged`/`triggerCadastroCloudPush`
+  (`services/runtime.ts`), que e barato porque `pushSharedCadastroToCloud` anda por cursor, junta a
+  rajada de um mesmo salvamento em um envio e nao perde o que for editado durante ele. (2) O pull
+  incremental de 15 s recortava por `updated_at`, que e a hora da maquina que EDITOU — e o
+  `desktop-sync` grava esse valor como veio. Linha criada 10:00 e publicada 10:28 chega com
+  `updated_at = 10:00`, e quem ja puxou as 10:28 **nunca mais** a ve: o cursor so anda para frente.
+  O recorte agora e `cloud_synced_at` — a hora da NUVEM ao gravar —, em `_shared/cadastro-window.ts`,
+  carimbada por **gatilho** (migracao `202609150001_cadastro_cloud_arrival`) e nao pelo payload,
+  porque tambem escrevem nessas tabelas o painel, o `omie-sync` e o tombstone da disputa de preco. A
+  varredura completa continua pedindo o cadastro INTEIRO: e ela a rede de seguranca do que um
+  incremental deixar passar, e a folga de 5 min do cursor cobre a fresta entre os dois relogios
+  (`serverTime` da Edge Function x `now()` do Postgres).
 - **Queda de conexao nao condena o envio** (AGENTS.md "Queda longa nao para a fila"): a fila
   desistia do job depois de 10 tentativas e o mandava para `dead_letter`, fora da rotacao
   automatica — com o backoff ate 15 min isso e ~2h de queda, e dali so um clique do operador

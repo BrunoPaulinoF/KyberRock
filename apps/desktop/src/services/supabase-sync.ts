@@ -723,7 +723,14 @@ export async function processCloudSyncQueue(
 export const SETUP_COMPANY_ID = "setup-company";
 
 export const CADASTRO_LAST_PULL_KEY = "cloud_cadastro_last_pull_at";
-/** Janela de sobreposicao do pull incremental, para absorver diferenca de relogio. */
+/**
+ * Janela de sobreposicao do pull incremental.
+ *
+ * A marca guardada aqui e o `serverTime` da resposta (relogio do runtime da Edge Function) e
+ * o recorte do cadastro na nuvem e o `cloud_synced_at` da linha (`now()` do Postgres, que e a
+ * hora em que a TRANSACAO comecou). Sao dois relogios, e o segundo pode ficar alguns instantes
+ * atras do commit — a sobreposicao existe para que nada caia nessa fresta.
+ */
 const CADASTRO_INCREMENTAL_OVERLAP_MS = 5 * 60 * 1000;
 /**
  * Nome da tabela de dispositivos NA NUVEM. Aqui ele so serve para reconhecer o
