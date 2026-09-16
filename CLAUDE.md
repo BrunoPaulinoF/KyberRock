@@ -197,6 +197,24 @@ These recur across the codebase and are easy to violate accidentally:
   bloqueado por falha determinística fica em `failed` com `next_attempt_at` no ano 9999 e não
   anda mais sozinho, igual ao `dead_letter` — e **nulo não é zero**, porque "esta balança nunca
   reportou" (instalação antiga, migração pendente) não pode ser exibido como "fila limpa".
+- **O que a nuvem nao precisa guardar nem receber** (AGENTS.md "O que a nuvem NAO precisa guardar
+  nem receber"): o Supabase estourava espaco e engasgava, e a medicao (16/09/2026: 106 MB de banco,
+  273 mil requisicoes em 24 h para OITO balancas) mostrou repeticao, nao operacao. A copia
+  congelada do cupom (`print_receipts.content_snapshot_json`) levava a logo da pedreira em base64
+  em **cada** via impressa — 11 kB dos ~11,5 kB da linha, 6.310 copias de 3 imagens distintas,
+  **66 MB dos 106 MB**, contra 2,6 MB de tudo o que o cupom guarda de verdade. A logo viva mora no
+  perfil de impressao; o snapshot e **arquivo** e ninguem o le (a reimpressao remonta o cupom pela
+  OPERACAO, e `PRINT_RECEIPT_COLUMNS` ja evitava seleciona-lo). Por isso a via nasce sem a imagem
+  (`archivableReceiptSnapshot`), o que ficou na fila e peneirado antes de subir
+  (`snapshotWithoutLogoImage`) e o `desktop-pull` parou de mandar a coluna de volta — com a guarda
+  de que `'{}'` chegando de fora **preserva** a copia de quem imprimiu, porque vazio e ausencia e
+  nao correcao. Na mesma linha, o ping do `desktop-status` regravava a linha do dispositivo a cada
+  vez so para carimbar `last_seen_at`: 101.875 UPDATEs numa tabela de **oito** linhas. A leitura
+  nao mudou de velocidade; a escrita e que passou por `shouldWriteDeviceTouch`
+  (`_shared/device-touch.ts`), que grava na hora quando muda um FATO (versao, aviso, fila, erro) e
+  no maximo de 5 em 5 min quando so o relogio andou — folga que cabe tres vezes nos 15 min que o
+  painel usa para declarar a balanca offline. Espaco de linha encolhida so volta ao disco com
+  `VACUUM FULL`, que nao cabe em migracao.
 - **Central de ajuda** (`apps/desktop/src/renderer/documentation-*`): o texto vive em
   `documentation-content.ts` (dados puros), a busca em `documentation-search.ts` e a tela em
   `DocumentationView.tsx` — corrigir uma dúvida operacional não deve tocar o componente. O

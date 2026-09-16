@@ -3095,7 +3095,15 @@ function upsertCloudPrintReceipts(
       receipt_number = excluded.receipt_number,
       device_number = excluded.device_number,
       copy_number = excluded.copy_number,
-      content_snapshot_json = excluded.content_snapshot_json,
+      -- A copia do cupom e ARQUIVO: ninguem a le de volta (a reimpressao remonta o cupom a
+      -- partir da operacao). Por isso o desktop-pull parou de manda-la de volta para as
+      -- maquinas -- e, sem esta guarda, o espelho chegaria com '{}' e apagaria justamente a
+      -- copia da maquina que IMPRIMIU a via. Vazio nao e correcao: e ausencia.
+      content_snapshot_json = CASE
+        WHEN excluded.content_snapshot_json IN ('', '{}', 'null')
+          THEN print_receipts.content_snapshot_json
+        ELSE excluded.content_snapshot_json
+      END,
       printed_at = excluded.printed_at,
       printer_name = excluded.printer_name,
       status = excluded.status,
@@ -4434,6 +4442,28 @@ export async function pushOmieCarriersToCloud(
   return { pushed, failed, errors };
 }
 
+/**
+ * Tira a imagem da logo do snapshot ANTES de ele subir.
+ *
+ * Desde `archivableReceiptSnapshot` (printing.ts) a via nova ja nasce sem a imagem, mas o
+ * SQLite da pedreira esta cheio de cupons gravados por versoes anteriores -- e e a fila de
+ * envio que decide quando cada um sobe, entao sem esta segunda peneira a logo de 11 kB
+ * continuaria chegando na nuvem por meses, um cupom atrasado de cada vez. E o mesmo motivo
+ * de a limpeza na nuvem nao bastar sozinha.
+ *
+ * Nao mexe no SQLite: o arquivo local e da maquina e ja esta gravado. Quem tem limite de
+ * espaco e a nuvem.
+ */
+function snapshotWithoutLogoImage(snapshot: unknown): unknown {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return snapshot;
+  const record = snapshot as Record<string, unknown>;
+  const logo = record.receiptLogo;
+  if (!logo || typeof logo !== "object" || Array.isArray(logo)) return snapshot;
+  const logoRecord = logo as Record<string, unknown>;
+  if (logoRecord.dataUrl === null || logoRecord.dataUrl === undefined) return snapshot;
+  return { ...record, receiptLogo: { ...logoRecord, dataUrl: null } };
+}
+
 function getPrintReceiptPayload(
   database: DesktopDatabase,
   receiptId: string,
@@ -4450,7 +4480,7 @@ function getPrintReceiptPayload(
     receipt_number: receipt.receipt_number,
     device_number: integerValue(receipt.device_number),
     copy_number: receipt.copy_number,
-    content_snapshot_json: parseJsonValue(receipt.content_snapshot_json),
+    content_snapshot_json: snapshotWithoutLogoImage(parseJsonValue(receipt.content_snapshot_json)),
     printed_at: receipt.printed_at,
     printer_name: receipt.printer_name,
     status: receipt.status,

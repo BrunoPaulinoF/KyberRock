@@ -3,7 +3,7 @@ import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { isReadUnavailable, isUnknownColumnError } from "../_shared/db-read-error.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 import { deviceHealthColumns, normalizeDeviceHealth } from "../_shared/device-health.ts";
-import { orderedTouchAttempts } from "../_shared/device-touch.ts";
+import { orderedTouchAttempts, shouldWriteDeviceTouch } from "../_shared/device-touch.ts";
 import {
   resolveUpdateNotice,
   type DeliveredUpdateNotice
@@ -66,8 +66,11 @@ function normalizeAppVersion(value: unknown): string | null {
  * aplicada. Por isso a segunda tentativa sem a coluna: pior caso, a balanca fica
  * em producao, que e o padrao correto.
  */
+// `last_seen_at` entra aqui porque a gravacao do ping agora COMPARA antes de escrever
+// (`shouldWriteDeviceTouch`): sem o valor gravado em maos nao da para saber se ja passou a
+// folga. E coluna do esquema original, existe em toda instalacao — nao precisa de degrau.
 const DEVICE_BASE_COLUMNS =
-  "id, company_id, unit_id, name, color, device_number, token_hash, is_active";
+  "id, company_id, unit_id, name, color, device_number, token_hash, is_active, last_seen_at";
 
 /**
  * Balancas principais de precos da empresa (`is_price_master`).
@@ -105,6 +108,11 @@ async function selectDeviceRow(
   // desconhecida falha INTEIRO — e o chamador trata erro de leitura como
   // "Desktop nao registrado", o que bloquearia a frota ate a migracao rodar.
   const attempts = [
+    // O degrau mais completo traz tambem o que o ping PRETENDE gravar (saude e versao), para a
+    // comparacao de `shouldWriteDeviceTouch` poder dizer "nada mudou". Com a migracao da saude
+    // pendente este degrau cai e a comparacao nao acha as colunas — ai ela grava sempre, que e
+    // o comportamento de antes: pior economia, nunca frota errada no painel.
+    `${DEVICE_BASE_COLUMNS}, update_channel, app_version, app_version_seen_at, update_notice_version, update_notice_sent_at, update_notice_seen_at, health_queue_pending, health_queue_blocked, health_oldest_pending_at, health_last_error, health_collected_at`,
     `${DEVICE_BASE_COLUMNS}, update_channel, app_version, update_notice_version, update_notice_sent_at, update_notice_seen_at`,
     `${DEVICE_BASE_COLUMNS}, update_channel`,
     DEVICE_BASE_COLUMNS
@@ -302,12 +310,17 @@ Deno.serve(async (req) => {
   // tambem quando nao ha nada a enriquecer, caso do desktop antigo que so manda
   // deviceId e token. Antes, esse desktop nao chegava a update nenhum e ficava
   // com o `last_seen_at` congelado: a frota o mostrava eternamente offline.
-  for (const update of orderedTouchAttempts([healthTouch, enrichedTouch, touch])) {
-    const { error } = await supabase
-      .from("device_registrations")
-      .update(update)
-      .eq("id", typedDevice.id);
-    if (!error) break;
+  //
+  // ...mas so quando ha o que gravar. Ver `shouldWriteDeviceTouch`: o ping le sempre, e
+  // escreve quando algum FATO mudou ou quando o relogio ja esta parado ha mais de 5 min.
+  if (shouldWriteDeviceTouch(typedDevice, healthTouch, checkedAt)) {
+    for (const update of orderedTouchAttempts([healthTouch, enrichedTouch, touch])) {
+      const { error } = await supabase
+        .from("device_registrations")
+        .update(update)
+        .eq("id", typedDevice.id);
+      if (!error) break;
+    }
   }
 
   const updateNotice: DeliveredUpdateNotice | null =

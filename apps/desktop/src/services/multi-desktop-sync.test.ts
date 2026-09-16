@@ -881,6 +881,66 @@ describe("multi-desktop na mesma pedreira", () => {
     }
   });
 
+  it("espelho sem a copia do cupom nao apaga a copia de quem imprimiu", async () => {
+    // O desktop-pull parou de mandar `content_snapshot_json` de volta: ninguem a le no
+    // desktop (a reimpressao remonta o cupom pela operacao) e ela arrastava ate 2.000 cupons
+    // de ~11,5 kB por pull completo. Sem esta guarda o espelho chegaria sem a coluna, o
+    // upsert gravaria '{}' e a maquina que IMPRIMIU a via perderia o proprio arquivo.
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      database
+        .prepare(
+          `INSERT INTO weighing_operations (id, company_id, unit_id, device_id, status,
+             operation_type, created_at, updated_at)
+           VALUES ('op-1', 'company-1', 'unit-1', 'desktop-a', 'closed_local', 'invoice',
+             '2026-09-16T10:00:00.000Z', '2026-09-16T10:00:00.000Z')`
+        )
+        .run();
+      database
+        .prepare(
+          `INSERT INTO print_receipts (id, operation_id, unit_id, receipt_number, copy_number,
+             content_snapshot_json, printed_at, printer_name, status, created_at, updated_at)
+           VALUES ('receipt-1', 'op-1', 'unit-1', 1, 1, '{"lines":["VIA DA BALANCA"]}',
+             '2026-09-16T10:05:00.000Z', 'TERMICA-80', 'printed',
+             '2026-09-16T10:05:00.000Z', '2026-09-16T10:05:00.000Z')`
+        )
+        .run();
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          printReceipts: [
+            {
+              id: "receipt-1",
+              operation_id: "op-1",
+              unit_id: "unit-1",
+              receipt_number: 1,
+              copy_number: 1,
+              printed_at: "2026-09-16T10:05:00.000Z",
+              printer_name: "TERMICA-80",
+              status: "printed",
+              created_at: "2026-09-16T10:05:00.000Z",
+              updated_at: "2026-09-16T10:06:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      const local = database
+        .prepare("SELECT content_snapshot_json, updated_at FROM print_receipts WHERE id = ?")
+        .get("receipt-1") as { content_snapshot_json: string; updated_at: string };
+      expect(local.content_snapshot_json).toContain("VIA DA BALANCA");
+      // O resto da linha continua sendo espelhado normalmente.
+      expect(local.updated_at).toBe("2026-09-16T10:06:00.000Z");
+    } finally {
+      database.close();
+    }
+  });
+
   it("pull nao deixa uma tabela quebrada derrubar o restante do lote", async () => {
     const database = createMachine("desktop-a");
 

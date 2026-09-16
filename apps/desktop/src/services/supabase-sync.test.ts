@@ -259,6 +259,53 @@ describe("supabase sync", () => {
     }
   });
 
+  it("nao deixa a logo do cupom antigo subir para a nuvem", async () => {
+    // A via nova ja nasce sem a imagem (`archivableReceiptSnapshot`, em printing.ts), mas o
+    // SQLite da pedreira esta cheio de cupons gravados por versoes anteriores e e a FILA que
+    // decide quando cada um sobe. Sem esta segunda peneira a logo de 11 kB continuaria
+    // chegando na nuvem por meses, um cupom atrasado de cada vez.
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertWeighingOperation(database);
+      insertPrintReceipt(database, {
+        lines: [],
+        receiptLogo: { dataUrl: "data:image/png;base64,iVBORw0KGgo=", widthMm: 24, fit: "contain" }
+      });
+      enqueueSyncJob(database, {
+        id: "cloud-receipt-job",
+        target: "cloud",
+        action: "upsert_print_receipt",
+        entityType: "print_receipt",
+        entityId: "receipt-1",
+        idempotencyKey: "cloud:print_receipt:receipt-1",
+        payload: { receiptId: "receipt-1" }
+      });
+
+      await processCloudSyncQueue(database, identity);
+
+      const enviado = invokeMock.mock.calls
+        .map(([, options]) => options?.body as { printReceipts?: Array<Record<string, unknown>> })
+        .find((body) => body?.printReceipts?.length);
+      const snapshot = enviado?.printReceipts?.[0]?.content_snapshot_json as {
+        receiptLogo: { dataUrl: string | null; widthMm: number };
+      };
+      expect(snapshot.receiptLogo.dataUrl).toBeNull();
+      // A geometria sobe: ela e barata e diz como a via saiu do papel.
+      expect(snapshot.receiptLogo.widthMm).toBe(24);
+
+      // O arquivo LOCAL nao e mexido: ele e da maquina e quem tem limite de espaco e a nuvem.
+      const local = database
+        .prepare("SELECT content_snapshot_json FROM print_receipts WHERE id = 'receipt-1'")
+        .get() as { content_snapshot_json: string };
+      expect(local.content_snapshot_json).toContain("iVBORw0KGgo=");
+    } finally {
+      database.close();
+    }
+  });
+
   it("processes queued cloud jobs for operations and receipts", async () => {
     const database = createDatabase();
 
@@ -4011,7 +4058,7 @@ function enqueueBillingJobForNewCustomer(
   });
 }
 
-function insertPrintReceipt(database: DesktopDatabase): void {
+function insertPrintReceipt(database: DesktopDatabase, snapshot?: unknown): void {
   const now = "2026-06-12T12:00:00.000Z";
   database
     .prepare(
@@ -4019,11 +4066,11 @@ function insertPrintReceipt(database: DesktopDatabase): void {
         id, operation_id, unit_id, receipt_number, copy_number, content_snapshot_json,
         printed_at, printer_name, status, created_at, updated_at
       ) VALUES (
-        'receipt-1', 'operation-1', 'unit-1', 1, 1, '{"lines":[]}',
+        'receipt-1', 'operation-1', 'unit-1', 1, 1, ?,
         ?, 'TERMICA-80', 'printed', ?, ?
       )`
     )
-    .run(now, now, now);
+    .run(JSON.stringify(snapshot ?? { lines: [] }), now, now, now);
 }
 
 function createFunctionHttpError(message: string, details?: unknown): Error & { context: unknown } {

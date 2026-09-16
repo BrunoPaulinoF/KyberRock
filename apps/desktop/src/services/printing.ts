@@ -139,6 +139,33 @@ export interface ReceiptContentSnapshot extends ReceiptTemplateInput {
   style: ReceiptStyle;
 }
 
+/**
+ * A copia do cupom que fica GUARDADA, sem a imagem da logo.
+ *
+ * O snapshot existe para arquivo: ninguem o le de volta -- a reimpressao remonta o cupom a
+ * partir da operacao (`reprintWeighingReceipt`) e este modulo nem declara a coluna
+ * (`PRINT_RECEIPT_COLUMNS`). Quem a le e so o espelhamento para a nuvem.
+ *
+ * Mesmo assim ele carregava a logo da pedreira em base64 dentro de CADA via impressa. Medido
+ * na producao: 11 kB dos ~11,5 kB de cada linha eram a imagem -- 6.310 cupons guardavam a
+ * MESMA logo (3 imagens distintas no total) e somavam 66 MB dos 106 MB do banco na nuvem, com
+ * ~1,6 MB novos por dia numa pedreira so. A imagem nao se perde: ela mora no perfil de
+ * impressao (`print_profiles.template_config_json`), que e de onde o cupom a le na hora de
+ * imprimir e de reimprimir.
+ *
+ * O que fica e a GEOMETRIA (tamanho e ajuste), que e barata e diz como a via saiu do papel.
+ * So o `dataUrl` sai -- apagar o bloco inteiro faria o arquivo mentir sobre o layout impresso.
+ *
+ * A troca e feita DEPOIS de montar o `payload`: quem imprime recebe o snapshot completo, com
+ * a imagem; quem grava recebe esta copia.
+ */
+export function archivableReceiptSnapshot(
+  snapshot: ReceiptContentSnapshot
+): ReceiptContentSnapshot {
+  if (!snapshot.receiptLogo?.dataUrl) return snapshot;
+  return { ...snapshot, receiptLogo: { ...snapshot.receiptLogo, dataUrl: null } };
+}
+
 interface PrintProfileRow {
   id: string;
   device_id: string;
@@ -480,7 +507,7 @@ export async function printTestReceipt(
       input.identity.unitId,
       0,
       0,
-      JSON.stringify(testSnapshot),
+      JSON.stringify(archivableReceiptSnapshot(testSnapshot)),
       timestamp,
       printerName,
       status,
@@ -562,7 +589,7 @@ async function writeReceiptAttempt(
         receiptNumber,
         deviceNumber,
         copyNumber,
-        JSON.stringify(snapshot),
+        JSON.stringify(archivableReceiptSnapshot(snapshot)),
         timestamp,
         payload.printerName,
         status,
