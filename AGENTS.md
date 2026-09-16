@@ -951,6 +951,53 @@ Dois cuidados que nao podem se perder numa mudanca futura:
   com o recorte antigo (pior janela, nunca cadastro nenhum) — e so quando o erro **e** a coluna
   que falta, pela mesma razao da secao anterior.
 
+## O que a nuvem NAO precisa guardar nem receber
+
+O Supabase estava estourando espaco e o banco dava engasgo. A medicao de 16/09/2026 (106 MB de
+banco, 273 mil requisicoes em 24 h para OITO balancas) mostrou que quase tudo era repeticao, nao
+operacao. Tres regras saíram dali, e todas valem para qualquer coisa nova que se pense em subir:
+
+**1. Imagem nao vai dentro de linha que se repete.** `print_receipts.content_snapshot_json` e a
+copia congelada do cupom e carregava a logo da pedreira em base64 em CADA via impressa: 11 kB dos
+~11,5 kB de cada linha, 6.310 copias de apenas 3 imagens distintas, **66 MB dos 106 MB do banco**
+— tudo o que o cupom guarda de verdade (linhas, pesos, valores, cabecalho, estilo) somava 2,6 MB.
+A logo viva mora no perfil de impressao (`print_profiles.template_config_json`), que e de onde o
+cupom sempre a leu. Agora a via nasce sem a imagem (`archivableReceiptSnapshot`, em
+`printing.ts`), o que ficou na fila da balanca e peneirado antes de subir
+(`snapshotWithoutLogoImage`, em `supabase-sync.ts`) e o que ja chegou foi limpo pela migracao
+`202609160001`. Fica a **geometria** (tamanho e ajuste) — apagar o bloco inteiro faria o arquivo
+mentir sobre o layout impresso.
+
+**2. Coluna que ninguem le nao viaja.** O `desktop-pull` mandava `select("*")` em
+`print_receipts`: ate 2.000 cupons x ~11,5 kB, **~23 MB numa resposta so**, para cada balanca da
+unidade, so para o outro lado jogar fora. Nenhum codigo do desktop le essa coluna — a reimpressao
+remonta o cupom a partir da OPERACAO (`reprintWeighingReceipt`) e o modulo de impressao ja evitava
+seleciona-la (`PRINT_RECEIPT_COLUMNS`). O espelho local trata coluna ausente como "nao veio" e
+**preserva** a copia que ja tinha, em vez de grava-la vazia: `'{}'` chegando de fora nao pode
+apagar o arquivo da maquina que imprimiu a via.
+
+**3. Ping e leitura; escrever e a excecao.** O `desktop-status` regravava a linha do dispositivo a
+cada ping para carimbar `last_seen_at`: **101.875 UPDATEs numa tabela de OITO linhas**, ~22 mil por
+dia. Update no Postgres nao e barato — nova versao da linha, indices, WAL e trabalho para o
+autovacuum —, e quase toda essa escrita gravava o que ja estava la. A leitura continua na mesma
+velocidade (bloqueio por inadimplencia, aviso de atualizacao e papel de principal de preco nao
+atrasaram um segundo); o que passou a ser espacado e a escrita. `shouldWriteDeviceTouch`
+(`_shared/device-touch.ts`) grava **na hora** quando muda um FATO — versao instalada, aviso de
+atualizacao, fila pendente, fila travada, ultimo erro — e no maximo **de 5 em 5 minutos** quando
+so o relogio andou. O painel considera a balanca offline com 15 min de silencio, entao a folga
+cabe tres vezes dentro do limite. Com a migracao da saude pendente o degrau mais completo do
+SELECT cai, a comparacao nao acha as colunas e ela grava sempre — pior economia, nunca frota
+errada no painel.
+
+E uma quarta, de arrumacao: **agendamento gera historico e ninguem o limpa.**
+`cron.job_run_details` crescia para sempre (ja era a sexta maior tabela do banco). A migracao
+`202609160002` agenda a poda diaria com 30 dias de retencao.
+
+O espaco de uma linha apagada ou encolhida **nao volta sozinho** para o disco: o Postgres
+reaproveita a pagina internamente (o banco para de crescer), mas o numero do painel so cai depois
+de um `VACUUM FULL` na tabela — que nao cabe numa migracao, porque vacuum nao roda dentro de
+transacao. Rodar a parte, fora do pico: ele tranca a tabela por alguns segundos.
+
 ## Edge Functions deploy
 
 **Automated (default).** `.github/workflows/edge-functions-deploy.yml` deploys the Deno Edge

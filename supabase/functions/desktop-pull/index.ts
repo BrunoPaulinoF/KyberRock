@@ -259,12 +259,25 @@ Deno.serve(async (req) => {
         },
         HISTORY_MAX_ROWS
       ),
+      // Vias impressas da unidade, SEM `content_snapshot_json`.
+      //
+      // Aquela coluna e a copia renderizada do cupom, e ela nao viaja de volta: ninguem no
+      // desktop a le -- a reimpressao remonta o cupom a partir da operacao e o proprio modulo
+      // de impressao evita seleciona-la (`PRINT_RECEIPT_COLUMNS`). Com `select("*")` cada pull
+      // completo arrastava ate 2.000 cupons x ~11,5 kB -- ~23 MB numa resposta so, quatro
+      // vezes por hora, por maquina -- para o outro lado jogar fora. Era o pull mais pesado da
+      // balanca e nao entregava nada.
+      //
+      // O espelho local trata a coluna ausente como "nao veio" e preserva a copia que ja
+      // tinha, em vez de grava-la vazia (ver o upsert em `supabase-sync`).
       fetchAll(
         "print_receipts",
         (from, to) => {
           const query = supabase
             .from("print_receipts")
-            .select("*")
+            .select(
+              "id, operation_id, unit_id, receipt_number, device_number, copy_number, printed_at, printer_name, status, error_message, created_at, updated_at"
+            )
             .eq("unit_id", unitId)
             .order("printed_at", { ascending: false })
             .order("id", { ascending: true });

@@ -540,6 +540,52 @@ describe("printing", () => {
     }
   });
 
+  it("a logo vai para a impressora, mas nao para a copia guardada", async () => {
+    // A imagem pesava 11 kB dos ~11,5 kB de cada via GUARDADA, e as 6.310 copias na nuvem
+    // eram a mesma logo repetida -- 66 MB dos 106 MB do banco. Quem imprime continua
+    // recebendo a imagem; quem arquiva recebe so a geometria, e a imagem viva mora no perfil
+    // de impressao. A reimpressao nunca dependeu desta coluna: ela remonta pela operacao.
+    const database = createDatabase();
+    const printer = createFakePrinter();
+    const logoDataUrl = "data:image/png;base64,iVBORw0KGgo=";
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        receiptLogoDataUrl: logoDataUrl,
+        receiptLogoWidthMm: 30,
+        receiptLogoHeightMm: 20
+      });
+      const operation = createClosedOperation(database, identity);
+
+      const via = await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer
+      );
+
+      expect(printer.calls[0].snapshot.receiptLogo.dataUrl).toBe(logoDataUrl);
+
+      const gravado = database
+        .prepare("SELECT content_snapshot_json FROM print_receipts WHERE id = ?")
+        .get(via.id) as { content_snapshot_json: string };
+      const arquivado = JSON.parse(gravado.content_snapshot_json) as {
+        receiptLogo: { dataUrl: string | null; widthMm: number; fit: string };
+        lines: string[];
+      };
+      expect(arquivado.receiptLogo.dataUrl).toBeNull();
+      // A geometria fica: e ela que diz como a via saiu do papel.
+      expect(arquivado.receiptLogo.widthMm).toBe(30);
+      expect(arquivado.receiptLogo.fit).toBe("contain");
+      // E o resto do cupom continua inteiro no arquivo.
+      expect(arquivado.lines.length).toBeGreaterThan(0);
+    } finally {
+      database.close();
+    }
+  });
+
   it("mantem a logo salva quando o perfil e regravado sem informar a logo", async () => {
     const database = createDatabase();
 
