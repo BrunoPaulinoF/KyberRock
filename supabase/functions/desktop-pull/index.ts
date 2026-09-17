@@ -2,7 +2,14 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { isReadUnavailable } from "../_shared/db-read-error.ts";
 import { cadastroWindowColumn, shouldRetryWithLegacyWindow } from "../_shared/cadastro-window.ts";
+import {
+  CADASTRO_DELTA_LIMIT,
+  CADASTRO_DELTA_RPC,
+  parseCadastroDelta,
+  type CadastroDelta
+} from "../_shared/cadastro-delta.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
+import { shouldWriteDeviceTouch } from "../_shared/device-touch.ts";
 
 type PullBody = {
   deviceId?: string;
@@ -116,7 +123,7 @@ Deno.serve(async (req) => {
 
     const { data: device, error: deviceError } = await supabase
       .from("device_registrations")
-      .select("id, company_id, unit_id, token_hash, is_active")
+      .select("id, company_id, unit_id, token_hash, is_active, last_seen_at")
       .eq("id", deviceId)
       .single();
     // Banco fora do ar nao e balanca sem autorizacao: 503 pede nova tentativa,
@@ -190,7 +197,7 @@ Deno.serve(async (req) => {
      * refeita com o recorte antigo: pior janela, mas nunca cadastro nenhum. A varredura
      * completa (sem `cadastroSince`) nao passa por nada disso — ela pede tudo.
      */
-    const byCompany = async (table: string): Promise<FetchResult> => {
+    const byCompanyPaged = async (table: string): Promise<FetchResult> => {
       const byArrival = await fetchAll(
         table,
         cadastroPage(table, cadastroWindowColumn(cadastroSince))
@@ -200,6 +207,47 @@ Deno.serve(async (req) => {
         table,
         cadastroPage(table, cadastroWindowColumn(cadastroSince, { legacy: true }))
       );
+    };
+
+    /**
+     * O cadastro alterado, de uma vez, quando da.
+     *
+     * So no pull INCREMENTAL. A varredura completa (sem `cadastroSince`) pede o cadastro
+     * inteiro da pedreira, que e justamente o caso em que paginar importa -- ela continua pelo
+     * caminho de sempre.
+     *
+     * Qualquer falha vira `null` e o pull segue tabela por tabela, inclusive na janela entre o
+     * deploy desta funcao e a aplicacao da migracao que cria a RPC. E otimizacao, nao regra:
+     * sem ela nada deixa de chegar, so chega em mais viagens. Por isso tambem nao vira aviso
+     * na tela do operador -- o caminho antigo emite os proprios avisos se falhar de verdade.
+     *
+     * A chamada comeca aqui e e esperada dentro de `byCompany`, para correr em paralelo com as
+     * consultas de historico em vez de atrasa-las: uma promessa so, compartilhada pelas 21
+     * tabelas.
+     */
+    const cadastroDeltaPromise: Promise<CadastroDelta | null> = cadastroSince
+      ? (async () => {
+          try {
+            const { data, error } = await supabase.rpc(CADASTRO_DELTA_RPC, {
+              p_company_id: companyId,
+              p_since: cadastroSince,
+              p_limit: CADASTRO_DELTA_LIMIT
+            });
+            if (error) return null;
+            return parseCadastroDelta(data);
+          } catch {
+            return null;
+          }
+        })()
+      : Promise.resolve(null);
+
+    const byCompany = async (table: string): Promise<FetchResult> => {
+      const cadastroDelta = await cadastroDeltaPromise;
+      if (!cadastroDelta) return await byCompanyPaged(table);
+      // Passou do teto numa viagem so: volta a ser paginada, senao o cursor avancaria por
+      // cima do que ficou de fora (ver `_shared/cadastro-delta.ts`).
+      if (cadastroDelta.truncated.has(table)) return await byCompanyPaged(table);
+      return { rows: cadastroDelta.tables[table] ?? [], warning: null, error: null };
     };
 
     const [
@@ -354,10 +402,21 @@ Deno.serve(async (req) => {
       .map((result) => result.warning)
       .filter((warning): warning is string => Boolean(warning));
 
-    await supabase
-      .from("device_registrations")
-      .update({ last_seen_at: new Date().toISOString() })
-      .eq("id", deviceId);
+    // O carimbo de "esta viva" tambem sai daqui, e pelo mesmo motivo do `desktop-status`: era
+    // UM UPDATE POR PULL, a cada ~1 min por balanca, quase sempre regravando o que ja estava
+    // la. Update no Postgres nao e barato -- nova versao da linha, indices, WAL e trabalho
+    // para o autovacuum. A regra de quando gravar e a mesma dos dois lados
+    // (`shouldWriteDeviceTouch`): no maximo de 5 em 5 min quando so o relogio andou, e o
+    // painel so considera a balanca offline com 15 min de silencio.
+    const seenAt = new Date().toISOString();
+    if (
+      shouldWriteDeviceTouch(device as Record<string, unknown>, { last_seen_at: seenAt }, seenAt)
+    ) {
+      await supabase
+        .from("device_registrations")
+        .update({ last_seen_at: seenAt })
+        .eq("id", deviceId);
+    }
 
     return jsonResponse({
       ok: true,

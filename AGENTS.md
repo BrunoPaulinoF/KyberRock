@@ -989,7 +989,36 @@ cabe tres vezes dentro do limite. Com a migracao da saude pendente o degrau mais
 SELECT cai, a comparacao nao acha as colunas e ela grava sempre — pior economia, nunca frota
 errada no painel.
 
-E uma quarta, de arrumacao: **agendamento gera historico e ninguem o limpa.**
+**4. Perguntar 21 vezes o que cabe numa pergunta.** O pull incremental roda a cada ~1 min em
+cada balanca e varria UMA TABELA POR VEZ as 21 do cadastro compartilhado -- clientes, produtos,
+transportadoras, motoristas, veiculos, vinculos, precos, contas, credito, destinatarios. Cadastro
+de pedreira muda algumas vezes por dia, entao quase toda resposta era uma lista vazia: ~113 mil
+das 273 mil requisicoes diarias. O peso nao estava no DADO; estava na VIAGEM. A funcao
+`desktop_pull_cadastro_delta` (migracao `202609160003`) faz as 21 varreduras dentro do banco --
+cada uma pelo indice `(company_id, cloud_synced_at, id)` que a `202609150001` ja criou -- e
+devolve o que mudou de uma vez. Com isso o pull incremental caiu de ~27 viagens para ~6.
+
+Tres coisas nao podem se perder aqui:
+
+- A varredura **completa** (sem `cadastroSince`) nao passa pela funcao. Ela pede o cadastro
+  inteiro da pedreira, que e o caso em que paginar importa, e continua no caminho de sempre.
+- **Truncamento nao entrega meia lista.** O cursor do desktop e o relogio do servidor, nao a
+  ultima linha lida: aceitar uma resposta cortada avancaria o cursor por cima do que ficou de
+  fora, e aquele cadastro so reapareceria na varredura completa. A funcao pede `p_limit + 1`
+  linhas; passou do teto, a tabela sai em `truncated` e o `desktop-pull` a busca paginada.
+- **E otimizacao, nao regra.** Qualquer falha da RPC -- inclusive a janela entre o deploy da
+  Edge Function e a aplicacao da migracao -- vira `null` em `parseCadastroDelta`
+  (`_shared/cadastro-delta.ts`) e o pull segue tabela por tabela. Nada deixa de chegar; so chega
+  em mais viagens. Por isso tambem nao emite aviso na tela do operador: o caminho antigo emite os
+  proprios se falhar de verdade.
+
+A funcao e `security invoker` e so a service role executa. Ela recebe o `company_id` por
+parametro: exposta a anon/authenticated, seria o cadastro de uma pedreira visivel a outra.
+
+O mesmo `desktop-pull` tambem gravava `last_seen_at` a CADA pull, pelo mesmo motivo e com o mesmo
+desperdicio do ping -- e agora passa pelo mesmo `shouldWriteDeviceTouch`.
+
+E uma quinta, de arrumacao: **agendamento gera historico e ninguem o limpa.**
 `cron.job_run_details` crescia para sempre (ja era a sexta maior tabela do banco). A migracao
 `202609160002` agenda a poda diaria com 30 dias de retencao.
 

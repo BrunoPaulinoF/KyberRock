@@ -215,6 +215,15 @@ These recur across the codebase and are easy to violate accidentally:
   no maximo de 5 em 5 min quando so o relogio andou — folga que cabe tres vezes nos 15 min que o
   painel usa para declarar a balanca offline. Espaco de linha encolhida so volta ao disco com
   `VACUUM FULL`, que nao cabe em migracao.
+  A terceira repeticao era de VIAGEM, nao de dado: o pull incremental (a cada ~1 min, por
+  balanca) varria as 21 tabelas do cadastro UMA POR VEZ, e quase toda resposta era vazia --
+  ~113 mil das 273 mil requisicoes diarias. `desktop_pull_cadastro_delta` (migracao
+  `202609160003`) faz as 21 varreduras dentro do banco, pelo indice que a `202609150001` ja
+  criou, e devolve numa viagem so: o pull caiu de ~27 viagens para ~6. A varredura COMPLETA nao
+  passa por ela (e o caso em que paginar importa); tabela acima do teto sai em `truncated` e
+  volta a ser paginada, porque o cursor do desktop e o relogio do servidor e meia lista o
+  avancaria por cima do que ficou de fora; e qualquer falha vira `null` em `parseCadastroDelta`
+  (`_shared/cadastro-delta.ts`), que devolve o pull ao caminho antigo -- e otimizacao, nao regra.
 - **Central de ajuda** (`apps/desktop/src/renderer/documentation-*`): o texto vive em
   `documentation-content.ts` (dados puros), a busca em `documentation-search.ts` e a tela em
   `DocumentationView.tsx` — corrigir uma dúvida operacional não deve tocar o componente. O
