@@ -1,5 +1,6 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { receiptRowsWithoutLogoImage } from "../_shared/receipt-snapshot.ts";
 import { isReadUnavailable, isUnknownColumnError } from "../_shared/db-read-error.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 import { scopeRowsToDevice } from "../_shared/device-scope.ts";
@@ -350,7 +351,12 @@ Deno.serve(async (req) => {
       }
     }
     if (body.printReceipts?.length) {
-      const { error } = await upsert("print_receipts", body.printReceipts, "id");
+      // A logo da pedreira NAO entra no banco, venha ela de que versao vier. A peneira do
+      // desktop viaja no instalador, e enquanto a balanca nao atualizar ela continua enviando
+      // a imagem: 11 kB por via, 66 MB de copias da mesma figura ate a limpeza de 16/09. Aqui
+      // e o ponto por onde todo cupom passa. Ver `_shared/receipt-snapshot.ts`.
+      const receipts = receiptRowsWithoutLogoImage(body.printReceipts);
+      const { error } = await upsert("print_receipts", receipts, "id");
       if (error) {
         stepErrors.push(`print_receipts: ${error.message} (code=${error.code ?? "n/a"})`);
       } else {
