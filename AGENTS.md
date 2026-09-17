@@ -968,6 +968,16 @@ cupom sempre a leu. Agora a via nasce sem a imagem (`archivableReceiptSnapshot`,
 `202609160001`. Fica a **geometria** (tamanho e ajuste) — apagar o bloco inteiro faria o arquivo
 mentir sobre o layout impresso.
 
+**1b. Peneira que viaja no instalador nao protege o banco.** A regra acima foi aplicada no
+desktop (`archivableReceiptSnapshot`, e `snapshotWithoutLogoImage` para o que ja estava na fila)
+— e o desktop chega na pedreira por INSTALADOR. Nas primeiras 24 h depois da limpeza chegaram
+**196 cupons novos, todos com a logo**, e o banco voltou a crescer (46 -> 49 MB): as Edge
+Functions sobem no push, mas a balanca so para de enviar a imagem quando alguem atualiza AQUELE
+computador. Por isso a ultima peneira fica no `desktop-sync`
+(`_shared/receipt-snapshot.ts`), o ponto por onde todo cupom passa antes de virar linha. A regra
+geral: **o que nao pode entrar no banco se barra na entrada, nao na origem** — a mesma razao de
+`normalizeDeviceHealth` existir. Vale para qualquer limite novo que dependa da versao instalada.
+
 **2. Coluna que ninguem le nao viaja.** O `desktop-pull` mandava `select("*")` em
 `print_receipts`: ate 2.000 cupons x ~11,5 kB, **~23 MB numa resposta so**, para cada balanca da
 unidade, so para o outro lado jogar fora. Nenhum codigo do desktop le essa coluna — a reimpressao

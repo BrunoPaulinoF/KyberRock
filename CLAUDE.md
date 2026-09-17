@@ -215,6 +215,10 @@ These recur across the codebase and are easy to violate accidentally:
   no maximo de 5 em 5 min quando so o relogio andou — folga que cabe tres vezes nos 15 min que o
   painel usa para declarar a balanca offline. Espaco de linha encolhida so volta ao disco com
   `VACUUM FULL`, que nao cabe em migracao.
+  A peneira da logo vive em DOIS lugares de proposito: a do desktop viaja no INSTALADOR, e
+  enquanto a balanca nao atualiza ela segue enviando a imagem (medido: 196 cupons novos, todos
+  com logo, nas 24 h seguintes a limpeza). Quem protege o banco e a do `desktop-sync`
+  (`_shared/receipt-snapshot.ts`) — o que nao pode entrar se barra na ENTRADA, nao na origem.
   A terceira repeticao era de VIAGEM, nao de dado: o pull incremental (a cada ~1 min, por
   balanca) varria as 21 tabelas do cadastro UMA POR VEZ, e quase toda resposta era vazia --
   ~113 mil das 273 mil requisicoes diarias. `desktop_pull_cadastro_delta` (migracao
