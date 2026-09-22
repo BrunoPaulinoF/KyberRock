@@ -89,6 +89,7 @@ export function Prices() {
   return (
     <>
       <PageHead
+        kicker="Cadastro"
         title="Precos"
         description="O preco tem dono: o que voce publica aqui vale em todas as balancas da pedreira."
       />
@@ -125,7 +126,7 @@ export function Prices() {
                   defaultByProduct.has(p.id) ? (
                     formatMoney(defaultByProduct.get(p.id))
                   ) : (
-                    <span style={{ color: "var(--muted)" }}>sem preco</span>
+                    <span style={{ color: "var(--kr-muted)" }}>sem preco</span>
                   )
               },
               {
@@ -195,7 +196,7 @@ export function Prices() {
                     specialByProduct.has(p.id) ? (
                       <strong>{formatMoney(specialByProduct.get(p.id))}</strong>
                     ) : (
-                      <span style={{ color: "var(--muted)" }}>—</span>
+                      <span style={{ color: "var(--kr-muted)" }}>—</span>
                     )
                 },
                 {

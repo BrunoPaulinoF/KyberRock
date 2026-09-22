@@ -44,10 +44,13 @@ export function useToast() {
 // ---------------------------------------------------------------------------
 
 export function PageHead({
+  kicker,
   title,
   description,
   actions
 }: {
+  /** A secao da tela, em caixa alta acima do titulo — o "kicker" do hero do desktop. */
+  kicker?: string;
   title: string;
   description?: string;
   actions?: ReactNode;
@@ -55,6 +58,7 @@ export function PageHead({
   return (
     <div className="page-head">
       <div>
+        {kicker && <p className="kicker">{kicker}</p>}
         <h1>{title}</h1>
         {description && <p>{description}</p>}
       </div>

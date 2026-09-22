@@ -70,6 +70,7 @@ export function Customers() {
   return (
     <>
       <PageHead
+        kicker="Cadastro"
         title="Clientes"
         description="Cadastro compartilhado com as balancas. Cliente com historico nunca e excluido: inative."
         actions={
@@ -96,7 +97,7 @@ export function Customers() {
             />
             Mostrar inativos
           </label>
-          <span style={{ marginLeft: "auto", color: "var(--muted)" }}>
+          <span style={{ marginLeft: "auto", color: "var(--kr-muted)" }}>
             {loading ? "Carregando..." : `${rows.length} de ${customers.length}`}
           </span>
         </div>
@@ -581,7 +582,7 @@ function CommercialForm({
           </>
         )}
         {customer.credit_limit_cents != null && (
-          <p style={{ color: "var(--muted)" }}>
+          <p style={{ color: "var(--kr-muted)" }}>
             Limite de credito (OMIE): {formatMoney(customer.credit_limit_cents)}
           </p>
         )}

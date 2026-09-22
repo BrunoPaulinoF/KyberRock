@@ -33,8 +33,14 @@ export function Login() {
     <div className="login">
       <div className="panel">
         <div className="panel-body">
-          <h1>KyberRock</h1>
-          <p className="sub">Acesso do comercial e da gestao da pedreira.</p>
+          <div className="login-brand">
+            <img src="./logo.png" alt="" />
+            <div>
+              <h1>KyberRock</h1>
+              <small>Comercial e gestao</small>
+            </div>
+          </div>
+          <p className="sub">Entre com o e-mail e a senha cadastrados pela Kybernan.</p>
           {!isSupabaseConfigured() && (
             <div className="alert error">Site sem configuracao do Supabase (ver .env.example).</div>
           )}
