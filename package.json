@@ -10,6 +10,7 @@
     "packages/print-templates",
     "apps/desktop",
     "apps/loader-web",
+    "apps/web",
     "functions"
   ],
   "scripts": {

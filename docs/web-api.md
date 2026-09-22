@@ -2,7 +2,7 @@
 
 Versão: 1.1 — 22/09/2026 (carteira e fechamento de faturas)
 Contexto: `docs/plano-migracao-web.md` (Etapa 1, decisões D3 e D4). Este é o documento que o
-repositório do site (`Kyberrock-Web`) precisa para falar com o Supabase do KyberRock.
+site (`apps/web`, workspace `@kyberrock/web`) precisa para falar com o Supabase do KyberRock.
 
 ## Em uma frase
 
