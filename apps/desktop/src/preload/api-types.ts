@@ -74,6 +74,8 @@ import type {
   DeletedCustomerSummary,
   UpdateCustomerInput
 } from "../services/customers";
+import type { DuplicateCadastroGroup } from "../services/customer-duplicates";
+import type { CustomerMergeResult } from "../services/customer-merge";
 import type { UpdatePaymentMethodInput } from "../services/payment-methods";
 import type { SettleWalletInput, WalletQuery, WalletReport } from "../services/wallet";
 import type { UpdateAccountInput } from "../services/accounts";
@@ -578,6 +580,10 @@ export interface KyberRockDesktopApi {
   /** Os cadastros excluidos da empresa, para a secao "Excluidos" da tela de clientes. */
   customersListDeleted: () => Promise<DeletedCustomerSummary[]>;
   customersRestore: (id: string) => Promise<void>;
+  /** Os grupos de cadastros que parecem o mesmo cliente (mesmo documento, ou mesmo nome). */
+  customersFindDuplicates: () => Promise<DuplicateCadastroGroup[]>;
+  /** Junta `loserId` em `keeperId`: o historico muda de dono e o perdedor vira tombstone. */
+  customersMerge: (keeperId: string, loserId: string) => Promise<CustomerMergeResult>;
   getDefaultNfeEmail: () => Promise<string | null>;
   setDefaultNfeEmail: (email: string) => Promise<string | null>;
   applyDefaultNfeEmailToAll: (email: string) => Promise<number>;

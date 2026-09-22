@@ -994,6 +994,68 @@ O que nao pode se perder numa mudanca futura:
   ela nao existe tabela de aviso: a inscricao falha, cai em `error`, e a balanca volta ao
   comportamento de 15 s — nada quebra, so nao acelera.
 
+## Cadastro duplicado: unificar, e fazer a unificacao durar
+
+O operador via "MORAES - AREIA E PEDRA LTDA" duas vezes na tela, uma linha LOCAL e uma OMIE —
+mesmo CNPJ, mesmo telefone, mesmo codigo OMIE. Na Pedreira Ibiuna eram **99 grupos / 202 linhas**.
+
+**Como nasceram (ja fechado).** Ate 21/08/2026 o pull do OMIE inseria como linha NOVA
+(`omie_<codigo>`) o cliente que tinha sido criado numa balanca e enviado para la: a maquina que
+fala com o OMIE ainda nao tinha recebido o cadastro da outra, porque o cadastro so andava na
+varredura de 30 min (quando andava — ver a secao anterior). `resolveExistingCustomerId`
+(`omie-sync.ts`) passou a adotar o cadastro local por codigo, documento e nome, e
+`findLocalCadastroWithDocument` faz o mesmo no pull pela nuvem. Medido: a ultima linha duplicada
+da pedreira e da semana de **24/08** — nao nasce mais nenhuma.
+
+**Por que nao sumiam (o defeito de verdade).** A migracao local 39 ja juntava os pares. Ela
+marcava a perdedora com `deleted_at` e `needs_push = 0`, e o pull seguinte tinha, literalmente:
+
+```sql
+deleted_at = CASE WHEN customers.needs_push = 0 THEN NULL ELSE customers.deleted_at END
+```
+
+`public.customers` **nao tinha `deleted_at`** — para a nuvem, existir era estar vivo. Entao todo
+ciclo ressuscitava a perdedora e o duplicado voltava. A limpeza se desfazia sozinha.
+
+**O conserto tem tres partes, e as tres sao necessarias:**
+
+1. **A nuvem aprendeu a dizer "excluido"** (migracao `202609220002`, coluna `deleted_at` em
+   `customers` e `carriers`). O push manda (`cadastroTombstone`), o pull aplica. `is_active =
+false` nao servia: cadastro inativo continua aparecendo na tela de clientes de proposito, para
+   o operador achar e reativar.
+2. **A unificacao** (`services/customer-merge.ts`): pesagem, orcamento, extrato de credito e
+   vinculos mudam de dono; a perdedora vira tombstone com `needs_push = 1` (o envio ao OMIE
+   ignora quem tem `deleted_at`, entao isso nao vira escrita no ERP, mas impede o pull de
+   reescrever a linha enquanto a nuvem nao souber); a sobrevivente herda o codigo OMIE que so a
+   outra tinha — sem ele o proximo pedido tentaria um `IncluirCliente` de quem ja existe la.
+3. **Quem roda**: por DOCUMENTO e automatico, na abertura do programa
+   (`mergeDuplicateCustomersByDocument`, chamada no construtor do runtime) — documento igual e
+   certeza, e a mesma identidade que `customerIdentityKey` ja usa. Por NOME e manual, no painel
+   "Cadastros repetidos" da tela de clientes: matriz e filial dividem o nome.
+
+Cuidados que nao podem se perder:
+
+- **A regra de quem fica e a mesma em tres lugares** (a migracao local 39, `chooseGroups` no
+  desktop e a migracao `202609220002` na nuvem): primeiro quem tem codigo OMIE, depois o mais
+  antigo, empate no menor id. Nao e estilo — as duas pontas resolvem o mesmo grupo cada uma por
+  sua conta, e se escolherem sobreviventes diferentes **cada uma encerra a linha que a outra
+  manteve** e o cliente some dos dois lados. Por isso `chooseGroups` compara `Date.parse` e nao
+  texto (o SQLite mistura `...T12:44:48.000Z` e `... 12:44:48`; a nuvem tem timestamptz).
+- **A rede de seguranca contra essa divergencia** vive em `resolveCustomerTombstone`: tombstone
+  vindo da nuvem para um cadastro que AQUI ainda tem pesagem viva e recusado. A unificacao tira a
+  pesagem antes do tombstone, entao esse caso nunca e unificacao legitima — e um duplicado a mais
+  na lista custa um clique; um cliente sem historico custa a conferencia do mes.
+- **A recusa por documento diferente** (`mergeCustomerInto`) e antes de qualquer escrita: juntar
+  dois CNPJs mistura pesagem, fatura e saldo de duas empresas, e a tela nao tem desfazer.
+- **Vinculo com chave natural** (preco especial, frete, placa, transportadora, nota futura) nao e
+  repontado as cegas: quando a sobrevivente ja tem a mesma chave, a linha da perdedora e
+  descartada. Repontar violaria o indice unico — no SQLite, ou no `23505` do proximo push.
+- **Excluir cliente agora exige cadastro sem historico** (`findCustomerDeletionBlock` ganhou
+  `historyCount`, que conta pesagem de QUALQUER status, inclusive cancelada, mais lancamento de
+  credito). Antes bastava nao haver dinheiro em aberto: um cliente com tres anos de historico todo
+  faturado saia da tela com um clique. Quem quer tirar do dia a dia tem **Inativar** (botao novo na
+  linha); quem tem cadastro repetido tem **Unificar**.
+
 ## O que a nuvem NAO precisa guardar nem receber
 
 O Supabase estava estourando espaco e o banco dava engasgo. A medicao de 16/09/2026 (106 MB de

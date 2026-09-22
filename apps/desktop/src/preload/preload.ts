@@ -288,6 +288,9 @@ const desktopApi = {
   customersDelete: (id: string) => ipcRenderer.invoke("desktop:customers-delete", id),
   customersListDeleted: () => ipcRenderer.invoke("desktop:customers-list-deleted"),
   customersRestore: (id: string) => ipcRenderer.invoke("desktop:customers-restore", id),
+  customersFindDuplicates: () => ipcRenderer.invoke("desktop:customers-duplicates"),
+  customersMerge: (keeperId: string, loserId: string) =>
+    ipcRenderer.invoke("desktop:customers-merge", keeperId, loserId),
   getDefaultNfeEmail: () => ipcRenderer.invoke("desktop:get-default-nfe-email"),
   setDefaultNfeEmail: (email: string) => ipcRenderer.invoke("desktop:set-default-nfe-email", email),
   applyDefaultNfeEmailToAll: (email: string) =>

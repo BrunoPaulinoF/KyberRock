@@ -68,28 +68,55 @@ describe("trava de exclusao de cliente", () => {
     }
   });
 
-  it("libera a exclusao quando tudo que fechou ja foi faturado", () => {
+  it("recusa excluir quem tem historico, mesmo todo faturado", () => {
     const database = createDatabase();
 
     try {
       const customerId = createTestCustomer(database);
       insertOperation(database, { customerId, status: "synced", omieBillingStatus: "billed" });
 
-      expect(findCustomerDeletionBlock(database, customerId)).toBeNull();
-      deleteCustomer(database, customerId);
-      expect(isDeleted(database, customerId)).toBe(true);
+      /*
+       * Antes isto passava: nao havia dinheiro em aberto, entao a exclusao era liberada sem
+       * aviso nenhum. Mas ela some com o cadastro de todas as telas, e o caminho ate as cargas
+       * dele vai junto — um cliente com tres anos de historico sumia com um clique. Quem quer
+       * tirar o cliente do dia a dia tem Inativar; quem tem cadastro repetido tem Unificar.
+       */
+      expect(findCustomerDeletionBlock(database, customerId)).toEqual({
+        openCount: 0,
+        unbilledCount: 0,
+        historyCount: 1
+      });
+      expect(() => deleteCustomer(database, customerId)).toThrow("1 registro no historico");
     } finally {
       database.close();
     }
   });
 
-  it("nao deixa carga cancelada segurar o cadastro para sempre", () => {
+  it("carga cancelada tambem e historico", () => {
     const database = createDatabase();
 
     try {
       const customerId = createTestCustomer(database);
-      // Cancelada nunca vira nota: se contasse, o cadastro ficaria intocavel.
+      // Cancelada nao segura DINHEIRO (nunca vira nota), mas e historico: continua na tela de
+      // canceladas, e excluir o cadastro esconderia o caminho ate ela.
       insertOperation(database, { customerId, status: "cancelled" });
+
+      expect(findCustomerDeletionBlock(database, customerId)).toEqual({
+        openCount: 0,
+        unbilledCount: 0,
+        historyCount: 1
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("libera a exclusao do cadastro que nunca foi usado", () => {
+    const database = createDatabase();
+
+    try {
+      // O caso que continua livre: cadastro criado errado, sem pesagem e sem credito.
+      const customerId = createTestCustomer(database);
 
       expect(findCustomerDeletionBlock(database, customerId)).toBeNull();
       deleteCustomer(database, customerId);
@@ -147,7 +174,8 @@ describe("trava de exclusao de cliente", () => {
 
       expect(findCustomerDeletionBlock(database, customerId)).toEqual({
         openCount: 2,
-        unbilledCount: 1
+        unbilledCount: 1,
+        historyCount: 4
       });
     } finally {
       database.close();
@@ -161,7 +189,16 @@ describe("restaurar cliente excluido", () => {
 
     try {
       const customerId = createTestCustomer(database);
-      insertOperation(database, { customerId, status: "synced", omieBillingStatus: "billed" });
+      const operationId = insertOperation(database, {
+        customerId,
+        status: "synced",
+        omieBillingStatus: "billed"
+      });
+      // A trava so olha pesagem VIVA: aqui a carga e excluida para o cadastro poder sair, e o
+      // que o teste verifica e o vinculo sobrevivendo ao ciclo excluir/restaurar.
+      database
+        .prepare("UPDATE weighing_operations SET deleted_at = ? WHERE id = ?")
+        .run("2026-08-20T10:00:00.000Z", operationId);
       deleteCustomer(database, customerId);
       expect(isDeleted(database, customerId)).toBe(true);
 
@@ -317,7 +354,7 @@ function insertOperation(
     omieBillingStatus?: string;
     deletedAt?: string;
   }
-): void {
+): string {
   operationSeq += 1;
   database
     .prepare(
@@ -335,6 +372,7 @@ function insertOperation(
       "2026-08-12T10:00:00.000Z",
       options.deletedAt ?? null
     );
+  return `op-${operationSeq}`;
 }
 
 function isDeleted(database: DesktopDatabase, customerId: string): boolean {

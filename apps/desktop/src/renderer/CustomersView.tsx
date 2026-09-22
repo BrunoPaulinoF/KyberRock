@@ -23,6 +23,7 @@ import type { FreightModality } from "../services/freight";
 import type { CustomerFreightRule as CustomerFreightRuleView } from "../services/customer-freight-rules";
 import type { CustomerFutureBillingInvoice } from "../services/customer-future-billing";
 import type { DeletedCustomerSummary } from "../services/customers";
+import type { DuplicateCadastroGroup, DuplicateCadastroRow } from "../services/customer-duplicates";
 import {
   CepInput,
   DocumentInput,
@@ -525,6 +526,18 @@ export function CustomersView({
   const [deletedCustomers, setDeletedCustomers] = useState<DeletedCustomerSummary[]>([]);
   const [showDeleted, setShowDeleted] = useState(false);
   const [restoringId, setRestoringId] = useState<string | null>(null);
+  /*
+   * Cadastros que parecem o mesmo cliente. Os de documento igual ja foram unificados na
+   * abertura do programa; o que sobra aqui e a SUSPEITA — mesmo nome com documento faltando —,
+   * em que so quem conhece a operacao sabe dizer se "Transportes Silva" e uma empresa ou duas.
+   */
+  const [duplicateGroups, setDuplicateGroups] = useState<DuplicateCadastroGroup[]>([]);
+  const [showDuplicates, setShowDuplicates] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const [pendingMerge, setPendingMerge] = useState<{
+    keeper: DuplicateCadastroRow;
+    losers: DuplicateCadastroRow[];
+  } | null>(null);
   // Visualizacao do cliente (duplo clique na linha) com botao "Editar".
   const [viewingCustomer, setViewingCustomer] = useState<CustomerCacheEntry | null>(null);
   const [viewingCredit, setViewingCredit] = useState<CustomerCreditSummary | null>(null);
@@ -656,6 +669,16 @@ export function CustomersView({
     }
   }, [desktopApi, page, debouncedSearch, isStandalone]);
 
+  const loadDuplicates = useCallback(async () => {
+    if (!desktopApi || isStandalone) return;
+    try {
+      setDuplicateGroups(await desktopApi.customersFindDuplicates());
+    } catch {
+      // Secao auxiliar, igual a de excluidos: falhar aqui nao pode derrubar o cadastro.
+      setDuplicateGroups([]);
+    }
+  }, [desktopApi, isStandalone]);
+
   const loadDeletedCustomers = useCallback(async () => {
     if (!desktopApi || isStandalone) return;
     try {
@@ -673,6 +696,10 @@ export function CustomersView({
   useEffect(() => {
     void loadDeletedCustomers();
   }, [loadDeletedCustomers]);
+
+  useEffect(() => {
+    void loadDuplicates();
+  }, [loadDuplicates]);
 
   useEffect(() => {
     setPage(0);
@@ -702,9 +729,10 @@ export function CustomersView({
     return desktopApi.onCadastroChanged(() => {
       void loadCustomers();
       void loadDeletedCustomers();
+      void loadDuplicates();
       void loadOptions();
     });
-  }, [desktopApi, loadCustomers, loadDeletedCustomers, loadOptions]);
+  }, [desktopApi, loadCustomers, loadDeletedCustomers, loadDuplicates, loadOptions]);
 
   // Modo "so formulario" pedindo edicao: busca o cliente e abre a ficha dele. A lista
   // paginada pode nao conter o alvo, entao a busca varre o cache pelo id.
@@ -1522,6 +1550,62 @@ export function CustomersView({
       showFlash("error", err instanceof Error ? err.message : "Erro ao reativar o cliente.");
     } finally {
       setTogglingBlockId(null);
+    }
+  }
+
+  /**
+   * Tira o cliente do dia a dia SEM esconder nada: ele sai dos seletores (que so listam
+   * ativos) e continua nesta tela, nos relatorios e no Fechamento.
+   *
+   * E a saida certa para o cadastro que nao se usa mais — e a unica para quem ja tem
+   * historico, porque excluir esconderia o caminho ate ele.
+   */
+  async function handleDeactivate(customer: CustomerCacheEntry): Promise<void> {
+    if (!desktopApi || togglingBlockId) return;
+    setTogglingBlockId(customer.id);
+    try {
+      await desktopApi.customersUpdate(customer.id, { isActive: false });
+      await loadCustomers();
+      showFlash(
+        "success",
+        "Cliente inativado. Ele sai das listas de escolha e mantem o historico."
+      );
+    } catch (err) {
+      showFlash("error", err instanceof Error ? err.message : "Erro ao inativar o cliente.");
+    } finally {
+      setTogglingBlockId(null);
+    }
+  }
+
+  /**
+   * Unifica um grupo de duplicados no cadastro escolhido pelo operador.
+   *
+   * O historico (pesagens, orcamentos, extrato de credito) muda de dono e os outros cadastros
+   * viram tombstone — que sobe para a nuvem e chega nas demais balancas. Nada e apagado: o que
+   * some e a linha repetida, e tudo o que estava pendurado nela passa a aparecer no cadastro
+   * que ficou.
+   */
+  async function handleConfirmMerge(): Promise<void> {
+    if (!desktopApi || !pendingMerge) return;
+    setMerging(true);
+    try {
+      let operations = 0;
+      for (const loser of pendingMerge.losers) {
+        const result = await desktopApi.customersMerge(pendingMerge.keeper.id, loser.id);
+        operations += result.counts.operations;
+      }
+      setPendingMerge(null);
+      await Promise.all([loadCustomers(), loadDuplicates(), loadDeletedCustomers()]);
+      showFlash(
+        "success",
+        operations > 0
+          ? `Cadastros unificados. ${operations} pesagem(ns) passaram para "${pendingMerge.keeper.name}".`
+          : "Cadastros unificados."
+      );
+    } catch (err) {
+      showFlash("error", err instanceof Error ? err.message : "Erro ao unificar os cadastros.");
+    } finally {
+      setMerging(false);
     }
   }
 
@@ -3073,6 +3157,20 @@ export function CustomersView({
         />
       ) : null}
 
+      {pendingMerge ? (
+        <ConfirmDialog
+          title="Unificar cadastros"
+          description={
+            `Tudo o que esta em ${pendingMerge.losers.length === 1 ? "1 cadastro" : `${pendingMerge.losers.length} cadastros`} ` +
+            `(pesagens, orcamentos e extrato de credito) passa para "${pendingMerge.keeper.name}", e o(s) outro(s) saem das telas. ` +
+            "Nenhuma pesagem e apagada. Esta acao nao tem botao de desfazer: confira se e mesmo o mesmo cliente."
+          }
+          busy={merging}
+          onCancel={() => setPendingMerge(null)}
+          onConfirm={() => void handleConfirmMerge()}
+        />
+      ) : null}
+
       {pendingSpecialPriceAction ? (
         <PriceChangePasswordDialog
           error={pricePasswordError}
@@ -3153,7 +3251,7 @@ export function CustomersView({
             {
               key: "actions",
               header: "Acoes",
-              width: "150px",
+              width: "230px",
               align: "right",
               render: (customer) => (
                 <>
@@ -3224,6 +3322,33 @@ export function CustomersView({
                       {customer.omieBillingBlocked ? <Lock size={15} /> : <Unlock size={15} />}
                     </button>
                   </Tooltip>
+                  {customer.isActive ? (
+                    <Tooltip
+                      content="Inativar: sai das listas de escolha e continua nos relatorios e no Fechamento"
+                      placement="left"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => void handleDeactivate(customer)}
+                        disabled={togglingBlockId !== null}
+                        aria-label="Inativar cliente"
+                        style={{
+                          border: "1px solid var(--kr-border)",
+                          background: "var(--kr-surface)",
+                          color: "var(--kr-muted)",
+                          borderRadius: "8px",
+                          padding: "0 8px",
+                          height: "30px",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          cursor: togglingBlockId ? "wait" : "pointer",
+                          flexShrink: 0
+                        }}
+                      >
+                        Inativar
+                      </button>
+                    </Tooltip>
+                  ) : null}
                   <DeleteRowButton onClick={() => setPendingDeleteId(customer.id)} />
                 </>
               )
@@ -3272,6 +3397,105 @@ export function CustomersView({
             </div>
           }
         />
+      )}
+      {standaloneForm || duplicateGroups.length === 0 ? null : (
+        <div
+          style={{
+            marginTop: "16px",
+            border: "1px solid var(--kr-border)",
+            borderRadius: "12px",
+            background: "var(--kr-surface)",
+            overflow: "hidden"
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setShowDuplicates((visible) => !visible)}
+            aria-expanded={showDuplicates}
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "8px",
+              border: "none",
+              background: "transparent",
+              color: "var(--kr-text-strong)",
+              padding: "12px 14px",
+              cursor: "pointer",
+              fontWeight: 800,
+              fontSize: "13px"
+            }}
+          >
+            <span>Cadastros repetidos ({duplicateGroups.length})</span>
+            <span style={{ ...styles.cellMuted, fontWeight: 700 }}>
+              {showDuplicates ? "Ocultar" : "Mostrar"}
+            </span>
+          </button>
+
+          {showDuplicates ? (
+            <div style={{ borderTop: "1px solid var(--kr-border)" }}>
+              <p style={{ ...styles.cellMuted, margin: 0, padding: "10px 14px" }}>
+                Escolha qual cadastro FICA: as pesagens, os orcamentos e o extrato dos outros passam
+                para ele, e os repetidos saem das telas (aqui e nas outras balancas). Cadastro com o
+                mesmo CNPJ/CPF ja e unificado sozinho na abertura — o que sobra aqui e suspeita por
+                NOME, e matriz e filial dividem o nome.
+              </p>
+
+              {duplicateGroups.map((group) => (
+                <div
+                  key={`${group.reason}:${group.key}`}
+                  style={{ borderTop: "1px solid var(--kr-border)", padding: "10px 14px" }}
+                >
+                  <div style={{ ...styles.cellMuted, fontWeight: 700, marginBottom: "6px" }}>
+                    {group.reason === "documento"
+                      ? "Mesmo CNPJ/CPF"
+                      : "Mesmo nome, sem CNPJ/CPF em um dos cadastros"}
+                  </div>
+
+                  {group.rows.map((row) => (
+                    <div
+                      key={row.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "12px",
+                        padding: "6px 0"
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: "13px" }}>{row.name}</div>
+                        <div style={styles.cellMuted}>
+                          {formatDocument(row.document ?? "") || "sem CNPJ/CPF"}
+                          {row.omieCustomerId
+                            ? ` · OMIE ${row.omieCustomerId}`
+                            : " · sem codigo OMIE"}
+                          {` · ${row.operations} pesagem(ns)`}
+                          {row.isActive ? "" : " · inativo"}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPendingMerge({
+                            keeper: row,
+                            losers: group.rows.filter((other) => other.id !== row.id)
+                          })
+                        }
+                        disabled={merging}
+                        style={{ ...styles.secondaryButton, flexShrink: 0 }}
+                      >
+                        Manter este
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
       )}
       {standaloneForm || deletedCustomers.length === 0 ? null : (
         <div

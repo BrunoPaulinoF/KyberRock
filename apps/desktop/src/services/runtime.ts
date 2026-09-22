@@ -57,6 +57,15 @@ import {
   type CadastroRealtimeState,
   type RealtimeCapableClient
 } from "./cadastro-realtime.js";
+import {
+  findDuplicateCustomerCadastros,
+  type DuplicateCadastroGroup
+} from "./customer-duplicates.js";
+import {
+  mergeCustomerInto,
+  mergeDuplicateCustomersByDocument,
+  type CustomerMergeResult
+} from "./customer-merge.js";
 import { probeInternet, probeOmie } from "./connectivity.js";
 import {
   getDesktopStatusSnapshot,
@@ -691,6 +700,7 @@ export class DesktopRuntime {
     ensureDefaultAccounts(this.database, this.ensureIdentity().companyId);
     ensureDefaultPaymentMethods(this.database, this.ensureIdentity().companyId);
     applyDefaultAccountBindings(this.database, this.ensureIdentity().companyId);
+    this.mergeDuplicateCustomersOnStartup();
     this.cacheStore.loadAll(this.ensureIdentity().companyId);
     initializeSupabaseFromSettings(this.database);
   }
@@ -896,6 +906,53 @@ export class DesktopRuntime {
     this.cadastroRealtime = null;
     this.cadastroPingScheduler?.stop();
     this.cadastroPingScheduler = null;
+  }
+
+  /**
+   * Junta, na abertura, os cadastros que tem o MESMO CNPJ/CPF.
+   *
+   * Roda aqui — e nao numa migracao de SQLite — porque a limpeza precisa da mesma regra que o
+   * botao de unificar usa, e regra copiada em dois lugares e exatamente o que produziu os
+   * duplicados: o cadastro manual normalizava o documento, o pull pela nuvem comparava literal.
+   * Uma implementacao so, testada, chamada pelos dois caminhos.
+   *
+   * Nunca derruba a abertura: uma balanca que nao consegue limpar cadastro ainda tem de pesar
+   * caminhao.
+   */
+  private mergeDuplicateCustomersOnStartup(): void {
+    try {
+      const merged = mergeDuplicateCustomersByDocument(
+        this.database,
+        this.ensureIdentity().companyId
+      );
+      if (merged.length > 0) {
+        console.info(`Cadastros duplicados unificados na abertura: ${merged.length}`);
+      }
+    } catch (error) {
+      console.error("Unificacao automatica de cadastros duplicados falhou", error);
+    }
+  }
+
+  /** Os grupos de cadastros que parecem o mesmo cliente — o que a tela oferece para unificar. */
+  listDuplicateCustomers(): DuplicateCadastroGroup[] {
+    return findDuplicateCustomerCadastros(this.database, this.ensureIdentity().companyId);
+  }
+
+  /**
+   * Unifica dois cadastros: o historico vai para o que fica e o outro vira tombstone.
+   *
+   * O push do cadastro sai na hora (e nao no ciclo de 30 min) porque o resultado tem de chegar
+   * as outras balancas junto: enquanto a exclusao nao subir, a maquina do lado continua
+   * mostrando — e podendo usar — o cadastro que acabou de sair daqui.
+   */
+  mergeCustomers(keeperId: string, loserId: string): CustomerMergeResult {
+    this.assertDesktopAccess();
+    const identity = this.ensureIdentity();
+    const result = mergeCustomerInto(this.database, { keeperId, loserId });
+    this.cacheStore.loadAll(identity.companyId);
+    this.triggerCadastroCloudPush("customer");
+    this.notifyCadastroChanged();
+    return result;
   }
 
   /** Diagnostico para a tela de status: `off` | `connecting` | `live` | `error`. */
