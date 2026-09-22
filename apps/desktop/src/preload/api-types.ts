@@ -909,6 +909,8 @@ export interface KyberRockDesktopApi {
   onUpdateDownloaded: (callback: (event: unknown, version: string) => void) => void;
   offUpdateDownloaded: (callback: (event: unknown, version: string) => void) => void;
   onPlateScanned: (callback: (plate: string) => void) => void;
+  /** Cadastro novo de outra balanca ja gravado aqui. Devolve o cancelamento do ouvinte. */
+  onCadastroChanged: (callback: () => void) => () => void;
   onScaleReading: (callback: (reading: ParsedToledoReading) => void) => void;
   offScaleReading: (callback: (reading: ParsedToledoReading) => void) => void;
 }

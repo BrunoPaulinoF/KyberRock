@@ -689,6 +689,23 @@ export function CustomersView({
     void loadCustomers();
   }, [loadCustomers]);
 
+  /*
+   * Cadastro de outra balanca chegou (a nuvem avisou e o main ja gravou aqui): reler.
+   *
+   * A lista desta tela sai do cache local, entao sem este aviso ela continuaria mostrando o
+   * estado de antes ate alguem trocar de pagina ou digitar na busca — e e exatamente esta a
+   * tela em que se fica olhando enquanto o comercial cadastra o cliente no outro computador.
+   * A ficha aberta nao e tocada: so a lista, as listas auxiliares e os seletores.
+   */
+  useEffect(() => {
+    if (!desktopApi) return;
+    return desktopApi.onCadastroChanged(() => {
+      void loadCustomers();
+      void loadDeletedCustomers();
+      void loadOptions();
+    });
+  }, [desktopApi, loadCustomers, loadDeletedCustomers, loadOptions]);
+
   // Modo "so formulario" pedindo edicao: busca o cliente e abre a ficha dele. A lista
   // paginada pode nao conter o alvo, entao a busca varre o cache pelo id.
   const standaloneEditId = standaloneForm?.editId;
