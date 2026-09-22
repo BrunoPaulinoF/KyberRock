@@ -137,6 +137,7 @@ export function InvoiceClosing() {
   return (
     <>
       <PageHead
+        kicker="Financeiro"
         title="Fechamento de faturas"
         description="Pesagens com nota do periodo, pela data de fechamento. O pedido de faturamento e executado pela balanca da unidade."
         actions={
@@ -229,7 +230,7 @@ export function InvoiceClosing() {
             So as sem nota
           </label>
           {(ops.loading || requests.loading) && (
-            <span style={{ color: "var(--muted)" }}>Carregando...</span>
+            <span style={{ color: "var(--kr-muted)" }}>Carregando...</span>
           )}
         </div>
         <DataTable

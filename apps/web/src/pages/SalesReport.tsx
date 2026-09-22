@@ -115,6 +115,7 @@ export function SalesReport() {
   return (
     <>
       <PageHead
+        kicker="Financeiro"
         title="Relatorio de vendas"
         description="Pesagens concluidas pela data de FECHAMENTO (a mesma que o OMIE usa na nota)."
         actions={
@@ -163,7 +164,7 @@ export function SalesReport() {
             <option value="product">Por produto</option>
             <option value="day">Por dia</option>
           </select>
-          {loading && <span style={{ color: "var(--muted)" }}>Carregando...</span>}
+          {loading && <span style={{ color: "var(--kr-muted)" }}>Carregando...</span>}
         </div>
         <DataTable
           rows={groups}

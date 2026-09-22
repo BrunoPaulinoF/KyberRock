@@ -60,6 +60,7 @@ export function Wallet() {
   return (
     <>
       <PageHead
+        kicker="Financeiro"
         title="Carteira"
         description="Vendas em carteira: a nota ja saiu, falta definir como e quando o cliente paga."
         actions={

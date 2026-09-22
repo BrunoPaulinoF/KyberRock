@@ -74,6 +74,7 @@ export function VehiclesAndDrivers() {
   return (
     <>
       <PageHead
+        kicker="Cadastro"
         title="Veiculos e motoristas"
         description="Cadastro compartilhado com as balancas; a portaria tambem cadastra na hora quando o caminhao chega."
         actions={
@@ -437,6 +438,7 @@ export function Carriers() {
   return (
     <>
       <PageHead
+        kicker="Cadastro"
         title="Transportadoras"
         description="Transportadora com CNPJ sobe para o OMIE como cadastro de transportador."
         actions={
