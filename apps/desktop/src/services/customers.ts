@@ -480,12 +480,22 @@ export function updateCustomer(
   return database.prepare("SELECT * FROM customers WHERE id = ?").get(id) as CustomerRow;
 }
 
-/** O que impede a exclusao de um cliente: dinheiro ainda presos nas pesagens dele. */
+/** O que impede a exclusao de um cliente: operacao em curso, dinheiro, ou historico. */
 export interface CustomerDeletionBlock {
   /** Pesagens que ainda nao fecharam (`draft` ... `awaiting_exit`). */
   openCount: number;
   /** Pesagens ja concluidas que ninguem faturou ainda. */
   unbilledCount: number;
+  /**
+   * TUDO o que este cadastro ja carrega: pesagens (de qualquer status, inclusive as ja
+   * faturadas e as canceladas) e lancamentos no extrato de credito.
+   *
+   * Os dois contadores acima olham para dinheiro em aberto; este olha para HISTORICO. A
+   * exclusao nunca apagou pesagem, mas some com o cadastro de todas as telas — e o caminho
+   * ate as cargas dele vai junto. Um cliente com tres anos de historico todo faturado passava
+   * pela trava antiga sem nenhum aviso.
+   */
+  historyCount: number;
 }
 
 /**
@@ -506,9 +516,11 @@ export interface CustomerDeletionBlock {
  * direto em SQL. Se aquela regra ganhar outro caminho para `billed`, esta consulta tem de
  * acompanhar.
  *
- * `cancelled` fica de fora das duas contas de proposito (nao esta em nenhuma das duas
- * listas de status): carga cancelada nao vira nota e nao pode segurar um cadastro para
- * sempre. Pesagem ja excluida tambem nao conta.
+ * `cancelled` fica de fora das duas PRIMEIRAS contas de proposito (nao esta em nenhuma das
+ * duas listas de status): carga cancelada nao vira nota e nao pode segurar dinheiro. Ela entra
+ * em `historyCount`, que pergunta outra coisa — "existe historico a esconder?" — e para essa
+ * pergunta a carga cancelada conta como qualquer outra. Pesagem ja excluida nao conta em
+ * lugar nenhum.
  */
 export function findCustomerDeletionBlock(
   database: DesktopDatabase,
@@ -519,21 +531,35 @@ export function findCustomerDeletionBlock(
       `SELECT
          SUM(CASE WHEN status IN (${OPEN_OPERATION_STATUS_SQL_LIST}) THEN 1 ELSE 0 END) AS open_count,
          SUM(CASE WHEN status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
-                   AND COALESCE(omie_billing_status, '') <> 'billed' THEN 1 ELSE 0 END) AS unbilled_count
+                   AND COALESCE(omie_billing_status, '') <> 'billed' THEN 1 ELSE 0 END) AS unbilled_count,
+         COUNT(*) AS history_count
        FROM weighing_operations
        WHERE customer_id = ? AND deleted_at IS NULL`
     )
-    .get(customerId) as { open_count: number | null; unbilled_count: number | null } | undefined;
+    .get(customerId) as
+    | { open_count: number | null; unbilled_count: number | null; history_count: number | null }
+    | undefined;
+
+  const creditRow = database
+    .prepare("SELECT COUNT(*) AS total FROM customer_credit_movements WHERE customer_id = ?")
+    .get(customerId) as { total: number | null } | undefined;
 
   const openCount = row?.open_count ?? 0;
   const unbilledCount = row?.unbilled_count ?? 0;
-  if (openCount === 0 && unbilledCount === 0) return null;
-  return { openCount, unbilledCount };
+  const historyCount = (row?.history_count ?? 0) + (creditRow?.total ?? 0);
+  if (openCount === 0 && unbilledCount === 0 && historyCount === 0) return null;
+  return { openCount, unbilledCount, historyCount };
 }
 
 /** "3 pesagens em aberto e 12 concluidas sem faturar" — so as partes que existem. */
 function describeDeletionBlock(block: CustomerDeletionBlock): string {
   const parts: string[] = [];
+  if (block.openCount === 0 && block.unbilledCount === 0) {
+    // So historico: nao ha dinheiro preso, o que se perde e o caminho ate o que ja aconteceu.
+    return block.historyCount === 1
+      ? "1 registro no historico (pesagem ou lancamento de credito)"
+      : `${block.historyCount} registros no historico (pesagens e lancamentos de credito)`;
+  }
   if (block.openCount > 0) {
     parts.push(
       block.openCount === 1 ? "1 pesagem em aberto" : `${block.openCount} pesagens em aberto`
@@ -575,8 +601,9 @@ export function deleteCustomer(
   if (block) {
     throw new Error(
       `Este cliente tem ${describeDeletionBlock(block)}. ` +
-        "Feche ou cancele as pesagens em aberto e fature as concluidas antes de excluir — " +
-        "ou use Inativar, que tira o cliente do dia a dia sem esconder as cargas dele."
+        "Excluir tira o cadastro de todas as telas e, com ele, o caminho ate esses registros. " +
+        "Use Inativar, que tira o cliente do dia a dia sem esconder nada — ou Unificar, se este " +
+        "for um cadastro repetido do mesmo cliente."
     );
   }
 

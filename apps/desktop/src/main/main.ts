@@ -1552,6 +1552,22 @@ function registerIpcHandlers(): void {
     runtime.restoreCustomer(id);
   });
 
+  ipcMain.handle("desktop:customers-duplicates", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.listDuplicateCustomers();
+  });
+
+  ipcMain.handle("desktop:customers-merge", (_event, keeperId: string, loserId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.mergeCustomers(keeperId, loserId);
+  });
+
   // Meios de pagamento e contas vem do OMIE (sincronizacao) — nao ha handlers de
   // criacao/exclusao no desktop, apenas atualizacao restrita.
   ipcMain.handle(
