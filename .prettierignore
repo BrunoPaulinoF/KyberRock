@@ -4,3 +4,5 @@ build/
 coverage/
 release/
 package-lock.json
+# Gerado pelo Supabase (`npm run types` dentro de kyberrock-web); nao e formatado a mao.
+kyberrock-web/src/lib/database.types.ts
