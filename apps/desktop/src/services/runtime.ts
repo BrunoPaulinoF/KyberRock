@@ -49,6 +49,14 @@ import {
   type CloudSyncSchedulerHandle,
   type CloudSyncSchedulerStatus
 } from "./cloud-scheduler.js";
+import {
+  startCadastroPingScheduler,
+  startCadastroRealtime,
+  type CadastroPingSchedulerHandle,
+  type CadastroRealtimeHandle,
+  type CadastroRealtimeState,
+  type RealtimeCapableClient
+} from "./cadastro-realtime.js";
 import { probeInternet, probeOmie } from "./connectivity.js";
 import {
   getDesktopStatusSnapshot,
@@ -167,6 +175,7 @@ import {
   type OmieBillingReconcileResult,
   rearmOmieBillingForCustomer,
   getSupabaseSyncStatus,
+  ensureSupabaseInitialized,
   isSupabaseInitialized,
   pullCompanyPricePasswordFromCloud,
   pushSharedCadastroToCloud,
@@ -619,6 +628,15 @@ export class DesktopRuntime {
   /** Pedido de execucao da fila OMIE que chegou com outra em andamento — roda ao terminar. */
   private omieQueueRerunRequested = false;
   private omieQueueDrainScheduler: OmieQueueDrainSchedulerHandle | null = null;
+  /** Inscricao no aviso de cadastro da nuvem (o que dispensa esperar o tique de 15 s). */
+  private cadastroRealtime: CadastroRealtimeHandle | null = null;
+  /** Junta a rajada de avisos em pulls espacados. */
+  private cadastroPingScheduler: CadastroPingSchedulerHandle | null = null;
+  /**
+   * Quem quer saber que o cadastro da nuvem mudou — na pratica, o encaminhador do main para o
+   * renderer, para a tela se redesenhar sem esperar o tique dela.
+   */
+  private readonly cadastroChangeListeners = new Set<() => void>();
   private receiptPrinter: ReceiptPrinter = { printReceipt: async () => undefined };
   private fiscalDocumentPrinter: FiscalDocumentPrinter = {
     printDocument: async () => ({ printed: false, error: null })
@@ -836,6 +854,76 @@ export class DesktopRuntime {
   stopCloudSyncScheduler(): void {
     this.cloudSyncScheduler?.stop();
     this.cloudSyncScheduler = null;
+  }
+
+  /**
+   * Liga o aviso de cadastro: a nuvem avisa que algo mudou e esta balanca puxa na hora.
+   *
+   * Nao substitui nada — o tique de 15 s do renderer e a varredura completa continuam como
+   * estavam. E por isso que todo o caminho aqui e best-effort: se o Realtime nao conectar (rede
+   * bloqueada, servidor fora do ar, balanca ainda nao ativada), a operacao segue exatamente
+   * como seguia antes, so que descobrindo o cadastro novo no ritmo antigo.
+   */
+  startCadastroRealtimeLink(): void {
+    this.stopCadastroRealtimeLink();
+
+    this.cadastroPingScheduler = startCadastroPingScheduler({
+      pull: async () => {
+        const result = await this.pullCloudNow();
+        // So avisa a tela quando veio alguma coisa: o aviso da nuvem chega para TODAS as
+        // balancas, inclusive a que acabou de gravar o cadastro, e um redesenho a toa
+        // interrompe quem esta digitando um formulario.
+        if (result.pulled > 0) this.notifyCadastroChanged();
+      },
+      onError: (error) => console.error("Pull por aviso de cadastro falhou", error)
+    });
+
+    this.cadastroRealtime = startCadastroRealtime({
+      getClient: () => {
+        // Rele a configuracao a cada checagem: a balanca pode ter sido ativada (ou ter
+        // trocado de pedreira) depois que o programa abriu.
+        initializeSupabaseFromSettings(this.database);
+        return ensureSupabaseInitialized() as unknown as RealtimeCapableClient | null;
+      },
+      getCompanyId: () => getLocalDesktopIdentity(this.database)?.companyId ?? null,
+      onPing: () => this.cadastroPingScheduler?.ping(),
+      onError: (error) => console.error("Aviso de cadastro (Realtime) falhou", error)
+    });
+  }
+
+  stopCadastroRealtimeLink(): void {
+    this.cadastroRealtime?.stop();
+    this.cadastroRealtime = null;
+    this.cadastroPingScheduler?.stop();
+    this.cadastroPingScheduler = null;
+  }
+
+  /** Diagnostico para a tela de status: `off` | `connecting` | `live` | `error`. */
+  getCadastroRealtimeState(): CadastroRealtimeState {
+    return this.cadastroRealtime?.getState() ?? "off";
+  }
+
+  /**
+   * Registra quem quer ser avisado de cadastro novo vindo da nuvem. Devolve o cancelamento.
+   *
+   * Indexado pela propria funcao (Set): o main reanexa o encaminhador do renderer a cada
+   * recarga da janela, e sem isso a mesma mudanca chegaria N vezes na tela.
+   */
+  onCadastroChanged(listener: () => void): () => void {
+    this.cadastroChangeListeners.add(listener);
+    return () => this.cadastroChangeListeners.delete(listener);
+  }
+
+  private notifyCadastroChanged(): void {
+    for (const listener of this.cadastroChangeListeners) {
+      try {
+        listener();
+      } catch (error) {
+        // Um ouvinte quebrado (janela fechando no meio do envio) nao pode derrubar o pull nem
+        // impedir o aviso dos outros.
+        console.error("Ouvinte de mudanca de cadastro falhou", error);
+      }
+    }
   }
 
   getCloudSyncSchedulerStatus(): CloudSyncSchedulerStatus {
@@ -2231,6 +2319,10 @@ export class DesktopRuntime {
     // depois do fechamento bate num handle fechado a cada 30 s.
     this.omieQueueDrainScheduler?.stop();
     this.omieQueueDrainScheduler = null;
+    // Idem para a inscricao do aviso: o supervisor dela tem timer proprio e o pull que ela
+    // dispara consulta o SQLite.
+    this.stopCadastroRealtimeLink();
+    this.cadastroChangeListeners.clear();
     // A reconexao da balanca nao desiste mais sozinha: sem encerrar o adaptador no
     // fechamento, o timer da proxima tentativa sobrevive ao pedido de saida.
     this.disconnectScale();

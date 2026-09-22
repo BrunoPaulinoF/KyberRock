@@ -951,6 +951,49 @@ Dois cuidados que nao podem se perder numa mudanca futura:
   com o recorte antigo (pior janela, nunca cadastro nenhum) — e so quando o erro **e** a coluna
   que falta, pela mesma razao da secao anterior.
 
+**3. A outra maquina ainda precisava PERGUNTAR.** Resolvidos os dois acima, o cadastro saia na
+hora e entrava na janela do pull — mas so era descoberto no tique seguinte do renderer
+(`MULTI_DESKTOP_PULL_INTERVAL_MS`, 15 s): ~7 s de espera na media, 15 s no pior caso, com a
+operadora olhando a tela e o caminhao na balanca.
+
+Agora a nuvem **avisa**. A migracao `202609220001_cadastro_change_pings` cria uma tabela de aviso
+com UMA linha por empresa (`company_id`, `changed_at`, `source`), carimbada por gatilho em toda
+escrita nas mesmas 21 tabelas de cadastro; a tabela esta na publicacao `supabase_realtime`, e a
+balanca assina `company_id=eq.<a dela>` (`services/cadastro-realtime.ts`) e puxa na hora. O
+caminho inteiro (salvar -> publicar -> avisar -> puxar) fica em **~1 a 3 s**.
+
+O que nao pode se perder numa mudanca futura:
+
+- **O aviso nao carrega cadastro, e por isso pode ser publico.** O que trafega e "mudou algo na
+  empresa X as 14:32" — nenhum nome, documento ou preco. Quem busca continua sendo o
+  `desktop-pull`, com o token do dispositivo. Publicar `customers` direto no Realtime exigiria
+  furar a politica `no direct client access` (`qual = false`) dessas tabelas, que e o que mantem
+  o cadastro fora do alcance da chave publicavel — nao troque o aviso por isso.
+- **O tique de 15 s continua.** Ele cobre a balanca que estava sem internet, o Realtime fora do ar
+  e o evento perdido. O aviso ADIANTA o pull; nao e por onde o cadastro anda. Nada em
+  `cadastro-realtime.ts` pode derrubar a operacao quando o websocket nao conecta (rede da pedreira
+  bloqueando, servidor fora) — dai o `onError` em vez de `throw` em todo o caminho.
+- **O gatilho e por STATEMENT, nao por linha.** O `omie-sync` grava cadastro em lote: por linha,
+  um lote de 500 clientes viraria 500 avisos para toda a frota. Por statement vira **um** — que e
+  a informacao real, ja que o pull seguinte traz o lote inteiro de qualquer jeito.
+- **A falha do aviso nunca derruba a escrita do cadastro.** O gatilho roda dentro da transacao de
+  quem gravou; todo o corpo dele vive num `exception when others`. Perder o aviso custa ate 15 s
+  (o tique cobre); perder a escrita custaria o cadastro.
+- **Toda subida da inscricao dispara um pull** (`startCadastroRealtime`, no `SUBSCRIBED`). Os
+  avisos que passaram enquanto ela esteve fora do ar nao ficam guardados em lugar nenhum — sem
+  isso a balanca voltaria "conectada" e desatualizada ao mesmo tempo.
+- **A reconexao e do supervisor, nao do callback de status** (`CADASTRO_REALTIME_SUPERVISOR_INTERVAL_MS`,
+  30 s). Reagir no proprio callback somaria a nossa re-tentativa a do supabase-js, e duas
+  reconexoes concorrentes derrubam uma a outra. O supervisor tambem e quem assina quando a
+  ativacao acontece com o programa ja aberto.
+- **Rajada vira pull espacado** (`startCadastroPingScheduler`): 400 ms juntando avisos do mesmo
+  salvamento (um salvamento escreve em varias tabelas, e cada tabela e um lote no `desktop-sync`)
+  e piso de 1,5 s entre pulls, contado do FIM do anterior. Aviso que chega durante um pull nao e
+  descartado — ele pode ser de uma linha gravada depois que aquele pull montou a janela dele.
+- A migracao **precisa estar aplicada antes** da release que a usa (ver "SQL migrations"). Sem
+  ela nao existe tabela de aviso: a inscricao falha, cai em `error`, e a balanca volta ao
+  comportamento de 15 s — nada quebra, so nao acelera.
+
 ## O que a nuvem NAO precisa guardar nem receber
 
 O Supabase estava estourando espaco e o banco dava engasgo. A medicao de 16/09/2026 (106 MB de

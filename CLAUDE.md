@@ -155,7 +155,19 @@ These recur across the codebase and are easy to violate accidentally:
   porque tambem escrevem nessas tabelas o painel, o `omie-sync` e o tombstone da disputa de preco. A
   varredura completa continua pedindo o cadastro INTEIRO: e ela a rede de seguranca do que um
   incremental deixar passar, e a folga de 5 min do cursor cobre a fresta entre os dois relogios
-  (`serverTime` da Edge Function x `now()` do Postgres).
+  (`serverTime` da Edge Function x `now()` do Postgres). (3) Resolvido isso, a outra maquina ainda
+  so descobria no tique seguinte do renderer (15 s). Agora a nuvem **avisa**:
+  `cadastro_change_pings` (migracao `202609220001`) guarda UMA linha por empresa, carimbada por
+  gatilho de STATEMENT nas mesmas 21 tabelas — por linha, um lote do `omie-sync` viraria 500
+  avisos —, esta na publicacao `supabase_realtime`, e a balanca assina `company_id=eq.<a dela>`
+  (`services/cadastro-realtime.ts`) e puxa na hora: ~1 a 3 s de ponta a ponta. O aviso **nao
+  carrega cadastro** ("mudou algo na empresa X as 14:32"), e e isso que o deixa passar pela chave
+  publicavel sem furar o `no direct client access` das tabelas de cadastro — quem busca continua
+  sendo o `desktop-pull` com o token do dispositivo. O tique de 15 s **continua**, cobrindo queda
+  de internet e evento perdido: o aviso adianta o pull, nao e por onde o cadastro anda. Por isso
+  falhar e sempre so perder velocidade — o gatilho inteiro vive num `exception when others` (perder
+  o aviso custa 15 s; perder a escrita custaria o cadastro) e toda subida da inscricao dispara um
+  pull, porque o que passou enquanto ela esteve fora do ar nao volta sozinho.
 - **Queda de conexao nao condena o envio** (AGENTS.md "Queda longa nao para a fila"): a fila
   desistia do job depois de 10 tentativas e o mandava para `dead_letter`, fora da rotacao
   automatica — com o backoff ate 15 min isso e ~2h de queda, e dali so um clique do operador

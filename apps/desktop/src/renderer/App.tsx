@@ -975,23 +975,27 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     let cancelled = false;
     const api = desktopApi;
 
+    // Rele o que veio de fora. Sempre, e nao so quando o pull trouxe linha nova: o pull
+    // tambem grava mudanca de status (fechada, cancelada) que nao aumenta a contagem.
+    async function refreshLists(): Promise<void> {
+      if (cancelled) return;
+      const [nextOpen, nextCanceled, nextDevices] = await Promise.all([
+        api.listOpenWeighingOperations(),
+        api.listCanceledWeighingOperations(),
+        api.listUnitDevices()
+      ]);
+      if (cancelled) return;
+      setOpenOperations(nextOpen);
+      setCanceledOperations(nextCanceled);
+      setUnitDevices(nextDevices);
+      await refreshClosedOperationsRef.current();
+    }
+
     async function tick(): Promise<void> {
       if (cancelled || !navigator.onLine) return;
       try {
         await api.pullCloudNow();
-        if (cancelled) return;
-        // Sempre rele as listas: o pull tambem grava mudanca de status (fechada,
-        // cancelada) que nao aumenta a contagem de linhas trazidas.
-        const [nextOpen, nextCanceled, nextDevices] = await Promise.all([
-          api.listOpenWeighingOperations(),
-          api.listCanceledWeighingOperations(),
-          api.listUnitDevices()
-        ]);
-        if (cancelled) return;
-        setOpenOperations(nextOpen);
-        setCanceledOperations(nextCanceled);
-        setUnitDevices(nextDevices);
-        await refreshClosedOperationsRef.current();
+        await refreshLists();
       } catch {
         // best-effort: a proxima sincronizacao (agendada ou por evento) cobre
       }
@@ -999,9 +1003,20 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
     void tick();
     const intervalId = window.setInterval(() => void tick(), MULTI_DESKTOP_PULL_INTERVAL_MS);
+
+    // Caminho rapido: a nuvem avisou que mudou cadastro e o main JA puxou (o aviso so chega
+    // depois do pull). Aqui falta so reler as listas — sem chamar o pull de novo, que seria
+    // uma segunda viagem para o mesmo dado.
+    const stopCadastroListener = api.onCadastroChanged(() => {
+      void refreshLists().catch(() => {
+        // best-effort, igual ao tique: o proximo ciclo cobre.
+      });
+    });
+
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
+      stopCadastroListener();
     };
   }, [desktopApi, phase]);
 
