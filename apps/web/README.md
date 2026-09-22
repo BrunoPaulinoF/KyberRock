@@ -53,6 +53,11 @@ repositório `BrunoPaulinoF/KyberRock` (branch `main`):
 5. Cada merge na `main` publica. O site não depende de nenhum outro workspace, então mudança
    só na balança ou nas Edge Functions gera um build igual ao anterior.
 
+Prévia sem servidor com rewrite (uma pasta dentro de outro site, uma hospedagem estática
+qualquer): compile com `VITE_ROUTER=hash` e as rotas viram `/#/clientes`, que funciona em
+qualquer lugar. Os caminhos dos arquivos já são relativos (`base: "./"`), então o build também
+funciona fora da raiz do domínio.
+
 Se a Hostinger do plano não rodar build (hospedagem compartilhada só com FTP), o caminho é um
 workflow em `.github/workflows/` da raiz que faça `npm ci && npm run build -w @kyberrock/web`
 e envie `apps/web/dist/` por FTP com os secrets do repositório.

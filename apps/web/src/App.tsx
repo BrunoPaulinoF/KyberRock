@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, HashRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { Layout } from "./components/Layout";
 import { ToastProvider } from "./components/ui";
@@ -19,11 +19,18 @@ function Private({ gestorOnly, children }: { gestorOnly?: boolean; children: Rea
   return children;
 }
 
+/**
+ * Hospedagem sem regra de rewrite (previa, pasta dentro de outro site) nao consegue servir
+ * `/clientes` direto: `VITE_ROUTER=hash` troca para `/#/clientes`, que funciona em qualquer
+ * servidor estatico. Na Hostinger fica o padrao (`.htaccess` faz o rewrite).
+ */
+const Router = import.meta.env.VITE_ROUTER === "hash" ? HashRouter : BrowserRouter;
+
 export function App() {
   return (
     <AuthProvider>
       <ToastProvider>
-        <BrowserRouter>
+        <Router>
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route
@@ -65,7 +72,7 @@ export function App() {
             </Route>
             <Route path="*" element={<Navigate to="/clientes" replace />} />
           </Routes>
-        </BrowserRouter>
+        </Router>
       </ToastProvider>
     </AuthProvider>
   );
