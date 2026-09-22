@@ -285,6 +285,141 @@ describe("cadastro compartilhado da pedreira", () => {
     }
   });
 
+  it("a exclusao feita em outra balanca chega pelo pull", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      database
+        .prepare(
+          `INSERT INTO customers (
+             id, company_id, source, legal_name, trade_name, document, sync_status, needs_push,
+             is_active, created_at, updated_at
+           ) VALUES ('cust-unificado', ?, 'hybrid', 'MORAES - AREIA E PEDRA LTDA', 'MORAES',
+                     '61241889000193', 'synced', 0, 1, ?, ?)`
+        )
+        .run(identity.companyId, "2026-08-01T13:50:15.000Z", "2026-08-01T13:50:15.000Z");
+
+      // A outra balanca unificou este cadastro: a nuvem devolve a linha com tombstone.
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          customers: [
+            {
+              id: "cust-unificado",
+              legal_name: "MORAES - AREIA E PEDRA LTDA",
+              trade_name: "MORAES",
+              document: "61241889000193",
+              is_active: false,
+              deleted_at: "2026-09-22T12:00:00.000Z",
+              updated_at: "2026-09-22T12:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      const row = database
+        .prepare("SELECT deleted_at FROM customers WHERE id = 'cust-unificado'")
+        .get() as { deleted_at: string | null };
+      // Antes desta versao esta coluna voltava NULL em todo pull, e o duplicado ressuscitava.
+      expect(row.deleted_at).toBe("2026-09-22T12:00:00.000Z");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("a exclusao da nuvem nao apaga o cadastro que ainda tem pesagem aqui", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      database
+        .prepare(
+          `INSERT INTO customers (
+             id, company_id, source, legal_name, trade_name, document, sync_status, needs_push,
+             is_active, created_at, updated_at
+           ) VALUES ('cust-vivo', ?, 'hybrid', 'MORAES - AREIA E PEDRA LTDA', 'MORAES',
+                     '61241889000193', 'synced', 0, 1, ?, ?)`
+        )
+        .run(identity.companyId, "2026-08-01T12:44:48.000Z", "2026-08-01T12:44:48.000Z");
+      database
+        .prepare(
+          `INSERT INTO weighing_operations
+             (id, company_id, unit_id, device_id, status, operation_type, customer_id, created_at, updated_at)
+           VALUES ('op-1', ?, 'unit-1', 'desktop-b', 'synced', 'invoice', 'cust-vivo', ?, ?)`
+        )
+        .run(identity.companyId, "2026-08-12T10:00:00.000Z", "2026-08-12T10:00:00.000Z");
+
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          customers: [
+            {
+              id: "cust-vivo",
+              legal_name: "MORAES - AREIA E PEDRA LTDA",
+              trade_name: "MORAES",
+              document: "61241889000193",
+              is_active: false,
+              deleted_at: "2026-09-22T12:00:00.000Z",
+              updated_at: "2026-09-22T12:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      /*
+       * A unificacao tira a pesagem da perdedora ANTES do tombstone. Um tombstone chegando para
+       * um cadastro que aqui ainda tem carga nao e unificacao: e divergencia entre as duas
+       * pontas, e obedecer faria o cliente sumir dos dois lados.
+       */
+      const row = database
+        .prepare("SELECT deleted_at FROM customers WHERE id = 'cust-vivo'")
+        .get() as { deleted_at: string | null };
+      expect(row.deleted_at).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("publica o tombstone do cadastro unificado", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      resetSharedCadastroPushState(database);
+      database
+        .prepare(
+          `INSERT INTO customers (
+             id, company_id, source, legal_name, trade_name, document, sync_status, needs_push,
+             is_active, created_at, updated_at, deleted_at
+           ) VALUES ('cust-perdedor', ?, 'hybrid', 'MORAES - AREIA E PEDRA LTDA', 'MORAES',
+                     '61241889000193', 'pending', 1, 0, ?, ?, ?)`
+        )
+        .run(
+          identity.companyId,
+          "2026-08-01T13:50:15.000Z",
+          "2026-09-22T12:00:00.000Z",
+          "2026-09-22T12:00:00.000Z"
+        );
+
+      await pushSharedCadastroToCloud(database, identity);
+
+      const payload = invokeMock.mock.calls
+        .map((call) => call[1]?.body as { customers?: Array<Record<string, unknown>> } | undefined)
+        .find((body) => body?.customers?.some((row) => row.id === "cust-perdedor"));
+      const sent = payload?.customers?.find((row) => row.id === "cust-perdedor");
+      // Sem esta coluna no payload, a unificacao morria nesta maquina e voltava no proximo pull.
+      expect(sent?.deleted_at).toBe("2026-09-22T12:00:00.000Z");
+      expect(sent?.is_active).toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+
   it("projeta no SQLite o cadastro que veio do desktop-pull", async () => {
     const database = createMachine("desktop-b");
 

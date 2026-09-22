@@ -1690,7 +1690,7 @@ function upsertCloudCarriers(
     INSERT INTO carriers (
       id, company_id, omie_customer_id, name, document, source, is_active,
       created_at, updated_at, deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       omie_customer_id = COALESCE(excluded.omie_customer_id, carriers.omie_customer_id),
@@ -1698,7 +1698,9 @@ function upsertCloudCarriers(
       document = CASE WHEN carriers.needs_push = 0 THEN excluded.document ELSE carriers.document END,
       is_active = excluded.is_active,
       updated_at = excluded.updated_at,
-      deleted_at = NULL
+      -- Mesma regra do cliente: a exclusao feita em outra balanca chega, e a exclusao daqui
+      -- que ainda nao subiu (needs_push = 1) nao e desfeita pelo espelho.
+      deleted_at = CASE WHEN carriers.needs_push = 0 THEN excluded.deleted_at ELSE carriers.deleted_at END
   `);
 
   let count = 0;
@@ -1727,7 +1729,9 @@ function upsertCloudCarriers(
       stringValue(row.source) === "omie" ? "omie" : "local",
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
-      updatedAt
+      updatedAt,
+      // Coluna nova na nuvem (migracao `202609220002`): ausente, chega null e nada muda.
+      isoStringValue(row.deleted_at)
     );
     count++;
   }
@@ -2220,6 +2224,7 @@ export async function lookupCnpjFromCloud(
 interface LocalCommercialRow {
   needs_push: number;
   updated_at: string | null;
+  deleted_at: string | null;
   default_payment_method_id: string | null;
   default_carrier_id: string | null;
   nf_required: number;
@@ -2245,7 +2250,7 @@ function upsertCloudCustomers(
   commercialPolicy: PriceConflictPolicy = "local"
 ): number {
   const readLocalCommercial = database.prepare(
-    `SELECT needs_push, updated_at, default_payment_method_id, default_carrier_id, nf_required, credit_mode,
+    `SELECT needs_push, updated_at, deleted_at, default_payment_method_id, default_carrier_id, nf_required, credit_mode,
             credit_account_enabled, credit_periodicity, credit_closing_day,
             credit_second_closing_day, credit_boleto_days, credit_second_boleto_days,
             credit_closing_weekday
@@ -2260,7 +2265,7 @@ function upsertCloudCustomers(
       credit_boleto_days, credit_second_boleto_days, credit_closing_weekday,
       sync_status, is_active,
       created_at, updated_at, deleted_at, last_synced_at, needs_push
-    ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, NULL, ?, 0)
+    ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, ?, ?, 0)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       -- Nunca apagar o codigo do OMIE que ja temos: sem ele o proximo push tenta um
@@ -2302,8 +2307,13 @@ function upsertCloudCustomers(
       sync_status = CASE WHEN customers.needs_push = 0 THEN 'synced' ELSE customers.sync_status END,
       is_active = CASE WHEN customers.needs_push = 0 THEN excluded.is_active ELSE customers.is_active END,
       updated_at = CASE WHEN customers.needs_push = 0 THEN excluded.updated_at ELSE customers.updated_at END,
-      -- Exclusao local pendente nao pode ser ressuscitada pelo espelho da nuvem.
-      deleted_at = CASE WHEN customers.needs_push = 0 THEN NULL ELSE customers.deleted_at END,
+      -- A exclusao viaja NOS DOIS SENTIDOS, e e isso que faz um cadastro duplicado unificado
+      -- numa balanca sumir das outras. Antes esta linha era THEN NULL: a nuvem nao tinha
+      -- coluna deleted_at em customers, entao "existe la" queria dizer "esta vivo" e todo pull
+      -- ressuscitava o que tivesse sido excluido ou unificado aqui -- a limpeza da migracao 39
+      -- se desfazia sozinha no ciclo seguinte. O needs_push = 1 continua protegendo a
+      -- exclusao local que ainda nao subiu.
+      deleted_at = CASE WHEN customers.needs_push = 0 THEN excluded.deleted_at ELSE customers.deleted_at END,
       last_synced_at = excluded.last_synced_at,
       needs_push = customers.needs_push
   `);
@@ -2361,11 +2371,60 @@ function upsertCloudCustomers(
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
       updatedAt,
+      resolveCustomerTombstone(database, id, row, local),
       updatedAt
     );
     count++;
   }
   return count;
+}
+
+/** Este cadastro ainda tem pesagem viva apontando para ele? */
+function hasLiveOperations(database: DesktopDatabase, customerId: string): boolean {
+  const row = database
+    .prepare(
+      "SELECT 1 AS found FROM weighing_operations WHERE customer_id = ? AND deleted_at IS NULL LIMIT 1"
+    )
+    .get(customerId) as { found: number } | undefined;
+  return Boolean(row);
+}
+
+/**
+ * A exclusao que vale para esta linha: a da nuvem, ou o tombstone local quando a nuvem ainda
+ * nao sabe dele.
+ *
+ * "A nuvem nao sabe" tem dois casos e os dois devolveriam vivo um cadastro que o operador
+ * excluiu (ou que a unificacao encerrou): o cliente apagado ANTES desta versao, quando a
+ * projecao so recebia `is_active = false`, e a janela em que a migracao `202609220002` ainda
+ * nao foi aplicada. O sinal que os separa de "recadastrado em outra balanca" e o mesmo que o
+ * destinatario de relatorio ja usava: a nuvem devolve a linha viva **e ativa**.
+ */
+function resolveCustomerTombstone(
+  database: DesktopDatabase,
+  customerId: string,
+  row: Record<string, unknown>,
+  local: LocalCommercialRow | undefined
+): string | null {
+  const cloudDeletedAt = "deleted_at" in row ? isoStringValue(row.deleted_at) : null;
+  if (cloudDeletedAt) {
+    /*
+     * Trava contra o unico desfecho que nao da para desfazer pela tela: o cliente sumir dos
+     * DOIS lados.
+     *
+     * A unificacao escolhe quem fica pela mesma regra aqui, na nuvem e na migracao local 39 —
+     * mas se algum dia essas regras divergirem, uma ponta encerraria a linha que a outra
+     * manteve e o cliente inteiro desapareceria. Cadastro unificado sai SEM historico (a
+     * pesagem muda de dono antes do tombstone), entao "a nuvem manda apagar uma linha que aqui
+     * ainda tem pesagem" nunca e uma unificacao — e sempre divergencia. Nesse caso, fica vivo:
+     * um duplicado a mais na lista custa um clique, um cliente sem historico custa a
+     * conferencia do mes.
+     */
+    if (hasLiveOperations(database, customerId)) return null;
+    return cloudDeletedAt;
+  }
+  const localDeletedAt = isoStringValue(local?.deleted_at) || null;
+  if (!localDeletedAt) return null;
+  return booleanToSql(row.is_active, true) === 0 ? localDeletedAt : null;
 }
 
 /**
@@ -7303,6 +7362,18 @@ function cloudActive(row: Record<string, unknown>): boolean {
   return Number(row.is_active ?? 1) === 1 && !row.deleted_at;
 }
 
+/**
+ * A hora da exclusao local, no formato da nuvem — ou `null` para quem esta vivo.
+ *
+ * `is_active = false` ja viajava, mas nao serve como exclusao: cadastro inativo continua
+ * aparecendo na tela de clientes (de proposito, para o operador achar e reativar), entao o
+ * cadastro unificado voltaria a ocupar a lista das outras balancas com outro rotulo.
+ */
+function cadastroTombstone(row: Record<string, unknown>): string | null {
+  const deletedAt = stringValue(row.deleted_at);
+  return deletedAt ? cloudTimestamp(deletedAt, new Date().toISOString()) : null;
+}
+
 const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
   {
     key: "customers",
@@ -7351,6 +7422,11 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         credit_closing_weekday: integerValue(row.credit_closing_weekday),
         commercial_published_at: updatedAt,
         is_active: cloudActive(row),
+        // O TOMBSTONE. Sem ele a nuvem so sabia dizer "existe" — e o pull das outras balancas
+        // devolvia vivo o cadastro que esta maquina excluiu ou unificou, porque "existe la"
+        // era a unica resposta possivel. Coluna nova (migracao `202609220002`): enquanto ela
+        // nao for aplicada o `desktop-sync` a descarta do payload e grava o resto.
+        deleted_at: cadastroTombstone(row),
         created_at: cloudTimestamp(row.created_at, updatedAt),
         updated_at: updatedAt
       };

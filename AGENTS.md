@@ -951,6 +951,111 @@ Dois cuidados que nao podem se perder numa mudanca futura:
   com o recorte antigo (pior janela, nunca cadastro nenhum) — e so quando o erro **e** a coluna
   que falta, pela mesma razao da secao anterior.
 
+**3. A outra maquina ainda precisava PERGUNTAR.** Resolvidos os dois acima, o cadastro saia na
+hora e entrava na janela do pull — mas so era descoberto no tique seguinte do renderer
+(`MULTI_DESKTOP_PULL_INTERVAL_MS`, 15 s): ~7 s de espera na media, 15 s no pior caso, com a
+operadora olhando a tela e o caminhao na balanca.
+
+Agora a nuvem **avisa**. A migracao `202609220001_cadastro_change_pings` cria uma tabela de aviso
+com UMA linha por empresa (`company_id`, `changed_at`, `source`), carimbada por gatilho em toda
+escrita nas mesmas 21 tabelas de cadastro; a tabela esta na publicacao `supabase_realtime`, e a
+balanca assina `company_id=eq.<a dela>` (`services/cadastro-realtime.ts`) e puxa na hora. O
+caminho inteiro (salvar -> publicar -> avisar -> puxar) fica em **~1 a 3 s**.
+
+O que nao pode se perder numa mudanca futura:
+
+- **O aviso nao carrega cadastro, e por isso pode ser publico.** O que trafega e "mudou algo na
+  empresa X as 14:32" — nenhum nome, documento ou preco. Quem busca continua sendo o
+  `desktop-pull`, com o token do dispositivo. Publicar `customers` direto no Realtime exigiria
+  furar a politica `no direct client access` (`qual = false`) dessas tabelas, que e o que mantem
+  o cadastro fora do alcance da chave publicavel — nao troque o aviso por isso.
+- **O tique de 15 s continua.** Ele cobre a balanca que estava sem internet, o Realtime fora do ar
+  e o evento perdido. O aviso ADIANTA o pull; nao e por onde o cadastro anda. Nada em
+  `cadastro-realtime.ts` pode derrubar a operacao quando o websocket nao conecta (rede da pedreira
+  bloqueando, servidor fora) — dai o `onError` em vez de `throw` em todo o caminho.
+- **O gatilho e por STATEMENT, nao por linha.** O `omie-sync` grava cadastro em lote: por linha,
+  um lote de 500 clientes viraria 500 avisos para toda a frota. Por statement vira **um** — que e
+  a informacao real, ja que o pull seguinte traz o lote inteiro de qualquer jeito.
+- **A falha do aviso nunca derruba a escrita do cadastro.** O gatilho roda dentro da transacao de
+  quem gravou; todo o corpo dele vive num `exception when others`. Perder o aviso custa ate 15 s
+  (o tique cobre); perder a escrita custaria o cadastro.
+- **Toda subida da inscricao dispara um pull** (`startCadastroRealtime`, no `SUBSCRIBED`). Os
+  avisos que passaram enquanto ela esteve fora do ar nao ficam guardados em lugar nenhum — sem
+  isso a balanca voltaria "conectada" e desatualizada ao mesmo tempo.
+- **A reconexao e do supervisor, nao do callback de status** (`CADASTRO_REALTIME_SUPERVISOR_INTERVAL_MS`,
+  30 s). Reagir no proprio callback somaria a nossa re-tentativa a do supabase-js, e duas
+  reconexoes concorrentes derrubam uma a outra. O supervisor tambem e quem assina quando a
+  ativacao acontece com o programa ja aberto.
+- **Rajada vira pull espacado** (`startCadastroPingScheduler`): 400 ms juntando avisos do mesmo
+  salvamento (um salvamento escreve em varias tabelas, e cada tabela e um lote no `desktop-sync`)
+  e piso de 1,5 s entre pulls, contado do FIM do anterior. Aviso que chega durante um pull nao e
+  descartado — ele pode ser de uma linha gravada depois que aquele pull montou a janela dele.
+- A migracao **precisa estar aplicada antes** da release que a usa (ver "SQL migrations"). Sem
+  ela nao existe tabela de aviso: a inscricao falha, cai em `error`, e a balanca volta ao
+  comportamento de 15 s — nada quebra, so nao acelera.
+
+## Cadastro duplicado: unificar, e fazer a unificacao durar
+
+O operador via "MORAES - AREIA E PEDRA LTDA" duas vezes na tela, uma linha LOCAL e uma OMIE —
+mesmo CNPJ, mesmo telefone, mesmo codigo OMIE. Na Pedreira Ibiuna eram **99 grupos / 202 linhas**.
+
+**Como nasceram (ja fechado).** Ate 21/08/2026 o pull do OMIE inseria como linha NOVA
+(`omie_<codigo>`) o cliente que tinha sido criado numa balanca e enviado para la: a maquina que
+fala com o OMIE ainda nao tinha recebido o cadastro da outra, porque o cadastro so andava na
+varredura de 30 min (quando andava — ver a secao anterior). `resolveExistingCustomerId`
+(`omie-sync.ts`) passou a adotar o cadastro local por codigo, documento e nome, e
+`findLocalCadastroWithDocument` faz o mesmo no pull pela nuvem. Medido: a ultima linha duplicada
+da pedreira e da semana de **24/08** — nao nasce mais nenhuma.
+
+**Por que nao sumiam (o defeito de verdade).** A migracao local 39 ja juntava os pares. Ela
+marcava a perdedora com `deleted_at` e `needs_push = 0`, e o pull seguinte tinha, literalmente:
+
+```sql
+deleted_at = CASE WHEN customers.needs_push = 0 THEN NULL ELSE customers.deleted_at END
+```
+
+`public.customers` **nao tinha `deleted_at`** — para a nuvem, existir era estar vivo. Entao todo
+ciclo ressuscitava a perdedora e o duplicado voltava. A limpeza se desfazia sozinha.
+
+**O conserto tem tres partes, e as tres sao necessarias:**
+
+1. **A nuvem aprendeu a dizer "excluido"** (migracao `202609220002`, coluna `deleted_at` em
+   `customers` e `carriers`). O push manda (`cadastroTombstone`), o pull aplica. `is_active =
+false` nao servia: cadastro inativo continua aparecendo na tela de clientes de proposito, para
+   o operador achar e reativar.
+2. **A unificacao** (`services/customer-merge.ts`): pesagem, orcamento, extrato de credito e
+   vinculos mudam de dono; a perdedora vira tombstone com `needs_push = 1` (o envio ao OMIE
+   ignora quem tem `deleted_at`, entao isso nao vira escrita no ERP, mas impede o pull de
+   reescrever a linha enquanto a nuvem nao souber); a sobrevivente herda o codigo OMIE que so a
+   outra tinha — sem ele o proximo pedido tentaria um `IncluirCliente` de quem ja existe la.
+3. **Quem roda**: por DOCUMENTO e automatico, na abertura do programa
+   (`mergeDuplicateCustomersByDocument`, chamada no construtor do runtime) — documento igual e
+   certeza, e a mesma identidade que `customerIdentityKey` ja usa. Por NOME e manual, no painel
+   "Cadastros repetidos" da tela de clientes: matriz e filial dividem o nome.
+
+Cuidados que nao podem se perder:
+
+- **A regra de quem fica e a mesma em tres lugares** (a migracao local 39, `chooseGroups` no
+  desktop e a migracao `202609220002` na nuvem): primeiro quem tem codigo OMIE, depois o mais
+  antigo, empate no menor id. Nao e estilo — as duas pontas resolvem o mesmo grupo cada uma por
+  sua conta, e se escolherem sobreviventes diferentes **cada uma encerra a linha que a outra
+  manteve** e o cliente some dos dois lados. Por isso `chooseGroups` compara `Date.parse` e nao
+  texto (o SQLite mistura `...T12:44:48.000Z` e `... 12:44:48`; a nuvem tem timestamptz).
+- **A rede de seguranca contra essa divergencia** vive em `resolveCustomerTombstone`: tombstone
+  vindo da nuvem para um cadastro que AQUI ainda tem pesagem viva e recusado. A unificacao tira a
+  pesagem antes do tombstone, entao esse caso nunca e unificacao legitima — e um duplicado a mais
+  na lista custa um clique; um cliente sem historico custa a conferencia do mes.
+- **A recusa por documento diferente** (`mergeCustomerInto`) e antes de qualquer escrita: juntar
+  dois CNPJs mistura pesagem, fatura e saldo de duas empresas, e a tela nao tem desfazer.
+- **Vinculo com chave natural** (preco especial, frete, placa, transportadora, nota futura) nao e
+  repontado as cegas: quando a sobrevivente ja tem a mesma chave, a linha da perdedora e
+  descartada. Repontar violaria o indice unico — no SQLite, ou no `23505` do proximo push.
+- **Excluir cliente agora exige cadastro sem historico** (`findCustomerDeletionBlock` ganhou
+  `historyCount`, que conta pesagem de QUALQUER status, inclusive cancelada, mais lancamento de
+  credito). Antes bastava nao haver dinheiro em aberto: um cliente com tres anos de historico todo
+  faturado saia da tela com um clique. Quem quer tirar do dia a dia tem **Inativar** (botao novo na
+  linha); quem tem cadastro repetido tem **Unificar**.
+
 ## O que a nuvem NAO precisa guardar nem receber
 
 O Supabase estava estourando espaco e o banco dava engasgo. A medicao de 16/09/2026 (106 MB de

@@ -119,6 +119,17 @@ function attachScaleReadingForwarder(): void {
   runtime?.onScaleReading(forwardScaleReadingToRenderer);
 }
 
+/**
+ * Avisa a tela que chegou cadastro novo de outra balanca.
+ *
+ * O pull ja aconteceu no main quando isto roda — o renderer so precisa reler as listas dele,
+ * que saem do cache local. Funcao nomeada pelo mesmo motivo do forwarder da balanca: o runtime
+ * indexa os ouvintes pela funcao, entao um closure novo a cada registro duplicaria o aviso.
+ */
+function forwardCadastroChangedToRenderer(): void {
+  mainWindow?.webContents.send("desktop:cadastro-changed");
+}
+
 async function createMainWindow(): Promise<void> {
   writeStartupLog("createMainWindow:start");
   runtime = DesktopRuntime.initialize();
@@ -131,6 +142,9 @@ async function createMainWindow(): Promise<void> {
   writeStartupLog("cloudScheduler:started");
   runtime.startOmieQueueDrainScheduler();
   writeStartupLog("omieQueueDrainScheduler:started");
+  runtime.startCadastroRealtimeLink();
+  runtime.onCadastroChanged(forwardCadastroChangedToRenderer);
+  writeStartupLog("cadastroRealtime:started");
   startReportDispatchScheduler();
   writeStartupLog("reportDispatchScheduler:started");
 
@@ -1536,6 +1550,22 @@ function registerIpcHandlers(): void {
     }
 
     runtime.restoreCustomer(id);
+  });
+
+  ipcMain.handle("desktop:customers-duplicates", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.listDuplicateCustomers();
+  });
+
+  ipcMain.handle("desktop:customers-merge", (_event, keeperId: string, loserId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.mergeCustomers(keeperId, loserId);
   });
 
   // Meios de pagamento e contas vem do OMIE (sincronizacao) — nao ha handlers de

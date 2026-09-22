@@ -155,7 +155,37 @@ These recur across the codebase and are easy to violate accidentally:
   porque tambem escrevem nessas tabelas o painel, o `omie-sync` e o tombstone da disputa de preco. A
   varredura completa continua pedindo o cadastro INTEIRO: e ela a rede de seguranca do que um
   incremental deixar passar, e a folga de 5 min do cursor cobre a fresta entre os dois relogios
-  (`serverTime` da Edge Function x `now()` do Postgres).
+  (`serverTime` da Edge Function x `now()` do Postgres). (3) Resolvido isso, a outra maquina ainda
+  so descobria no tique seguinte do renderer (15 s). Agora a nuvem **avisa**:
+  `cadastro_change_pings` (migracao `202609220001`) guarda UMA linha por empresa, carimbada por
+  gatilho de STATEMENT nas mesmas 21 tabelas — por linha, um lote do `omie-sync` viraria 500
+  avisos —, esta na publicacao `supabase_realtime`, e a balanca assina `company_id=eq.<a dela>`
+  (`services/cadastro-realtime.ts`) e puxa na hora: ~1 a 3 s de ponta a ponta. O aviso **nao
+  carrega cadastro** ("mudou algo na empresa X as 14:32"), e e isso que o deixa passar pela chave
+  publicavel sem furar o `no direct client access` das tabelas de cadastro — quem busca continua
+  sendo o `desktop-pull` com o token do dispositivo. O tique de 15 s **continua**, cobrindo queda
+  de internet e evento perdido: o aviso adianta o pull, nao e por onde o cadastro anda. Por isso
+  falhar e sempre so perder velocidade — o gatilho inteiro vive num `exception when others` (perder
+  o aviso custa 15 s; perder a escrita custaria o cadastro) e toda subida da inscricao dispara um
+  pull, porque o que passou enquanto ela esteve fora do ar nao volta sozinho.
+- **Cadastro duplicado, e por que ele voltava** (AGENTS.md "Cadastro duplicado: unificar, e fazer
+  a unificacao durar"): o mesmo cliente aparecia duas vezes, uma linha LOCAL e uma OMIE — 99
+  grupos / 202 linhas na Pedreira Ibiuna. Nascer, elas nao nascem mais desde 21/08 (o pull do
+  OMIE adota o cadastro local por codigo/documento/nome, `resolveExistingCustomerId`); o defeito
+  era **nao sumirem**. A migracao local 39 ja juntava o par, mas o pull trazia
+  `deleted_at = CASE WHEN needs_push = 0 THEN NULL ...` e `public.customers` nao tinha
+  `deleted_at`: para a nuvem existir era estar vivo, entao todo ciclo ressuscitava a perdedora.
+  Agora a nuvem tem o tombstone (migracao `202609220002`, tambem em `carriers`), a unificacao
+  vive em `services/customer-merge.ts` (historico muda de dono, perdedora vira tombstone com
+  `needs_push = 1`, sobrevivente herda o codigo OMIE) e roda sozinha por DOCUMENTO na abertura do
+  programa; por NOME e manual, no painel "Cadastros repetidos" — matriz e filial dividem o nome.
+  A regra de quem fica (codigo OMIE, depois mais antigo, empate no menor id) e a **mesma** nos
+  tres lugares de proposito: as pontas resolvem o grupo separadamente, e escolhas diferentes
+  fariam cada uma encerrar a linha que a outra manteve. A rede contra isso e
+  `resolveCustomerTombstone`, que recusa tombstone da nuvem para cadastro que aqui ainda tem
+  pesagem viva. E **excluir cliente** passou a exigir cadastro sem historico nenhum
+  (`historyCount`): quem tem carga ou credito usa Inativar ou Unificar, porque excluir nunca
+  apagou pesagem — so escondia o caminho ate ela.
 - **Queda de conexao nao condena o envio** (AGENTS.md "Queda longa nao para a fila"): a fila
   desistia do job depois de 10 tentativas e o mandava para `dead_letter`, fora da rotacao
   automatica — com o backoff ate 15 min isso e ~2h de queda, e dali so um clique do operador

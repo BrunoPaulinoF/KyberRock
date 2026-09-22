@@ -288,6 +288,9 @@ const desktopApi = {
   customersDelete: (id: string) => ipcRenderer.invoke("desktop:customers-delete", id),
   customersListDeleted: () => ipcRenderer.invoke("desktop:customers-list-deleted"),
   customersRestore: (id: string) => ipcRenderer.invoke("desktop:customers-restore", id),
+  customersFindDuplicates: () => ipcRenderer.invoke("desktop:customers-duplicates"),
+  customersMerge: (keeperId: string, loserId: string) =>
+    ipcRenderer.invoke("desktop:customers-merge", keeperId, loserId),
   getDefaultNfeEmail: () => ipcRenderer.invoke("desktop:get-default-nfe-email"),
   setDefaultNfeEmail: (email: string) => ipcRenderer.invoke("desktop:set-default-nfe-email", email),
   applyDefaultNfeEmailToAll: (email: string) =>
@@ -440,6 +443,18 @@ const desktopApi = {
     ipcRenderer.off("desktop:update-downloaded", callback),
   onPlateScanned: (callback: (plate: string) => void) =>
     ipcRenderer.on("desktop:plate-scanned", (_event: unknown, plate: string) => callback(plate)),
+  /**
+   * Cadastro de outra balanca acabou de chegar (o main ja puxou). Devolve o cancelamento
+   * porque quem escuta sao telas que montam e desmontam — sem ele, cada abertura da tela de
+   * clientes deixaria mais um ouvinte vivo.
+   */
+  onCadastroChanged: (callback: () => void) => {
+    const wrapper = (): void => callback();
+    ipcRenderer.on("desktop:cadastro-changed", wrapper);
+    return () => {
+      ipcRenderer.removeListener("desktop:cadastro-changed", wrapper);
+    };
+  },
   onScaleReading: (callback: (reading: unknown) => void) => {
     const wrapper = (_event: unknown, reading: unknown) => callback(reading);
     scaleReadingWrappers.set(callback, wrapper);
