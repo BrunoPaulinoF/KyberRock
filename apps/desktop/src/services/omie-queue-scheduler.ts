@@ -47,6 +47,12 @@ export interface StartOmieQueueDrainSchedulerOptions {
    * continuar sendo so o da fila em quem nao passa esta funcao.
    */
   reconcileBilling?: () => Promise<void>;
+  /**
+   * Executa os pedidos de faturamento que o site deixou na nuvem (`billing_requests`).
+   * Mesmo desenho da conferencia: roda em todo tick, com trava propria, e o proprio
+   * executor desiste barato quando nao ha pedido (uma chamada leve a `claim`).
+   */
+  processBillingRequests?: () => Promise<void>;
   onError?: (error: unknown) => void;
   intervalMs?: number;
   setIntervalFn?: typeof setInterval;
@@ -66,6 +72,7 @@ export function startOmieQueueDrainScheduler(
 
   let running = false;
   let reconciling = false;
+  let billingRequests = false;
 
   // Travas separadas de proposito: a conferencia de faturamento nao pode ficar esperando
   // uma drenagem longa (e vice-versa). Quem serializa as chamadas ao OMIE de verdade e a
@@ -80,6 +87,19 @@ export function startOmieQueueDrainScheduler(
       })
       .finally(() => {
         reconciling = false;
+      });
+  };
+
+  const tickBillingRequests = (): void => {
+    if (billingRequests || !options.processBillingRequests) return;
+    billingRequests = true;
+    void options
+      .processBillingRequests()
+      .catch((error: unknown) => {
+        options.onError?.(error);
+      })
+      .finally(() => {
+        billingRequests = false;
       });
   };
 
@@ -111,6 +131,7 @@ export function startOmieQueueDrainScheduler(
   const tick = (): void => {
     tickDrain();
     tickReconcile();
+    tickBillingRequests();
   };
 
   // Sem tick imediato de proposito: no startup o app ainda esta montando identidade,

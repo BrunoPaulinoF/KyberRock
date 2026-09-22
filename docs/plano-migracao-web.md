@@ -187,10 +187,13 @@ atualizadas).
 - [x] Painel `/admin` cria usuário `gestor`.
 - [x] Testes: `_shared/web-session`, `web-device`, `web-cadastro` e `web-api/handler`
       (58 casos), `deno check` da função, build/lint/test do monorepo verdes.
-- [ ] Empresa de **teste** no banco de produção ("Pedreira Teste"), com uma balança virtual e
-      um usuário `gestor` e um `comercial`: é onde o site vai ser testado com dados reais de
-      estrutura sem encostar na Ibiúna.
-- [ ] Contrato entregue ao Pedro: `docs/web-api.md`.
+- [x] Migration `202609220003` aplicada em produção (22/09); `web-api` no ar.
+- [x] Empresa de **teste** criada em produção ("Pedreira Teste", unidade "Teste", código de
+      ativação no painel), com um `gestor` e um `comercial`. Login e `web-api` conferidos.
+- [x] Carteira e fechamento de faturas na `web-api` (migração `202609220004`, Edge Function
+      `desktop-billing-requests`, e a balança executando os pedidos no tique da fila OMIE — precisa
+      de release do desktop).
+- [x] Contrato entregue ao Pedro: `docs/web-api.md`.
 
 **Pronto quando:** migration aplicada, `web-api` no ar, empresa de teste criada e um cliente
 gravado pelo `curl`/site aparecendo numa balança virtual da empresa de teste.
@@ -205,8 +208,9 @@ Ordem das telas, da que resolve mais dor para a que resolve menos:
 4. **Veículos, motoristas, transportadoras** e seus vínculos.
 5. **Relatórios** — os mesmos da balança (diário, mensal, por cliente, por produto, vendas),
    lendo da nuvem. É o que a Fernanda usa; é o que hoje diverge entre máquinas.
-6. **Fechamento de faturas, carteira, crédito** (leitura primeiro; baixa de carteira depois —
-   precisa de novas ações na `web-api`).
+6. **Fechamento de faturas, carteira, crédito** — as ações já existem na `web-api`
+   (`settle_wallet`, `reopen_wallet`, `request_invoice_closing`; ver `docs/web-api.md` 4.7 e
+   4.8). O faturamento em si continua na balança: o site pede, a balança executa.
 7. **Usuários** — o admin da Kybernan já cria; falta a pedreira poder gerir os próprios.
 
 Cada tela sai com teste automatizado das regras de tela. Deploy automático na Hostinger.
@@ -300,8 +304,7 @@ Agora sim mexer no desktop, com o problema já resolvido do lado de fora:
 4. **Divisão:** Pedro nas telas do site; Fable nas fundações da nuvem (`web-api`, migrations),
    na balança seguidora e nos scripts; Bruno na homologação e na virada com a pedreira.
 
-Ainda em aberto: fechamento de faturas e carteira precisam estar no site na primeira virada, ou
-podem continuar na balança por enquanto? (Afeta a Etapa 2, item 6.)
+5. **Fechamento de faturas e carteira:** no site já na primeira virada (feito na `web-api`).
 
 ## 8. Documentos relacionados
 

@@ -460,7 +460,7 @@ export function writeOmiePullState(
   return next;
 }
 
-interface CloudSettings {
+export interface CloudSettings {
   companyId: string;
   unitId: string;
   deviceId: string;
@@ -3914,7 +3914,7 @@ export function applyOmieReferenceData(
   };
 }
 
-function getCloudSettings(
+export function getCloudSettings(
   database: DesktopDatabase,
   identity?: LocalDesktopIdentity
 ): CloudSettings {
@@ -3992,6 +3992,11 @@ function getOperationPayload(
     // reservar de novo.
     settle_from_advance: Number(operation.settle_from_advance ?? 0) === 1,
     omie_advance_settle_cents: operation.omie_advance_settle_cents ?? 0,
+    // Faturamento no OMIE, para o site saber o que ja tem nota e nunca pedir de novo
+    // (migracao `202609220004`). A nuvem sem as colunas continua aceitando o push.
+    omie_billing_status: operation.omie_billing_status ?? null,
+    omie_billing_message: operation.omie_billing_message ?? null,
+    omie_invoice_number: operation.omie_invoice_number ?? null,
     plate: operation.plate,
     customer_name: operation.customer_name,
     driver_name: operation.driver_name,
@@ -6481,7 +6486,7 @@ async function invokeDesktopSync(
   if (error) throw new Error(await getFunctionErrorMessage(error));
 }
 
-async function getFunctionErrorMessage(error: unknown): Promise<string> {
+export async function getFunctionErrorMessage(error: unknown): Promise<string> {
   const fallback = getErrorLikeMessage(error);
   const context =
     typeof error === "object" && error !== null && "context" in error

@@ -1,6 +1,6 @@
 # `web-api` — contrato do site web com a nuvem
 
-Versão: 1.0 — 22/09/2026
+Versão: 1.1 — 22/09/2026 (carteira e fechamento de faturas)
 Contexto: `docs/plano-migracao-web.md` (Etapa 1, decisões D3 e D4). Este é o documento que o
 repositório do site (`Kyberrock-Web`) precisa para falar com o Supabase do KyberRock.
 
@@ -52,7 +52,7 @@ Com o usuário logado, o `supabase-js` já manda o token; basta consultar. A mig
 `customer_special_prices`, `price_tables`, `price_table_items`, `customer_price_tables`,
 `customer_freight_rules`, `customer_future_billing_invoices`, `payment_terms`,
 `payment_methods`, `accounts`, `customer_credit_movements`, `customer_credit_balances`,
-`quotations`, `loading_requests`, `weighing_operations`, `units`, `companies`.
+`quotations`, `loading_requests`, `weighing_operations`, `billing_requests`, `units`, `companies`.
 
 Regras de leitura que o site precisa respeitar:
 
@@ -174,13 +174,48 @@ tabela+produto). A `web-api` atualiza a linha que existe em vez de criar outra �
 para o mesmo par que fazia duas balanças brigarem. Remover é exclusão lógica (`deleted_at`),
 que chega às balanças como tombstone.
 
-### 4.7 O que ainda não está na `web-api` (próximas versões)
+### 4.7 Carteira (só gestor)
+
+| Ação            | Payload                                                                  | Devolve    |
+| --------------- | ------------------------------------------------------------------------ | ---------- |
+| `settle_wallet` | `operationIds[]`, `settlementMethodId`, `dueDate?` (AAAA-MM-DD), `note?` | `settled`  |
+| `reopen_wallet` | `operationIds[]`                                                         | `reopened` |
+
+Mesmas regras da tela Carteira da balança: a forma escolhida precisa ser de **recebimento**
+(não "em carteira") e ativa; a venda precisa ter sido em carteira (`payment_methods.is_wallet`)
+e não pode estar cancelada; venda quitada pelo adiantamento não reabre. A leitura da carteira é
+direta: `weighing_operations` com `payment_method_id` de uma forma `is_wallet` — em aberto é
+`wallet_settled_at is null`; `omie_advance_settle_cents` é quanto o adiantamento já cobriu.
+
+### 4.8 Fechamento de faturas (só gestor)
+
+| Ação                      | Payload          | Devolve                                                         |
+| ------------------------- | ---------------- | --------------------------------------------------------------- |
+| `request_invoice_closing` | `operationIds[]` | `requested`, `requestIds[]`, `skipped[{ operationId, reason }]` |
+
+**O site não fatura — ele pede.** Faturar no OMIE exige montar o pedido inteiro (parcelas, meio
+de pagamento, frete, adiantamento), e isso só a balança sabe fazer. A ação deixa um pedido por
+pesagem em `billing_requests`; a balança da unidade pega no tique de 30 s da fila OMIE, fatura
+pelo mesmo caminho do botão "Fazer fechamento" e devolve o resultado. O site acompanha lendo
+`billing_requests` (RLS): `status` = `pending` → `processing` → `done` | `failed`, com
+`result_message` (ex.: "Faturado — NF-e 28727." ou "Preencha o número do endereço do cliente").
+
+A peneira é a mesma da balança e vem em `skipped` com o motivo: só venda com nota
+(`operation_type = 'invoice'`), só pesagem concluída, **nunca quem já tem
+`omie_invoice_number` ou `omie_billing_status = 'billed'`** (refaturar duplica a NF-e), e nunca
+quem já tem pedido `pending`/`processing`.
+
+Para montar a tela do fechamento: `weighing_operations` (período pela data de **fechamento**,
+`closed_at`), com `omie_billing_status`, `omie_billing_message` e `omie_invoice_number` — a
+balança projeta essas três colunas a partir da versão que traz a migração `202609220004`.
+Se a balança da unidade estiver desligada, o pedido fica `pending` até ela ligar.
+
+### 4.9 O que ainda não está na `web-api` (próximas versões)
 
 - Regra de frete do cliente (`customer_freight_rules.rule_json`) — o formato do JSON é o da
   balança (`apps/desktop/src/services/customer-freight-rules.ts`) e precisa ser documentado
   antes de abrir a escrita.
-- Nota de faturamento futuro, baixa de carteira, fechamento de faturas: leitura já funciona;
-  escrita fica para a Etapa 2b do plano.
+- Nota de faturamento futuro (`customer_future_billing_invoices`): leitura já funciona.
 - Gestão de usuários pela própria pedreira (hoje é o painel `/admin`).
 
 ## 5. Como o cadastro do site chega na balança
