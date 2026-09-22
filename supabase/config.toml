@@ -81,6 +81,12 @@ verify_jwt = false
 [functions.whatsapp-link]
 verify_jwt = false
 
+# Escrita do cadastro pelo site web (docs/web-api.md). Valida o token da sessao
+# do usuario em codigo (`_shared/web-session.ts`); `verify_jwt = false` porque o
+# preflight CORS do navegador (OPTIONS) chega sem Authorization.
+[functions.web-api]
+verify_jwt = false
+
 # --- Protegidas pelo JWT do Supabase -----------------------------------------
 
 [functions.cnpj-lookup]

@@ -19,6 +19,12 @@
       "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
     }
   },
+  "redirects": {
+    "https://esm.sh/@supabase/supabase-js@2": "https://esm.sh/@supabase/supabase-js@2.117.0"
+  },
+  "remote": {
+    "https://esm.sh/@supabase/supabase-js@2.117.0": "52358cc08fc0a25278a2be371821c2eb1fa5c615ba76dbca43a01b2d122f0201"
+  },
   "workspace": {
     "packageJson": {
       "dependencies": [

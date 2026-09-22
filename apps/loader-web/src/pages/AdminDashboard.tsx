@@ -86,11 +86,21 @@ interface Unit {
   isActive: boolean;
 }
 
+/**
+ * `gestor` e o perfil do site novo (comercial + precos e bloco comercial/credito). Neste
+ * painel ele e listado junto com o comercial, com a coluna Perfil dizendo qual e.
+ */
+type UserRole = "loader" | "comercial" | "gestor";
+
+function parseUserRole(value: unknown): UserRole {
+  return value === "comercial" || value === "gestor" ? value : "loader";
+}
+
 interface LoaderUser {
   id: string;
   email: string;
   name: string;
-  role: "loader" | "comercial";
+  role: UserRole;
   companyId: string;
   unitId: string;
   isActive: boolean;
@@ -389,7 +399,7 @@ export function AdminDashboard() {
             id: user.id,
             email: user.email,
             name: user.name,
-            role: user.role === "comercial" ? "comercial" : "loader",
+            role: parseUserRole(user.role),
             companyId: user.company_id,
             unitId: user.unit_id,
             isActive: user.is_active
@@ -517,11 +527,14 @@ export function AdminDashboard() {
     [devices, filterCompanyId, search, companyName, unitName]
   );
 
+  // A secao "Comercial" lista comercial E gestor: sao os dois perfis do site.
   const usersByRole = useCallback(
     (role: "loader" | "comercial") =>
       rankCadastro(
         users.filter(
-          (user) => user.role === role && (!filterCompanyId || user.companyId === filterCompanyId)
+          (user) =>
+            (role === "comercial" ? user.role !== "loader" : user.role === "loader") &&
+            (!filterCompanyId || user.companyId === filterCompanyId)
         ),
         (user) => [user.name, user.email, companyName(user.companyId)],
         search
@@ -542,7 +555,7 @@ export function AdminDashboard() {
       id: "comercial",
       label: "Comercial",
       group: "Acessos",
-      count: users.filter((user) => user.role === "comercial").length
+      count: users.filter((user) => user.role !== "loader").length
     },
     { id: "devices", label: "Balancas", group: "Acessos", count: devices.length },
     { id: "updates", label: "Atualizacoes", group: "Plataforma" },
@@ -769,6 +782,15 @@ export function AdminDashboard() {
           </>
         )
       },
+      ...(role === "comercial"
+        ? [
+            {
+              key: "role",
+              header: "Perfil",
+              render: (user: LoaderUser) => (user.role === "gestor" ? "Gestor" : "Comercial")
+            }
+          ]
+        : []),
       {
         key: "unit",
         header: "Unidade",
@@ -1842,13 +1864,24 @@ function UserFormModal({
             password: form.get("password"),
             name: form.get("name"),
             unitId: form.get("unitId"),
-            role
+            role: role === "comercial" ? (form.get("role") ?? "comercial") : role
           });
         }}
       >
         <Field label="Nome completo">
           <input className="adm-input" name="name" required autoFocus />
         </Field>
+        {role === "comercial" && (
+          <Field
+            label="Perfil"
+            hint="Gestor e comercial mais precos e o bloco comercial/credito do cliente."
+          >
+            <select className="adm-select" name="role" defaultValue="comercial">
+              <option value="comercial">Comercial</option>
+              <option value="gestor">Gestor</option>
+            </select>
+          </Field>
+        )}
         <Field label="E-mail">
           <input className="adm-input" name="email" type="email" required />
         </Field>
