@@ -558,9 +558,12 @@ Deno.serve(async (req) => {
       const password = String(payload.password ?? "");
       const name = String(payload.name ?? "").trim();
       const unitId = String(payload.unitId ?? "");
-      // "loader" (carregador, ve fila da unidade) ou "comercial" (extrai
-      // relatorios de venda da empresa inteira no loader-web).
-      const role = String(payload.role ?? "loader") === "comercial" ? "comercial" : "loader";
+      // "loader" (carregador, ve fila da unidade), "comercial" (cadastro e relatorios da
+      // empresa inteira pelo site) ou "gestor" (comercial + precos e bloco comercial/credito;
+      // ver `web-api` e a migracao `202609220003_web_access_roles`).
+      const requestedRole = String(payload.role ?? "loader");
+      const role =
+        requestedRole === "comercial" || requestedRole === "gestor" ? requestedRole : "loader";
       const { data: unit, error: unitError } = await supabase
         .from("units")
         .select("company_id")
