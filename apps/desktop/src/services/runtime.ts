@@ -86,6 +86,8 @@ import {
   startOmieQueueDrainScheduler,
   type OmieQueueDrainSchedulerHandle
 } from "./omie-queue-scheduler.js";
+import { enqueueBillingCloudPush, runBillingRequests } from "./billing-request-runner.js";
+import { claimCloudBillingRequests, reportCloudBillingRequests } from "./billing-requests-cloud.js";
 import { readUpdateChannel, type DesktopUpdateChannel } from "./update-channel.js";
 import {
   checkCustomerOmieReadiness,
@@ -1272,6 +1274,28 @@ export class DesktopRuntime {
   }
 
   /**
+   * Executa os pedidos de faturamento que o site deixou na nuvem (`billing_requests`): o
+   * site pede, esta balanca fatura pelo mesmo caminho do botao "Fazer fechamento" e devolve
+   * o resultado. Sem credencial de nuvem nao ha o que pegar; a falha fica no log do tique.
+   */
+  private async runBillingRequests(): Promise<void> {
+    if (!this.hasCloudCredentials()) return;
+    initializeSupabaseFromSettings(this.database);
+    if (!isSupabaseInitialized()) return;
+    const identity = this.ensureIdentity();
+    const result = await runBillingRequests({
+      claim: () => claimCloudBillingRequests(this.database, identity),
+      bill: (operationId) => processFiscalBillingNow(this.database, identity, operationId),
+      report: (outcomes) => reportCloudBillingRequests(this.database, identity, outcomes),
+      afterBilled: (operationId) => enqueueBillingCloudPush(this.database, operationId)
+    });
+    // O status novo da pesagem ja esta na fila (duravel); isto so adianta a subida.
+    if (result.claimed > 0) {
+      this.triggerBackgroundCloudSync("billing_requests", { count: result.claimed });
+    }
+  }
+
+  /**
    * Liga o tick que drena a fila OMIE e confere o faturamento (ver omie-queue-scheduler).
    * Sem ele, a re-tentativa de um job que falhou (60 s, 2 min, 4 min...) so acontecia
    * quando algo disparava a sincronizacao cloud — no pior caso, o ciclo de 30 minutos —,
@@ -1287,6 +1311,9 @@ export class DesktopRuntime {
       },
       reconcileBilling: async () => {
         await this.runOmieBillingCheck();
+      },
+      processBillingRequests: async () => {
+        await this.runBillingRequests();
       },
       onError: (error) => console.error("Drenagem da fila OMIE falhou", error)
     });

@@ -35,6 +35,7 @@ import {
   parseVehicleInput
 } from "../_shared/web-cadastro.ts";
 import { canManagePrices, type WebSession, type WebSessionResult } from "../_shared/web-session.ts";
+import { selectOperationsForBillingRequest } from "../_shared/billing-requests.ts";
 
 export type Row = Record<string, unknown>;
 
@@ -110,7 +111,10 @@ export const WEB_API_ACTIONS = [
   "set_price_table_active",
   "set_price_table_item",
   "remove_price_table_item",
-  "set_customer_price_table"
+  "set_customer_price_table",
+  "settle_wallet",
+  "reopen_wallet",
+  "request_invoice_closing"
 ] as const;
 
 export type WebApiAction = (typeof WEB_API_ACTIONS)[number];
@@ -125,7 +129,10 @@ export const GESTOR_ONLY_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiActi
   "set_price_table_active",
   "set_price_table_item",
   "remove_price_table_item",
-  "set_customer_price_table"
+  "set_customer_price_table",
+  "settle_wallet",
+  "reopen_wallet",
+  "request_invoice_closing"
 ]);
 
 export class WebApiError extends Error {
@@ -743,6 +750,179 @@ async function setCustomerPriceTable(ctx: ActionContext): Promise<Row> {
 }
 
 // ---------------------------------------------------------------------------
+// Financeiro: carteira e fechamento de faturas (so gestor)
+// ---------------------------------------------------------------------------
+
+/** Lista de ids do payload, sem repetidos nem vazios, com teto para nao virar lote infinito. */
+function idList(payload: Row, key: string, max = 200): string[] {
+  const raw = payload[key];
+  const values = Array.isArray(raw) ? raw : [];
+  const ids = [...new Set(values.map((value) => String(value ?? "").trim()).filter(Boolean))];
+  if (ids.length > max) throw new WebApiError(400, `Envie no maximo ${max} pesagens por vez.`);
+  return ids;
+}
+
+/**
+ * Fechamento da carteira: define COMO o cliente vai pagar as vendas "em carteira" e quando.
+ * Mesmas regras de `settleWalletOperations` na balanca: a forma escolhida precisa ser de
+ * recebimento (nao "em carteira") e ativa; a venda precisa ter sido em carteira e nao pode
+ * estar cancelada. O desktop puxa `wallet_*` da nuvem quando a nuvem e mais nova — e aqui
+ * `updated_at` e a hora da nuvem.
+ */
+async function settleWallet(ctx: ActionContext): Promise<Row> {
+  const operationIds = idList(ctx.payload, "operationIds");
+  if (operationIds.length === 0) {
+    throw new WebApiError(400, "Selecione ao menos uma venda em carteira para fechar.");
+  }
+  const methodId = requiredId(ctx.payload, "settlementMethodId", "a forma de recebimento");
+  const method = await requireRow(ctx, "payment_methods", methodId, "Forma de pagamento");
+  if (method.is_wallet === true) {
+    throw new WebApiError(
+      400,
+      `"${String(method.alias || method.name)}" e uma forma em carteira. Escolha como o cliente vai pagar (dinheiro, PIX, boleto...).`
+    );
+  }
+  if (method.is_active === false) {
+    throw new WebApiError(400, `A forma de pagamento "${String(method.name)}" esta inativa.`);
+  }
+  const dueDate = parseIsoDate(ctx.payload, "dueDate");
+  if (!dueDate.ok)
+    throw new WebApiError(400, "Data de vencimento invalida: use o formato AAAA-MM-DD.");
+  const note = optionalText(ctx.payload, "note") ?? null;
+
+  const walletMethods = new Map<string, boolean>();
+  const operations: Row[] = [];
+  for (const operationId of operationIds) {
+    const operation = await requireRow(ctx, "weighing_operations", operationId, "Pesagem");
+    if (operation.status === "cancelled") {
+      throw new WebApiError(400, `A pesagem ${operationId} foi cancelada e nao pode ser fechada.`);
+    }
+    const paymentMethodId =
+      typeof operation.payment_method_id === "string" ? operation.payment_method_id : "";
+    if (paymentMethodId && !walletMethods.has(paymentMethodId)) {
+      const row = await ctx.store.getRow("payment_methods", ctx.session.companyId, paymentMethodId);
+      walletMethods.set(paymentMethodId, row?.is_wallet === true);
+    }
+    if (!paymentMethodId || walletMethods.get(paymentMethodId) !== true) {
+      throw new WebApiError(400, `A pesagem ${operationId} nao foi vendida em carteira.`);
+    }
+    if (
+      operation.wallet_settled_at &&
+      !operation.wallet_settlement_method_id &&
+      Number(operation.omie_advance_settle_cents ?? 0) > 0
+    ) {
+      throw new WebApiError(
+        400,
+        `A pesagem ${operationId} foi quitada pelo adiantamento do cliente e nao precisa de fechamento.`
+      );
+    }
+    operations.push(operation);
+  }
+
+  for (const operation of operations) {
+    await ctx.store.updateRow("weighing_operations", ctx.session.companyId, String(operation.id), {
+      wallet_settlement_method_id: methodId,
+      wallet_settlement_due_date: dueDate.value ?? null,
+      wallet_settled_at: ctx.nowIso,
+      wallet_settlement_note: note,
+      updated_at: ctx.nowIso
+    });
+  }
+  return { settled: operations.length };
+}
+
+/** Desfaz um fechamento lancado errado — menos o que foi abatido do adiantamento (`reopenWalletOperations`). */
+async function reopenWallet(ctx: ActionContext): Promise<Row> {
+  const operationIds = idList(ctx.payload, "operationIds");
+  if (operationIds.length === 0)
+    throw new WebApiError(400, "Selecione ao menos uma venda para reabrir.");
+
+  let reopened = 0;
+  for (const operationId of operationIds) {
+    const operation = await requireRow(ctx, "weighing_operations", operationId, "Pesagem");
+    if (!operation.wallet_settled_at) continue;
+    if (
+      !operation.wallet_settlement_method_id &&
+      Number(operation.omie_advance_settle_cents ?? 0) > 0
+    ) {
+      throw new WebApiError(
+        400,
+        "Esta venda foi abatida do adiantamento do cliente e nao pode ser reaberta. Para desfazer, cancele a operacao na balanca — o adiantamento volta para o saldo dele."
+      );
+    }
+    await ctx.store.updateRow("weighing_operations", ctx.session.companyId, operationId, {
+      wallet_settlement_method_id: null,
+      wallet_settlement_due_date: null,
+      wallet_settled_at: null,
+      wallet_settlement_note: null,
+      updated_at: ctx.nowIso
+    });
+    reopened++;
+  }
+  return { reopened };
+}
+
+/**
+ * "Fazer fechamento" pelo site: deixa um pedido por pesagem em `billing_requests`. Quem
+ * fatura e a balanca da unidade, pelo mesmo caminho do botao dela (ver a migracao
+ * `202609220004` e `_shared/billing-requests.ts` para a peneira).
+ */
+async function requestInvoiceClosing(ctx: ActionContext): Promise<Row> {
+  const operationIds = idList(ctx.payload, "operationIds");
+  if (operationIds.length === 0) {
+    throw new WebApiError(400, "Selecione ao menos uma pesagem para o fechamento.");
+  }
+
+  const operations: Row[] = [];
+  for (const operationId of operationIds) {
+    operations.push(await requireRow(ctx, "weighing_operations", operationId, "Pesagem"));
+  }
+  const [pending, processing] = await Promise.all([
+    ctx.store.listRows("billing_requests", ctx.session.companyId, "operation_id, status", [
+      { column: "status", value: "pending" }
+    ]),
+    ctx.store.listRows("billing_requests", ctx.session.companyId, "operation_id, status", [
+      { column: "status", value: "processing" }
+    ])
+  ]);
+
+  const selection = selectOperationsForBillingRequest(
+    operations.map((operation) => ({
+      id: String(operation.id),
+      operation_type: operation.operation_type,
+      status: operation.status,
+      omie_billing_status: operation.omie_billing_status,
+      omie_invoice_number: operation.omie_invoice_number
+    })),
+    [...pending, ...processing].map((row) => ({
+      operation_id: String(row.operation_id),
+      status: String(row.status)
+    }))
+  );
+
+  const byId = new Map(operations.map((operation) => [String(operation.id), operation]));
+  const requested: string[] = [];
+  for (const operationId of selection.eligible) {
+    const operation = byId.get(operationId);
+    const id = ctx.newId();
+    await ctx.store.insertRow("billing_requests", {
+      id,
+      company_id: ctx.session.companyId,
+      // A unidade do pedido e a da PESAGEM: e a balanca daquela unidade que fatura.
+      unit_id: operation?.unit_id ?? ctx.session.unitId,
+      operation_id: operationId,
+      requested_by: ctx.session.userId,
+      requested_at: ctx.nowIso,
+      status: "pending",
+      created_at: ctx.nowIso,
+      updated_at: ctx.nowIso
+    });
+    requested.push(id);
+  }
+  return { requested: requested.length, requestIds: requested, skipped: selection.skipped };
+}
+
+// ---------------------------------------------------------------------------
 // Roteamento
 // ---------------------------------------------------------------------------
 
@@ -810,6 +990,12 @@ async function runAction(action: WebApiAction, ctx: ActionContext): Promise<Row>
       return removePriceTableItem(ctx);
     case "set_customer_price_table":
       return setCustomerPriceTable(ctx);
+    case "settle_wallet":
+      return settleWallet(ctx);
+    case "reopen_wallet":
+      return reopenWallet(ctx);
+    case "request_invoice_closing":
+      return requestInvoiceClosing(ctx);
   }
 }
 

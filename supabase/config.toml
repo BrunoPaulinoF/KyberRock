@@ -87,6 +87,10 @@ verify_jwt = false
 [functions.web-api]
 verify_jwt = false
 
+# A balanca pega/devolve os pedidos de faturamento do site (autentica por dispositivo).
+[functions.desktop-billing-requests]
+verify_jwt = false
+
 # --- Protegidas pelo JWT do Supabase -----------------------------------------
 
 [functions.cnpj-lookup]
