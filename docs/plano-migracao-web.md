@@ -20,7 +20,7 @@ A causa não é bug pontual — é ter **vários donos para o mesmo dado**. A so
 ┌──────────────────────────────┐        ┌──────────────────────────────┐
 │  BALANÇA (1 PC por balança)  │        │  EQUIPE (comercial, gestão)  │
 │  Desktop Electron + SQLite   │        │  Navegador → site web        │
-│                              │        │  (repositório Kyberrock-Web, │
+│                              │        │  (apps/web deste monorepo,   │
 │  Dona da PESAGEM             │        │   hospedado na Hostinger)    │
 │  • pesa sem internet         │        │                              │
 │  • fecha e imprime local     │        │  Dona do CADASTRO:           │
@@ -94,13 +94,16 @@ uma linha viva por chave natural de preço. Se o site gravar direto, ou essas re
 (e divergem), ou são puladas (e o problema volta). Além disso, várias tabelas hoje têm a
 política `no direct client access`, de propósito.
 
-### D4 — Onde fica o código do site — DECIDIDO: repositório separado
+### D4 — Onde fica o código do site — DECIDIDO: `apps/web`, neste monorepo
 
-`Dev-PedroMarcelino/Kyberrock-Web`, separado do monorepo. Motivo do Bruno: cada merge sobe
-sozinho para produção, e o site precisa subir separado da balança e das Edge Functions.
+Decisão revista pelo Bruno em 22/09: o site vive em `apps/web` (workspace `@kyberrock/web`)
+do repositório principal, e não num repositório separado. A Hostinger aponta para a pasta
+`apps/web` da branch `main`; como o site não importa nenhum outro workspace, merge só na
+balança ou nas Edge Functions gera um build igual ao anterior — o deploy continua independente
+na prática. Ganho: um `npm run lint`/`build`/`test` cobre o site, e contrato (`docs/web-api.md`)
+e tela mudam na mesma PR.
 
-Custo aceito: login, perfis e listagens que já existem em `apps/loader-web` serão refeitos lá.
-Para o custo parar aí, três regras inegociáveis:
+Três regras inegociáveis:
 
 1. **Migrations só no repositório principal** (`supabase/migrations`). O site nunca cria tabela,
    coluna ou política.
@@ -198,7 +201,7 @@ atualizadas).
 **Pronto quando:** migration aplicada, `web-api` no ar, empresa de teste criada e um cliente
 gravado pelo `curl`/site aparecendo numa balança virtual da empresa de teste.
 
-### Etapa 2 — Construir o site (repositório `Kyberrock-Web`, Pedro)
+### Etapa 2 — Construir o site (`apps/web`, Pedro)
 
 Ordem das telas, da que resolve mais dor para a que resolve menos:
 
@@ -298,7 +301,8 @@ Agora sim mexer no desktop, com o problema já resolvido do lado de fora:
 
 ## 7. Decisões já tomadas (respostas do Bruno, 22/09)
 
-1. **Repositório:** separado (`Kyberrock-Web`). Motivo: merge e deploy independentes.
+1. **Repositório:** único — o site em `apps/web` deste monorepo (revisto em 22/09; antes era
+   separado). O deploy continua independente porque a Hostinger constrói só `apps/web`.
 2. **Hospedagem:** Hostinger com deploy automático do GitHub; VPS será desligada.
 3. **Perfis:** `comercial` e `gestor`; preço só do gestor.
 4. **Divisão:** Pedro nas telas do site; Fable nas fundações da nuvem (`web-api`, migrations),

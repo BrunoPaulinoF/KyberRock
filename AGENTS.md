@@ -5,6 +5,7 @@
 - **Monorepo**: `npm` workspaces. Root `tsconfig.json` is `references`-only; each workspace has `composite: true` and excludes `**/*.test.ts` from build — use `import type` for test-only symbols.
 - **Desktop** (`apps/desktop`, `@kyberrock/desktop`): Electron 40 + React 19 + Vite 7 + `better-sqlite3`. Hardware integration (scale, printer) lives in `src/services/`; the renderer never imports Node.
 - **Loader web** (`apps/loader-web`, `@kyberrock/loader-web`): React 19 + Vite 7 + Supabase JS, served via nginx (Docker / EasyPanel).
+- **Web (comercial/gestor)** (`apps/web`, `@kyberrock/web`): React 19 + Vite 7 + Supabase JS, static build published by Hostinger from `apps/web` (`npm run dev -w @kyberrock/web` → :5175). Writes only via the `web-api` Edge Function; see `docs/web-api.md`.
 - **Functions lib** (`functions`, `@kyberrock/functions`): TypeScript utils workspace (not to be confused with Deno Edge Functions in `supabase/functions/`).
 - **Shared packages** (`packages/`): `shared` (types), `scale-adapters` (balance), `omie-client` (OMIE), `print-templates` (80 mm / A4).
 - **Cloud**: Supabase Postgres + Deno Edge Functions in `supabase/functions/` (with `_shared/`); SQL migrations in `supabase/migrations/`. Use the `supabase_kyberrock_*` MCP tools for DB / function work.
@@ -26,6 +27,7 @@ Per workspace (`-w` is short for `--workspace`):
 
 ```bash
 npm run dev      -w @kyberrock/loader-web   # vite @ :5173
+npm run dev      -w @kyberrock/web          # vite @ :5175 (site comercial/gestor)
 npm run dev      -w @kyberrock/desktop      # vite @ :5174 (renderer only)
 npm run start    -w @kyberrock/desktop      # build + electron .
 npm run build    -w @kyberrock/desktop      # tsc -b + vite + copy workspace dists

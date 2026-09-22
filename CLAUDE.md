@@ -40,6 +40,7 @@ apps/desktop (Electron + SQLite)  --HTTPS when online-->  Supabase (Postgres + E
                                                                v
                                                           OMIE ERP API
 apps/loader-web (React)  --read-only-->  Supabase Postgres   (loader sees open loading requests)
+apps/web (React)         --RLS read / writes only via `web-api`-->  Supabase   (comercial/gestor)
 ```
 
 - **`apps/desktop`** — the operator app and the only place hardware lives. The Electron main
@@ -48,6 +49,10 @@ apps/loader-web (React)  --read-only-->  Supabase Postgres   (loader sees open l
   `contextIsolation`/`sandbox` boundary via `src/preload/preload.ts` and
   `ipcMain.handle("desktop:*", …)`. See AGENTS.md "Desktop quirks" for native-rebuild and
   workspace-copy gotchas.
+- **`apps/web`** — the comercial/gestor site (`docs/plano-migracao-web.md`, `docs/web-api.md`):
+  reads Postgres under RLS with the user's login and writes **only** through the `web-api` Edge
+  Function, acting as the virtual device `web-<company_id>`. Deployed by Hostinger from this
+  folder; it imports no other workspace on purpose.
 - **`apps/loader-web`** — read-only React site where the loader (carregador) sees open loading
   requests projected into Supabase Postgres. Served via nginx in Docker.
 - **`supabase/functions/*`** — Deno Edge Functions, the _only_ place sensitive integrations run:
