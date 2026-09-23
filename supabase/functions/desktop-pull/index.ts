@@ -3,6 +3,10 @@ import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { isReadUnavailable } from "../_shared/db-read-error.ts";
 import { cadastroWindowColumn, shouldRetryWithLegacyWindow } from "../_shared/cadastro-window.ts";
 import {
+  historyWindowColumn,
+  shouldRetryHistoryWithLegacyWindow
+} from "../_shared/history-window.ts";
+import {
   CADASTRO_DELTA_LIMIT,
   CADASTRO_DELTA_RPC,
   parseCadastroDelta,
@@ -250,6 +254,29 @@ Deno.serve(async (req) => {
       return { rows: cadastroDelta.tables[table] ?? [], warning: null, error: null };
     };
 
+    /**
+     * Historico da unidade. No pull incremental o recorte e a CHEGADA da linha aqui, nunca a
+     * hora em que a maquina de origem a editou — ver `_shared/history-window.ts`: era por essa
+     * fresta que a carga cancelada numa balanca continuava concluida no computador do
+     * fechamento. Sem a migracao aplicada, refaz com o recorte antigo.
+     */
+    const byUnitHistory = async (
+      table: string,
+      page: (sinceColumn: string | null) => (from: number, to: number) => PromiseLike<QueryOutcome>
+    ): Promise<FetchResult> => {
+      const byArrival = await fetchAll(
+        table,
+        page(historyWindowColumn(historySince)),
+        HISTORY_MAX_ROWS
+      );
+      if (!shouldRetryHistoryWithLegacyWindow(byArrival.error)) return byArrival;
+      return await fetchAll(
+        table,
+        page(historyWindowColumn(historySince, { legacy: true })),
+        HISTORY_MAX_ROWS
+      );
+    };
+
     const [
       customers,
       products,
@@ -279,34 +306,32 @@ Deno.serve(async (req) => {
     ] = await Promise.all([
       byCompany("customers"),
       byCompany("products"),
-      fetchAll(
-        "weighing_operations",
-        (from, to) => {
-          const query = supabase
-            .from("weighing_operations")
-            .select("*")
-            .eq("company_id", companyId)
-            .eq("unit_id", unitId)
-            .order("created_at", { ascending: false })
-            .order("id", { ascending: true });
-          return (historySince ? query.gt("updated_at", historySince) : query).range(from, to);
-        },
-        HISTORY_MAX_ROWS
-      ),
-      fetchAll(
-        "loading_requests",
-        (from, to) => {
-          const query = supabase
-            .from("loading_requests")
-            .select("*")
-            .eq("company_id", companyId)
-            .eq("unit_id", unitId)
-            .order("created_at", { ascending: false })
-            .order("id", { ascending: true });
-          return (historySince ? query.gt("updated_at", historySince) : query).range(from, to);
-        },
-        HISTORY_MAX_ROWS
-      ),
+      byUnitHistory("weighing_operations", (sinceColumn) => (from, to) => {
+        const query = supabase
+          .from("weighing_operations")
+          .select("*")
+          .eq("company_id", companyId)
+          .eq("unit_id", unitId)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true });
+        return (sinceColumn && historySince ? query.gt(sinceColumn, historySince) : query).range(
+          from,
+          to
+        );
+      }),
+      byUnitHistory("loading_requests", (sinceColumn) => (from, to) => {
+        const query = supabase
+          .from("loading_requests")
+          .select("*")
+          .eq("company_id", companyId)
+          .eq("unit_id", unitId)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true });
+        return (sinceColumn && historySince ? query.gt(sinceColumn, historySince) : query).range(
+          from,
+          to
+        );
+      }),
       // Vias impressas da unidade, SEM `content_snapshot_json`.
       //
       // Aquela coluna e a copia renderizada do cupom, e ela nao viaja de volta: ninguem no
@@ -318,21 +343,20 @@ Deno.serve(async (req) => {
       //
       // O espelho local trata a coluna ausente como "nao veio" e preserva a copia que ja
       // tinha, em vez de grava-la vazia (ver o upsert em `supabase-sync`).
-      fetchAll(
-        "print_receipts",
-        (from, to) => {
-          const query = supabase
-            .from("print_receipts")
-            .select(
-              "id, operation_id, unit_id, receipt_number, device_number, copy_number, printed_at, printer_name, status, error_message, created_at, updated_at"
-            )
-            .eq("unit_id", unitId)
-            .order("printed_at", { ascending: false })
-            .order("id", { ascending: true });
-          return (historySince ? query.gt("updated_at", historySince) : query).range(from, to);
-        },
-        HISTORY_MAX_ROWS
-      ),
+      byUnitHistory("print_receipts", (sinceColumn) => (from, to) => {
+        const query = supabase
+          .from("print_receipts")
+          .select(
+            "id, operation_id, unit_id, receipt_number, device_number, copy_number, printed_at, printer_name, status, error_message, created_at, updated_at"
+          )
+          .eq("unit_id", unitId)
+          .order("printed_at", { ascending: false })
+          .order("id", { ascending: true });
+        return (sinceColumn && historySince ? query.gt(sinceColumn, historySince) : query).range(
+          from,
+          to
+        );
+      }),
       // Dispositivos da unidade: nome + cor para a legenda multi-desktop e para
       // satisfazer a FK local device_id das operacoes criadas em outras maquinas.
       fetchAll("device_registrations", (from, to) =>

@@ -996,6 +996,24 @@ O que nao pode se perder numa mudanca futura:
   ela nao existe tabela de aviso: a inscricao falha, cai em `error`, e a balanca volta ao
   comportamento de 15 s — nada quebra, so nao acelera.
 
+## Cancelamento chega em todas as balancas (e nao volta)
+
+Carga **cancelada** entrava no fechamento de frete do transportador (Pedreira Ibiuna, 23/09/2026).
+Na nuvem ela estava cancelada; quem nao sabia era o computador do fechamento. O pull incremental do
+**historico** (pesagens, pedidos de carregamento, vias) recortava por `updated_at` — o mesmo defeito
+que a secao anterior corrigiu no cadastro: o cancelamento feito as 12:56 que so chegou as 13:02 fica
+fora da janela de quem ja puxou as 13:00, para sempre. Medido: 21 das 112 cargas canceladas depois de
+fechadas chegaram a nuvem com mais de 5 min (a folga do cursor) de atraso.
+
+- O recorte agora e `cloud_synced_at`, carimbado pelo mesmo gatilho do cadastro (migracao
+  `202609230001_history_cloud_arrival`, regra em `_shared/history-window.ts`). Sem a migracao o
+  `desktop-pull` refaz com o recorte antigo.
+- **Cancelada e final na nuvem** (`_shared/operation-writes.ts`): o `desktop-sync` recusa qualquer
+  copia de outro status para uma pesagem cancelada, mesmo mais nova — a da balanca que nao soube do
+  cancelamento e mexeu na carga depois (carteira, nota) desfaria o cancelamento para a pedreira
+  inteira. E a linha e **reanunciada** com `updated_at` posterior ao da copia recusada, porque o
+  espelho daquela balanca descarta versao mais antiga que a dele e nunca se corrigiria sozinho.
+
 ## Cadastro duplicado: unificar, e fazer a unificacao durar
 
 O operador via "MORAES - AREIA E PEDRA LTDA" duas vezes na tela, uma linha LOCAL e uma OMIE —

@@ -4,6 +4,7 @@ import { receiptRowsWithoutLogoImage } from "../_shared/receipt-snapshot.ts";
 import { isReadUnavailable, isUnknownColumnError } from "../_shared/db-read-error.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 import { scopeRowsToDevice } from "../_shared/device-scope.ts";
+import { cancellationReannouncements, isStaleOperationWrite } from "../_shared/operation-writes.ts";
 import {
   MAX_UNKNOWN_COLUMN_ROUNDS,
   type PostgrestLikeError,
@@ -486,16 +487,6 @@ async function upsertSkippingUnknownColumns(
   };
 }
 
-// Status de operacao que nao pode voltar para aberto por um re-envio atrasado.
-const TERMINAL_OPERATION_STATUSES = new Set([
-  "closed_local",
-  "pending_cloud",
-  "pending_omie",
-  "synced",
-  "sync_error",
-  "cancelled"
-]);
-
 type SupabaseServiceClient = ReturnType<typeof createClient>;
 
 async function dropStaleOperationWrites(
@@ -515,23 +506,24 @@ async function dropStaleOperationWrites(
       (row) => [row.id, row]
     )
   );
+  // A balanca que mandou uma copia mais nova de uma carga cancelada nao sabe do cancelamento:
+  // a linha volta a ela como a versao mais nova (ver `_shared/operation-writes.ts`). Falhar
+  // aqui so atrasa a correcao daquela maquina, entao nao derruba o envio.
+  for (const { id, updatedAt } of cancellationReannouncements(currentById, rows)) {
+    await supabase
+      .from("weighing_operations")
+      .update({ updated_at: updatedAt })
+      .eq("id", id)
+      .eq("status", "cancelled");
+  }
+  // A regra (inclusive "cancelada e final") vive em `_shared/operation-writes.ts`.
   return rows.filter((row) => {
     const current = currentById.get(String(row.id ?? ""));
     if (!current) return true;
-    const incomingStatus = String(row.status ?? "");
-    const currentStatus = String(current.status ?? "");
-    if (
-      TERMINAL_OPERATION_STATUSES.has(currentStatus) &&
-      !TERMINAL_OPERATION_STATUSES.has(incomingStatus)
-    ) {
-      return false;
-    }
-    const incomingTs = Date.parse(String(row.updated_at ?? ""));
-    const currentTs = Date.parse(String(current.updated_at ?? ""));
-    if (Number.isFinite(incomingTs) && Number.isFinite(currentTs) && incomingTs < currentTs) {
-      return false;
-    }
-    return true;
+    return !isStaleOperationWrite(current, {
+      status: row.status as string | null | undefined,
+      updated_at: row.updated_at as string | null | undefined
+    });
   });
 }
 
