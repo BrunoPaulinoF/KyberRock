@@ -33,7 +33,9 @@ export type WebApiAction =
   | "set_customer_price_table"
   | "settle_wallet"
   | "reopen_wallet"
-  | "request_invoice_closing";
+  | "request_invoice_closing"
+  | "operation_status"
+  | "request_operation";
 
 export class WebApiError extends Error {
   constructor(

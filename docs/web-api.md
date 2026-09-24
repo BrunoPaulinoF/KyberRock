@@ -221,7 +221,46 @@ Para montar a tela do fechamento: `weighing_operations` (período pela data de *
 balança projeta essas três colunas a partir da versão que traz a migração `202609220004`.
 Se a balança da unidade estiver desligada, o pedido fica `pending` até ela ligar.
 
-### 4.9 O que ainda não está na `web-api` (próximas versões)
+### 4.9 Pesagem pelo site (operação e gestor)
+
+| Ação                | Payload                                          | Devolve                                              |
+| ------------------- | ------------------------------------------------ | ---------------------------------------------------- |
+| `operation_status`  | —                                                | `executor { name, online }`, `requiresPricePassword` |
+| `request_operation` | `kind`, `operationId?`, `data`, `pricePassword?` | `requestId`, `operationId`, `warnings`               |
+
+**O site não pesa — ele pede, e a balança executora executa.** Mesmo desenho do fechamento de
+faturas, pelo mesmo motivo: a conta da pesagem (preço na entrada, frete, crédito/adiantamento,
+faturamento futuro, pedido do OMIE, fila do carregador, número da pesagem, cupom) vive inteira
+no desktop. A ação grava um pedido em `operation_requests` (migração `202609250001`); a balança
+marcada no painel como **executora da unidade** (Acessos do sistema → "Pesagem do site") é
+avisada pelo Realtime (`operation_request_pings`, 1 a 3 s; tique de 30 s de reserva), executa
+pelas mesmas funções dos botões do desktop e devolve o resultado.
+
+`kind` e `data`:
+
+| `kind`    | `data`                                                                                                                                                                                                                       |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `entry`   | `customerId`, `vehicleId`, `driverId`, `productId`, `entryWeightKg`; opcionais `carrierId`, `paymentMethodId`, `paymentTermId`, `operationType` (`invoice` padrão, ou `internal`)                                            |
+| `exit`    | `exitWeightKg`; opcional `operationType`. O cupom sai na impressora da executora, com o número de vias do perfil dela (1 ou 2)                                                                                               |
+| `update`  | só o que muda: `customerId`, `productId`, `vehicleId`, `driverId`, `carrierId` (`null` tira), `paymentMethodId`, `paymentTermId`, `operationType`, `unitPriceCents`. Pesagem concluída: só cliente, produto e transportadora |
+| `cancel`  | `reason`                                                                                                                                                                                                                     |
+| `reprint` | — (só pesagem concluída)                                                                                                                                                                                                     |
+
+- O peso é **digitado** (como a balança virtual) e fica marcado `WEB:<kg>` na auditoria da pesagem.
+- Na entrada o id da pesagem nasce na `web-api` (`operationId` da resposta): executar o mesmo
+  pedido duas vezes (resposta perdida, pedido devolvido à fila) encontra a pesagem em vez de
+  criar outro caminhão no pátio. Fechar ou cancelar de novo também é reconhecido como já feito.
+- Mudar `unitPriceCents` exige `pricePassword` (a senha de alteração de preço da pedreira) de
+  quem tem `user_profiles.requires_price_password` — marcado no painel, por login. A senha é
+  conferida aqui e nunca é gravada no pedido.
+- Sem executora marcada na unidade a ação responde 409. Executora fora do ar: o pedido é aceito,
+  fica `pending` e vem um aviso em `warnings`.
+- O site acompanha lendo `operation_requests` (RLS + Realtime): `status` `pending` →
+  `processing` → `done` | `failed`, `result_message` (a mesma mensagem que o desktop mostraria,
+  ex.: "Ja existe uma operacao aberta para a placa ABC-1234."), `result` (número, pesos,
+  totais) e `print_status`/`print_message` ("pesagem registrada, mas o cupom não imprimiu").
+
+### 4.10 O que ainda não está na `web-api` (próximas versões)
 
 - Regra de frete do cliente (`customer_freight_rules.rule_json`) — o formato do JSON é o da
   balança (`apps/desktop/src/services/customer-freight-rules.ts`) e precisa ser documentado

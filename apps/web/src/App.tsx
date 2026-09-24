@@ -8,6 +8,7 @@ import { Carriers, VehiclesAndDrivers } from "./pages/Cadastros";
 import { Customers } from "./pages/Customers";
 import { InvoiceClosing } from "./pages/InvoiceClosing";
 import { Loading } from "./pages/Loading";
+import { OperationDone, OperationYard } from "./pages/Operation";
 import { Login } from "./pages/Login";
 import { Prices } from "./pages/Prices";
 import { SalesReport } from "./pages/SalesReport";
@@ -80,6 +81,8 @@ export function App() {
                 <Route path="/veiculos" element={<VehiclesAndDrivers />} />
                 <Route path="/transportadoras" element={<Carriers />} />
                 <Route path="/vendas" element={<SalesReport />} />
+                <Route path="/operacao" element={<OperationYard />} />
+                <Route path="/operacao/concluidas" element={<OperationDone />} />
                 <Route
                   path="/precos"
                   element={

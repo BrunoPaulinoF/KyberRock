@@ -1,8 +1,10 @@
 import {
   Building2,
+  ClipboardCheck,
   LogOut,
   Moon,
   ReceiptText,
+  Scale,
   Sun,
   Tags,
   TrendingUp,
@@ -36,6 +38,15 @@ export function Layout() {
           <span className="sidebar-meta">Web</span>
         </div>
         <nav className="sidebar-nav" aria-label="Navegacao principal">
+          <div className="nav-section">Operacao</div>
+          <NavLink to="/operacao" end className="nav-link">
+            <Scale size={16} strokeWidth={2.2} />
+            Patio
+          </NavLink>
+          <NavLink to="/operacao/concluidas" className="nav-link">
+            <ClipboardCheck size={16} strokeWidth={2.2} />
+            Concluidas
+          </NavLink>
           <div className="nav-section">Cadastro</div>
           <NavLink to="/clientes" className="nav-link">
             <Users size={16} strokeWidth={2.2} />

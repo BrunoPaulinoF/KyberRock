@@ -413,6 +413,16 @@
   align-items: center;
 }
 
+.adm-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--adm-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
 .adm-mono {
   font-family: var(--adm-mono);
   font-size: 12px;

@@ -96,6 +96,8 @@ type AdminAction =
   | "update_device_unit"
   | "update_device_channel"
   | "update_device_price_master"
+  | "update_device_web_executor"
+  | "update_user_price_password"
   | "delete_device"
   | "get_ai_settings"
   | "update_ai_settings"
@@ -211,6 +213,8 @@ async function selectDevicesForList(supabase: SupabaseAdminClient) {
   // Da mais completa para a mais antiga: cada coluna acrescentada por migracao entra numa
   // tentativa propria, para a lista continuar carregando no projeto que ainda nao a tem.
   const attempts = [
+    // Executora dos pedidos de pesagem do site (migracao `202609250001`).
+    `${DEVICE_LIST_COLUMNS}, ${DEVICE_HEALTH_COLUMNS}, update_channel, is_price_master, app_version, app_version_seen_at, update_notice_version, update_notice_sent_at, update_notice_seen_at, executes_web_operations, web_executor_seen_at`,
     `${DEVICE_LIST_COLUMNS}, ${DEVICE_HEALTH_COLUMNS}, update_channel, is_price_master, app_version, app_version_seen_at, update_notice_version, update_notice_sent_at, update_notice_seen_at`,
     `${DEVICE_LIST_COLUMNS}, update_channel, is_price_master, app_version, app_version_seen_at, update_notice_version, update_notice_sent_at, update_notice_seen_at`,
     `${DEVICE_LIST_COLUMNS}, update_channel, is_price_master, app_version, app_version_seen_at`,
@@ -896,6 +900,56 @@ Deno.serve(async (req) => {
       }
 
       return jsonResponse({ ok: true, isPriceMaster });
+    }
+
+    /**
+     * Qual balanca executa os pedidos de pesagem do site nesta unidade (migracao
+     * `202609250001`). Uma por unidade: marcar uma desmarca a que estava antes — duas
+     * executoras pegariam o mesmo pedido e o caminhao entraria duas vezes.
+     */
+    if (body.action === "update_device_web_executor") {
+      const deviceId = String(payload.deviceId ?? "");
+      if (!deviceId) return jsonResponse({ error: "Informe a balanca" }, 400);
+      if (deviceId.startsWith("web-")) {
+        return jsonResponse({ error: "O site nao executa pedidos: escolha uma balanca." }, 400);
+      }
+      const executes = payload.executes === true;
+      const nowIso = new Date().toISOString();
+      if (executes) {
+        const { data: device, error: deviceError } = await supabase
+          .from("device_registrations")
+          .select("unit_id")
+          .eq("id", deviceId)
+          .single();
+        if (deviceError) throw deviceError;
+        const { error: clearError } = await supabase
+          .from("device_registrations")
+          .update({ executes_web_operations: false, updated_at: nowIso })
+          .eq("unit_id", device.unit_id)
+          .eq("executes_web_operations", true)
+          .neq("id", deviceId);
+        if (clearError) throw clearError;
+      }
+      const { error } = await supabase
+        .from("device_registrations")
+        .update({ executes_web_operations: executes, updated_at: nowIso })
+        .eq("id", deviceId);
+      if (error) throw error;
+      return jsonResponse({ ok: true, executes });
+    }
+
+    // Marca o login que precisa da senha de alteracao de preco da pedreira para mudar preco de
+    // pesagem pelo site. Quem confere a senha e a `web-api`.
+    if (body.action === "update_user_price_password") {
+      const userId = String(payload.userId ?? "");
+      if (!userId) return jsonResponse({ error: "Usuario nao informado" }, 400);
+      const requires = payload.requiresPricePassword === true;
+      const { error } = await supabase
+        .from("user_profiles")
+        .update({ requires_price_password: requires, updated_at: new Date().toISOString() })
+        .eq("id", userId);
+      if (error) throw error;
+      return jsonResponse({ ok: true, requiresPricePassword: requires });
     }
 
     if (body.action === "update_company") {

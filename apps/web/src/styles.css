@@ -858,6 +858,118 @@ input[type="radio"] {
   font-weight: 700;
 }
 
+/* ---------- operacao pelo site: busca, pedidos ao vivo, peso ---------- */
+.picker {
+  position: relative;
+}
+.picker .input {
+  width: 100%;
+}
+.picker-list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 280px;
+  overflow: auto;
+  background: var(--kr-surface-elevated);
+  border: 1px solid var(--kr-border);
+  border-radius: 10px;
+  box-shadow: var(--kr-shadow);
+}
+.picker-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.picker-list li.active {
+  background: var(--kr-accent-soft);
+}
+.picker-list li small {
+  color: var(--kr-muted);
+  font-size: 11px;
+}
+.picker-empty,
+.picker-none {
+  color: var(--kr-muted);
+}
+.request-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.request-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--kr-border);
+}
+.request-item:last-child {
+  border-bottom: none;
+}
+.request-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: var(--kr-muted);
+}
+.request-item.pending .request-dot,
+.request-item.processing .request-dot {
+  background: var(--kr-accent);
+  animation: request-pulse 1.1s ease-in-out infinite;
+}
+.request-item.done .request-dot {
+  background: var(--kr-success);
+}
+.request-item.failed .request-dot {
+  background: var(--kr-danger);
+}
+.request-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.request-warning {
+  color: var(--kr-warning);
+  font-weight: 700;
+  font-size: 12px;
+}
+.request-when {
+  display: inline;
+  white-space: nowrap;
+}
+@keyframes request-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .request-item .request-dot {
+    animation: none;
+  }
+}
+.weight-input {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.page-head .actions .badge {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
 /* ---------- tela do carregador (celular na mao, dentro da pedreira) ---------- */
 .loading-shell {
   min-height: 100vh;

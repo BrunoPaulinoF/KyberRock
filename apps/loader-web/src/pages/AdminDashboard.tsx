@@ -146,6 +146,8 @@ interface LoaderUser {
   isActive: boolean;
   /** Acesso do sistema (computador cadastrado) a que este login pertence, se houver. */
   deviceId: string | null;
+  /** Pede a senha de alteracao de preco ao mudar preco de pesagem pelo site. */
+  requiresPricePassword: boolean;
 }
 
 /** Anel de atualizacao: `beta` recebe as versoes em avaliacao antes da frota. */
@@ -177,6 +179,8 @@ interface Device {
    * empate que fazia o preco especial existir numa maquina e nao na outra.
    */
   isPriceMaster: boolean;
+  /** Executa os pedidos de pesagem do site da unidade (migracao `202609250001`). */
+  executesWebOperations: boolean;
   lastSeenAt: string | null;
   /**
    * Saude da fila de envio, reportada pela propria balanca no `desktop-status`.
@@ -393,6 +397,7 @@ export function AdminDashboard() {
             unit_id: string;
             is_active: boolean;
             device_id?: string | null;
+            requires_price_password?: boolean | null;
           }>;
           devices: Array<{
             id: string;
@@ -402,6 +407,7 @@ export function AdminDashboard() {
             is_active: boolean;
             update_channel?: string | null;
             is_price_master?: boolean | null;
+            executes_web_operations?: boolean | null;
             last_seen_at: string | null;
             // Ausentes enquanto a migracao da saude nao for aplicada: a funcao cai
             // no select sem elas para a lista inteira nao deixar de carregar.
@@ -447,7 +453,8 @@ export function AdminDashboard() {
             companyId: user.company_id,
             unitId: user.unit_id,
             isActive: user.is_active,
-            deviceId: user.device_id ?? null
+            deviceId: user.device_id ?? null,
+            requiresPricePassword: user.requires_price_password === true
           }))
         );
         setDevices(
@@ -459,6 +466,7 @@ export function AdminDashboard() {
             isActive: device.is_active,
             updateChannel: toDeviceUpdateChannel(device.update_channel),
             isPriceMaster: device.is_price_master === true,
+            executesWebOperations: device.executes_web_operations === true,
             lastSeenAt: device.last_seen_at,
             // `?? null` e nao `?? 0`: coluna ausente (migracao pendente) e campo
             // nulo (balanca que nunca reportou) tem que continuar sendo "nao sei"
@@ -846,6 +854,24 @@ export function AdminDashboard() {
               )
             },
             {
+              key: "pricePassword",
+              header: "Senha de preco",
+              render: (user: LoaderUser) => (
+                <PricePasswordToggle
+                  user={user}
+                  onChange={(requires) =>
+                    void run(
+                      "update_user_price_password",
+                      { userId: user.id, requiresPricePassword: requires },
+                      requires
+                        ? `${user.name} passa a precisar da senha para mudar preco.`
+                        : `${user.name} muda preco sem senha.`
+                    )
+                  }
+                />
+              )
+            },
+            {
               key: "device",
               header: "Acesso",
               render: (user: LoaderUser) =>
@@ -951,6 +977,35 @@ export function AdminDashboard() {
       )
     },
     {
+      // A balanca que executa as pesagens pedidas pelo site: uma por unidade. Marcar uma
+      // desmarca a anterior (duas executoras pegariam o mesmo pedido).
+      key: "webExecutor",
+      header: "Pesagem do site",
+      render: (device) =>
+        isVirtualWebDevice(device.id) ? (
+          <span className="adm-cell-sub">—</span>
+        ) : (
+          <select
+            className="adm-select"
+            aria-label={`Pesagem do site na balanca ${device.name}`}
+            title="A balanca executora registra as pesagens pedidas pelo site e imprime o cupom do fechamento na impressora dela."
+            value={device.executesWebOperations ? "yes" : "no"}
+            onChange={(event) =>
+              void run(
+                "update_device_web_executor",
+                { deviceId: device.id, executes: event.target.value === "yes" },
+                event.target.value === "yes"
+                  ? `${device.name} passou a executar as pesagens do site.`
+                  : `${device.name} deixou de executar as pesagens do site.`
+              )
+            }
+          >
+            <option value="no">Nao executa</option>
+            <option value="yes">Executa</option>
+          </select>
+        )
+    },
+    {
       // Login do KyberRock Web deste acesso: e com ele que a pessoa daquele computador entra
       // no site — inclusive depois que o desktop dela for desligado na virada.
       key: "login",
@@ -985,6 +1040,18 @@ export function AdminDashboard() {
                 Senha
               </Button>
             </div>
+            <PricePasswordToggle
+              user={login}
+              onChange={(requires) =>
+                void run(
+                  "update_user_price_password",
+                  { userId: login.id, requiresPricePassword: requires },
+                  requires
+                    ? `${login.email} passa a precisar da senha para mudar preco.`
+                    : `${login.email} muda preco sem senha.`
+                )
+              }
+            />
             {!login.isActive && (
               <Badge tone="danger" dot>
                 Bloqueado
@@ -2039,6 +2106,29 @@ function RoleField({ defaultValue }: { defaultValue: UserRole }) {
         ))}
       </select>
     </Field>
+  );
+}
+
+/**
+ * "Pede senha para mudar preco": quem estiver marcado digita a senha de alteracao de preco da
+ * pedreira (a mesma da balanca) para mudar o preco de uma pesagem pelo site.
+ */
+function PricePasswordToggle({
+  user,
+  onChange
+}: {
+  user: LoaderUser;
+  onChange: (requires: boolean) => void;
+}) {
+  return (
+    <label className="adm-check" title="A senha e a de alteracao de preco da pedreira.">
+      <input
+        type="checkbox"
+        checked={user.requiresPricePassword}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      Pede senha de preco
+    </label>
   );
 }
 
