@@ -37,6 +37,8 @@ export interface WebSession {
   role: WebRole;
   companyId: string;
   unitId: string;
+  /** Pede a senha de preco da pedreira para mudar preco de pesagem (migracao `202609250001`). */
+  requiresPricePassword: boolean;
 }
 
 /** O minimo do cliente Supabase que a resolucao da sessao usa (facil de simular em teste). */
@@ -83,6 +85,14 @@ export function canEditCustomers(role: WebRole): boolean {
 }
 
 /**
+ * Pesagem pelo site (entrada, saida, alterar, cancelar, reimprimir): operacao e gestor. Quem
+ * executa e a balanca da unidade — o site so pede (`operation_requests`).
+ */
+export function canOperate(role: WebRole): boolean {
+  return role === "operacao" || role === "gestor";
+}
+
+/**
  * Veiculo, motorista e transportadora: todo perfil que nao e so consulta. E o cadastro rapido
  * que a balanca ja faz na hora (caminhao chegou sem cadastro), por isso a `operacao` tambem.
  */
@@ -98,6 +108,7 @@ type ProfileRow = {
   company_id?: unknown;
   unit_id?: unknown;
   is_active?: unknown;
+  requires_price_password?: unknown;
 };
 
 export async function resolveWebSession(
@@ -114,7 +125,9 @@ export async function resolveWebSession(
 
   const profile = await client
     .from("user_profiles")
-    .select("id, email, name, role, company_id, unit_id, is_active")
+    // `*` e nao a lista: coluna nova (ex.: `requires_price_password`) com a migracao ainda
+    // pendente nao pode derrubar o login de todo mundo.
+    .select("*")
     .eq("id", data.user.id)
     .maybeSingle();
   // Ver `_shared/db-read-error.ts`: banco fora do ar nao pode virar "usuario sem acesso".
@@ -144,7 +157,8 @@ export async function resolveWebSession(
       name: typeof row.name === "string" ? row.name : "",
       role: row.role,
       companyId: row.company_id,
-      unitId: row.unit_id
+      unitId: row.unit_id,
+      requiresPricePassword: row.requires_price_password === true
     }
   };
 }

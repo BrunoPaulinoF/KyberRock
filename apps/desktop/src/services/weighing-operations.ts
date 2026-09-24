@@ -139,6 +139,12 @@ export interface CreateWeighingOperationInput {
    * ate onde ele der e o que sobrar continua em carteira.
    */
   settleFromAdvance?: boolean;
+  /**
+   * Id da pesagem, quando quem pede ja o definiu: o pedido de entrada do site
+   * (`operation_requests`, migracao `202609250001`) nasce com ele para que executar o mesmo
+   * pedido duas vezes encontre a pesagem em vez de criar um segundo caminhao no patio.
+   */
+  operationId?: string;
 }
 
 export interface CloseWeighingOperationInput {
@@ -647,7 +653,7 @@ export function createWeighingOperation(
     throw new Error(financialBlock.message ?? "Cliente bloqueado por limite financeiro.");
   }
 
-  const operationId = randomUUID();
+  const operationId = input.operationId ?? randomUUID();
   const loadingRequestId = randomUUID();
 
   const createOperation = database.transaction(() => {

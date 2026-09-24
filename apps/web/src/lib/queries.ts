@@ -4,6 +4,7 @@
  * a intencao ficar explicita no codigo.
  */
 
+import { OPEN_STATUS, type OperationRequest } from "./operation";
 import { supabase, type Tables } from "./supabase";
 
 export type Customer = Tables<"customers">;
@@ -164,6 +165,34 @@ export const q = {
           : query.not("wallet_settled_at", "is", null);
       return query.order("created_at", { ascending: false }).range(from, to);
     }),
+  /** Caminhoes no patio da unidade: pesagem com entrada e sem saida. */
+  openOperations: (companyId: string, unitId: string) =>
+    all<Operation>((from, to) =>
+      supabase
+        .from("weighing_operations")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("unit_id", unitId)
+        .eq("status", OPEN_STATUS)
+        .order("created_at", { ascending: true })
+        .range(from, to)
+    ),
+  /** Pedidos de pesagem feitos pelo site desde `sinceIso`, mais novo primeiro. */
+  operationRequests: async (companyId: string, sinceIso: string): Promise<OperationRequest[]> => {
+    const { data, error } = await supabase
+      .from("operation_requests")
+      .select(
+        "id, kind, operation_id, status, requested_by_name, requested_at, processed_at, result_message, result, print_status, print_message"
+      )
+      .eq("company_id", companyId)
+      .gte("requested_at", sinceIso)
+      .order("requested_at", { ascending: false })
+      .limit(50);
+    fail(error);
+    // `kind`/`status`/`result` sao texto e JSON no banco; os valores possiveis estao nos CHECKs
+    // da migracao `202609250001`.
+    return (data ?? []) as unknown as OperationRequest[];
+  },
   billingRequests: (companyId: string, operationIds: string[]) =>
     operationIds.length === 0
       ? Promise.resolve([] as BillingRequest[])

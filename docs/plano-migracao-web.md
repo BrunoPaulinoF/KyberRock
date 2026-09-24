@@ -300,6 +300,18 @@ Agora sim mexer no desktop, com o problema já resolvido do lado de fora:
   do relatório do desktop, mas a nuvem não tem `deleted_at` em `weighing_operations` e o site
   continua contando. Diferença nesse sentido é isso, não dado preso.
 
+### Operação pelo site (decidida em 24/09)
+
+As máquinas de apoio também fazem pesagem (entrada com balança virtual, fechamentos), então o
+site ganhou **Pátio** e **Concluídas** para os perfis `operacao` e `gestor`: nova entrada, fechar
+saída, alterar, cancelar e reimprimir. O site **pede** e a balança marcada como **executora**
+da unidade (normalmente o PC PRINCIPAL) **executa** pelas mesmas funções do desktop e imprime o
+cupom do fechamento na impressora dela — ver `docs/web-api.md` 4.9. A pesagem continua nascendo
+e fechando no SQLite da balança; o que muda é quem apertou o botão. Consequência para a virada:
+os computadores que pesam só saem do desktop depois que a operação pelo site for testada na
+Pedreira Teste e na Ibiúna. Número de vias do cupom (1 ou 2) passou a ser escolhido no perfil de
+impressão do desktop.
+
 ## 5. O que NÃO vamos fazer (para não errar por pressa)
 
 - Não transformar a pesagem em "nuvem primeiro". Pesagem é local, sempre.

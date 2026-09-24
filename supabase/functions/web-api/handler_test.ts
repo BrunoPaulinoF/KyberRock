@@ -7,6 +7,8 @@ import {
   FLEET_ACTIONS,
   GESTOR_ONLY_ACTIONS,
   handleWebApiRequest,
+  OPERATION_ACTIONS,
+  READ_ACTIONS,
   WEB_API_ACTIONS,
   type OmieBridge,
   type Row,
@@ -71,7 +73,8 @@ function session(role: WebSession["role"]): WebSession {
     name: "Rafaela",
     role,
     companyId: COMPANY,
-    unitId: "unit-1"
+    unitId: "unit-1",
+    requiresPricePassword: false
   };
 }
 
@@ -189,14 +192,17 @@ describe("web-api: sessao e permissoes", () => {
   it("toda acao tem dono: nenhuma nasce liberada para quem so consulta", () => {
     for (const action of WEB_API_ACTIONS) {
       const groups = [
-        action === "me",
+        READ_ACTIONS.has(action),
+        OPERATION_ACTIONS.has(action),
         GESTOR_ONLY_ACTIONS.has(action),
         CUSTOMER_ACTIONS.has(action),
         FLEET_ACTIONS.has(action)
       ].filter(Boolean);
       expect(groups, action).toHaveLength(1);
       expect(actionDenial("gestor", action), action).toBeNull();
-      if (action !== "me") expect(actionDenial("monitoramento", action), action).not.toBeNull();
+      if (!READ_ACTIONS.has(action)) {
+        expect(actionDenial("monitoramento", action), action).not.toBeNull();
+      }
     }
   });
 

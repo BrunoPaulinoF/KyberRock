@@ -33,19 +33,22 @@ Acessos de homologação (Pedreira Teste): `gestor.teste@kyberrock.app` e
 ## Telas
 
 Perfis (`src/lib/permissions.ts`, espelho de `_shared/web-session.ts`): `monitoramento` só
-consulta; `operacao` edita veículos, motoristas e transportadoras; `comercial` também clientes;
-`gestor` também preços, carteira e fechamento. O `loader` (carregador) só tem `/carregamento`.
+consulta; `operacao` edita veículos, motoristas e transportadoras e faz pesagem; `comercial`
+também clientes; `gestor` tudo. O `loader` (carregador) só tem `/carregamento`. A pesagem pelo
+site é um PEDIDO que a balança executora da unidade registra (`docs/web-api.md` 4.9).
 
-| Rota               | Quem       | O que faz                                                                                        |
-| ------------------ | ---------- | ------------------------------------------------------------------------------------------------ |
-| `/carregamento`    | carregador | Fila de carregamento da unidade: concluir e devolver carga                                       |
-| `/clientes`        | todos      | Lista; cadastro/edição (sobe ao OMIE) e inativar só comercial e gestor; bloco comercial (gestor) |
-| `/veiculos`        | todos      | Veículos e motoristas (edição: operação, comercial e gestor)                                     |
-| `/transportadoras` | todos      | Transportadoras (sobem ao OMIE com CNPJ; edição: operação em diante)                             |
-| `/precos`          | gestor     | Preço padrão por produto e especial por cliente                                                  |
-| `/vendas`          | todos      | Relatório de vendas por cliente/produto/dia, CSV                                                 |
-| `/carteira`        | gestor     | Fechamento e reabertura da carteira                                                              |
-| `/fechamento`      | gestor     | Conferência do período e pedido de faturamento (a balança executa)                               |
+| Rota                   | Quem                             | O que faz                                                                                        |
+| ---------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `/carregamento`        | carregador                       | Fila de carregamento da unidade: concluir e devolver carga                                       |
+| `/operacao`            | todos (pesar: operação e gestor) | Pátio: nova entrada (F2), fechar saída, alterar, cancelar; pedidos ao vivo                       |
+| `/operacao/concluidas` | todos (ações: operação e gestor) | Pesagens fechadas no dia: reimprimir na balança, alterar, cancelar                               |
+| `/clientes`            | todos                            | Lista; cadastro/edição (sobe ao OMIE) e inativar só comercial e gestor; bloco comercial (gestor) |
+| `/veiculos`            | todos                            | Veículos e motoristas (edição: operação, comercial e gestor)                                     |
+| `/transportadoras`     | todos                            | Transportadoras (sobem ao OMIE com CNPJ; edição: operação em diante)                             |
+| `/precos`              | gestor                           | Preço padrão por produto e especial por cliente                                                  |
+| `/vendas`              | todos                            | Relatório de vendas por cliente/produto/dia, CSV                                                 |
+| `/carteira`            | gestor                           | Fechamento e reabertura da carteira                                                              |
+| `/fechamento`          | gestor                           | Conferência do período e pedido de faturamento (a balança executa)                               |
 
 ## Deploy na Hostinger
 

@@ -1368,6 +1368,7 @@ export type Database = {
           company_id: string;
           created_at: string;
           device_number: number | null;
+          executes_web_operations: boolean;
           health_collected_at: string | null;
           health_last_error: string | null;
           health_oldest_pending_at: string | null;
@@ -1386,6 +1387,7 @@ export type Database = {
           update_notice_sent_at: string | null;
           update_notice_version: string | null;
           updated_at: string;
+          web_executor_seen_at: string | null;
         };
         Insert: {
           app_version?: string | null;
@@ -1394,6 +1396,7 @@ export type Database = {
           company_id: string;
           created_at?: string;
           device_number?: number | null;
+          executes_web_operations?: boolean;
           health_collected_at?: string | null;
           health_last_error?: string | null;
           health_oldest_pending_at?: string | null;
@@ -1412,6 +1415,7 @@ export type Database = {
           update_notice_sent_at?: string | null;
           update_notice_version?: string | null;
           updated_at?: string;
+          web_executor_seen_at?: string | null;
         };
         Update: {
           app_version?: string | null;
@@ -1420,6 +1424,7 @@ export type Database = {
           company_id?: string;
           created_at?: string;
           device_number?: number | null;
+          executes_web_operations?: boolean;
           health_collected_at?: string | null;
           health_last_error?: string | null;
           health_oldest_pending_at?: string | null;
@@ -1438,6 +1443,7 @@ export type Database = {
           update_notice_sent_at?: string | null;
           update_notice_version?: string | null;
           updated_at?: string;
+          web_executor_seen_at?: string | null;
         };
         Relationships: [
           {
@@ -1602,6 +1608,7 @@ export type Database = {
       loading_requests: {
         Row: {
           closed_at: string | null;
+          cloud_synced_at: string;
           company_id: string;
           created_at: string;
           customer_name: string;
@@ -1618,6 +1625,7 @@ export type Database = {
         };
         Insert: {
           closed_at?: string | null;
+          cloud_synced_at?: string;
           company_id: string;
           created_at?: string;
           customer_name: string;
@@ -1634,6 +1642,7 @@ export type Database = {
         };
         Update: {
           closed_at?: string | null;
+          cloud_synced_at?: string;
           company_id?: string;
           created_at?: string;
           customer_name?: string;
@@ -1706,6 +1715,124 @@ export type Database = {
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      operation_request_pings: {
+        Row: {
+          requested_at: string;
+          unit_id: string;
+        };
+        Insert: {
+          requested_at?: string;
+          unit_id: string;
+        };
+        Update: {
+          requested_at?: string;
+          unit_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "operation_request_pings_unit_id_fkey";
+            columns: ["unit_id"];
+            isOneToOne: true;
+            referencedRelation: "units";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      operation_requests: {
+        Row: {
+          claimed_at: string | null;
+          claimed_by_device_id: string | null;
+          company_id: string;
+          created_at: string;
+          id: string;
+          kind: string;
+          operation_id: string;
+          payload: Json;
+          print_message: string | null;
+          print_status: string | null;
+          processed_at: string | null;
+          requested_at: string;
+          requested_by: string | null;
+          requested_by_name: string | null;
+          result: Json | null;
+          result_message: string | null;
+          status: string;
+          unit_id: string;
+          updated_at: string;
+        };
+        Insert: {
+          claimed_at?: string | null;
+          claimed_by_device_id?: string | null;
+          company_id: string;
+          created_at?: string;
+          id?: string;
+          kind: string;
+          operation_id: string;
+          payload?: Json;
+          print_message?: string | null;
+          print_status?: string | null;
+          processed_at?: string | null;
+          requested_at?: string;
+          requested_by?: string | null;
+          requested_by_name?: string | null;
+          result?: Json | null;
+          result_message?: string | null;
+          status?: string;
+          unit_id: string;
+          updated_at?: string;
+        };
+        Update: {
+          claimed_at?: string | null;
+          claimed_by_device_id?: string | null;
+          company_id?: string;
+          created_at?: string;
+          id?: string;
+          kind?: string;
+          operation_id?: string;
+          payload?: Json;
+          print_message?: string | null;
+          print_status?: string | null;
+          processed_at?: string | null;
+          requested_at?: string;
+          requested_by?: string | null;
+          requested_by_name?: string | null;
+          result?: Json | null;
+          result_message?: string | null;
+          status?: string;
+          unit_id?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "operation_requests_claimed_by_device_id_fkey";
+            columns: ["claimed_by_device_id"];
+            isOneToOne: false;
+            referencedRelation: "device_registrations";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "operation_requests_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "operation_requests_requested_by_fkey";
+            columns: ["requested_by"];
+            isOneToOne: false;
+            referencedRelation: "user_profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "operation_requests_unit_id_fkey";
+            columns: ["unit_id"];
+            isOneToOne: false;
+            referencedRelation: "units";
             referencedColumns: ["id"];
           }
         ];
@@ -1815,6 +1942,42 @@ export type Database = {
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      price_password_failures: {
+        Row: {
+          attempted_at: string;
+          company_id: string;
+          id: string;
+          user_id: string;
+        };
+        Insert: {
+          attempted_at?: string;
+          company_id: string;
+          id?: string;
+          user_id: string;
+        };
+        Update: {
+          attempted_at?: string;
+          company_id?: string;
+          id?: string;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "price_password_failures_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "price_password_failures_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "user_profiles";
             referencedColumns: ["id"];
           }
         ];
@@ -1935,6 +2098,7 @@ export type Database = {
       };
       print_receipts: {
         Row: {
+          cloud_synced_at: string;
           content_snapshot_json: Json;
           copy_number: number;
           created_at: string;
@@ -1950,6 +2114,7 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          cloud_synced_at?: string;
           content_snapshot_json?: Json;
           copy_number?: number;
           created_at?: string;
@@ -1965,6 +2130,7 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          cloud_synced_at?: string;
           content_snapshot_json?: Json;
           copy_number?: number;
           created_at?: string;
@@ -2453,10 +2619,12 @@ export type Database = {
         Row: {
           company_id: string;
           created_at: string;
+          device_id: string | null;
           email: string;
           id: string;
           is_active: boolean;
           name: string;
+          requires_price_password: boolean;
           role: string;
           unit_id: string;
           updated_at: string;
@@ -2464,10 +2632,12 @@ export type Database = {
         Insert: {
           company_id: string;
           created_at?: string;
+          device_id?: string | null;
           email: string;
           id: string;
           is_active?: boolean;
           name: string;
+          requires_price_password?: boolean;
           role: string;
           unit_id: string;
           updated_at?: string;
@@ -2475,10 +2645,12 @@ export type Database = {
         Update: {
           company_id?: string;
           created_at?: string;
+          device_id?: string | null;
           email?: string;
           id?: string;
           is_active?: boolean;
           name?: string;
+          requires_price_password?: boolean;
           role?: string;
           unit_id?: string;
           updated_at?: string;
@@ -2489,6 +2661,13 @@ export type Database = {
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "user_profiles_device_id_fkey";
+            columns: ["device_id"];
+            isOneToOne: false;
+            referencedRelation: "device_registrations";
             referencedColumns: ["id"];
           },
           {
@@ -2616,6 +2795,7 @@ export type Database = {
           carrier_id: string | null;
           carrier_name: string | null;
           closed_at: string | null;
+          cloud_synced_at: string;
           company_id: string;
           created_at: string;
           customer_id: string | null;
@@ -2672,6 +2852,7 @@ export type Database = {
           carrier_id?: string | null;
           carrier_name?: string | null;
           closed_at?: string | null;
+          cloud_synced_at?: string;
           company_id: string;
           created_at?: string;
           customer_id?: string | null;
@@ -2728,6 +2909,7 @@ export type Database = {
           carrier_id?: string | null;
           carrier_name?: string | null;
           closed_at?: string | null;
+          cloud_synced_at?: string;
           company_id?: string;
           created_at?: string;
           customer_id?: string | null;
@@ -2918,12 +3100,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends (DefaultSchemaTableNameOrOptions extends {
+  TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals;
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never) = never
+    : never = never
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals;
 }
@@ -2943,12 +3125,13 @@ export type Tables<
 
 export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
-    keyof DefaultSchema["Tables"] | { schema: keyof DatabaseWithoutInternals },
-  TableName extends (DefaultSchemaTableNameOrOptions extends {
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never) = never
+    : never = never
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals;
 }
@@ -2967,12 +3150,13 @@ export type TablesInsert<
 
 export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
-    keyof DefaultSchema["Tables"] | { schema: keyof DatabaseWithoutInternals },
-  TableName extends (DefaultSchemaTableNameOrOptions extends {
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never) = never
+    : never = never
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals;
 }
@@ -2991,12 +3175,13 @@ export type TablesUpdate<
 
 export type Enums<
   DefaultSchemaEnumNameOrOptions extends
-    keyof DefaultSchema["Enums"] | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
+    | keyof DefaultSchema["Enums"]
+    | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never) = never
+    : never = never
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals;
 }
@@ -3007,12 +3192,13 @@ export type Enums<
 
 export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
-    keyof DefaultSchema["CompositeTypes"] | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
+    | keyof DefaultSchema["CompositeTypes"]
+    | { schema: keyof DatabaseWithoutInternals },
+  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never) = never
+    : never = never
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals;
 }

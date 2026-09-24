@@ -1,3 +1,5 @@
+import type { DesktopDatabase } from "../database/sqlite.js";
+
 import { parsePaymentCondition, PaymentConditionParseError } from "./payment-condition-parser.js";
 
 /**
@@ -68,4 +70,39 @@ export function validatePaymentMethodCondition(
     return { allowed: false, message: CASH_REQUIRES_A_VISTA_MESSAGE };
   }
   return { allowed: true };
+}
+
+/**
+ * A mesma trava, lida do SQLite: para quem nao passa pela tela de entrada do desktop (o pedido
+ * de pesagem do site, executado pela balanca). Sem isso a regra so existia no renderer e o
+ * site gravaria "dinheiro em 7/14/21", que o desktop recusa.
+ */
+export function assertPaymentMethodConditionAllowed(
+  database: DesktopDatabase,
+  paymentMethodId: string | null | undefined,
+  paymentTermId: string | null | undefined
+): void {
+  if (!paymentMethodId) return;
+  const method = database
+    .prepare("SELECT code, is_customer_credit FROM payment_methods WHERE id = ?")
+    .get(paymentMethodId) as { code: string | null; is_customer_credit: number } | undefined;
+  if (!method) return;
+  let raw = "";
+  if (paymentTermId) {
+    const term = database
+      .prepare("SELECT rules_json FROM payment_terms WHERE id = ?")
+      .get(paymentTermId) as { rules_json: string | null } | undefined;
+    try {
+      const rules = JSON.parse(term?.rules_json || "{}") as { raw?: unknown };
+      raw = typeof rules.raw === "string" ? rules.raw : "";
+    } catch {
+      raw = "";
+    }
+  }
+  const result = validatePaymentMethodCondition(
+    { code: method.code ?? "", isCustomerCredit: method.is_customer_credit === 1 },
+    { raw }
+  );
+  if (!result.allowed)
+    throw new Error(result.message ?? "Forma e condicao de pagamento incompativeis.");
 }

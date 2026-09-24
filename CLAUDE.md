@@ -103,6 +103,15 @@ These recur across the codebase and are easy to violate accidentally:
   enviada errada. O `COALESCE` com `created_at` fica: operacao antiga nao tem horario de
   saida gravado. O **patio** continua pela ENTRADA (`getTruckControlReport`,
   `getAverageQuarryMinutes`), que ali o assunto e o tempo do caminhao na pedreira.
+- **Pesagem pelo site e PEDIDO, nao pesagem** (`docs/web-api.md` 4.9, migracao `202609250001`):
+  o site (perfis `operacao` e `gestor`) grava em `operation_requests` pela `web-api`, e a balanca
+  marcada como executora da unidade (`device_registrations.executes_web_operations`, uma por
+  unidade) pega pelo `desktop-operation-requests` — aviso Realtime em `operation_request_pings`,
+  tique de 30 s de reserva — e executa pelas MESMAS funcoes dos botoes (`registerEntry` /
+  `registerExit` em `services/runtime.ts`), com o peso digitado marcado `WEB:<kg>` na auditoria.
+  A pesagem continua nascendo e fechando no SQLite. Nunca reescrever essa conta na nuvem: preco,
+  frete, credito e pedido do OMIE so existem inteiros no desktop. O id da pesagem de entrada nasce
+  no pedido para que reexecutar (pedido devolvido a fila) nao crie um segundo caminhao.
 - **Data ownership is split**: KyberRock owns operations, coupons, prices, vehicles/drivers and
   loading requests; OMIE owns customer/product/payment cadastros — OMIE-owned fields are locked
   locally. See the ownership table in `docs/ARCHITECTURE.md`.

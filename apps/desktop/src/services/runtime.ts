@@ -88,6 +88,25 @@ import {
 } from "./omie-queue-scheduler.js";
 import { enqueueBillingCloudPush, runBillingRequests } from "./billing-request-runner.js";
 import { claimCloudBillingRequests, reportCloudBillingRequests } from "./billing-requests-cloud.js";
+import {
+  printOutcome,
+  runWebOperationRequests,
+  type WebOperationClaim,
+  type WebOperationExecution
+} from "./web-operation-requests.js";
+import {
+  claimCloudWebOperationRequests,
+  reportCloudWebOperationRequests
+} from "./web-operation-requests-cloud.js";
+import { isClosedOperationStatus } from "./weighing-operation-status.js";
+import { assertPaymentMethodConditionAllowed } from "./payment-method-condition-guard.js";
+
+/** Tabela de aviso de pedido do site (migracao `202609250001_web_operation_requests`). */
+const WEB_OPERATION_PING_TABLE = "operation_request_pings";
+/** Rede de seguranca do aviso: a executora pergunta por pedidos pelo menos a cada 30 s. */
+const WEB_OPERATION_POLL_INTERVAL_MS = 30_000;
+/** Balanca que nao e a executora so volta a perguntar se virou executora a cada 5 min. */
+const WEB_OPERATION_NON_EXECUTOR_RECHECK_MS = 5 * 60_000;
 import { readUpdateChannel, type DesktopUpdateChannel } from "./update-channel.js";
 import {
   checkCustomerOmieReadiness,
@@ -102,6 +121,7 @@ import {
   createWeighingOperation,
   deleteClosedWeighingOperation,
   getCustomerLastEntryPreferences,
+  getWeighingOperation,
   getOperationOmieIssue,
   listCanceledWeighingOperations,
   countClosedWeighingOperations,
@@ -620,6 +640,27 @@ export interface CnpjBulkEnrichResult {
   failed: number;
 }
 
+/** O que a tela de entrada (e o pedido de entrada do site) informa para registrar a pesagem. */
+export interface StartWeighingInput {
+  operationType?: OperationType;
+  customerId: string;
+  vehicleId: string;
+  carrierId?: string;
+  driverId: string;
+  productId: string;
+  paymentTermId?: string;
+  paymentMethodId?: string;
+  manualInstallments?: number;
+  manualDownPaymentCents?: number;
+  freight?: OperationFreightInput | null;
+  freightModality?: FreightModality | null;
+  quotationId?: string;
+  deductFreightFromCredit?: boolean;
+  /** Venda em carteira que sai do adiantamento do cliente (ver createWeighingOperation). */
+  settleFromAdvance?: boolean;
+  scaleCaptureId?: string;
+}
+
 export class DesktopRuntime {
   private database: DesktopDatabase;
   private readonly paths: InitializedDesktopDatabase["paths"];
@@ -643,6 +684,18 @@ export class DesktopRuntime {
   private cadastroRealtime: CadastroRealtimeHandle | null = null;
   /** Junta a rajada de avisos em pulls espacados. */
   private cadastroPingScheduler: CadastroPingSchedulerHandle | null = null;
+  /** Inscricao no aviso de pedido de pesagem do site (`operation_request_pings`). */
+  private webOperationRealtime: CadastroRealtimeHandle | null = null;
+  /** Junta os avisos de pedido e garante uma passada por vez. */
+  private webOperationPingScheduler: CadastroPingSchedulerHandle | null = null;
+  private webOperationTimer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Esta balanca e a executora dos pedidos do site? `null` = ainda nao perguntou. As que nao
+   * sao so voltam a perguntar a cada `WEB_OPERATION_NON_EXECUTOR_RECHECK_MS`, para a frota
+   * inteira nao chamar a nuvem a cada pedido que nao e dela.
+   */
+  private webOperationExecutor: boolean | null = null;
+  private webOperationExecutorCheckedAt = 0;
   /**
    * Quem quer saber que o cadastro da nuvem mudou — na pratica, o encaminhador do main para o
    * renderer, para a tela se redesenhar sem esperar o tique dela.
@@ -1029,25 +1082,7 @@ export class DesktopRuntime {
     this.fiscalDocumentPrinter = fiscalDocumentPrinter;
   }
 
-  async startWeighing(input: {
-    operationType?: OperationType;
-    customerId: string;
-    vehicleId: string;
-    carrierId?: string;
-    driverId: string;
-    productId: string;
-    paymentTermId?: string;
-    paymentMethodId?: string;
-    manualInstallments?: number;
-    manualDownPaymentCents?: number;
-    freight?: OperationFreightInput | null;
-    freightModality?: FreightModality | null;
-    quotationId?: string;
-    deductFreightFromCredit?: boolean;
-    /** Venda em carteira que sai do adiantamento do cliente (ver createWeighingOperation). */
-    settleFromAdvance?: boolean;
-    scaleCaptureId?: string;
-  }): Promise<WeighingOperationSummary> {
+  async startWeighing(input: StartWeighingInput): Promise<WeighingOperationSummary> {
     this.assertDesktopAccess();
     // Trava de cadastro ANTES de tudo — antes de capturar peso e antes de conferir
     // adiantamento. O fechamento acontece com o caminhao carregado em cima da balanca e
@@ -1066,9 +1101,22 @@ export class DesktopRuntime {
       this.pendingScaleCaptures.consume(input.scaleCaptureId, { operationType: "entry" }) ??
       (await this.captureStableWeight({ operationType: "entry" }));
     await advanceSync;
+    return this.registerEntry(input, entryReading);
+  }
 
+  /**
+   * Grava a entrada com um peso ja lido (da balanca ou digitado no site). Separado da captura
+   * para o pedido do site passar pelo MESMO registro do botao — preco, credito, fila do
+   * carregador, numero da pesagem —, mudando so de onde veio o peso.
+   */
+  private registerEntry(
+    input: StartWeighingInput,
+    entryReading: ScaleReading,
+    operationId?: string
+  ): WeighingOperationSummary {
     const operation = createWeighingOperation(this.database, {
       identity: this.ensureIdentity(),
+      operationId,
       operationType: input.operationType,
       customerId: input.customerId,
       vehicleId: input.vehicleId,
@@ -1123,7 +1171,26 @@ export class DesktopRuntime {
     ) {
       throw new Error("Invalid operation type.");
     }
+    return this.registerExit(
+      operationId,
+      operationType,
+      async () =>
+        this.pendingScaleCaptures.consume(scaleCaptureId, {
+          operationType: "exit",
+          operationId
+        }) ?? (await this.captureStableWeight({ operationType: "exit" }))
+    );
+  }
 
+  /**
+   * Fecha a pesagem com o peso que `readWeight` trouxer (da balanca ou digitado no site). O
+   * resto — adiantamento, cadastro para NF-e, push, pedido do OMIE — e o mesmo do botao.
+   */
+  private async registerExit(
+    operationId: string,
+    operationType: OperationType | undefined,
+    readWeight: () => Promise<ScaleReading>
+  ): Promise<WeighingOperationSummary> {
     // O abatimento do adiantamento e calculado NO fechamento: e aqui que o saldo
     // precisa estar em dia com o OMIE. Dispara junto com a captura do peso para nao
     // somar espera, e e conferido antes de fechar.
@@ -1135,9 +1202,7 @@ export class DesktopRuntime {
       // offline-first, e a falha ja foi registrada nos logs tecnicos.
       .catch(() => undefined);
 
-    const exitReading =
-      this.pendingScaleCaptures.consume(scaleCaptureId, { operationType: "exit", operationId }) ??
-      (await this.captureStableWeight({ operationType: "exit" }));
+    const exitReading = await readWeight();
     await advanceSync;
 
     const operation = closeWeighingOperation(this.database, {
@@ -1293,6 +1358,404 @@ export class DesktopRuntime {
     if (result.claimed > 0) {
       this.triggerBackgroundCloudSync("billing_requests", { count: result.claimed });
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Pesagem pelo site: esta balanca executa o que o site pediu
+  // -------------------------------------------------------------------------
+
+  /**
+   * Liga o executor dos pedidos de pesagem do site: aviso pelo Realtime (a nuvem avisa que
+   * chegou pedido para a unidade e a balanca pega na hora) mais um tique de 30 s de rede de
+   * seguranca. Todas as balancas ligam; so a marcada como executora no painel recebe pedido —
+   * as outras ficam sabendo na primeira pergunta e passam a perguntar de 5 em 5 min.
+   */
+  startWebOperationLink(): void {
+    this.stopWebOperationLink();
+    this.webOperationPingScheduler = startCadastroPingScheduler({
+      pull: () => this.runWebOperationRequests(),
+      coalesceMs: 100,
+      minIntervalMs: 300,
+      onError: (error) => console.error("Pedidos de pesagem do site falharam", error)
+    });
+    this.webOperationRealtime = startCadastroRealtime({
+      getClient: () => {
+        initializeSupabaseFromSettings(this.database);
+        return ensureSupabaseInitialized() as unknown as RealtimeCapableClient | null;
+      },
+      getCompanyId: () => getLocalDesktopIdentity(this.database)?.unitId ?? null,
+      table: WEB_OPERATION_PING_TABLE,
+      filterColumn: "unit_id",
+      onPing: () => this.webOperationPingScheduler?.ping(),
+      onError: (error) => console.error("Aviso de pedido do site (Realtime) falhou", error)
+    });
+    this.webOperationTimer = setInterval(
+      () => this.webOperationPingScheduler?.ping(),
+      WEB_OPERATION_POLL_INTERVAL_MS
+    );
+  }
+
+  stopWebOperationLink(): void {
+    if (this.webOperationTimer) clearInterval(this.webOperationTimer);
+    this.webOperationTimer = null;
+    this.webOperationRealtime?.stop();
+    this.webOperationRealtime = null;
+    this.webOperationPingScheduler?.stop();
+    this.webOperationPingScheduler = null;
+  }
+
+  /**
+   * Pega os pedidos do site e executa um por vez. Quem chama e o agendador do aviso
+   * (`webOperationPingScheduler`): e ele que garante uma passada por vez e roda outra logo
+   * depois quando chega aviso no meio — e que o `stop()` do fechamento do programa cancela.
+   */
+  private async runWebOperationRequests(): Promise<void> {
+    if (!this.hasCloudCredentials()) return;
+    if (
+      this.webOperationExecutor === false &&
+      Date.now() - this.webOperationExecutorCheckedAt < WEB_OPERATION_NON_EXECUTOR_RECHECK_MS
+    ) {
+      return;
+    }
+    initializeSupabaseFromSettings(this.database);
+    if (!isSupabaseInitialized()) return;
+    {
+      const identity = this.ensureIdentity();
+      const result = await runWebOperationRequests({
+        claim: async () => {
+          const claimed = await claimCloudWebOperationRequests(this.database, identity);
+          this.webOperationExecutor = claimed.executor;
+          this.webOperationExecutorCheckedAt = Date.now();
+          return claimed;
+        },
+        execute: (claim) => this.executeWebOperation(claim),
+        report: (outcomes) => reportCloudWebOperationRequests(this.database, identity, outcomes)
+      });
+      if (result.claimed > 0) {
+        // A tela deste PC tambem precisa ver a pesagem que o site fez (patio, concluidas).
+        this.notifyCadastroChanged();
+        this.recordTechnicalLog(
+          "info",
+          "web-operations",
+          "Pedidos de pesagem do site executados.",
+          {
+            claimed: result.claimed,
+            done: result.done,
+            failed: result.failed
+          }
+        );
+      }
+    }
+  }
+
+  /** Executa um pedido do site pelas mesmas funcoes dos botoes do desktop. */
+  private async executeWebOperation(claim: WebOperationClaim): Promise<WebOperationExecution> {
+    this.assertDesktopAccess();
+    switch (claim.kind) {
+      case "entry":
+        return this.executeWebEntry(claim);
+      case "exit":
+        return this.executeWebExit(claim);
+      case "update":
+        return this.executeWebUpdate(claim);
+      case "cancel":
+        return this.executeWebCancel(claim);
+      case "reprint":
+        return this.executeWebReprint(claim);
+    }
+  }
+
+  private async executeWebEntry(claim: WebOperationClaim): Promise<WebOperationExecution> {
+    // Executar o mesmo pedido de novo (a resposta anterior se perdeu) encontra a pesagem pelo
+    // id que nasceu no pedido — e nao cria um segundo caminhao no patio.
+    if (this.localOperationStatus(claim.operationId) !== null) {
+      const existing = getWeighingOperation(this.database, claim.operationId);
+      return {
+        message: `Entrada ja registrada: ${describeOperation(existing)}.`,
+        operation: existing
+      };
+    }
+    const payload = claim.payload;
+    const input: StartWeighingInput = {
+      operationType: payload.operationType === "internal" ? "internal" : "invoice",
+      customerId: requiredText(payload.customerId, "Cliente"),
+      vehicleId: requiredText(payload.vehicleId, "Veiculo"),
+      driverId: requiredText(payload.driverId, "Motorista"),
+      productId: requiredText(payload.productId, "Produto"),
+      carrierId: optionalText(payload.carrierId),
+      paymentTermId: optionalText(payload.paymentTermId),
+      paymentMethodId: optionalText(payload.paymentMethodId)
+    };
+    await this.ensureLocalRows([
+      ["customers", input.customerId, "O cliente"],
+      ["vehicles", input.vehicleId, "O veiculo"],
+      ["drivers", input.driverId, "O motorista"],
+      ["products", input.productId, "O produto"],
+      ["carriers", input.carrierId, "A transportadora"],
+      ["payment_terms", input.paymentTermId, "A condicao de pagamento"],
+      ["payment_methods", input.paymentMethodId, "A forma de pagamento"]
+    ]);
+    this.assertCustomerReadyForOmie(input.customerId, input.operationType);
+    // A trava "dinheiro so a vista" morava so na tela do desktop; o pedido do site passa por ela
+    // aqui, com a mesma mensagem.
+    assertPaymentMethodConditionAllowed(this.database, input.paymentMethodId, input.paymentTermId);
+    const operation = this.registerEntry(
+      input,
+      this.webScaleReading(Number(payload.entryWeightKg)),
+      claim.operationId
+    );
+    return { message: `Entrada registrada: ${describeOperation(operation)}.`, operation };
+  }
+
+  private async executeWebExit(claim: WebOperationClaim): Promise<WebOperationExecution> {
+    await this.ensureLocalOperation(claim.operationId);
+    const current = getWeighingOperation(this.database, claim.operationId);
+    if (current.status === "cancelled") throw new Error("Esta pesagem foi cancelada.");
+    if (isClosedOperationStatus(current.status)) {
+      // Ja fechada (a resposta anterior se perdeu, ou fecharam no proprio PC): nao fecha de
+      // novo, e so imprime se o cupom ainda nao saiu.
+      const print = this.hasReceipt(claim.operationId)
+        ? { status: "skipped" as const, message: "O cupom desta pesagem ja tinha sido impresso." }
+        : await this.printForWeb(claim.operationId);
+      return {
+        message: `Pesagem ja estava fechada: ${describeOperation(current)}.`,
+        operation: current,
+        print
+      };
+    }
+    const payload = claim.payload;
+    const operationType =
+      payload.operationType === "internal" || payload.operationType === "invoice"
+        ? payload.operationType
+        : undefined;
+    const weightKg = Number(payload.exitWeightKg);
+    const operation = await this.registerExit(claim.operationId, operationType, async () =>
+      this.webScaleReading(weightKg)
+    );
+    // O cupom sai no fechamento, como no botao do desktop: aqui, na impressora deste PC.
+    const print = await this.printForWeb(claim.operationId);
+    return { message: `Pesagem fechada: ${describeOperation(operation)}.`, operation, print };
+  }
+
+  private async executeWebUpdate(claim: WebOperationClaim): Promise<WebOperationExecution> {
+    await this.ensureLocalOperation(claim.operationId);
+    const payload = claim.payload;
+    await this.ensureLocalRows([
+      ["customers", optionalText(payload.customerId), "O cliente"],
+      ["vehicles", optionalText(payload.vehicleId), "O veiculo"],
+      ["drivers", optionalText(payload.driverId), "O motorista"],
+      ["products", optionalText(payload.productId), "O produto"],
+      ["carriers", optionalText(payload.carrierId), "A transportadora"],
+      ["payment_terms", optionalText(payload.paymentTermId), "A condicao de pagamento"],
+      ["payment_methods", optionalText(payload.paymentMethodId), "A forma de pagamento"]
+    ]);
+    const current = getWeighingOperation(this.database, claim.operationId);
+    if (current.status === "cancelled") throw new Error("Esta pesagem foi cancelada.");
+
+    if (!isClosedOperationStatus(current.status)) {
+      const input: UpdateWeighingOperationDetailsInput = { operationId: claim.operationId };
+      if (typeof payload.customerId === "string") input.customerId = payload.customerId;
+      if (typeof payload.productId === "string") input.productId = payload.productId;
+      if (typeof payload.vehicleId === "string") input.vehicleId = payload.vehicleId;
+      if (typeof payload.driverId === "string") input.driverId = payload.driverId;
+      if ("carrierId" in payload) input.carrierId = optionalText(payload.carrierId) ?? null;
+      if ("paymentMethodId" in payload) {
+        input.paymentMethodId = optionalText(payload.paymentMethodId) ?? null;
+      }
+      if ("paymentTermId" in payload) {
+        input.paymentTermId = optionalText(payload.paymentTermId) ?? null;
+      }
+      if (payload.operationType === "invoice" || payload.operationType === "internal") {
+        input.operationType = payload.operationType;
+      }
+      if (typeof payload.unitPriceCents === "number") input.unitPriceCents = payload.unitPriceCents;
+      assertPaymentMethodConditionAllowed(
+        this.database,
+        input.paymentMethodId !== undefined ? input.paymentMethodId : current.paymentMethodId,
+        input.paymentTermId !== undefined ? input.paymentTermId : current.paymentTermId
+      );
+      const operation = this.updateWeighingOperation(input);
+      return { message: `Pesagem alterada: ${describeOperation(operation)}.`, operation };
+    }
+
+    // Concluida: os mesmos tres "Alterar" da lista de concluidas do desktop. O site pode ter
+    // pedido mais (a pesagem fechou entre o pedido e a execucao): aplicar so uma parte e dizer
+    // "alterada" esconderia que o preco, por exemplo, nao mudou — entao recusa inteiro.
+    const notApplicable = Object.keys(payload).filter(
+      (key) => !["customerId", "productId", "carrierId"].includes(key)
+    );
+    if (notApplicable.length > 0) {
+      throw new Error(
+        "A pesagem foi fechada antes desta alteracao chegar. Pesagem concluida so muda cliente, produto ou transportadora — confira e peca de novo."
+      );
+    }
+    if (typeof payload.productId === "string") {
+      this.updateWeighingProduct({
+        operationId: claim.operationId,
+        newProductId: payload.productId
+      });
+    }
+    if (typeof payload.customerId === "string") {
+      this.updateWeighingCustomer({
+        operationId: claim.operationId,
+        newCustomerId: payload.customerId
+      });
+    }
+    if ("carrierId" in payload) {
+      this.updateWeighingCarrier({
+        operationId: claim.operationId,
+        newCarrierId: optionalText(payload.carrierId) ?? null
+      });
+    }
+    const operation = getWeighingOperation(this.database, claim.operationId);
+    return { message: `Pesagem alterada: ${describeOperation(operation)}.`, operation };
+  }
+
+  private async executeWebCancel(claim: WebOperationClaim): Promise<WebOperationExecution> {
+    await this.ensureLocalOperation(claim.operationId);
+    const current = getWeighingOperation(this.database, claim.operationId);
+    if (current.status === "cancelled") {
+      return { message: "Pesagem ja estava cancelada.", operation: current };
+    }
+    const reason = optionalText(claim.payload.reason) ?? "Cancelada pelo site";
+    const who = claim.requestedByName ? ` — pelo site, ${claim.requestedByName}` : " — pelo site";
+    const operation = this.cancelWeighing(claim.operationId, `${reason}${who}`);
+    return { message: `Pesagem cancelada: ${describeOperation(operation)}.`, operation };
+  }
+
+  private async executeWebReprint(claim: WebOperationClaim): Promise<WebOperationExecution> {
+    await this.ensureLocalOperation(claim.operationId);
+    const operation = getWeighingOperation(this.database, claim.operationId);
+    const latest = this.database
+      .prepare(
+        "SELECT id FROM print_receipts WHERE operation_id = ? ORDER BY created_at DESC LIMIT 1"
+      )
+      .pluck()
+      .get(claim.operationId) as string | undefined;
+    let print: WebOperationExecution["print"];
+    try {
+      print = printOutcome(
+        latest ? await this.reprintReceipt(latest) : await this.printReceipt(claim.operationId)
+      );
+    } catch (error) {
+      print = { status: "failed", message: error instanceof Error ? error.message : String(error) };
+    }
+    return { message: `Reimpressao: ${describeOperation(operation)}.`, operation, print };
+  }
+
+  /** Imprime o cupom do fechamento. Falha de impressora nao desfaz a pesagem: vira aviso. */
+  private async printForWeb(operationId: string): Promise<WebOperationExecution["print"]> {
+    try {
+      return printOutcome(await this.printReceipt(operationId));
+    } catch (error) {
+      return { status: "failed", message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  private hasReceipt(operationId: string): boolean {
+    return (
+      this.database
+        .prepare(
+          "SELECT 1 FROM print_receipts WHERE operation_id = ? AND status = 'printed' LIMIT 1"
+        )
+        .get(operationId) !== undefined
+    );
+  }
+
+  /** Status local da pesagem, ou `null` quando ela nao existe (ou foi excluida) aqui. */
+  private localOperationStatus(operationId: string): string | null {
+    const row = this.database
+      .prepare("SELECT status FROM weighing_operations WHERE id = ? AND deleted_at IS NULL")
+      .get(operationId) as { status: string } | undefined;
+    return row?.status ?? null;
+  }
+
+  /**
+   * A pesagem feita em outra balanca (ou recem-criada) pode ainda nao ter chegado aqui: puxa
+   * da nuvem uma vez antes de desistir.
+   */
+  private async ensureLocalOperation(operationId: string): Promise<void> {
+    if (this.localOperationStatus(operationId) !== null) return;
+    await this.pullForWebOperation();
+    if (this.localOperationStatus(operationId) === null) {
+      throw new Error(
+        "Esta pesagem ainda nao chegou na balanca executora. Tente de novo em alguns segundos."
+      );
+    }
+  }
+
+  /**
+   * O cadastro que o site acabou de criar (placa nova, motorista) pode ainda nao ter chegado
+   * aqui: puxa uma vez e so entao recusa, dizendo o que faltou.
+   */
+  private async ensureLocalRows(
+    refs: Array<[table: string, id: string | undefined, label: string]>
+  ): Promise<void> {
+    // Tombstone nao vale: cliente unificado (ou transportadora excluida) continua na tabela com
+    // `deleted_at`, e a unificacao existe justamente para nada novo nascer nele.
+    const missing = () =>
+      refs.filter(
+        ([table, id]) =>
+          id !== undefined &&
+          this.database
+            .prepare(
+              `SELECT 1 FROM ${table} WHERE id = ?${this.tableHasDeletedAt(table) ? " AND deleted_at IS NULL" : ""}`
+            )
+            .get(id) === undefined
+      );
+    if (missing().length === 0) return;
+    await this.pullForWebOperation();
+    const still = missing();
+    if (still.length > 0) {
+      throw new Error(
+        `${still[0][2]} ainda nao chegou na balanca executora. Tente de novo em alguns segundos.`
+      );
+    }
+  }
+
+  private readonly deletedAtColumnCache = new Map<string, boolean>();
+
+  private tableHasDeletedAt(table: string): boolean {
+    const cached = this.deletedAtColumnCache.get(table);
+    if (cached !== undefined) return cached;
+    const columns = this.database.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>;
+    const has = columns.some((column) => column.name === "deleted_at");
+    this.deletedAtColumnCache.set(table, has);
+    return has;
+  }
+
+  /**
+   * Puxa da nuvem para achar o que o pedido cita. O `pullCloudNow` nao faz nada enquanto a
+   * sincronizacao completa roda — e ai o pedido falharia a toa. Espera ela terminar (ate 90 s)
+   * e so entao puxa.
+   */
+  private async pullForWebOperation(): Promise<void> {
+    const deadline = Date.now() + 90_000;
+    while (this.cloudSyncInProgress && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    await this.pullCloudNow().catch(() => undefined);
+  }
+
+  /** Leitura "de balanca" para o peso digitado no site — marcada como tal na auditoria. */
+  private webScaleReading(weightKg: number): ScaleReading {
+    if (!Number.isFinite(weightKg) || weightKg <= 0) {
+      throw new Error("Peso invalido no pedido do site.");
+    }
+    const now = new Date().toISOString();
+    return {
+      weightKg: Math.round(weightKg),
+      unit: "kg",
+      status: "stable",
+      stable: true,
+      capturedAt: now,
+      receivedAt: now,
+      rawFrame: `WEB:${Math.round(weightKg)}`,
+      deviceId: this.ensureIdentity().deviceId,
+      adapterName: "web"
+    };
   }
 
   /**
@@ -2406,6 +2869,7 @@ export class DesktopRuntime {
     // Idem para a inscricao do aviso: o supervisor dela tem timer proprio e o pull que ela
     // dispara consulta o SQLite.
     this.stopCadastroRealtimeLink();
+    this.stopWebOperationLink();
     this.cadastroChangeListeners.clear();
     // A reconexao da balanca nao desiste mais sozinha: sem encerrar o adaptador no
     // fechamento, o timer da proxima tentativa sobrevive ao pedido de saida.
@@ -5267,4 +5731,25 @@ function redactScaleConnection(connection: ScaleConnectionConfig): Record<string
     serialTransport: connection.serialTransport,
     autoConnect: connection.autoConnect
   };
+}
+
+/** "pesagem 12.345, placa ABC-1D23" — o que a mensagem do site mostra de cada pesagem. */
+function describeOperation(operation: WeighingOperationSummary): string {
+  const code =
+    operation.operationCode !== null
+      ? `pesagem ${operation.operationCode.toLocaleString("pt-BR")}`
+      : "pesagem";
+  return operation.plate ? `${code}, placa ${operation.plate}` : code;
+}
+
+function requiredText(value: unknown, label: string): string {
+  const text = optionalText(value);
+  if (!text) throw new Error(`${label} nao informado no pedido do site.`);
+  return text;
+}
+
+function optionalText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }

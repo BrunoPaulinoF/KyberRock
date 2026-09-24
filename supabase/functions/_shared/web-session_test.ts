@@ -74,7 +74,8 @@ describe("resolveWebSession", () => {
         name: "Rafaela",
         role: "comercial",
         companyId: "company-1",
-        unitId: "unit-1"
+        unitId: "unit-1",
+        requiresPricePassword: false
       }
     });
   });

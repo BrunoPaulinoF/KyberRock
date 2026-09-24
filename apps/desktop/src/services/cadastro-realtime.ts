@@ -166,8 +166,18 @@ export interface RealtimeCapableClient {
 export interface StartCadastroRealtimeOptions {
   /** Cliente da nuvem, ou `null` enquanto a balanca nao tem configuracao. */
   getClient: () => RealtimeCapableClient | null;
-  /** Empresa desta balanca, ou `null` enquanto ela nao foi ativada. */
+  /**
+   * Escopo do aviso: a empresa desta balanca (aviso de cadastro) ou a unidade (aviso de pedido
+   * do site), ou `null` enquanto ela nao foi ativada.
+   */
   getCompanyId: () => string | null;
+  /**
+   * Tabela de aviso e coluna do filtro. Padrao: o aviso de cadastro por empresa. O aviso de
+   * pedido de pesagem do site usa `operation_request_pings` por `unit_id` (migracao
+   * `202609250001`) — mesmo encanamento, outro sinal.
+   */
+  table?: string;
+  filterColumn?: string;
   /** Chegou aviso (ou a inscricao acabou de subir — ver `onStateChange`). */
   onPing: () => void;
   onStateChange?: (state: CadastroRealtimeState) => void;
@@ -197,6 +207,8 @@ export function startCadastroRealtime(
   const clearIntervalFn = options.clearIntervalFn ?? clearInterval;
   const supervisorIntervalMs =
     options.supervisorIntervalMs ?? CADASTRO_REALTIME_SUPERVISOR_INTERVAL_MS;
+  const pingTable = options.table ?? CADASTRO_PING_TABLE;
+  const filterColumn = options.filterColumn ?? "company_id";
 
   let channel: RealtimeChannelLike | null = null;
   let client: RealtimeCapableClient | null = null;
@@ -247,18 +259,18 @@ export function startCadastroRealtime(
     setState("connecting");
 
     try {
-      const created = nextClient.channel(`${CADASTRO_PING_TABLE}:${companyId}`);
+      const created = nextClient.channel(`${pingTable}:${companyId}`);
       created
         .on(
           "postgres_changes",
           {
             event: "*",
             schema: "public",
-            table: CADASTRO_PING_TABLE,
+            table: pingTable,
             // O filtro e do servidor: esta balanca nao recebe (nem ve) o aviso de outra
             // pedreira. `company_id` e a chave primaria da tabela de aviso, entao ele vale
             // para INSERT e UPDATE sem precisar de replica identity cheia.
-            filter: `company_id=eq.${companyId}`
+            filter: `${filterColumn}=eq.${companyId}`
           },
           () => {
             if (stopped) return;

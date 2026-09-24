@@ -91,6 +91,10 @@ verify_jwt = false
 [functions.desktop-billing-requests]
 verify_jwt = false
 
+# A balanca executora pega/devolve os pedidos de pesagem do site (autentica por dispositivo).
+[functions.desktop-operation-requests]
+verify_jwt = false
+
 # --- Protegidas pelo JWT do Supabase -----------------------------------------
 
 [functions.cnpj-lookup]

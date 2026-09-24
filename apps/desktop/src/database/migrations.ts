@@ -2110,5 +2110,16 @@ ON CONFLICT(key) DO UPDATE SET
   value_json = excluded.value_json,
   updated_at = excluded.updated_at;
 `
+  },
+  {
+    version: 58,
+    name: "receipt_copies_choice",
+    sql: `
+-- O cupom passou a aceitar 1 via (Configuracoes > Impressao). Ate aqui o piso era 2 em
+-- \`printWeighingReceipt\` e o valor gravado nao importava: a coluna nasce com DEFAULT 1 e ha
+-- perfis antigos com 1 que sempre imprimiram 2. Sem isto, eles passariam a imprimir 1 via sem
+-- ninguem ter escolhido. Daqui em diante, 1 so existe se o operador escolher.
+UPDATE print_profiles SET copies = 2 WHERE copies < 2;
+`
   }
 ];

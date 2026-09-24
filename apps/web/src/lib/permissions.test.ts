@@ -8,27 +8,32 @@ describe("perfis de acesso", () => {
       isLoader: true,
       canEditCustomers: false,
       canEditFleet: false,
-      canManagePrices: false
+      canManagePrices: false,
+      canOperate: false
     });
     expect(capabilitiesFor("monitoramento")).toEqual({
       isLoader: false,
       canEditCustomers: false,
       canEditFleet: false,
-      canManagePrices: false
+      canManagePrices: false,
+      canOperate: false
     });
     expect(capabilitiesFor("operacao")).toMatchObject({
       canEditCustomers: false,
-      canEditFleet: true
+      canEditFleet: true,
+      canOperate: true
     });
     expect(capabilitiesFor("comercial")).toMatchObject({
       canEditCustomers: true,
       canEditFleet: true,
-      canManagePrices: false
+      canManagePrices: false,
+      canOperate: false
     });
     expect(capabilitiesFor("gestor")).toMatchObject({
       canEditCustomers: true,
       canEditFleet: true,
-      canManagePrices: true
+      canManagePrices: true,
+      canOperate: true
     });
   });
 

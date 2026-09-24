@@ -21,6 +21,7 @@
  */
 
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { safeEqual } from "../_shared/crypto.ts";
 import { normalizeDocument } from "../_shared/document.ts";
 import {
   buildOmieCarrierPayload,
@@ -38,12 +39,23 @@ import {
   canEditCustomers,
   canEditFleet,
   canManagePrices,
+  canOperate,
   WEB_ROLE_LABELS,
   type WebRole,
   type WebSession,
   type WebSessionResult
 } from "../_shared/web-session.ts";
 import { selectOperationsForBillingRequest } from "../_shared/billing-requests.ts";
+import {
+  changesPrice,
+  isExecutorOnline,
+  isOperationRequestKind,
+  validateOperationRequest,
+  type EntryRequestPayload,
+  type OperationRequestKind,
+  type OperationRequestPayload,
+  type UpdateRequestPayload
+} from "../_shared/operation-requests.ts";
 
 export type Row = Record<string, unknown>;
 
@@ -122,7 +134,9 @@ export const WEB_API_ACTIONS = [
   "set_customer_price_table",
   "settle_wallet",
   "reopen_wallet",
-  "request_invoice_closing"
+  "request_invoice_closing",
+  "operation_status",
+  "request_operation"
 ] as const;
 
 export type WebApiAction = (typeof WEB_API_ACTIONS)[number];
@@ -141,6 +155,17 @@ export const GESTOR_ONLY_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiActi
   "settle_wallet",
   "reopen_wallet",
   "request_invoice_closing"
+]);
+
+/** So leitura, para todo perfil do site. */
+export const READ_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
+  "me",
+  "operation_status"
+]);
+
+/** Pesagem pelo site: operacao e gestor (quem executa e a balanca da unidade). */
+export const OPERATION_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
+  "request_operation"
 ]);
 
 /** Cadastro de cliente e os vinculos que partem dele: comercial e gestor. */
@@ -169,8 +194,13 @@ export const FLEET_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
  * acao nova nao nascer liberada para o monitoramento por esquecimento.
  */
 export function actionDenial(role: WebRole, action: WebApiAction): string | null {
-  if (action === "me") return null;
+  if (READ_ACTIONS.has(action)) return null;
   const profile = WEB_ROLE_LABELS[role];
+  if (OPERATION_ACTIONS.has(action)) {
+    return canOperate(role)
+      ? null
+      : `O perfil ${profile} nao faz pesagem pelo site. Pesagem e da operacao e do gestor.`;
+  }
   if (GESTOR_ONLY_ACTIONS.has(action)) {
     return canManagePrices(role)
       ? null
@@ -975,6 +1005,253 @@ async function requestInvoiceClosing(ctx: ActionContext): Promise<Row> {
 }
 
 // ---------------------------------------------------------------------------
+// Pesagem pelo site (operation_requests)
+// ---------------------------------------------------------------------------
+
+/** Status da pesagem aberta na nuvem: o desktop projeta todas as fases em andamento como `open`. */
+const OPEN_OPERATION_STATUS = "open";
+
+/** Campos que ainda podem mudar depois que a pesagem fechou (os "Alterar" da lista de concluidas). */
+const CLOSED_EDITABLE_FIELDS: ReadonlySet<string> = new Set([
+  "customerId",
+  "productId",
+  "carrierId"
+]);
+
+/**
+ * A balanca que executa os pedidos do site nesta unidade, e se ela esta perguntando por
+ * pedidos agora. Sem executora marcada no painel o site nem deixa pedir: o pedido ficaria
+ * parado para sempre.
+ */
+async function executorOf(ctx: ActionContext, unitId: string): Promise<Row | null> {
+  const rows = await ctx.store.listRows(
+    "device_registrations",
+    ctx.session.companyId,
+    "id, name, unit_id, is_active, executes_web_operations, web_executor_seen_at",
+    [
+      { column: "unit_id", value: unitId },
+      { column: "executes_web_operations", value: true }
+    ]
+  );
+  return rows.find((row) => row.is_active === true) ?? null;
+}
+
+async function operationStatus(ctx: ActionContext): Promise<Row> {
+  const executor = await executorOf(ctx, ctx.session.unitId);
+  return {
+    executor: executor
+      ? {
+          deviceId: executor.id,
+          name: executor.name,
+          seenAt: executor.web_executor_seen_at ?? null,
+          online: isExecutorOnline(
+            typeof executor.web_executor_seen_at === "string"
+              ? executor.web_executor_seen_at
+              : null,
+            new Date(ctx.nowIso)
+          )
+        }
+      : null,
+    requiresPricePassword: ctx.session.requiresPricePassword
+  };
+}
+
+async function requireLive(ctx: ActionContext, table: string, id: string, label: string) {
+  const row = await requireRow(ctx, table, id, label);
+  if (row.is_active === false) throw new WebApiError(400, `${label} esta inativo.`);
+  return row;
+}
+
+/** Cadastro citado no pedido existe na empresa (e esta ativo): o erro volta na hora, no site. */
+async function checkReferences(ctx: ActionContext, payload: Row): Promise<void> {
+  const checks: Array<[string, string, string]> = [
+    ["customerId", "customers", "Cliente"],
+    ["productId", "products", "Produto"],
+    ["vehicleId", "vehicles", "Veiculo"],
+    ["driverId", "drivers", "Motorista"],
+    ["carrierId", "carriers", "Transportadora"],
+    ["paymentMethodId", "payment_methods", "Forma de pagamento"],
+    ["paymentTermId", "payment_terms", "Condicao de pagamento"]
+  ];
+  for (const [key, table, label] of checks) {
+    const id = payload[key];
+    if (typeof id === "string" && id.length > 0) await requireLive(ctx, table, id, label);
+  }
+}
+
+/** Tentativas erradas da senha de preco antes de travar o login por um tempo. */
+const PRICE_PASSWORD_MAX_FAILURES = 5;
+const PRICE_PASSWORD_WINDOW_MS = 15 * 60 * 1000;
+
+async function checkPricePassword(ctx: ActionContext): Promise<void> {
+  if (!ctx.session.requiresPricePassword) return;
+  const typed = optionalText(ctx.payload, "pricePassword");
+  if (!typed) throw new WebApiError(403, "Digite a senha de alteracao de preco.");
+  // A senha tem 4 digitos e e a mesma da balanca: sem limite, bastaria tentar todas.
+  const since = Date.parse(ctx.nowIso) - PRICE_PASSWORD_WINDOW_MS;
+  const failures = (
+    await ctx.store.listRows("price_password_failures", ctx.session.companyId, "attempted_at", [
+      { column: "user_id", value: ctx.session.userId }
+    ])
+  ).filter((row) => Date.parse(String(row.attempted_at ?? "")) >= since);
+  if (failures.length >= PRICE_PASSWORD_MAX_FAILURES) {
+    throw new WebApiError(
+      429,
+      "Muitas tentativas erradas da senha de preco. Espere 15 minutos e tente de novo."
+    );
+  }
+  const [company] = await ctx.store.listRows(
+    "companies",
+    ctx.session.companyId,
+    "id, price_change_password",
+    [{ column: "id", value: ctx.session.companyId }],
+    { anyCompany: true }
+  );
+  const expected = String(company?.price_change_password ?? "");
+  if (!expected || !safeEqual(typed, expected)) {
+    await ctx.store.insertRow("price_password_failures", {
+      id: ctx.newId(),
+      company_id: ctx.session.companyId,
+      user_id: ctx.session.userId,
+      attempted_at: ctx.nowIso
+    });
+    throw new WebApiError(403, "Senha de alteracao de preco incorreta.");
+  }
+}
+
+async function requestOperation(ctx: ActionContext): Promise<Row> {
+  const kind = ctx.payload.kind;
+  if (!isOperationRequestKind(kind)) {
+    throw new WebApiError(400, "Tipo de pedido invalido (entry, exit, update, cancel, reprint).");
+  }
+  const raw =
+    ctx.payload.data && typeof ctx.payload.data === "object" ? (ctx.payload.data as Row) : {};
+  const validation = validateOperationRequest(kind, raw);
+  if (!validation.ok) throw new WebApiError(400, validation.error);
+  const data: OperationRequestPayload = validation.value;
+
+  // Entrada: o id da pesagem nasce aqui (ver migracao `202609250001`: e o que torna a repeticao
+  // do pedido segura). Os outros tipos apontam para uma pesagem que ja existe na nuvem.
+  let operationId: string;
+  let unitId = ctx.session.unitId;
+  if (kind === "entry") {
+    operationId = ctx.newId();
+    await checkReferences(ctx, data as EntryRequestPayload as unknown as Row);
+  } else {
+    operationId = optionalText(ctx.payload, "operationId") ?? "";
+    if (!operationId) throw new WebApiError(400, "Informe a pesagem.");
+    const operation = await requireRow(ctx, "weighing_operations", operationId, "Pesagem");
+    unitId = typeof operation.unit_id === "string" ? operation.unit_id : unitId;
+    await checkOperationState(ctx, kind, operation, data);
+    if (kind === "update") await checkReferences(ctx, data as UpdateRequestPayload as Row);
+  }
+  if (changesPrice(kind, data)) await checkPricePassword(ctx);
+
+  const executor = await executorOf(ctx, unitId);
+  if (!executor) {
+    throw new WebApiError(
+      409,
+      "Nenhuma balanca desta unidade esta marcada para executar os pedidos do site. Marque uma no painel (Acessos do sistema)."
+    );
+  }
+
+  const id = ctx.newId();
+  await insertOperationRequest(ctx, {
+    id,
+    company_id: ctx.session.companyId,
+    unit_id: unitId,
+    kind,
+    operation_id: operationId,
+    payload: data,
+    requested_by: ctx.session.userId,
+    requested_by_name: ctx.session.name || ctx.session.email,
+    requested_at: ctx.nowIso,
+    status: "pending",
+    created_at: ctx.nowIso,
+    updated_at: ctx.nowIso
+  });
+  if (
+    !isExecutorOnline(
+      typeof executor.web_executor_seen_at === "string" ? executor.web_executor_seen_at : null,
+      new Date(ctx.nowIso)
+    )
+  ) {
+    ctx.warnings.push(
+      `A balanca ${String(executor.name ?? "executora")} esta fora do ar agora. O pedido fica na fila e e executado quando ela voltar.`
+    );
+  }
+  return { requestId: id, operationId };
+}
+
+/**
+ * Grava o pedido. O indice `operation_requests_one_close_or_cancel` e a garantia contra dois
+ * fechamentos/cancelamentos simultaneos que passaram juntos pela checagem de leitura: vira o
+ * mesmo 409 dela.
+ */
+async function insertOperationRequest(ctx: ActionContext, row: Row): Promise<void> {
+  try {
+    await ctx.store.insertRow("operation_requests", row);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("23505")) {
+      throw new WebApiError(
+        409,
+        "Ja existe um fechamento ou cancelamento desta pesagem esperando a balanca."
+      );
+    }
+    throw error;
+  }
+}
+
+async function checkOperationState(
+  ctx: ActionContext,
+  kind: Exclude<OperationRequestKind, "entry">,
+  operation: Row,
+  data: OperationRequestPayload
+): Promise<void> {
+  const status = String(operation.status ?? "");
+  if (status === "cancelled") {
+    throw new WebApiError(409, "Esta pesagem esta cancelada.");
+  }
+  const open = status === OPEN_OPERATION_STATUS;
+  if (kind === "exit" && !open) {
+    throw new WebApiError(409, "Esta pesagem ja foi fechada.");
+  }
+  if (kind === "reprint" && open) {
+    throw new WebApiError(409, "O cupom sai no fechamento: esta pesagem ainda esta no patio.");
+  }
+  if (kind === "update" && !open) {
+    const blocked = Object.keys(data).filter((key) => !CLOSED_EDITABLE_FIELDS.has(key));
+    if (blocked.length > 0) {
+      throw new WebApiError(
+        409,
+        "Pesagem concluida: pelo site so da para alterar cliente, produto ou transportadora."
+      );
+    }
+  }
+  // Dois fechamentos (ou fechamento e cancelamento) da mesma pesagem na fila: a balanca
+  // executaria o segundo em cima do resultado do primeiro.
+  if (kind === "exit" || kind === "cancel") {
+    const queued = await ctx.store.listRows(
+      "operation_requests",
+      ctx.session.companyId,
+      "id, kind, status",
+      [{ column: "operation_id", value: String(operation.id) }]
+    );
+    const busy = queued.some(
+      (row) =>
+        (row.status === "pending" || row.status === "processing") &&
+        (row.kind === "exit" || row.kind === "cancel")
+    );
+    if (busy) {
+      throw new WebApiError(
+        409,
+        "Ja existe um fechamento ou cancelamento desta pesagem esperando a balanca."
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Roteamento
 // ---------------------------------------------------------------------------
 
@@ -994,7 +1271,9 @@ async function me(ctx: ActionContext): Promise<Row> {
       unitId: ctx.session.unitId,
       canManagePrices: canManagePrices(ctx.session.role),
       canEditCustomers: canEditCustomers(ctx.session.role),
-      canEditFleet: canEditFleet(ctx.session.role)
+      canEditFleet: canEditFleet(ctx.session.role),
+      canOperate: canOperate(ctx.session.role),
+      requiresPricePassword: ctx.session.requiresPricePassword
     },
     companyId: ctx.session.companyId,
     units
@@ -1050,6 +1329,10 @@ async function runAction(action: WebApiAction, ctx: ActionContext): Promise<Row>
       return reopenWallet(ctx);
     case "request_invoice_closing":
       return requestInvoiceClosing(ctx);
+    case "operation_status":
+      return operationStatus(ctx);
+    case "request_operation":
+      return requestOperation(ctx);
   }
 }
 

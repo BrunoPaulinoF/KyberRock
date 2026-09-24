@@ -253,6 +253,27 @@ describe("printing", () => {
     }
   });
 
+  it("imprime so 1 via quando o perfil pede 1 via", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        copies: 1
+      });
+      const operation = createClosedOperation(database, identity);
+      await printWeighingReceipt(database, { operationId: operation.id, identity }, printer);
+
+      expect(printer.calls).toHaveLength(1);
+      expect(database.prepare("SELECT COUNT(*) FROM print_receipts").pluck().get()).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
   it("imprime o numero do computador como sufixo e mantem o mesmo numero na reimpressao", async () => {
     const database = createDatabase();
     const printer = createFakePrinter();
