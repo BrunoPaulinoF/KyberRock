@@ -1,0 +1,20 @@
+{
+  "name": "KyberRock Web",
+  "short_name": "KyberRock",
+  "description": "KyberRock no navegador: fila do carregador, cadastros, precos e relatorios da pedreira.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1c1917",
+  "theme_color": "#1c1917",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
