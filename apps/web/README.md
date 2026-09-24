@@ -1,7 +1,8 @@
 # KyberRock Web
 
 Site do carregador, do comercial e da gestão da pedreira (workspace `@kyberrock/web`). Carregador
-e comercial entravam pelo KyberRock Portal (`apps/loader-web`) e agora entram só por aqui. Lê o Supabase do
+e comercial também entram pelo KyberRock Portal (`apps/loader-web`) por enquanto — o site tem as
+mesmas telas deles, e o portal sai depois dos testes. Lê o Supabase do
 KyberRock direto (com o login do usuário e RLS) e grava **só** pela Edge Function `web-api`.
 O contrato completo está em `docs/web-api.md`; o plano em `docs/plano-migracao-web.md`.
 

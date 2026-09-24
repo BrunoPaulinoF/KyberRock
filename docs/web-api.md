@@ -49,9 +49,10 @@ de quem grava o quê vive em `_shared/web-session.ts` (`canEditCustomers`, `canE
 liberada a quem só consulta. `me` devolve `canManagePrices`, `canEditPrices`, `canEditCustomers`
 e `canEditFleet`.
 
-O carregador e o comercial entravam pelo KyberRock Portal (`apps/loader-web`); agora entram
-**só** pelo KyberRock Web — o portal ficou só com o painel da Kybernan e manda quem chega por
-`/`, `/login`, `/loader` ou `/relatorios` para o site. O comercial passou a mexer em **preço**
+O carregador e o comercial entram pelo KyberRock Portal (`apps/loader-web`) e agora também pelo
+KyberRock Web, que tem as mesmas telas deles (a fila do carregador, feita para celular e tablet,
+e o relatório de vendas do comercial). Por enquanto os dois ficam no ar; o portal deixa de
+receber carregador e comercial depois dos testes. O comercial passou a mexer em **preço**
 (antes só do gestor), porque negociar preço é o trabalho dele; o bloco comercial/crédito, a
 carteira, o fechamento e os destinatários continuam só do gestor.
 
