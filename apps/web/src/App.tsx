@@ -16,16 +16,18 @@ import { NewEntry } from "./pages/NewEntry";
 import { Operations } from "./pages/Operation";
 import { Registrations } from "./pages/Registrations";
 import { SalesReport } from "./pages/SalesReport";
+import { Settings } from "./pages/Settings";
 import { TruckControl } from "./pages/TruckControl";
 import { Wallet } from "./pages/Wallet";
 
 /**
- * Onde cada perfil comeca: o carregador na fila, o comercial no cadastro e o resto na tela
- * Operacoes — a mesma que o desktop abre para quem opera a balanca.
+ * Onde cada perfil comeca: o carregador na fila, o comercial no relatorio de vendas (a tela
+ * dele no antigo portal) e o resto na tela Operacoes — a mesma que o desktop abre para quem
+ * opera a balanca.
  */
 function homeFor(user: { isLoader: boolean; role: string }): string {
   if (user.isLoader) return "/carregamento";
-  return user.role === "comercial" ? "/cadastros" : "/operacoes";
+  return user.role === "comercial" ? "/relatorios?aba=vendas" : "/operacoes";
 }
 
 /**
@@ -98,6 +100,11 @@ export function App() {
                 <Route path="/conferencia-faturamento" element={<BillingConference />} />
                 <Route path="/relatorios" element={<SalesReport />} />
                 <Route path="/documentacao" element={<Documentation />} />
+                <Route
+                  path="/configuracoes"
+                  element={<Navigate to="/configuracoes/balanca" replace />}
+                />
+                <Route path="/configuracoes/:tab" element={<Settings />} />
                 {/* Enderecos antigos (favoritos, links mandados por mensagem). */}
                 <Route path="/operacao" element={<Navigate to="/operacoes" replace />} />
                 <Route

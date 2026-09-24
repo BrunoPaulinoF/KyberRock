@@ -34,19 +34,27 @@ const { data: profile } = await supabase
   .single();
 ```
 
-| `role`          | Lê                                          | Grava pela `web-api`                                        |
-| --------------- | ------------------------------------------- | ----------------------------------------------------------- |
-| `monitoramento` | Todo o cadastro e as operações da empresa   | Nada — só consulta (403 em toda escrita)                    |
-| `operacao`      | O mesmo                                     | Transportadora, motorista, veículo e os vínculos entre eles |
-| `comercial`     | O mesmo                                     | Tudo da operação **+ cliente** e vínculos do cliente        |
-| `gestor`        | O mesmo                                     | Tudo do comercial **+ preços + bloco comercial/crédito**    |
-| `loader`        | Só a fila da unidade (tela `/carregamento`) | Nada — a `web-api` responde 403                             |
+| `role`          | Lê                                          | Grava pela `web-api`                                         |
+| --------------- | ------------------------------------------- | ------------------------------------------------------------ |
+| `monitoramento` | Todo o cadastro e as operações da empresa   | Nada — só consulta (403 em toda escrita)                     |
+| `operacao`      | O mesmo                                     | Transportadora, motorista, veículo e os vínculos entre eles  |
+| `comercial`     | O mesmo                                     | Tudo da operação **+ cliente**, vínculos do cliente e preços |
+| `gestor`        | O mesmo                                     | Tudo do comercial **+ bloco comercial/crédito**, carteira…   |
+| `loader`        | Só a fila da unidade (tela `/carregamento`) | Nada — a `web-api` responde 403                              |
 
 `monitoramento` e `operacao` entraram na migração `202609240001_system_access_profiles`. A regra
 de quem grava o quê vive em `_shared/web-session.ts` (`canEditCustomers`, `canEditFleet`,
-`canManagePrices`) e o mapa ação → grupo em `web-api/handler.ts` (`actionDenial`); um teste
-garante que toda ação nova caia em algum grupo, para nenhuma nascer liberada a quem só consulta.
-`me` devolve `canManagePrices`, `canEditCustomers` e `canEditFleet`.
+`canEditPrices`, `canManagePrices`) e o mapa ação → grupo em `web-api/handler.ts`
+(`actionDenial`); um teste garante que toda ação nova caia em algum grupo, para nenhuma nascer
+liberada a quem só consulta. `me` devolve `canManagePrices`, `canEditPrices`, `canEditCustomers`
+e `canEditFleet`.
+
+O carregador e o comercial entram pelo KyberRock Portal (`apps/loader-web`) e agora também pelo
+KyberRock Web, que tem as mesmas telas deles (a fila do carregador, feita para celular e tablet,
+e o relatório de vendas do comercial). Por enquanto os dois ficam no ar; o portal deixa de
+receber carregador e comercial depois dos testes. O comercial passou a mexer em **preço**
+(antes só do gestor), porque negociar preço é o trabalho dele; o bloco comercial/crédito, a
+carteira, o fechamento e os destinatários continuam só do gestor.
 
 Quem cria usuários é o painel `/admin` da Kybernan: aba **Acessos do sistema** (um login por
 computador cadastrado, coluna "Login do site", gravado com `user_profiles.device_id`) ou
@@ -167,7 +175,7 @@ A placa é gravada em maiúsculas, sem espaço nem hífen (`ABC1D23`); placa rep
 `isActive: false` desfaz o vínculo (a linha fica, inativa). Repetir com `true` reaproveita a
 mesma linha — nunca nasce um par duplicado.
 
-### 4.6 Preços (só gestor)
+### 4.6 Preços (comercial e gestor)
 
 | Ação                            | Payload                                                                          | Devolve                |
 | ------------------------------- | -------------------------------------------------------------------------------- | ---------------------- |
@@ -291,7 +299,21 @@ e-mail nem WhatsApp. Excluir é tombstone (`deleted_at`), que a balança puxa no
 `channels` diz só **se** o SMTP e o WhatsApp da pedreira estão configurados — senha e token
 nunca saem da nuvem; configurar os canais e o horário dos envios continua na balança.
 
-### 4.11 O que ainda não está na `web-api` (próximas versões)
+### 4.11 Balanças da unidade (todos os perfis)
+
+| Ação           | Payload | Devolve     |
+| -------------- | ------- | ----------- |
+| `unit_devices` | —       | `devices[]` |
+
+A engrenagem do rodapé do site (Configurações → Balança, Impressão e Cloud), no lugar das telas
+de mesmo nome do desktop. No desktop elas configuram o computador em que ele roda; o site não tem
+balança nem impressora, então mostra o **estado** das balanças da unidade de quem entrou: nome,
+número, versão, anel de atualização (`teste`/`producao`), último sinal e se está ligada (sinal há
+até 15 min), se é a principal de preços, se executa os pedidos do site e o resumo de saúde da
+fila (`health`: pendentes, parados, mais antigo, último erro). Só leitura; fica de fora o
+dispositivo virtual do site (`web-…`), a balança inativa e — sempre — o token.
+
+### 4.12 O que ainda não está na `web-api` (próximas versões)
 
 - Regra de frete do cliente (`customer_freight_rules.rule_json`) — o formato do JSON é o da
   balança (`apps/desktop/src/services/customer-freight-rules.ts`) e precisa ser documentado

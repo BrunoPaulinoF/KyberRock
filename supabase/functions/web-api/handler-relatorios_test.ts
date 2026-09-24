@@ -157,3 +157,51 @@ describe("web-api: destinatarios do fechamento diario", () => {
     expect(list.body.recipients).toEqual([]);
   });
 });
+
+describe("web-api: balancas da unidade (Configuracoes)", () => {
+  it("lista so as balancas ativas da unidade, sem token, com a saude da fila", async () => {
+    const h = harness("monitoramento");
+    h.store.seed("device_registrations", [
+      {
+        id: "desktop-a",
+        company_id: COMPANY,
+        unit_id: "unit-1",
+        name: "PC PRINCIPAL",
+        is_active: true,
+        token_hash: "segredo-token",
+        app_version: "0.8.253",
+        update_channel: "beta",
+        last_seen_at: "2026-09-25T14:55:00.000Z",
+        executes_web_operations: true,
+        is_price_master: true,
+        health_queue_pending: 2,
+        health_queue_blocked: 1,
+        health_last_error: "OMIE fora do ar"
+      },
+      {
+        id: "desktop-b",
+        company_id: COMPANY,
+        unit_id: "unit-1",
+        name: "BALANCA 2",
+        is_active: true,
+        last_seen_at: "2026-09-25T10:00:00.000Z"
+      },
+      { id: "desktop-c", company_id: COMPANY, unit_id: "unit-2", name: "OUTRA", is_active: true },
+      { id: "desktop-d", company_id: COMPANY, unit_id: "unit-1", name: "VELHA", is_active: false },
+      { id: "web-x", company_id: COMPANY, unit_id: "unit-1", name: "Web", is_active: true }
+    ]);
+    const result = await h.call("unit_devices");
+    expect(result.status).toBe(200);
+    const devices = result.body.devices as Row[];
+    expect(devices.map((d) => d.name)).toEqual(["BALANCA 2", "PC PRINCIPAL"]);
+    expect(devices[1]).toMatchObject({
+      online: true,
+      updateChannel: "teste",
+      executesWebOperations: true,
+      isPriceMaster: true,
+      health: { queuePending: 2, queueBlocked: 1, lastError: "OMIE fora do ar" }
+    });
+    expect(devices[0]).toMatchObject({ online: false, updateChannel: "producao" });
+    expect(JSON.stringify(result.body)).not.toContain("segredo-token");
+  });
+});

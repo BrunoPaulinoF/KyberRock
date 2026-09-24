@@ -271,6 +271,7 @@ export function NewEntry() {
           />
           <Field label="Cliente">
             <Picker
+              loading={!options}
               value={customerId}
               options={options?.customers ?? []}
               onChange={chooseCustomer}
@@ -280,6 +281,7 @@ export function NewEntry() {
           </Field>
           <Field label="Produto">
             <Picker
+              loading={!options}
               value={productId}
               options={options?.products ?? []}
               onChange={setProductId}
@@ -288,6 +290,7 @@ export function NewEntry() {
           </Field>
           <Field label="Forma de pagamento">
             <Picker
+              loading={!options}
               value={paymentMethodId}
               options={options?.paymentMethods ?? []}
               onChange={setPaymentMethodId}
@@ -463,6 +466,7 @@ export function NewEntry() {
           </div>
           <Field label="Transportadora">
             <Picker
+              loading={!options}
               value={carrierId}
               options={options?.carriers ?? []}
               onChange={setCarrierId}
@@ -479,6 +483,7 @@ export function NewEntry() {
           <div className="entry-inline">
             <Field label="Placa">
               <Picker
+                loading={!options}
                 value={vehicleId}
                 options={options?.vehicles ?? []}
                 onChange={setVehicleId}
@@ -487,6 +492,7 @@ export function NewEntry() {
             </Field>
             <Field label="Motorista">
               <Picker
+                loading={!options}
                 value={driverId}
                 options={options?.drivers ?? []}
                 onChange={setDriverId}
@@ -646,7 +652,17 @@ function WeightCard({
 function ExecutorText({ status }: { status: ExecutorStatus | null }) {
   if (!status) return <>Verificando a balanca...</>;
   if (!status.executor) return <>Nenhuma balanca executa os pedidos do site.</>;
-  return status.executor.online ? (
+  const { name, online, needsUpdate, appVersion, minVersion } = status.executor;
+  if (needsUpdate) {
+    return (
+      <>
+        Balanca {name} {online ? "" : "fora do ar e "}desatualizada
+        {appVersion ? ` (versao ${appVersion})` : ""}: atualize para {minVersion ?? "a mais nova"}{" "}
+        para registrar entradas pelo site.
+      </>
+    );
+  }
+  return online ? (
     <>Balanca {status.executor.name} conectada: ela registra a entrada.</>
   ) : (
     <>Balanca {status.executor.name} fora do ar: o pedido espera ela voltar.</>

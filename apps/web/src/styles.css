@@ -344,6 +344,67 @@ h3 {
   background: var(--kr-surface-soft);
   color: var(--kr-text-strong);
 }
+.icon-btn.square {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface);
+}
+.icon-btn.square.active {
+  background: var(--kr-surface-soft);
+  color: var(--kr-text-strong);
+}
+.sidebar-actions {
+  justify-content: flex-start;
+  gap: 8px;
+}
+/* o menu da engrenagem abre para CIMA, como o do desktop */
+.settings-menu {
+  position: relative;
+}
+.settings-dropdown {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  margin-bottom: 4px;
+  min-width: 180px;
+  z-index: 100;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--kr-surface);
+  border: 1px solid var(--kr-border);
+  border-radius: 8px;
+  box-shadow: var(--kr-shadow);
+}
+.settings-dropdown button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--kr-text);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-dropdown button:hover {
+  background: var(--kr-surface-soft);
+}
+.settings-dropdown button.danger {
+  color: #b91c1c;
+}
+.settings-divider {
+  height: 1px;
+  background: var(--kr-border);
+  margin: 4px 0;
+}
+
 .main {
   flex: 1;
   min-width: 0;
@@ -859,6 +920,28 @@ input[type="radio"] {
 }
 .picker .input {
   width: 100%;
+  padding-right: 32px;
+  cursor: pointer;
+}
+.picker .input:focus {
+  cursor: text;
+}
+.picker-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--kr-muted);
+  cursor: pointer;
+}
+.picker-toggle:disabled {
+  cursor: not-allowed;
 }
 .picker-list {
   position: absolute;
@@ -965,11 +1048,13 @@ input[type="radio"] {
   padding: 4px 10px;
 }
 
-/* ---------- tela do carregador (celular na mao, dentro da pedreira) ---------- */
+/* ---------- tela do carregador (celular e tablet, dentro da pedreira) ---------- */
 .loading-shell {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
+  background: var(--kr-bg);
 }
 .loading-top {
   position: sticky;
@@ -977,10 +1062,23 @@ input[type="radio"] {
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 10px 16px;
+  padding-top: max(10px, env(safe-area-inset-top));
   background: var(--kr-surface);
   border-bottom: 1px solid var(--kr-border);
+}
+.loading-avatar {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  background: var(--kr-primary-strong);
+  color: var(--kr-primary-text);
 }
 .loading-top-title {
   flex: 1;
@@ -991,91 +1089,217 @@ input[type="radio"] {
 .loading-top-title strong {
   color: var(--kr-text-strong);
   font-size: 15px;
-}
-.loading-top-title span {
-  color: var(--kr-muted);
-  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.loading-top-title span {
+  color: var(--kr-muted);
+  font-size: 12px;
+}
+.loading-top-btn {
+  min-width: 44px;
+  height: 44px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--kr-border);
+  border-radius: 10px;
+  background: var(--kr-surface);
+  color: var(--kr-text-strong);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
 .loading-main {
   width: 100%;
-  max-width: 760px;
+  max-width: 1180px;
   margin: 0 auto;
-  padding: 12px 16px 32px;
+  padding: 12px 16px;
+  padding-bottom: max(32px, env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
-.loading-kpis {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+.loading-toolbar {
+  display: flex;
   gap: 10px;
+  align-items: stretch;
 }
-.loading-kpi-button {
-  text-align: left;
-  cursor: pointer;
+.loading-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--kr-surface);
+  border: 1px solid var(--kr-border);
+}
+.loading-stat strong {
+  font-size: 26px;
+  line-height: 1;
+  color: var(--kr-text-strong);
+}
+.loading-stat span {
+  color: var(--kr-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.loading-history {
+  flex: 1;
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface);
+  color: var(--kr-text-strong);
   font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
 }
+.loading-history-count {
+  min-width: 24px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--kr-surface-soft);
+  border: 1px solid var(--kr-border);
+  font-size: 13px;
+}
+/* faixa de produtos: rola de lado no celular em vez de empilhar linhas */
 .loading-products {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.loading-product {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: var(--kr-surface);
+  border: 1px solid var(--kr-border);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.loading-product strong {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  text-align: center;
+  background: var(--kr-primary-strong);
+  color: var(--kr-primary-text);
+}
+.loading-late {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--kr-warning-border);
+  background: var(--kr-warning-soft);
+  font-size: 13px;
+}
+.loading-late > span {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
-.loading-products .badge {
-  font-size: 12px;
-  gap: 6px;
-  padding: 4px 10px;
+.loading-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
-.loading-products .badge strong {
+.loading-head h1 {
+  margin: 0;
+  font-size: 20px;
   color: var(--kr-text-strong);
+}
+.loading-head p {
+  margin: 2px 0 0;
+  color: var(--kr-muted);
+  font-size: 13px;
+}
+.loading-head-count {
+  min-width: 40px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 800;
+  background: var(--kr-surface);
+  border: 1px solid var(--kr-border);
+  color: var(--kr-text-strong);
+}
+.loading-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 36px 16px;
+  text-align: center;
+  border: 1px dashed var(--kr-border);
+  border-radius: 14px;
+  color: var(--kr-muted);
+}
+.loading-empty strong {
+  color: var(--kr-text-strong);
+  font-size: 16px;
 }
 .loading-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
 }
 .loading-card {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  gap: 4px;
   padding: 12px;
   background: var(--kr-card-bg);
   border: 1px solid var(--kr-card-border);
-  border-radius: 12px;
+  border-radius: 14px;
   box-shadow: var(--kr-shadow);
+  min-width: 0;
 }
 .loading-card.late {
   border-color: var(--kr-warning-border);
   background: var(--kr-warning-soft);
 }
-.loading-position {
-  font-size: 18px;
-  font-weight: 800;
-  color: var(--kr-muted);
-  min-width: 32px;
-}
-.loading-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.loading-headline {
+.loading-card-top {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
+.loading-position {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--kr-muted);
+  min-width: 30px;
+}
 .loading-plate {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-weight: 800;
-  font-size: 16px;
+  font-size: 18px;
   letter-spacing: 0.06em;
   padding: 2px 8px;
   border-radius: 6px;
@@ -1083,19 +1307,134 @@ input[type="radio"] {
   border: 1px solid var(--kr-plate-border);
   color: var(--kr-plate-text);
 }
+.loading-plate.small {
+  font-size: 13px;
+  padding: 1px 6px;
+}
 .loading-time {
+  margin-left: auto;
   color: var(--kr-muted);
   font-weight: 700;
 }
 .loading-customer {
+  margin-top: 4px;
   color: var(--kr-text-strong);
+  font-size: 15px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.loading-meta {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  color: var(--kr-muted);
+  font-size: 13px;
+}
+.loading-meta > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.loading-product-name {
+  font-weight: 700;
+  color: var(--kr-text);
+}
+/* o botao do polegar: largura toda do cartao, alto o bastante para luva */
 .loading-done {
-  padding: 12px 16px;
-  font-size: 15px;
+  margin-top: 8px;
+  min-height: 52px;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: none;
+  border-radius: 12px;
+  background: #15803d;
+  color: #ffffff;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.loading-done:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.loading-completed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.loading-completed li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--kr-border);
+  border-radius: 12px;
+}
+.loading-completed-info {
+  flex: 1;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.loading-undo {
+  min-height: 44px;
+}
+.loading-install-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+@media (max-width: 520px) {
+  .loading-history {
+    font-size: 13px;
+    gap: 6px;
+    padding: 0 10px;
+  }
+  .loading-top-label {
+    display: none;
+  }
+  .loading-top-btn {
+    padding: 0;
+  }
+  .loading-shell .modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .loading-shell .modal {
+    border-radius: 16px 16px 0 0;
+    max-height: 85vh;
+    overflow-y: auto;
+  }
+  .loading-undo {
+    width: 100%;
+  }
+}
+/* tablet: duas colunas de cartoes; tela grande de patio: tres */
+@media (min-width: 760px) {
+  .loading-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .loading-late {
+    flex-direction: row;
+    align-items: center;
+  }
+}
+@media (min-width: 1100px) {
+  .loading-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 /* ---------- telas no molde do desktop (components/desk.tsx) ---------- */
@@ -1934,4 +2273,77 @@ input[type="radio"] {
 .modal-body .alert,
 .modal-body .toolbar {
   margin-bottom: 12px;
+}
+
+/* ---------- Configuracoes (Balanca, Impressao, Cloud) ---------- */
+.settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.settings-live {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 120px;
+  justify-content: center;
+  padding: 16px;
+  border: 1px dashed var(--kr-border);
+  border-radius: 8px;
+  background: var(--kr-surface-soft);
+  font-size: 13px;
+  color: var(--kr-muted);
+}
+.settings-live strong {
+  color: var(--kr-text-strong);
+  font-size: 15px;
+}
+.settings-status {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.settings-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-device {
+  border: 1px solid var(--kr-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.settings-device header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.settings-device dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+.settings-device dt {
+  color: var(--kr-muted);
+}
+.settings-device dd {
+  margin: 0;
+  text-align: right;
+  color: var(--kr-text-strong);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 900px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
 }

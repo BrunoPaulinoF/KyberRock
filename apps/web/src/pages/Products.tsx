@@ -12,12 +12,13 @@ import { useAsync } from "../lib/use-async";
 
 /**
  * Aba Produtos da tela Cadastros (a `ProductsView` do desktop): o preco padrao de cada produto
- * e, logo abaixo, o preco especial por cliente. Todos veem; publicar preco e so do gestor.
+ * e, logo abaixo, o preco especial por cliente. Todos veem; publicar preco e do comercial e do
+ * gestor.
  */
 export function ProductsSection() {
   const user = useUser();
   const toast = useToast();
-  const canEdit = user.canManagePrices;
+  const canEdit = user.canEditPrices;
   const { data, loading, error, reload } = useAsync(
     () =>
       Promise.all([

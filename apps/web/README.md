@@ -1,6 +1,8 @@
 # KyberRock Web
 
-Site do comercial e da gestão da pedreira (workspace `@kyberrock/web`). Lê o Supabase do
+Site do carregador, do comercial e da gestão da pedreira (workspace `@kyberrock/web`). Carregador
+e comercial também entram pelo KyberRock Portal (`apps/loader-web`) por enquanto — o site tem as
+mesmas telas deles, e o portal sai depois dos testes. Lê o Supabase do
 KyberRock direto (com o login do usuário e RLS) e grava **só** pela Edge Function `web-api`.
 O contrato completo está em `docs/web-api.md`; o plano em `docs/plano-migracao-web.md`.
 
@@ -34,7 +36,9 @@ Acessos de homologação (Pedreira Teste): `gestor.teste@kyberrock.app` e
 
 Perfis (`src/lib/permissions.ts`, espelho de `_shared/web-session.ts`): `monitoramento` só
 consulta; `operacao` edita veículos, motoristas e transportadoras e faz pesagem; `comercial`
-também clientes; `gestor` tudo. O `loader` (carregador) só tem `/carregamento`. A pesagem pelo
+também clientes e preços, e começa no relatório de vendas (`/relatorios?aba=vendas`, o antigo
+relatório do portal); `gestor` tudo. O `loader` (carregador) só tem `/carregamento`, feita para
+celular e tablet e instalável como app (`public/manifest.webmanifest` + `public/sw.js`). A pesagem pelo
 site é um PEDIDO que a balança executora da unidade registra (`docs/web-api.md` 4.9).
 
 As telas seguem a disposicao do KyberRock Desktop (mesmo menu, mesmos nomes, abas por icone,
@@ -56,6 +60,7 @@ estao em `src/components/desk.tsx`.
 | `/fechamento`              | gestor                           | Fechamento de faturas (pedido de faturamento; a balanca executa)                         |
 | `/relatorios`              | todos (destinatarios: gestor)    | Fechamento diario, periodo, tabela dinamica, mensal e destinatarios                      |
 | `/documentacao`            | todos                            | Central de ajuda (copia da do desktop, guardada por teste)                               |
+| `/configuracoes/<aba>`     | todos (engrenagem do rodape)     | Balanca, Impressao e Cloud: estado das balancas da unidade, cupons do site, fila OMIE    |
 
 Os enderecos antigos (`/operacao`, `/clientes`, `/veiculos`, `/transportadoras`, `/precos`,
 `/vendas`) redirecionam para os novos.

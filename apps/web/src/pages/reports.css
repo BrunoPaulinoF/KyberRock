@@ -114,3 +114,31 @@
   font-size: 13px;
   color: var(--kr-text-strong);
 }
+
+/* atalhos de periodo (os do antigo portal do comercial) */
+.reports-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-self: flex-end;
+}
+.reports-preset {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface);
+  color: var(--kr-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.reports-preset:hover {
+  background: var(--kr-surface-soft);
+}
+.reports-preset.active {
+  border-color: var(--kr-primary-strong);
+  background: var(--kr-primary-strong);
+  color: var(--kr-primary-text);
+}

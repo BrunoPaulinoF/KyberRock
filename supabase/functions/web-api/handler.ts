@@ -38,6 +38,7 @@ import {
 import {
   canEditCustomers,
   canEditFleet,
+  canEditPrices,
   canManagePrices,
   canOperate,
   WEB_ROLE_LABELS,
@@ -143,22 +144,15 @@ export const WEB_API_ACTIONS = [
   "request_operation",
   "list_report_recipients",
   "save_report_recipient",
-  "delete_report_recipient"
+  "delete_report_recipient",
+  "unit_devices"
 ] as const;
 
 export type WebApiAction = (typeof WEB_API_ACTIONS)[number];
 
-/** Acoes que so o gestor executa (preco e bloco comercial/credito). */
+/** Acoes que so o gestor executa (bloco comercial/credito, carteira, fechamento). */
 export const GESTOR_ONLY_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "set_customer_commercial",
-  "set_product_default_price",
-  "set_customer_special_price",
-  "remove_customer_special_price",
-  "upsert_price_table",
-  "set_price_table_active",
-  "set_price_table_item",
-  "remove_price_table_item",
-  "set_customer_price_table",
   "settle_wallet",
   "reopen_wallet",
   "request_invoice_closing",
@@ -167,10 +161,23 @@ export const GESTOR_ONLY_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiActi
   "delete_report_recipient"
 ]);
 
+/** Preco padrao, especial por cliente e tabelas de preco: comercial e gestor. */
+export const PRICE_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
+  "set_product_default_price",
+  "set_customer_special_price",
+  "remove_customer_special_price",
+  "upsert_price_table",
+  "set_price_table_active",
+  "set_price_table_item",
+  "remove_price_table_item",
+  "set_customer_price_table"
+]);
+
 /** So leitura, para todo perfil do site. */
 export const READ_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "me",
-  "operation_status"
+  "operation_status",
+  "unit_devices"
 ]);
 
 /** Pesagem pelo site: operacao e gestor (quem executa e a balanca da unidade). */
@@ -211,10 +218,15 @@ export function actionDenial(role: WebRole, action: WebApiAction): string | null
       ? null
       : `O perfil ${profile} nao faz pesagem pelo site. Pesagem e da operacao e do gestor.`;
   }
+  if (PRICE_ACTIONS.has(action)) {
+    return canEditPrices(role)
+      ? null
+      : `O perfil ${profile} so consulta precos. Preco e do comercial e do gestor.`;
+  }
   if (GESTOR_ONLY_ACTIONS.has(action)) {
     return canManagePrices(role)
       ? null
-      : "So o gestor altera precos, o bloco comercial do cliente, a carteira, o fechamento e os destinatarios dos relatorios.";
+      : "So o gestor altera o bloco comercial do cliente, a carteira, o fechamento e os destinatarios dos relatorios.";
   }
   if (CUSTOMER_ACTIONS.has(action)) {
     return canEditCustomers(role)
@@ -1054,6 +1066,11 @@ async function operationStatus(ctx: ActionContext): Promise<Row> {
           deviceId: executor.id,
           name: executor.name,
           seenAt: executor.web_executor_seen_at ?? null,
+          appVersion: typeof executor.app_version === "string" ? executor.app_version : null,
+          // A versao minima para a Nova entrada com frete/condicao digitada: a tela avisa
+          // antes, em vez de a pessoa preencher tudo e so descobrir no 409 do envio.
+          needsUpdate: !isVersionAtLeast(executor.app_version, ENTRY_FREIGHT_MIN_EXECUTOR_VERSION),
+          minVersion: ENTRY_FREIGHT_MIN_EXECUTOR_VERSION,
           online: isExecutorOnline(
             typeof executor.web_executor_seen_at === "string"
               ? executor.web_executor_seen_at
@@ -1152,6 +1169,54 @@ async function deleteReportRecipient(ctx: ActionContext): Promise<Row> {
     updated_at: ctx.nowIso
   });
   return { id };
+}
+
+// ---------------------------------------------------------------------------
+// Configuracoes (o menu da engrenagem do desktop): as balancas da unidade
+// ---------------------------------------------------------------------------
+
+/** Sem sinal ha mais que isto, a balanca aparece fora do ar (a mesma folga do painel admin). */
+const DEVICE_ONLINE_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * As balancas da unidade do usuario, para as telas Balanca e Cloud do site: nome, versao,
+ * anel de atualizacao, se executa os pedidos do site, se e a principal de precos e a saude da
+ * fila (o mesmo resumo da coluna Saude do painel). Nunca o token nem a instalacao.
+ */
+async function unitDevices(ctx: ActionContext): Promise<Row> {
+  const rows = await ctx.store.listRows(
+    "device_registrations",
+    ctx.session.companyId,
+    "id, name, unit_id, is_active, device_number, app_version, update_channel, last_seen_at, is_price_master, executes_web_operations, web_executor_seen_at, health_queue_pending, health_queue_blocked, health_oldest_pending_at, health_last_error, health_collected_at",
+    [{ column: "unit_id", value: ctx.session.unitId }]
+  );
+  const now = Date.parse(ctx.nowIso);
+  const devices = rows
+    .filter((row) => row.is_active === true && !String(row.id ?? "").startsWith("web-"))
+    .map((row) => {
+      const seen = typeof row.last_seen_at === "string" ? Date.parse(row.last_seen_at) : NaN;
+      return {
+        id: row.id,
+        name: row.name,
+        deviceNumber: row.device_number ?? null,
+        appVersion: row.app_version ?? null,
+        updateChannel: row.update_channel === "beta" ? "teste" : "producao",
+        lastSeenAt: row.last_seen_at ?? null,
+        online: Number.isFinite(seen) && now - seen <= DEVICE_ONLINE_WINDOW_MS,
+        isPriceMaster: row.is_price_master === true,
+        executesWebOperations: row.executes_web_operations === true,
+        webExecutorSeenAt: row.web_executor_seen_at ?? null,
+        health: {
+          queuePending: row.health_queue_pending ?? null,
+          queueBlocked: row.health_queue_blocked ?? null,
+          oldestPendingAt: row.health_oldest_pending_at ?? null,
+          lastError: row.health_last_error ?? null,
+          collectedAt: row.health_collected_at ?? null
+        }
+      };
+    })
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), "pt-BR"));
+  return { devices };
 }
 
 async function requireLive(ctx: ActionContext, table: string, id: string, label: string) {
@@ -1378,6 +1443,7 @@ async function me(ctx: ActionContext): Promise<Row> {
       role: ctx.session.role,
       unitId: ctx.session.unitId,
       canManagePrices: canManagePrices(ctx.session.role),
+      canEditPrices: canEditPrices(ctx.session.role),
       canEditCustomers: canEditCustomers(ctx.session.role),
       canEditFleet: canEditFleet(ctx.session.role),
       canOperate: canOperate(ctx.session.role),
@@ -1447,6 +1513,8 @@ async function runAction(action: WebApiAction, ctx: ActionContext): Promise<Row>
       return saveReportRecipient(ctx);
     case "delete_report_recipient":
       return deleteReportRecipient(ctx);
+    case "unit_devices":
+      return unitDevices(ctx);
   }
 }
 

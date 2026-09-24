@@ -23,6 +23,7 @@ export type ReportOperation = Pick<
   | "product_total_cents"
   | "freight_total_cents"
   | "total_cents"
+  | "freight_type"
   | "closed_at"
   | "created_at"
 >;
@@ -131,9 +132,24 @@ export function centsPerTon(totalCents: number, netWeightKg: number): number | n
 
 export type SalesPivotGroupBy = "customer" | "product" | "customer_product" | "day";
 
+/**
+ * Filtro de frete do relatorio de vendas (o do antigo portal do comercial): "com frete" e a
+ * pesagem que tem VALOR de frete — na nota (`fob`), so no sistema (`cif`) ou o transporte
+ * proprio do catalogo antigo (`own_sender`); o resto (`third_party`, `own_recipient`, `none`)
+ * e "sem frete". Mesma regra de `apps/loader-web/src/lib/sales-report.ts`.
+ */
+export type SalesFreightFilter = "all" | "with" | "without";
+
+const FREIGHT_TYPES_WITH_FREIGHT = ["cif", "fob", "own_sender"];
+
+export function hasFreight(freightType: string | null | undefined): boolean {
+  return typeof freightType === "string" && FREIGHT_TYPES_WITH_FREIGHT.includes(freightType);
+}
+
 export interface SalesPivotFilters {
   customerId?: string | null;
   productId?: string | null;
+  freight?: SalesFreightFilter;
 }
 
 export interface SalesPivotRow {
@@ -143,7 +159,11 @@ export interface SalesPivotRow {
   date: string | null;
   totalOperations: number;
   totalWeightKg: number;
+  /** Valor do PRODUTO (sem frete): e dele que sai o preco medio. */
   totalValueCents: number;
+  freightCents: number;
+  /** Produto + frete: o total da venda. */
+  grandTotalCents: number;
   avgPriceCentsPerTon: number;
 }
 
@@ -158,6 +178,8 @@ export interface SalesPivotResult {
     totalOperations: number;
     totalWeightKg: number;
     totalValueCents: number;
+    freightCents: number;
+    grandTotalCents: number;
     avgPriceCentsPerTon: number;
   };
   customers: SalesPivotOption[];
@@ -192,7 +214,10 @@ export function salesPivot(
   const filtered = ops.filter(
     (op) =>
       (!filters.customerId || op.customer_id === filters.customerId) &&
-      (!filters.productId || op.product_id === filters.productId)
+      (!filters.productId || op.product_id === filters.productId) &&
+      (!filters.freight ||
+        filters.freight === "all" ||
+        hasFreight(op.freight_type) === (filters.freight === "with"))
   );
 
   const groups = new Map<string, SalesPivotRow>();
@@ -229,11 +254,17 @@ export function salesPivot(
       totalOperations: 0,
       totalWeightKg: 0,
       totalValueCents: 0,
+      freightCents: 0,
+      grandTotalCents: 0,
       avgPriceCentsPerTon: 0
     };
+    const productCents = op.product_total_cents ?? 0;
+    const freightCents = op.freight_total_cents ?? 0;
     row.totalOperations += 1;
     row.totalWeightKg += op.net_weight_kg ?? 0;
-    row.totalValueCents += op.product_total_cents ?? 0;
+    row.totalValueCents += productCents;
+    row.freightCents += freightCents;
+    row.grandTotalCents += op.total_cents ?? productCents + freightCents;
     groups.set(key, row);
   }
 
@@ -247,6 +278,8 @@ export function salesPivot(
   const totalOperations = rows.reduce((sum, row) => sum + row.totalOperations, 0);
   const totalWeightKg = rows.reduce((sum, row) => sum + row.totalWeightKg, 0);
   const totalValueCents = rows.reduce((sum, row) => sum + row.totalValueCents, 0);
+  const freightCents = rows.reduce((sum, row) => sum + row.freightCents, 0);
+  const grandTotalCents = rows.reduce((sum, row) => sum + row.grandTotalCents, 0);
 
   return {
     rows,
@@ -254,6 +287,8 @@ export function salesPivot(
       totalOperations,
       totalWeightKg,
       totalValueCents,
+      freightCents,
+      grandTotalCents,
       avgPriceCentsPerTon: avgPricePerTon(totalValueCents, totalWeightKg)
     },
     customers: distinctOptions(ops.map((op) => [op.customer_id, op.customer_name])),
@@ -264,6 +299,33 @@ export function salesPivot(
 // ---------------------------------------------------------------------------
 // Mensal (getMonthlyReport + getDailySeries)
 // ---------------------------------------------------------------------------
+
+/** Atalhos de periodo do antigo portal do comercial. */
+export type PeriodPreset = "today" | "7d" | "30d" | "month" | "lastMonth";
+
+export const PERIOD_PRESETS: Array<{ id: PeriodPreset; label: string }> = [
+  { id: "today", label: "Hoje" },
+  { id: "7d", label: "7 dias" },
+  { id: "30d", label: "30 dias" },
+  { id: "month", label: "Este mes" },
+  { id: "lastMonth", label: "Mes passado" }
+];
+
+function shiftDay(iso: string, days: number): string {
+  const date = new Date(`${iso}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+/** Datas (AAAA-MM-DD) do atalho, contando o dia de hoje. */
+export function presetRange(preset: PeriodPreset, today: string): { start: string; end: string } {
+  if (preset === "today") return { start: today, end: today };
+  if (preset === "7d") return { start: shiftDay(today, -6), end: today };
+  if (preset === "30d") return { start: shiftDay(today, -29), end: today };
+  if (preset === "month") return { start: `${today.slice(0, 7)}-01`, end: today };
+  const lastOfPrevious = shiftDay(`${today.slice(0, 7)}-01`, -1);
+  return { start: `${lastOfPrevious.slice(0, 7)}-01`, end: lastOfPrevious };
+}
 
 /** "2026-09" -> primeiro e ultimo dia do mes. */
 export function monthRange(month: string): { start: string; end: string } {
@@ -462,6 +524,8 @@ export function pivotCsv(result: SalesPivotResult, groupBy: SalesPivotGroupBy): 
       "Operacoes",
       "Quantidade (t)",
       "Preco medio (R$/t)",
+      "Valor produto (R$)",
+      "Frete (R$)",
       "Total (R$)"
     ],
     ...result.rows.map((row) => [
@@ -469,7 +533,9 @@ export function pivotCsv(result: SalesPivotResult, groupBy: SalesPivotGroupBy): 
       String(row.totalOperations),
       csvTons(row.totalWeightKg),
       csvMoney(row.avgPriceCentsPerTon),
-      csvMoney(row.totalValueCents)
+      csvMoney(row.totalValueCents),
+      csvMoney(row.freightCents),
+      csvMoney(row.grandTotalCents)
     ]),
     ...(result.rows.length > 0
       ? [
@@ -479,7 +545,9 @@ export function pivotCsv(result: SalesPivotResult, groupBy: SalesPivotGroupBy): 
             String(result.totals.totalOperations),
             csvTons(result.totals.totalWeightKg),
             csvMoney(result.totals.avgPriceCentsPerTon),
-            csvMoney(result.totals.totalValueCents)
+            csvMoney(result.totals.totalValueCents),
+            csvMoney(result.totals.freightCents),
+            csvMoney(result.totals.grandTotalCents)
           ]
         ]
       : [])
