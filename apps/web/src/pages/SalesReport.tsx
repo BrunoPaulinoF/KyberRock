@@ -2,7 +2,14 @@ import { useMemo, useState } from "react";
 
 import { Alert, DataTable, PageHead } from "../components/ui";
 import { useUser } from "../lib/auth";
-import { firstDayOfMonth, formatMoney, formatTons, periodToIso, todayIso } from "../lib/format";
+import {
+  firstDayOfMonth,
+  formatMoney,
+  formatTons,
+  localDay,
+  periodToIso,
+  todayIso
+} from "../lib/format";
 import { q, type Operation } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
 
@@ -26,7 +33,7 @@ function groupRows(rows: Operation[], by: GroupBy): Group[] {
         ? (row.customer_id ?? row.customer_name ?? "?")
         : by === "product"
           ? (row.product_id ?? row.product_description ?? "?")
-          : (row.closed_at ?? row.created_at).slice(0, 10);
+          : localDay(row.closed_at ?? row.created_at);
     const label =
       by === "customer"
         ? row.customer_name || "Cliente nao informado"

@@ -6,6 +6,7 @@ import {
   formatMoney,
   isValidDocument,
   normalizeDocument,
+  localDay,
   parseMoneyToCents,
   periodToIso
 } from "./format";
@@ -53,5 +54,11 @@ describe("periodo", () => {
       startIso: "2026-09-01T03:00:00.000Z",
       endIso: "2026-09-16T03:00:00.000Z"
     });
+  });
+
+  it("agrupa pelo dia de Brasilia, nao pelo dia em UTC", () => {
+    // 21h30 de 23/09 em Brasilia ja e 24/09 em UTC.
+    expect(localDay("2026-09-24T00:30:00.000Z")).toBe("2026-09-23");
+    expect(localDay("2026-09-24T03:00:00.000Z")).toBe("2026-09-24");
   });
 });
