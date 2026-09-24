@@ -50,7 +50,8 @@ function harness(role: WebSession["role"] = "gestor") {
     name: "Gestor",
     role,
     companyId: COMPANY,
-    unitId: "unit-1"
+    unitId: "unit-1",
+    requiresPricePassword: false
   };
   return {
     store,

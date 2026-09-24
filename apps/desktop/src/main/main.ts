@@ -143,6 +143,8 @@ async function createMainWindow(): Promise<void> {
   runtime.startOmieQueueDrainScheduler();
   writeStartupLog("omieQueueDrainScheduler:started");
   runtime.startCadastroRealtimeLink();
+  // Pedidos de pesagem do site: so a balanca marcada como executora no painel recebe.
+  runtime.startWebOperationLink();
   runtime.onCadastroChanged(forwardCadastroChangedToRenderer);
   writeStartupLog("cadastroRealtime:started");
   startReportDispatchScheduler();

@@ -584,6 +584,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [savedReceiptProfile, setSavedReceiptProfile] = useState<PrintProfileSummary | null>(null);
   const [receiptLogoFit, setReceiptLogoFit] =
     useState<PrintProfileSummary["receiptLogo"]["fit"]>("contain");
+  // Quantas vias cada fechamento imprime: 1 ou 2. Era fixo em 2.
+  const [receiptCopies, setReceiptCopies] = useState<1 | 2>(2);
   // Como a logo sai na impressora termica (preto e branco, sem tons): a previa colorida
   // nao denuncia a logo clara demais, que imprime em branco.
   const [receiptLogoPreview, setReceiptLogoPreview] = useState<ThermalLogoPreview | null>(null);
@@ -1821,6 +1823,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     setReceiptLogoWidthMm(String(profile.receiptLogo.widthMm));
     setReceiptLogoHeightMm(String(profile.receiptLogo.heightMm));
     setReceiptLogoFit(profile.receiptLogo.fit);
+    setReceiptCopies(profile.copies === 1 ? 1 : 2);
     setReceiptTemplateConfig(profile.templateConfig);
   }
 
@@ -2371,7 +2374,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         networkHost: printerType === "network" ? networkHost : null,
         networkPort: printerType === "network" ? networkPort : null,
         paperWidthMm: 80,
-        copies: 2,
+        copies: receiptCopies,
         receiptLogoDataUrl: receiptLogoDataUrl,
         receiptLogoWidthMm: Number(receiptLogoWidthMm),
         receiptLogoHeightMm: Number(receiptLogoHeightMm),
@@ -2399,22 +2402,23 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
    */
   const receiptProfileUnsaved =
     savedReceiptProfile !== null &&
-    receiptProfileSignature({
-      printerType: savedReceiptProfile.printerType,
-      windowsPrinterName: savedReceiptProfile.windowsPrinterName,
-      networkHost: savedReceiptProfile.networkHost ?? "",
-      networkPort: savedReceiptProfile.networkPort ?? 9100,
-      logo: savedReceiptProfile.receiptLogo,
-      templateConfig: savedReceiptProfile.templateConfig
-    }) !==
+    ((savedReceiptProfile.copies === 1 ? 1 : 2) !== receiptCopies ||
       receiptProfileSignature({
-        printerType,
-        windowsPrinterName: selectedPrinterName,
-        networkHost: networkPrinterHost,
-        networkPort: Number(networkPrinterPort) || 9100,
-        logo: currentReceiptLogo(),
-        templateConfig: receiptTemplateConfig
-      });
+        printerType: savedReceiptProfile.printerType,
+        windowsPrinterName: savedReceiptProfile.windowsPrinterName,
+        networkHost: savedReceiptProfile.networkHost ?? "",
+        networkPort: savedReceiptProfile.networkPort ?? 9100,
+        logo: savedReceiptProfile.receiptLogo,
+        templateConfig: savedReceiptProfile.templateConfig
+      }) !==
+        receiptProfileSignature({
+          printerType,
+          windowsPrinterName: selectedPrinterName,
+          networkHost: networkPrinterHost,
+          networkPort: Number(networkPrinterPort) || 9100,
+          logo: currentReceiptLogo(),
+          templateConfig: receiptTemplateConfig
+        }));
 
   /** Logo como o formulario esta agora — o que a previa desenha. */
   function currentReceiptLogo(): ReceiptLogoConfig {
@@ -4245,6 +4249,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                       </option>
                       <option value="windows">Windows instalada - grafica (driver)</option>
                       <option value="network">Rede / WiFi ESC/POS</option>
+                    </select>
+                  </label>
+                  <label style={styles.fieldLabel}>
+                    Vias por fechamento
+                    <select
+                      value={receiptCopies}
+                      onChange={(event) => setReceiptCopies(event.target.value === "1" ? 1 : 2)}
+                      style={styles.input}
+                    >
+                      <option value={2}>2 vias (cliente e pedreira)</option>
+                      <option value={1}>1 via</option>
                     </select>
                   </label>
                   <p style={{ ...styles.muted, marginTop: 0 }}>

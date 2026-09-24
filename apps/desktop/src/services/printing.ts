@@ -358,7 +358,9 @@ export async function printWeighingReceipt(
   ensureOperationCode(database, operation, now);
 
   const profile = getActiveReceiptPrintProfile(database, input.identity.deviceId);
-  const copies = Math.max(profile?.copies ?? 2, 2);
+  // 1 ou 2 vias, como o operador escolheu na tela de impressao (antes o piso era 2 e a
+  // escolha de 1 via era ignorada). Sem perfil, o padrao continua 2.
+  const copies = Math.max(profile?.copies ?? 2, 1);
   const receiptNumber = getNextReceiptNumber(database, input.identity.unitId);
   const deviceNumber = getDeviceNumber(database, input.identity.deviceId);
   let lastReceipt: PrintReceiptSummary | null = null;
