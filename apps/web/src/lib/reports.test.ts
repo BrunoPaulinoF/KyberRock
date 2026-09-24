@@ -8,7 +8,9 @@ import {
   filterByUnit,
   monthRange,
   periodCsv,
+  hasFreight,
   pivotCsv,
+  presetRange,
   reportLines,
   saleDay,
   salesPivot,
@@ -28,6 +30,7 @@ function op(partial: Partial<ReportOperation> & { id: string }): ReportOperation
     product_total_cents: 50_000,
     freight_total_cents: 10_000,
     total_cents: 60_000,
+    freight_type: "fob",
     closed_at: "2026-09-11T13:00:00Z",
     created_at: "2026-09-11T12:00:00Z",
     ...partial
@@ -112,6 +115,19 @@ describe("fechamento diario e periodo", () => {
   });
 });
 
+describe("atalhos de periodo", () => {
+  it("contam o dia de hoje e atravessam a virada do mes e do ano", () => {
+    expect(presetRange("today", "2026-09-24")).toEqual({ start: "2026-09-24", end: "2026-09-24" });
+    expect(presetRange("7d", "2026-09-03")).toEqual({ start: "2026-08-28", end: "2026-09-03" });
+    expect(presetRange("30d", "2026-09-24")).toEqual({ start: "2026-08-26", end: "2026-09-24" });
+    expect(presetRange("month", "2026-09-24")).toEqual({ start: "2026-09-01", end: "2026-09-24" });
+    expect(presetRange("lastMonth", "2026-01-15")).toEqual({
+      start: "2025-12-01",
+      end: "2025-12-31"
+    });
+  });
+});
+
 describe("tabela dinamica de vendas", () => {
   const ops = [
     op({ id: "1", customer_id: "c1", customer_name: "Alfa", product_id: "p1" }),
@@ -123,6 +139,8 @@ describe("tabela dinamica de vendas", () => {
       product_description: "Areia",
       net_weight_kg: 20_000,
       product_total_cents: 200_000,
+      total_cents: 210_000,
+      freight_type: "third_party",
       closed_at: "2026-09-12T13:00:00Z"
     }),
     op({
@@ -147,6 +165,8 @@ describe("tabela dinamica de vendas", () => {
       totalOperations: 3,
       totalWeightKg: 40_000,
       totalValueCents: 300_000,
+      freightCents: 30_000,
+      grandTotalCents: 330_000,
       avgPriceCentsPerTon: 7_500
     });
   });
@@ -172,7 +192,7 @@ describe("tabela dinamica de vendas", () => {
     );
     expect(result.rows[0].customerName).toBeNull();
     expect(pivotCsv(result, "customer").slice(1).split("\r\n")[1]).toBe(
-      "N/A;1;10,000;50,00;500,00"
+      "N/A;1;10,000;50,00;500,00;100,00;600,00"
     );
   });
 
@@ -193,8 +213,22 @@ describe("tabela dinamica de vendas", () => {
     const rows = pivotCsv(salesPivot(ops, "customer_product"), "customer_product")
       .slice(1)
       .split("\r\n");
-    expect(rows[0]).toBe("Cliente;Produto;Operacoes;Quantidade (t);Preco medio (R$/t);Total (R$)");
-    expect(rows.at(-1)).toBe("TOTAL;;3;40,000;75,00;3000,00");
+    expect(rows[0]).toBe(
+      "Cliente;Produto;Operacoes;Quantidade (t);Preco medio (R$/t);Valor produto (R$);Frete (R$);Total (R$)"
+    );
+    expect(rows.at(-1)).toBe("TOTAL;;3;40,000;75,00;3000,00;300,00;3300,00");
+  });
+
+  it("filtra com frete (valor na nota ou so no sistema) e sem frete", () => {
+    const withFreight = salesPivot(ops, "customer", { freight: "with" });
+    expect(withFreight.totals.totalOperations).toBe(2);
+    const without = salesPivot(ops, "customer", { freight: "without" });
+    expect(without.rows.map((row) => row.customerName)).toEqual(["Beta"]);
+    expect(salesPivot(ops, "customer", { freight: "all" }).totals.totalOperations).toBe(3);
+    expect(hasFreight("cif")).toBe(true);
+    expect(hasFreight("own_sender")).toBe(true);
+    expect(hasFreight("third_party")).toBe(false);
+    expect(hasFreight(null)).toBe(false);
   });
 });
 

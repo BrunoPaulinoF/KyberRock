@@ -8,6 +8,7 @@ import {
   GESTOR_ONLY_ACTIONS,
   handleWebApiRequest,
   OPERATION_ACTIONS,
+  PRICE_ACTIONS,
   READ_ACTIONS,
   WEB_API_ACTIONS,
   type OmieBridge,
@@ -154,13 +155,17 @@ describe("web-api: sessao e permissoes", () => {
     expect(result.body.actions).toContain("upsert_customer");
   });
 
-  it("comercial nao mexe em preco nem no bloco comercial", async () => {
+  it("comercial mexe em preco, mas nao no bloco comercial, carteira nem fechamento", async () => {
     const h = harness({ role: "comercial" });
+    for (const action of PRICE_ACTIONS) {
+      expect(actionDenial("comercial", action), action).toBeNull();
+      expect(actionDenial("operacao", action), action).not.toBeNull();
+    }
     for (const action of [
-      "set_product_default_price",
-      "set_customer_special_price",
       "set_customer_commercial",
-      "set_customer_price_table"
+      "settle_wallet",
+      "request_invoice_closing",
+      "save_report_recipient"
     ]) {
       const result = await h.call(action, { id: "x" });
       expect(result.status, action).toBe(403);
@@ -195,6 +200,7 @@ describe("web-api: sessao e permissoes", () => {
         READ_ACTIONS.has(action),
         OPERATION_ACTIONS.has(action),
         GESTOR_ONLY_ACTIONS.has(action),
+        PRICE_ACTIONS.has(action),
         CUSTOMER_ACTIONS.has(action),
         FLEET_ACTIONS.has(action)
       ].filter(Boolean);
@@ -223,6 +229,7 @@ describe("web-api: sessao e permissoes", () => {
     expect(result.body.user).toMatchObject({
       role: "gestor",
       canManagePrices: true,
+      canEditPrices: true,
       canEditCustomers: true,
       canEditFleet: true
     });

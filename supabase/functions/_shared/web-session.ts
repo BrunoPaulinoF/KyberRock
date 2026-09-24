@@ -74,9 +74,20 @@ export function isWebRole(value: unknown): value is WebRole {
   return typeof value === "string" && (WEB_ROLES as readonly string[]).includes(value);
 }
 
-/** So o gestor mexe em preco e no bloco comercial/credito do cliente. */
+/**
+ * So o gestor mexe no bloco comercial/credito do cliente, na carteira, no fechamento e nos
+ * destinatarios dos relatorios.
+ */
 export function canManagePrices(role: WebRole): boolean {
   return role === "gestor";
+}
+
+/**
+ * Preco (padrao, especial por cliente e tabelas de preco): comercial e gestor. O comercial
+ * passou a entrar pelo KyberRock Web em vez do portal, e negociar preco e o trabalho dele.
+ */
+export function canEditPrices(role: WebRole): boolean {
+  return role === "comercial" || role === "gestor";
 }
 
 /** Cadastro de cliente (sobe ao OMIE): comercial e gestor. */

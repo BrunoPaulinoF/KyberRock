@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { DeskPanel, EmptyState, IconAction, PillTabs, SectionHead } from "../components/desk";
 import { Picker } from "../components/Picker";
@@ -30,12 +31,15 @@ import {
   periodCsv,
   pivotCsv,
   pivotGroupColumns,
+  PERIOD_PRESETS,
+  presetRange,
   reportLines,
   reportUnits,
   salesPivot,
   sumLines,
   sumSeries,
   type ReportTotals,
+  type SalesFreightFilter,
   type SalesPivotGroupBy
 } from "../lib/reports";
 import { useAsync } from "../lib/use-async";
@@ -80,11 +84,25 @@ function downloadCsv(content: string, fileName: string): void {
   URL.revokeObjectURL(url);
 }
 
-/** Relatorios e fechamento diario: as contas de `services/reports.ts` do desktop, sobre a nuvem. */
+/** `?aba=vendas` abre direto a tabela dinamica (a entrada do comercial, que vinha do portal). */
+function initialTab(param: string | null): ReportTab {
+  if (param === "vendas" || param === "pivot") return "pivot";
+  if (param === "periodo") return "period";
+  if (param === "mensal") return "monthly";
+  return "daily";
+}
+
+/**
+ * Relatorios e fechamento diario: as contas de `services/reports.ts` do desktop, sobre a nuvem.
+ * A tabela dinamica tambem e o antigo "Relatorio de vendas" do portal do comercial (atalhos de
+ * periodo, filtro de frete, produto + frete + total), que deixou o portal e mora aqui.
+ */
 export function SalesReport() {
   const user = useUser();
   const today = todayIso();
-  const [tab, setTab] = useState<ReportTab>("daily");
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<ReportTab>(() => initialTab(searchParams.get("aba")));
+  const [freight, setFreight] = useState<SalesFreightFilter>("all");
   const [day, setDay] = useState(today);
   const [start, setStart] = useState(firstDayOfMonth(today));
   const [end, setEnd] = useState(today);
@@ -124,8 +142,8 @@ export function SalesReport() {
   );
   const totals = useMemo(() => sumLines(lines), [lines]);
   const pivot = useMemo(
-    () => salesPivot(operations, groupBy, { customerId, productId }),
-    [operations, groupBy, customerId, productId]
+    () => salesPivot(operations, groupBy, { customerId, productId, freight }),
+    [operations, groupBy, customerId, productId, freight]
   );
   const series = useMemo(
     () => dailySeries(operations, range.start, range.end),
@@ -146,7 +164,10 @@ export function SalesReport() {
     const suffix = tab === "daily" ? day : `${range.start}-a-${range.end}`;
     if (tab === "daily") downloadCsv(dailyCsv(day, lines), `relatorio-diario-${suffix}.csv`);
     if (tab === "period") downloadCsv(periodCsv(lines), `relatorio-periodo-${suffix}.csv`);
-    if (tab === "pivot") downloadCsv(pivotCsv(pivot, groupBy), `vendas-${groupBy}-${suffix}.csv`);
+    if (tab === "pivot") {
+      const freightSuffix = freight === "all" ? "" : `-${freight === "with" ? "com" : "sem"}-frete`;
+      downloadCsv(pivotCsv(pivot, groupBy), `vendas-${groupBy}${freightSuffix}-${suffix}.csv`);
+    }
     if (tab === "monthly") downloadCsv(monthlyCsv(series), `relatorio-mensal-${month}.csv`);
   }
 
@@ -205,6 +226,26 @@ export function SalesReport() {
               )}
               {(tab === "period" || tab === "pivot") && (
                 <>
+                  <div className="reports-presets" role="group" aria-label="Atalhos de periodo">
+                    {PERIOD_PRESETS.map((preset) => {
+                      const range = presetRange(preset.id, today);
+                      const active = range.start === start && range.end === end;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          className={`reports-preset${active ? " active" : ""}`}
+                          aria-pressed={active}
+                          onClick={() => {
+                            setStart(range.start);
+                            setEnd(range.end);
+                          }}
+                        >
+                          {preset.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                   <label className="op-filter">
                     De
                     <input
@@ -296,6 +337,18 @@ export function SalesReport() {
                       emptyLabel="Todos"
                     />
                   </div>
+                  <label className="op-filter">
+                    Frete
+                    <select
+                      className="select"
+                      value={freight}
+                      onChange={(event) => setFreight(event.target.value as SalesFreightFilter)}
+                    >
+                      <option value="all">Todos</option>
+                      <option value="with">Com frete</option>
+                      <option value="without">Sem frete</option>
+                    </select>
+                  </label>
                 </>
               )}
               {ops.loading && <span className="reports-loading">Carregando...</span>}
@@ -498,7 +551,9 @@ function PivotReport({
           { label: "Operacoes", value: pivot.totals.totalOperations.toLocaleString("pt-BR") },
           { label: "Quantidade", value: formatTons(pivot.totals.totalWeightKg) },
           { label: "Preco medio", value: `${formatMoney(pivot.totals.avgPriceCentsPerTon)}/t` },
-          { label: "Total", value: formatMoney(pivot.totals.totalValueCents) }
+          { label: "Valor produto", value: formatMoney(pivot.totals.totalValueCents) },
+          { label: "Frete", value: formatMoney(pivot.totals.freightCents) },
+          { label: "Total", value: formatMoney(pivot.totals.grandTotalCents) }
         ]}
       />
       {pivot.rows.length === 0 ? (
@@ -513,6 +568,8 @@ function PivotReport({
               <th className="num">Operacoes</th>
               <th className="num">Quantidade</th>
               <th className="num">Preco medio</th>
+              <th className="num">Valor produto</th>
+              <th className="num">Frete</th>
               <th className="num">Total</th>
             </tr>
           }
@@ -523,6 +580,8 @@ function PivotReport({
               <td className="num">{formatTons(pivot.totals.totalWeightKg)}</td>
               <td className="num">{formatMoney(pivot.totals.avgPriceCentsPerTon)}/t</td>
               <td className="num">{formatMoney(pivot.totals.totalValueCents)}</td>
+              <td className="num">{formatMoney(pivot.totals.freightCents)}</td>
+              <td className="num">{formatMoney(pivot.totals.grandTotalCents)}</td>
             </tr>
           }
         >
@@ -538,8 +597,10 @@ function PivotReport({
               <td className="num">{row.totalOperations.toLocaleString("pt-BR")}</td>
               <td className="num">{formatTons(row.totalWeightKg)}</td>
               <td className="num">{formatMoney(row.avgPriceCentsPerTon)}/t</td>
+              <td className="num">{formatMoney(row.totalValueCents)}</td>
+              <td className="num">{formatMoney(row.freightCents)}</td>
               <td className="num">
-                <strong>{formatMoney(row.totalValueCents)}</strong>
+                <strong>{formatMoney(row.grandTotalCents)}</strong>
               </td>
             </tr>
           ))}

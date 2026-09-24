@@ -21,12 +21,13 @@ import { TruckControl } from "./pages/TruckControl";
 import { Wallet } from "./pages/Wallet";
 
 /**
- * Onde cada perfil comeca: o carregador na fila, o comercial no cadastro e o resto na tela
- * Operacoes — a mesma que o desktop abre para quem opera a balanca.
+ * Onde cada perfil comeca: o carregador na fila, o comercial no relatorio de vendas (a tela
+ * dele no antigo portal) e o resto na tela Operacoes — a mesma que o desktop abre para quem
+ * opera a balanca.
  */
 function homeFor(user: { isLoader: boolean; role: string }): string {
   if (user.isLoader) return "/carregamento";
-  return user.role === "comercial" ? "/cadastros" : "/operacoes";
+  return user.role === "comercial" ? "/relatorios?aba=vendas" : "/operacoes";
 }
 
 /**

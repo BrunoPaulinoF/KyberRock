@@ -1,6 +1,7 @@
 # KyberRock Web
 
-Site do comercial e da gestão da pedreira (workspace `@kyberrock/web`). Lê o Supabase do
+Site do carregador, do comercial e da gestão da pedreira (workspace `@kyberrock/web`). Carregador
+e comercial entravam pelo KyberRock Portal (`apps/loader-web`) e agora entram só por aqui. Lê o Supabase do
 KyberRock direto (com o login do usuário e RLS) e grava **só** pela Edge Function `web-api`.
 O contrato completo está em `docs/web-api.md`; o plano em `docs/plano-migracao-web.md`.
 
@@ -34,7 +35,9 @@ Acessos de homologação (Pedreira Teste): `gestor.teste@kyberrock.app` e
 
 Perfis (`src/lib/permissions.ts`, espelho de `_shared/web-session.ts`): `monitoramento` só
 consulta; `operacao` edita veículos, motoristas e transportadoras e faz pesagem; `comercial`
-também clientes; `gestor` tudo. O `loader` (carregador) só tem `/carregamento`. A pesagem pelo
+também clientes e preços, e começa no relatório de vendas (`/relatorios?aba=vendas`, o antigo
+relatório do portal); `gestor` tudo. O `loader` (carregador) só tem `/carregamento`, feita para
+celular e tablet e instalável como app (`public/manifest.webmanifest` + `public/sw.js`). A pesagem pelo
 site é um PEDIDO que a balança executora da unidade registra (`docs/web-api.md` 4.9).
 
 As telas seguem a disposicao do KyberRock Desktop (mesmo menu, mesmos nomes, abas por icone,

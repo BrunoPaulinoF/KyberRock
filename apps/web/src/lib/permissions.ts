@@ -8,8 +8,8 @@
  *   - `loader`        carregador: so a fila de carregamento da propria unidade;
  *   - `monitoramento` so consulta: cadastro e relatorios;
  *   - `operacao`      consulta + veiculo, motorista, transportadora e PESAGEM;
- *   - `comercial`     + clientes;
- *   - `gestor`        + precos, bloco comercial, carteira, fechamento e pesagem.
+ *   - `comercial`     + clientes e precos (e o relatorio de vendas que ficava no portal);
+ *   - `gestor`        + bloco comercial, carteira, fechamento e pesagem.
  */
 
 export const ROLES = ["loader", "monitoramento", "operacao", "comercial", "gestor"] as const;
@@ -34,8 +34,10 @@ export interface Capabilities {
   canEditCustomers: boolean;
   /** Veiculo, motorista e transportadora: operacao, comercial e gestor. */
   canEditFleet: boolean;
-  /** Preco, bloco comercial, carteira e fechamento: so o gestor. */
+  /** Bloco comercial/credito, carteira, fechamento e destinatarios: so o gestor. */
   canManagePrices: boolean;
+  /** Preco padrao, especial por cliente e tabelas de preco: comercial e gestor. */
+  canEditPrices: boolean;
   /**
    * Pesagem pelo site (entrada, fechamento, alterar, cancelar, reimprimir): operacao e gestor.
    * Quem executa e a balanca da unidade — o site so pede.
@@ -49,6 +51,7 @@ export function capabilitiesFor(role: Role): Capabilities {
     canEditCustomers: role === "comercial" || role === "gestor",
     canEditFleet: role === "operacao" || role === "comercial" || role === "gestor",
     canManagePrices: role === "gestor",
+    canEditPrices: role === "comercial" || role === "gestor",
     canOperate: role === "operacao" || role === "gestor"
   };
 }

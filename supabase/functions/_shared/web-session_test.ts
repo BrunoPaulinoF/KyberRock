@@ -4,6 +4,7 @@ import {
   bearerToken,
   canEditCustomers,
   canEditFleet,
+  canEditPrices,
   canManagePrices,
   resolveWebSession,
   type WebSessionClient
@@ -141,9 +142,18 @@ describe("resolveWebSession", () => {
 });
 
 describe("canManagePrices", () => {
-  it("so o gestor mexe em preco", () => {
+  it("so o gestor mexe no bloco comercial, carteira e fechamento", () => {
     expect(canManagePrices("gestor")).toBe(true);
     expect(canManagePrices("comercial")).toBe(false);
+  });
+});
+
+describe("canEditPrices", () => {
+  it("preco: comercial e gestor", () => {
+    expect(canEditPrices("gestor")).toBe(true);
+    expect(canEditPrices("comercial")).toBe(true);
+    expect(canEditPrices("operacao")).toBe(false);
+    expect(canEditPrices("monitoramento")).toBe(false);
   });
 });
 

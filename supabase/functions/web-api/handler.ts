@@ -38,6 +38,7 @@ import {
 import {
   canEditCustomers,
   canEditFleet,
+  canEditPrices,
   canManagePrices,
   canOperate,
   WEB_ROLE_LABELS,
@@ -149,9 +150,19 @@ export const WEB_API_ACTIONS = [
 
 export type WebApiAction = (typeof WEB_API_ACTIONS)[number];
 
-/** Acoes que so o gestor executa (preco e bloco comercial/credito). */
+/** Acoes que so o gestor executa (bloco comercial/credito, carteira, fechamento). */
 export const GESTOR_ONLY_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "set_customer_commercial",
+  "settle_wallet",
+  "reopen_wallet",
+  "request_invoice_closing",
+  "list_report_recipients",
+  "save_report_recipient",
+  "delete_report_recipient"
+]);
+
+/** Preco padrao, especial por cliente e tabelas de preco: comercial e gestor. */
+export const PRICE_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "set_product_default_price",
   "set_customer_special_price",
   "remove_customer_special_price",
@@ -159,13 +170,7 @@ export const GESTOR_ONLY_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiActi
   "set_price_table_active",
   "set_price_table_item",
   "remove_price_table_item",
-  "set_customer_price_table",
-  "settle_wallet",
-  "reopen_wallet",
-  "request_invoice_closing",
-  "list_report_recipients",
-  "save_report_recipient",
-  "delete_report_recipient"
+  "set_customer_price_table"
 ]);
 
 /** So leitura, para todo perfil do site. */
@@ -213,10 +218,15 @@ export function actionDenial(role: WebRole, action: WebApiAction): string | null
       ? null
       : `O perfil ${profile} nao faz pesagem pelo site. Pesagem e da operacao e do gestor.`;
   }
+  if (PRICE_ACTIONS.has(action)) {
+    return canEditPrices(role)
+      ? null
+      : `O perfil ${profile} so consulta precos. Preco e do comercial e do gestor.`;
+  }
   if (GESTOR_ONLY_ACTIONS.has(action)) {
     return canManagePrices(role)
       ? null
-      : "So o gestor altera precos, o bloco comercial do cliente, a carteira, o fechamento e os destinatarios dos relatorios.";
+      : "So o gestor altera o bloco comercial do cliente, a carteira, o fechamento e os destinatarios dos relatorios.";
   }
   if (CUSTOMER_ACTIONS.has(action)) {
     return canEditCustomers(role)
@@ -1433,6 +1443,7 @@ async function me(ctx: ActionContext): Promise<Row> {
       role: ctx.session.role,
       unitId: ctx.session.unitId,
       canManagePrices: canManagePrices(ctx.session.role),
+      canEditPrices: canEditPrices(ctx.session.role),
       canEditCustomers: canEditCustomers(ctx.session.role),
       canEditFleet: canEditFleet(ctx.session.role),
       canOperate: canOperate(ctx.session.role),
