@@ -38,7 +38,8 @@ export type WebApiAction =
   | "request_operation"
   | "list_report_recipients"
   | "save_report_recipient"
-  | "delete_report_recipient";
+  | "delete_report_recipient"
+  | "unit_devices";
 
 export class WebApiError extends Error {
   constructor(

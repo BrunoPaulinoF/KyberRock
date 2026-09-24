@@ -271,6 +271,7 @@ export function NewEntry() {
           />
           <Field label="Cliente">
             <Picker
+              loading={!options}
               value={customerId}
               options={options?.customers ?? []}
               onChange={chooseCustomer}
@@ -280,6 +281,7 @@ export function NewEntry() {
           </Field>
           <Field label="Produto">
             <Picker
+              loading={!options}
               value={productId}
               options={options?.products ?? []}
               onChange={setProductId}
@@ -288,6 +290,7 @@ export function NewEntry() {
           </Field>
           <Field label="Forma de pagamento">
             <Picker
+              loading={!options}
               value={paymentMethodId}
               options={options?.paymentMethods ?? []}
               onChange={setPaymentMethodId}
@@ -463,6 +466,7 @@ export function NewEntry() {
           </div>
           <Field label="Transportadora">
             <Picker
+              loading={!options}
               value={carrierId}
               options={options?.carriers ?? []}
               onChange={setCarrierId}
@@ -479,6 +483,7 @@ export function NewEntry() {
           <div className="entry-inline">
             <Field label="Placa">
               <Picker
+                loading={!options}
                 value={vehicleId}
                 options={options?.vehicles ?? []}
                 onChange={setVehicleId}
@@ -487,6 +492,7 @@ export function NewEntry() {
             </Field>
             <Field label="Motorista">
               <Picker
+                loading={!options}
                 value={driverId}
                 options={options?.drivers ?? []}
                 onChange={setDriverId}

@@ -56,6 +56,7 @@ estao em `src/components/desk.tsx`.
 | `/fechamento`              | gestor                           | Fechamento de faturas (pedido de faturamento; a balanca executa)                         |
 | `/relatorios`              | todos (destinatarios: gestor)    | Fechamento diario, periodo, tabela dinamica, mensal e destinatarios                      |
 | `/documentacao`            | todos                            | Central de ajuda (copia da do desktop, guardada por teste)                               |
+| `/configuracoes/<aba>`     | todos (engrenagem do rodape)     | Balanca, Impressao e Cloud: estado das balancas da unidade, cupons do site, fila OMIE    |
 
 Os enderecos antigos (`/operacao`, `/clientes`, `/veiculos`, `/transportadoras`, `/precos`,
 `/vendas`) redirecionam para os novos.

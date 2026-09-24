@@ -143,7 +143,8 @@ export const WEB_API_ACTIONS = [
   "request_operation",
   "list_report_recipients",
   "save_report_recipient",
-  "delete_report_recipient"
+  "delete_report_recipient",
+  "unit_devices"
 ] as const;
 
 export type WebApiAction = (typeof WEB_API_ACTIONS)[number];
@@ -170,7 +171,8 @@ export const GESTOR_ONLY_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiActi
 /** So leitura, para todo perfil do site. */
 export const READ_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "me",
-  "operation_status"
+  "operation_status",
+  "unit_devices"
 ]);
 
 /** Pesagem pelo site: operacao e gestor (quem executa e a balanca da unidade). */
@@ -1154,6 +1156,54 @@ async function deleteReportRecipient(ctx: ActionContext): Promise<Row> {
   return { id };
 }
 
+// ---------------------------------------------------------------------------
+// Configuracoes (o menu da engrenagem do desktop): as balancas da unidade
+// ---------------------------------------------------------------------------
+
+/** Sem sinal ha mais que isto, a balanca aparece fora do ar (a mesma folga do painel admin). */
+const DEVICE_ONLINE_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * As balancas da unidade do usuario, para as telas Balanca e Cloud do site: nome, versao,
+ * anel de atualizacao, se executa os pedidos do site, se e a principal de precos e a saude da
+ * fila (o mesmo resumo da coluna Saude do painel). Nunca o token nem a instalacao.
+ */
+async function unitDevices(ctx: ActionContext): Promise<Row> {
+  const rows = await ctx.store.listRows(
+    "device_registrations",
+    ctx.session.companyId,
+    "id, name, unit_id, is_active, device_number, app_version, update_channel, last_seen_at, is_price_master, executes_web_operations, web_executor_seen_at, health_queue_pending, health_queue_blocked, health_oldest_pending_at, health_last_error, health_collected_at",
+    [{ column: "unit_id", value: ctx.session.unitId }]
+  );
+  const now = Date.parse(ctx.nowIso);
+  const devices = rows
+    .filter((row) => row.is_active === true && !String(row.id ?? "").startsWith("web-"))
+    .map((row) => {
+      const seen = typeof row.last_seen_at === "string" ? Date.parse(row.last_seen_at) : NaN;
+      return {
+        id: row.id,
+        name: row.name,
+        deviceNumber: row.device_number ?? null,
+        appVersion: row.app_version ?? null,
+        updateChannel: row.update_channel === "beta" ? "teste" : "producao",
+        lastSeenAt: row.last_seen_at ?? null,
+        online: Number.isFinite(seen) && now - seen <= DEVICE_ONLINE_WINDOW_MS,
+        isPriceMaster: row.is_price_master === true,
+        executesWebOperations: row.executes_web_operations === true,
+        webExecutorSeenAt: row.web_executor_seen_at ?? null,
+        health: {
+          queuePending: row.health_queue_pending ?? null,
+          queueBlocked: row.health_queue_blocked ?? null,
+          oldestPendingAt: row.health_oldest_pending_at ?? null,
+          lastError: row.health_last_error ?? null,
+          collectedAt: row.health_collected_at ?? null
+        }
+      };
+    })
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), "pt-BR"));
+  return { devices };
+}
+
 async function requireLive(ctx: ActionContext, table: string, id: string, label: string) {
   const row = await requireRow(ctx, table, id, label);
   if (row.is_active === false) throw new WebApiError(400, `${label} esta inativo.`);
@@ -1447,6 +1497,8 @@ async function runAction(action: WebApiAction, ctx: ActionContext): Promise<Row>
       return saveReportRecipient(ctx);
     case "delete_report_recipient":
       return deleteReportRecipient(ctx);
+    case "unit_devices":
+      return unitDevices(ctx);
   }
 }
 

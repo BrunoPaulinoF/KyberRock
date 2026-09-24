@@ -2,6 +2,7 @@ import {
   BarChart3,
   BookOpen,
   ClipboardCheck,
+  Cloud,
   Database,
   FileText,
   LayoutDashboard,
@@ -9,13 +10,18 @@ import {
   LogOut,
   Moon,
   PlusCircle,
+  Printer,
   ReceiptText,
+  RefreshCw,
+  Scale,
+  Settings,
   Sun,
   Truck,
   UserSearch,
   Wallet
 } from "lucide-react";
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth, useUser } from "../lib/auth";
 import { ROLE_LABELS } from "../lib/permissions";
@@ -24,14 +30,42 @@ import { useTheme } from "../lib/theme";
 /**
  * A casca do site: o mesmo menu lateral do KyberRock Desktop — mesmas secoes (Operacional e
  * Analise), mesmos nomes, mesma ordem e mesmos icones (`lucide-react`) —, com o rodape de
- * usuario, tema e saida. Fica de fora so o que nao existe no site; o que o perfil nao pode
- * usar nem aparece.
+ * usuario, tema e a engrenagem de configuracoes. Fica de fora so o que nao existe no site
+ * (Logs, Exportar e Restaurar mexem no banco local da balanca); o que o perfil nao pode usar
+ * nem aparece.
  */
 export function Layout() {
   const user = useUser();
   const { logout } = useAuth();
   const { theme, toggle } = useTheme();
   const roleLabel = ROLE_LABELS[user.role];
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [showSettings, setShowSettings] = useState(false);
+  const settingsRef = useRef<HTMLDivElement>(null);
+
+  // O menu fecha ao trocar de tela, ao clicar fora e no Esc — como o do desktop.
+  useEffect(() => setShowSettings(false), [location.pathname]);
+  useEffect(() => {
+    if (!showSettings) return undefined;
+    function onPointer(event: MouseEvent) {
+      if (!settingsRef.current?.contains(event.target as Node)) setShowSettings(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setShowSettings(false);
+    }
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [showSettings]);
+
+  function openSettings(tab: string) {
+    setShowSettings(false);
+    navigate(`/configuracoes/${tab}`);
+  }
 
   return (
     <div className="shell">
@@ -107,23 +141,64 @@ export function Layout() {
           <div className="sidebar-actions">
             <button
               type="button"
-              className="icon-btn"
+              className="icon-btn square"
               onClick={toggle}
               aria-label="Alternar tema"
               title={theme === "light" ? "Tema escuro" : "Tema claro"}
             >
               {theme === "light" ? <Moon size={17} /> : <Sun size={17} />}
-              {theme === "light" ? "Escuro" : "Claro"}
             </button>
-            <button
-              type="button"
-              className="icon-btn"
-              onClick={() => void logout()}
-              title="Sair da conta"
-            >
-              <LogOut size={17} />
-              Sair
-            </button>
+            <div className="settings-menu" ref={settingsRef}>
+              <button
+                type="button"
+                className={`icon-btn square${showSettings ? " active" : ""}`}
+                onClick={() => setShowSettings((open) => !open)}
+                aria-label="Configuracoes"
+                aria-expanded={showSettings}
+                title="Configuracoes"
+              >
+                <Settings size={17} />
+              </button>
+              {showSettings && (
+                <div className="settings-dropdown" role="menu">
+                  <button type="button" role="menuitem" onClick={() => openSettings("balanca")}>
+                    <Scale size={14} />
+                    Balanca
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => openSettings("impressao")}>
+                    <Printer size={14} />
+                    Impressao
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => openSettings("cloud")}>
+                    <Cloud size={14} />
+                    Cloud
+                  </button>
+                  <div className="settings-divider" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => window.location.reload()}
+                    title="Carrega a versao mais nova do site"
+                  >
+                    <RefreshCw size={14} />
+                    Atualizar site
+                  </button>
+                  <div className="settings-divider" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="danger"
+                    onClick={() => {
+                      setShowSettings(false);
+                      void logout();
+                    }}
+                  >
+                    <LogOut size={14} />
+                    Sair
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </aside>

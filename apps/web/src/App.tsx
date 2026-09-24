@@ -16,6 +16,7 @@ import { NewEntry } from "./pages/NewEntry";
 import { Operations } from "./pages/Operation";
 import { Registrations } from "./pages/Registrations";
 import { SalesReport } from "./pages/SalesReport";
+import { Settings } from "./pages/Settings";
 import { TruckControl } from "./pages/TruckControl";
 import { Wallet } from "./pages/Wallet";
 
@@ -98,6 +99,11 @@ export function App() {
                 <Route path="/conferencia-faturamento" element={<BillingConference />} />
                 <Route path="/relatorios" element={<SalesReport />} />
                 <Route path="/documentacao" element={<Documentation />} />
+                <Route
+                  path="/configuracoes"
+                  element={<Navigate to="/configuracoes/balanca" replace />}
+                />
+                <Route path="/configuracoes/:tab" element={<Settings />} />
                 {/* Enderecos antigos (favoritos, links mandados por mensagem). */}
                 <Route path="/operacao" element={<Navigate to="/operacoes" replace />} />
                 <Route

@@ -291,7 +291,21 @@ e-mail nem WhatsApp. Excluir é tombstone (`deleted_at`), que a balança puxa no
 `channels` diz só **se** o SMTP e o WhatsApp da pedreira estão configurados — senha e token
 nunca saem da nuvem; configurar os canais e o horário dos envios continua na balança.
 
-### 4.11 O que ainda não está na `web-api` (próximas versões)
+### 4.11 Balanças da unidade (todos os perfis)
+
+| Ação           | Payload | Devolve     |
+| -------------- | ------- | ----------- |
+| `unit_devices` | —       | `devices[]` |
+
+A engrenagem do rodapé do site (Configurações → Balança, Impressão e Cloud), no lugar das telas
+de mesmo nome do desktop. No desktop elas configuram o computador em que ele roda; o site não tem
+balança nem impressora, então mostra o **estado** das balanças da unidade de quem entrou: nome,
+número, versão, anel de atualização (`teste`/`producao`), último sinal e se está ligada (sinal há
+até 15 min), se é a principal de preços, se executa os pedidos do site e o resumo de saúde da
+fila (`health`: pendentes, parados, mais antigo, último erro). Só leitura; fica de fora o
+dispositivo virtual do site (`web-…`), a balança inativa e — sempre — o token.
+
+### 4.12 O que ainda não está na `web-api` (próximas versões)
 
 - Regra de frete do cliente (`customer_freight_rules.rule_json`) — o formato do JSON é o da
   balança (`apps/desktop/src/services/customer-freight-rules.ts`) e precisa ser documentado

@@ -1,3 +1,4 @@
+import { ChevronDown } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { matchesSearch } from "../lib/operation";
@@ -9,12 +10,14 @@ export interface PickerOption {
   hint?: string;
 }
 
-const MAX_VISIBLE = 8;
+/** Quantos itens a lista mostra de uma vez (rola dentro dela). */
+const MAX_VISIBLE = 60;
 
 /**
- * Campo de escolha com busca — o "digita um pedaco e escolhe" do desktop. Enter escolhe o
- * primeiro da lista, setas navegam, Esc fecha. `allowEmpty` mostra a opcao de deixar vazio
- * (transportadora, forma de pagamento).
+ * Campo de escolha com busca — o `SearchPicker` do desktop: clicar (ou a seta para baixo) abre
+ * a lista inteira (e a setinha deixa claro que e uma selecao), digitar filtra. Enter escolhe o primeiro da lista,
+ * setas navegam, Esc fecha. `allowEmpty` mostra a opcao de deixar vazio (transportadora, forma
+ * de pagamento); `loading` avisa que a lista ainda esta chegando, em vez de "Nada encontrado".
  */
 export function Picker({
   value,
@@ -24,7 +27,8 @@ export function Picker({
   allowEmpty,
   emptyLabel = "Nenhum",
   autoFocus,
-  disabled
+  disabled,
+  loading
 }: {
   value: string;
   options: PickerOption[];
@@ -34,6 +38,7 @@ export function Picker({
   emptyLabel?: string;
   autoFocus?: boolean;
   disabled?: boolean;
+  loading?: boolean;
 }) {
   const listId = useId();
   const selected = options.find((option) => option.value === value) ?? null;
@@ -76,10 +81,13 @@ export function Picker({
         placeholder={placeholder}
         autoFocus={autoFocus}
         disabled={disabled}
-        onFocus={(event) => {
+        // A lista abre no clique, ao digitar ou na seta para baixo — nao so por ganhar foco:
+        // o Cliente ja entra focado na Nova entrada, e a lista aberta sozinha cobria Produto e
+        // Forma de pagamento, entao o clique nesses campos escolhia um cliente sem querer.
+        onFocus={(event) => event.currentTarget.select()}
+        onMouseDown={() => {
           setOpen(true);
           setActive(0);
-          event.currentTarget.select();
         }}
         onBlur={() => {
           // Da tempo do clique na lista chegar antes de fechar.
@@ -93,6 +101,11 @@ export function Picker({
         onKeyDown={(event) => {
           if (event.key === "ArrowDown") {
             event.preventDefault();
+            if (!open) {
+              setOpen(true);
+              setActive(0);
+              return;
+            }
             setActive((index) => Math.min(index + 1, items.length - 1));
           } else if (event.key === "ArrowUp") {
             event.preventDefault();
@@ -107,9 +120,31 @@ export function Picker({
           }
         }}
       />
+      <button
+        type="button"
+        className="picker-toggle"
+        tabIndex={-1}
+        aria-label="Abrir lista"
+        disabled={disabled}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          if (open) {
+            setOpen(false);
+          } else {
+            inputRef.current?.focus();
+            setOpen(true);
+            setActive(0);
+          }
+        }}
+      >
+        <ChevronDown size={16} />
+      </button>
       {open && !disabled && (
         <ul className="picker-list" id={listId} role="listbox">
-          {items.length === 0 && <li className="picker-empty">Nada encontrado.</li>}
+          {loading && options.length === 0 && <li className="picker-empty">Carregando...</li>}
+          {items.length === 0 && !(loading && options.length === 0) && (
+            <li className="picker-empty">Nada encontrado.</li>
+          )}
           {items.map((option, index) => (
             <li
               key={option?.value ?? "__empty"}
