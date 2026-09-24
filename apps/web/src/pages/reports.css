@@ -1,0 +1,116 @@
+/* Relatorios e fechamento diario (pages/SalesReport.tsx) */
+
+.reports-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.reports-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.reports-page .section-head {
+  margin-top: 14px;
+}
+.reports-filters {
+  margin-bottom: 12px;
+}
+.reports-picker {
+  min-width: 240px;
+}
+.reports-loading {
+  align-self: center;
+  color: var(--kr-muted);
+  font-size: 13px;
+}
+.reports-kpis {
+  margin-bottom: 12px;
+}
+.reports-table {
+  max-height: calc(100vh - 360px);
+  overflow: auto;
+}
+.reports-table tfoot td {
+  position: sticky;
+  bottom: 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+  color: var(--kr-text-strong);
+  background: var(--kr-surface-soft);
+  border-top: 2px solid var(--kr-border);
+}
+.reports-table tfoot td.num {
+  text-align: right;
+}
+.reports-note {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin: 12px 0 0;
+  color: var(--kr-muted);
+  font-size: 12px;
+}
+.reports-note svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.reports-print-head {
+  display: none;
+}
+
+@media print {
+  body:has(.reports-page) .sidebar,
+  .reports-no-print {
+    display: none !important;
+  }
+  body:has(.reports-page) .shell {
+    padding: 0;
+  }
+  body:has(.reports-page) .desk-panel {
+    border: none;
+    box-shadow: none;
+    padding: 0;
+  }
+  .reports-print-head {
+    display: block;
+    margin: 0 0 10px;
+    color: var(--kr-muted);
+    font-size: 12px;
+  }
+  .reports-table {
+    max-height: none;
+    overflow: visible;
+  }
+  .reports-page table.data {
+    min-width: 0;
+  }
+  .reports-page table.data th,
+  .reports-table tfoot td {
+    position: static;
+  }
+  .reports-page tr {
+    break-inside: avoid;
+  }
+}
+
+/* Aba Destinatarios (pages/ReportRecipients.tsx) */
+.recipients-channels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+.recipients-channels small {
+  color: var(--kr-muted);
+  font-weight: 400;
+}
+.recipients-form-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--kr-text-strong);
+}

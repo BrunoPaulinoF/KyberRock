@@ -1,0 +1,395 @@
+/* Fechamento de faturas — os `styles` de apps/desktop/src/renderer/InvoiceClosingView.tsx
+   (mais `WeighingLinesTable`, `Kpi`, `SituationPill` e `InvoiceNumberCell`). */
+
+.closing {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.closing-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.closing-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.closing-title {
+  margin: 0;
+  color: var(--kr-text-strong);
+  font-size: 18px;
+}
+.closing-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  cursor: help;
+  opacity: 0.42;
+  color: var(--kr-muted);
+}
+.closing-help:hover {
+  opacity: 0.9;
+}
+.closing-print-only {
+  display: none;
+}
+.closing-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.closing-card,
+.closing-kpi {
+  background: var(--kr-card-bg);
+  border: 1px solid var(--kr-card-border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: var(--kr-shadow);
+  min-width: 0;
+}
+.closing-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--kr-text-strong);
+  margin: 0 0 8px;
+}
+.closing-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+.closing-filter-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.closing-filter-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.closing-filter-label {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--kr-muted);
+}
+.closing-clear {
+  border: none;
+  background: none;
+  color: var(--kr-primary-strong);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+.closing-plate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 132px;
+  overflow-y: auto;
+  border: 1px solid var(--kr-card-border);
+  border-radius: 10px;
+  padding: 6px 8px;
+  background: var(--kr-surface);
+}
+.closing-input,
+.closing-filter-block .picker .input {
+  border: 1px solid var(--kr-input-border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--kr-input-bg);
+  color: var(--kr-text-strong);
+  width: 100%;
+  box-sizing: border-box;
+}
+.closing-input:focus {
+  outline: none;
+  border-color: var(--kr-accent);
+  box-shadow: 0 0 0 3px var(--kr-focus-ring);
+}
+.closing-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.closing-chip {
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface);
+  color: var(--kr-muted);
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.closing-chip.active {
+  border-color: var(--kr-primary-strong);
+  background: var(--kr-primary-strong);
+  color: var(--kr-primary-text);
+  font-weight: 700;
+}
+.closing-custom-dates {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.closing-date-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--kr-muted);
+  flex: 1 1 120px;
+}
+.closing-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kr-text-strong);
+  cursor: pointer;
+}
+.closing-hint {
+  font-size: 12px;
+  color: var(--kr-muted);
+  margin: 0;
+  white-space: pre-line;
+}
+.closing-foot-note {
+  font-size: 11px;
+  color: var(--kr-muted);
+  font-style: italic;
+  margin: 8px 0 0;
+}
+.closing-warning-text {
+  color: var(--kr-warning);
+}
+.closing-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+.closing-kpi-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--kr-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+.closing-kpi-value {
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--kr-text-strong);
+  margin: 4px 0 2px;
+}
+.closing-kpi-value.danger {
+  color: var(--kr-danger);
+}
+.closing-kpi-value.success {
+  color: var(--kr-success);
+}
+.closing-scroll {
+  overflow: auto;
+  max-height: 340px;
+}
+.closing-scroll.tall {
+  max-height: calc(100vh - 200px);
+}
+.closing-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.closing-table th {
+  padding: 7px 10px;
+  border-bottom: 2px solid var(--kr-card-border);
+  color: var(--kr-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  position: sticky;
+  top: 0;
+  background: var(--kr-card-bg);
+  white-space: nowrap;
+  text-align: right;
+  z-index: 1;
+}
+.closing-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--kr-card-border);
+  color: var(--kr-text-strong);
+  white-space: nowrap;
+  text-align: right;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.closing-table .left {
+  text-align: left;
+}
+.closing-table td.strong {
+  font-weight: 700;
+}
+.closing-table td.danger {
+  color: var(--kr-danger);
+}
+.closing-table td.warning {
+  color: var(--kr-warning);
+  font-weight: 700;
+}
+.closing-table td.wrap {
+  white-space: normal;
+}
+.closing-table td.total {
+  padding: 8px 10px;
+  border-top: 2px solid var(--kr-card-border);
+  border-bottom: none;
+  font-weight: 800;
+  position: sticky;
+  bottom: 0;
+  background: var(--kr-card-bg);
+}
+.closing-table td.closing-sub-row {
+  padding-left: 26px;
+  color: var(--kr-muted);
+}
+.closing-detail-cell {
+  padding: 0 !important;
+  /* A lista de cargas rola dentro da celula, sem alargar a tabela das faturas. */
+  max-width: 0 !important;
+}
+.closing-detail {
+  background: var(--kr-surface);
+  border-left: 3px solid var(--kr-primary-strong);
+  padding: 8px 10px;
+  overflow-x: auto;
+}
+.closing-link-button {
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface);
+  color: var(--kr-text-strong);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.closing-danger-button {
+  border: none;
+  background: var(--kr-primary-strong);
+  color: var(--kr-primary-text);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.closing-confirm {
+  background: var(--kr-card-bg);
+  border: 2px solid var(--kr-primary-strong);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: var(--kr-shadow);
+}
+.closing-confirm-actions {
+  margin-top: 10px;
+}
+.closing-error {
+  color: var(--kr-danger);
+  font-size: 13px;
+  background: var(--kr-danger-soft);
+  border: 1px solid var(--kr-danger-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0;
+}
+.closing-info {
+  color: var(--kr-info-text);
+  background: var(--kr-info-bg);
+  border: 1px solid var(--kr-info-border);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin: 0;
+  white-space: pre-line;
+}
+.closing-situation {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.closing-situation.success {
+  background: var(--kr-success-soft);
+  color: var(--kr-success);
+}
+.closing-situation.danger {
+  background: var(--kr-danger-soft);
+  color: var(--kr-danger);
+}
+.closing-situation.warning {
+  background: var(--kr-warning-soft);
+  color: var(--kr-warning);
+}
+.closing-situation.info {
+  background: var(--kr-info-bg);
+  color: var(--kr-info-text);
+}
+.closing-invoice-number.number {
+  font-weight: 700;
+}
+.closing-invoice-number.pending {
+  color: var(--kr-danger);
+}
+.closing-invoice-number.not_applicable {
+  color: var(--kr-muted);
+}
+
+@media print {
+  body:has(.closing) .sidebar,
+  .closing-actions,
+  .closing-filters,
+  .closing-no-print,
+  .closing-help {
+    display: none !important;
+  }
+  body:has(.closing) .shell {
+    padding: 0;
+  }
+  .closing-print-only {
+    display: inline;
+    margin-left: 12px;
+    color: var(--kr-muted);
+    font-size: 13px;
+  }
+  .closing-scroll,
+  .closing-scroll.tall {
+    max-height: none;
+    overflow: visible;
+  }
+  .closing-table th,
+  .closing-table td.total {
+    position: static;
+  }
+}

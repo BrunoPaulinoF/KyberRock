@@ -1,0 +1,251 @@
+/* Relatorio por cliente — os `styles` de apps/desktop/src/renderer/CustomerReportView.tsx. */
+
+.cr-page {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.cr-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.cr-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cr-title {
+  margin: 0;
+  color: var(--kr-text-strong);
+  font-size: 18px;
+}
+.cr-help {
+  display: inline-flex;
+  color: var(--kr-muted);
+  cursor: help;
+}
+.cr-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cr-card {
+  background: var(--kr-card-bg);
+  border: 1px solid var(--kr-card-border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: var(--kr-shadow);
+  min-width: 0;
+}
+.cr-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--kr-text-strong);
+  margin: 0 0 8px;
+}
+.cr-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+.cr-filter-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.cr-filter-label {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--kr-muted);
+}
+.cr-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cr-chip {
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface);
+  color: var(--kr-muted);
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cr-chip.active {
+  border-color: var(--kr-primary-strong);
+  background: var(--kr-primary-strong);
+  color: var(--kr-primary-text);
+  font-weight: 700;
+}
+.cr-custom-dates {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cr-date-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--kr-muted);
+  flex: 1 1 120px;
+}
+.cr-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kr-text-strong);
+  cursor: pointer;
+}
+.cr-checkbox input {
+  margin-top: 2px;
+}
+.cr-checkbox-hint {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--kr-muted);
+  margin-top: 2px;
+}
+.cr-hint {
+  font-size: 12px;
+  color: var(--kr-muted);
+  margin: 0;
+  white-space: pre-line;
+}
+.cr-foot-note {
+  font-size: 11px;
+  color: var(--kr-muted);
+  font-style: italic;
+  margin: 8px 0 0;
+}
+.cr-identity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+.cr-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--kr-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+.cr-identity-value {
+  font-size: 13px;
+  color: var(--kr-text-strong);
+  margin: 2px 0 0;
+  word-break: break-word;
+}
+.cr-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+.cr-kpi-value {
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--kr-text-strong);
+  margin: 4px 0 2px;
+}
+.cr-table-scroll {
+  overflow: auto;
+  max-height: 420px;
+}
+.cr-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.cr-table th {
+  padding: 7px 10px;
+  border-bottom: 2px solid var(--kr-card-border);
+  color: var(--kr-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  position: sticky;
+  top: 0;
+  background: var(--kr-card-bg);
+  white-space: nowrap;
+  z-index: 1;
+  text-align: right;
+}
+.cr-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--kr-card-border);
+  color: var(--kr-text-strong);
+  white-space: nowrap;
+  text-align: right;
+}
+.cr-table th:first-child,
+.cr-table td:first-child {
+  text-align: left;
+}
+.cr-error {
+  color: var(--kr-danger);
+  font-size: 13px;
+  background: var(--kr-danger-soft);
+  border: 1px solid var(--kr-danger-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0;
+}
+.cr-info {
+  color: var(--kr-info-text);
+  background: var(--kr-info-bg);
+  border: 1px solid var(--kr-info-border);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin: 0;
+  white-space: pre-line;
+}
+
+/*
+ * O PDF do site e a impressao da previa: some o menu, os filtros e os avisos, e as tabelas
+ * saem inteiras (sem a rolagem de 420 px).
+ */
+@media print {
+  body:has(.cr-page) .sidebar,
+  .cr-filters,
+  .cr-header-actions,
+  .cr-help,
+  .cr-message {
+    display: none !important;
+  }
+  body:has(.cr-page) .shell {
+    display: block;
+    padding: 0;
+  }
+  .cr-card {
+    box-shadow: none;
+    break-inside: avoid-page;
+  }
+  .cr-data-card {
+    break-inside: auto;
+  }
+  .cr-table-scroll {
+    max-height: none;
+    overflow: visible;
+  }
+  .cr-table th {
+    position: static;
+  }
+  .cr-table td {
+    white-space: normal;
+  }
+}

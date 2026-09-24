@@ -47,15 +47,19 @@ import {
 } from "../_shared/web-session.ts";
 import { selectOperationsForBillingRequest } from "../_shared/billing-requests.ts";
 import {
+  ENTRY_FREIGHT_MIN_EXECUTOR_VERSION,
   changesPrice,
+  entryNeedsFreightSupport,
   isExecutorOnline,
   isOperationRequestKind,
+  isVersionAtLeast,
   validateOperationRequest,
   type EntryRequestPayload,
   type OperationRequestKind,
   type OperationRequestPayload,
   type UpdateRequestPayload
 } from "../_shared/operation-requests.ts";
+import { recipientColumns, validateReportRecipient } from "../_shared/report-recipients.ts";
 
 export type Row = Record<string, unknown>;
 
@@ -136,7 +140,10 @@ export const WEB_API_ACTIONS = [
   "reopen_wallet",
   "request_invoice_closing",
   "operation_status",
-  "request_operation"
+  "request_operation",
+  "list_report_recipients",
+  "save_report_recipient",
+  "delete_report_recipient"
 ] as const;
 
 export type WebApiAction = (typeof WEB_API_ACTIONS)[number];
@@ -154,7 +161,10 @@ export const GESTOR_ONLY_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiActi
   "set_customer_price_table",
   "settle_wallet",
   "reopen_wallet",
-  "request_invoice_closing"
+  "request_invoice_closing",
+  "list_report_recipients",
+  "save_report_recipient",
+  "delete_report_recipient"
 ]);
 
 /** So leitura, para todo perfil do site. */
@@ -204,7 +214,7 @@ export function actionDenial(role: WebRole, action: WebApiAction): string | null
   if (GESTOR_ONLY_ACTIONS.has(action)) {
     return canManagePrices(role)
       ? null
-      : "So o gestor altera precos, o bloco comercial do cliente, a carteira e o fechamento.";
+      : "So o gestor altera precos, o bloco comercial do cliente, a carteira, o fechamento e os destinatarios dos relatorios.";
   }
   if (CUSTOMER_ACTIONS.has(action)) {
     return canEditCustomers(role)
@@ -1027,7 +1037,7 @@ async function executorOf(ctx: ActionContext, unitId: string): Promise<Row | nul
   const rows = await ctx.store.listRows(
     "device_registrations",
     ctx.session.companyId,
-    "id, name, unit_id, is_active, executes_web_operations, web_executor_seen_at",
+    "id, name, unit_id, is_active, executes_web_operations, web_executor_seen_at, app_version",
     [
       { column: "unit_id", value: unitId },
       { column: "executes_web_operations", value: true }
@@ -1054,6 +1064,94 @@ async function operationStatus(ctx: ActionContext): Promise<Row> {
       : null,
     requiresPricePassword: ctx.session.requiresPricePassword
   };
+}
+
+// ---------------------------------------------------------------------------
+// Destinatarios do fechamento diario (tela Relatorios do desktop)
+// ---------------------------------------------------------------------------
+
+const RECIPIENT_COLUMNS =
+  "id, display_name, email, whatsapp_phone, send_email, send_whatsapp, schedule_frequency, schedule_time, report_types, send_financial, financial_schedule_time, is_active, deleted_at, updated_at";
+
+/**
+ * A lista e a situacao dos canais. Os canais (SMTP, instancia do WhatsApp) guardam senha e
+ * token: aqui so sai SE estao configurados — a configuracao continua na balanca.
+ */
+async function listReportRecipients(ctx: ActionContext): Promise<Row> {
+  const [recipients, channels] = await Promise.all([
+    ctx.store.listRows("report_recipients", ctx.session.companyId, RECIPIENT_COLUMNS, [], {
+      live: true
+    }),
+    ctx.store.listRows(
+      "report_channel_settings",
+      ctx.session.companyId,
+      "smtp_host, smtp_user, smtp_password, smtp_sender, whatsapp_url, whatsapp_instance_token, whatsapp_status",
+      []
+    )
+  ]);
+  const channel = channels[0] ?? {};
+  return {
+    recipients,
+    channels: {
+      emailConfigured: Boolean(channel.smtp_host && channel.smtp_user && channel.smtp_password),
+      emailSender: typeof channel.smtp_sender === "string" ? channel.smtp_sender : null,
+      whatsappConfigured: Boolean(channel.whatsapp_url && channel.whatsapp_instance_token),
+      whatsappStatus: typeof channel.whatsapp_status === "string" ? channel.whatsapp_status : null
+    }
+  };
+}
+
+async function saveReportRecipient(ctx: ActionContext): Promise<Row> {
+  const validation = validateReportRecipient(ctx.payload);
+  if (!validation.ok) throw new WebApiError(400, validation.error);
+  const value = validation.value;
+  const id = typeof ctx.payload.id === "string" && ctx.payload.id ? ctx.payload.id : null;
+  const live = await ctx.store.listRows(
+    "report_recipients",
+    ctx.session.companyId,
+    "id, email, whatsapp_phone",
+    [],
+    { live: true }
+  );
+  const others = live.filter((row) => row.id !== id);
+  if (value.email && others.some((row) => row.email === value.email)) {
+    throw new WebApiError(409, "Ja existe um destinatario com esse e-mail.");
+  }
+  if (value.whatsappPhone && others.some((row) => row.whatsapp_phone === value.whatsappPhone)) {
+    throw new WebApiError(409, "Ja existe um destinatario com esse WhatsApp.");
+  }
+  const columns = recipientColumns(value);
+  if (id) {
+    await requireRow(ctx, "report_recipients", id, "Destinatario");
+    await ctx.store.updateRow("report_recipients", ctx.session.companyId, id, {
+      ...columns,
+      deleted_at: null,
+      updated_at: ctx.nowIso
+    });
+    return { id };
+  }
+  const newId = ctx.newId();
+  await ctx.store.insertRow("report_recipients", {
+    id: newId,
+    company_id: ctx.session.companyId,
+    ...columns,
+    created_at: ctx.nowIso,
+    updated_at: ctx.nowIso
+  });
+  return { id: newId };
+}
+
+/** Exclusao por tombstone: a balanca puxa o `deleted_at` e tira o destinatario dela tambem. */
+async function deleteReportRecipient(ctx: ActionContext): Promise<Row> {
+  const id = typeof ctx.payload.id === "string" ? ctx.payload.id : "";
+  if (!id) throw new WebApiError(400, "Informe o destinatario.");
+  await requireRow(ctx, "report_recipients", id, "Destinatario");
+  await ctx.store.updateRow("report_recipients", ctx.session.companyId, id, {
+    is_active: false,
+    deleted_at: ctx.nowIso,
+    updated_at: ctx.nowIso
+  });
+  return { id };
 }
 
 async function requireLive(ctx: ActionContext, table: string, id: string, label: string) {
@@ -1152,6 +1250,16 @@ async function requestOperation(ctx: ActionContext): Promise<Row> {
     throw new WebApiError(
       409,
       "Nenhuma balanca desta unidade esta marcada para executar os pedidos do site. Marque uma no painel (Acessos do sistema)."
+    );
+  }
+  if (
+    kind === "entry" &&
+    entryNeedsFreightSupport(data as EntryRequestPayload) &&
+    !isVersionAtLeast(executor.app_version, ENTRY_FREIGHT_MIN_EXECUTOR_VERSION)
+  ) {
+    throw new WebApiError(
+      409,
+      `A balanca ${String(executor.name ?? "executora")} precisa ser atualizada (versao ${ENTRY_FREIGHT_MIN_EXECUTOR_VERSION} ou mais nova) para receber entrada com frete ou condicao digitada. Atualize a balanca ou envie sem frete e com a condicao da lista.`
     );
   }
 
@@ -1333,6 +1441,12 @@ async function runAction(action: WebApiAction, ctx: ActionContext): Promise<Row>
       return operationStatus(ctx);
     case "request_operation":
       return requestOperation(ctx);
+    case "list_report_recipients":
+      return listReportRecipients(ctx);
+    case "save_report_recipient":
+      return saveReportRecipient(ctx);
+    case "delete_report_recipient":
+      return deleteReportRecipient(ctx);
   }
 }
 

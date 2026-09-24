@@ -1,67 +1,42 @@
 import { useMemo, useState, type FormEvent } from "react";
 
-import {
-  Alert,
-  Badge,
-  DataTable,
-  Field,
-  Modal,
-  PageHead,
-  Warnings,
-  useToast
-} from "../components/ui";
+import { IconAction, NewButton, Pill, SearchBar, SectionHead } from "../components/desk";
+import { Alert, DataTable, Field, Modal, Warnings, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { formatDocument, formatPlate, isValidDocument } from "../lib/format";
 import { q, type Carrier, type Driver, type Vehicle } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
 
-/** Veiculos e motoristas numa tela so: e assim que a portaria pensa neles. */
-export function VehiclesAndDrivers() {
-  const user = useUser();
+/*
+ * A aba Transporte da tela Cadastros: Motoristas, Transportadoras e Placas, cada um com a
+ * lista no molde do desktop (`DriverCrud`, `CarrierCrud`, `VehicleCrud`).
+ */
+
+function InactiveToggle({
+  checked,
+  onChange,
+  label = "Inativos"
+}: {
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  label?: string;
+}) {
+  return (
+    <label className="check" style={{ margin: 0, whiteSpace: "nowrap" }}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      {label}
+    </label>
+  );
+}
+
+function useToggleActive(reload: () => Promise<void>) {
   const toast = useToast();
-  const { data, loading, error, reload } = useAsync(
-    () =>
-      Promise.all([
-        q.vehicles(user.companyId),
-        q.drivers(user.companyId),
-        q.carriers(user.companyId)
-      ]),
-    [user.companyId]
-  );
-  const [tab, setTab] = useState<"vehicles" | "drivers">("vehicles");
-  const [search, setSearch] = useState("");
-  const [showInactive, setShowInactive] = useState(false);
-  const [vehicle, setVehicle] = useState<Vehicle | "new" | null>(null);
-  const [driver, setDriver] = useState<Driver | "new" | null>(null);
-  const [vehicles, drivers, carriers] = data ?? [[], [], []];
-  const carrierName = (id: string | null) => carriers.find((c) => c.id === id)?.name ?? "—";
-
-  const needle = search.trim().toLowerCase();
-  const vehicleRows = useMemo(
-    () =>
-      vehicles.filter(
-        (v) =>
-          (showInactive || v.is_active) &&
-          (!needle ||
-            v.plate.toLowerCase().includes(needle.replace(/[\s-]/g, "")) ||
-            (v.description ?? "").toLowerCase().includes(needle))
-      ),
-    [vehicles, needle, showInactive]
-  );
-  const driverRows = useMemo(
-    () =>
-      drivers.filter(
-        (d) => (showInactive || d.is_active) && (!needle || d.name.toLowerCase().includes(needle))
-      ),
-    [drivers, needle, showInactive]
-  );
-
-  async function toggle(
-    action: "set_vehicle_active" | "set_driver_active",
+  return async (
+    action: "set_vehicle_active" | "set_driver_active" | "set_carrier_active",
     id: string,
     isActive: boolean
-  ) {
+  ) => {
     try {
       await callWebApi(action, { id, isActive });
       toast.push(isActive ? "Reativado." : "Inativado.");
@@ -69,142 +44,192 @@ export function VehiclesAndDrivers() {
     } catch (caught) {
       toast.push(errorMessage(caught), "error");
     }
-  }
+  };
+}
+
+export function DriversSection() {
+  const user = useUser();
+  const { data, loading, error, reload } = useAsync(
+    () => q.drivers(user.companyId),
+    [user.companyId]
+  );
+  const toggle = useToggleActive(reload);
+  const [search, setSearch] = useState("");
+  const [showInactive, setShowInactive] = useState(false);
+  const [driver, setDriver] = useState<Driver | "new" | null>(null);
+  const drivers = data ?? [];
+  const needle = search.trim().toLowerCase();
+  const rows = useMemo(
+    () =>
+      drivers.filter(
+        (d) =>
+          (showInactive || d.is_active) &&
+          (!needle ||
+            d.name.toLowerCase().includes(needle) ||
+            (d.document ?? "").toLowerCase().includes(needle))
+      ),
+    [drivers, needle, showInactive]
+  );
 
   return (
     <>
-      <PageHead
-        kicker="Cadastro"
-        title="Veiculos e motoristas"
-        description="Cadastro compartilhado com as balancas; a portaria tambem cadastra na hora quando o caminhao chega."
-        actions={
+      <SectionHead
+        title="Motoristas"
+        count={drivers.filter((d) => d.is_active).length}
+        description="Motoristas usados na identificacao do caminhao e impressos no cupom."
+        action={
           user.canEditFleet && (
-            <button
-              className="btn primary"
-              onClick={() => (tab === "vehicles" ? setVehicle("new") : setDriver("new"))}
-            >
-              {tab === "vehicles" ? "Novo veiculo" : "Novo motorista"}
-            </button>
+            <NewButton onClick={() => setDriver("new")}>Novo motorista</NewButton>
           )
         }
       />
       {error && <Alert kind="error">{error}</Alert>}
-      <div className="tabs">
-        <button
-          className={`tab ${tab === "vehicles" ? "active" : ""}`}
-          onClick={() => setTab("vehicles")}
-        >
-          Veiculos ({vehicles.length})
-        </button>
-        <button
-          className={`tab ${tab === "drivers" ? "active" : ""}`}
-          onClick={() => setTab("drivers")}
-        >
-          Motoristas ({drivers.length})
-        </button>
-      </div>
-      <div className="panel">
-        <div className="toolbar">
-          <input
-            className="input"
-            placeholder="Buscar"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ minWidth: 260 }}
-          />
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={showInactive}
-              onChange={(e) => setShowInactive(e.target.checked)}
-            />
-            Mostrar inativos
-          </label>
-        </div>
-        {tab === "vehicles" ? (
-          <DataTable
-            rows={vehicleRows}
-            rowKey={(v) => v.id}
-            rowClassName={(v) => (v.is_active ? undefined : "inactive")}
-            empty={loading ? "Carregando..." : "Nenhum veiculo."}
-            columns={[
-              {
-                key: "plate",
-                header: "Placa",
-                render: (v) => <strong>{formatPlate(v.plate)}</strong>
-              },
-              { key: "desc", header: "Descricao", render: (v) => v.description || "—" },
-              {
-                key: "carrier",
-                header: "Transportadora",
-                render: (v) => carrierName(v.carrier_id)
-              },
-              {
-                key: "status",
-                header: "Situacao",
-                render: (v) =>
-                  v.is_active ? <Badge kind="ok">ativo</Badge> : <Badge>inativo</Badge>
-              },
-              {
-                key: "actions",
-                header: "",
-                render: (v) =>
-                  user.canEditFleet && (
-                    <span className="actions">
-                      <button className="btn small" onClick={() => setVehicle(v)}>
-                        Editar
-                      </button>
-                      <button
-                        className="btn small"
-                        onClick={() => void toggle("set_vehicle_active", v.id, !v.is_active)}
-                      >
-                        {v.is_active ? "Inativar" : "Reativar"}
-                      </button>
-                    </span>
-                  )
-              }
-            ]}
-          />
-        ) : (
-          <DataTable
-            rows={driverRows}
-            rowKey={(d) => d.id}
-            rowClassName={(d) => (d.is_active ? undefined : "inactive")}
-            empty={loading ? "Carregando..." : "Nenhum motorista."}
-            columns={[
-              { key: "name", header: "Motorista", render: (d) => <strong>{d.name}</strong> },
-              { key: "doc", header: "Documento", render: (d) => d.document || "—" },
-              { key: "phone", header: "Telefone", render: (d) => d.phone || "—" },
-              { key: "ind", header: "Autonomo", render: (d) => (d.is_independent ? "sim" : "nao") },
-              {
-                key: "status",
-                header: "Situacao",
-                render: (d) =>
-                  d.is_active ? <Badge kind="ok">ativo</Badge> : <Badge>inativo</Badge>
-              },
-              {
-                key: "actions",
-                header: "",
-                render: (d) =>
-                  user.canEditFleet && (
-                    <span className="actions">
-                      <button className="btn small" onClick={() => setDriver(d)}>
-                        Editar
-                      </button>
-                      <button
-                        className="btn small"
-                        onClick={() => void toggle("set_driver_active", d.id, !d.is_active)}
-                      >
-                        {d.is_active ? "Inativar" : "Reativar"}
-                      </button>
-                    </span>
-                  )
-              }
-            ]}
-          />
-        )}
-      </div>
+      <SearchBar
+        value={search}
+        onChange={setSearch}
+        placeholder="Buscar motoristas..."
+        onRefresh={() => void reload()}
+      >
+        <InactiveToggle checked={showInactive} onChange={setShowInactive} />
+      </SearchBar>
+      <DataTable
+        rows={rows}
+        rowKey={(d) => d.id}
+        rowClassName={(d) => (d.is_active ? undefined : "inactive")}
+        empty={loading ? "Carregando..." : "Nenhum motorista."}
+        columns={[
+          { key: "name", header: "Nome", render: (d) => <strong>{d.name}</strong> },
+          {
+            key: "details",
+            header: "Detalhes",
+            render: (d) =>
+              [
+                d.document ? `CPF: ${d.document}` : null,
+                d.phone ? `Tel: ${d.phone}` : null,
+                d.is_independent ? "Autonomo" : null,
+                d.is_active ? null : "Inativo"
+              ]
+                .filter(Boolean)
+                .join(" · ") || "—"
+          },
+          {
+            key: "actions",
+            header: "Acoes",
+            numeric: true,
+            render: (d) =>
+              user.canEditFleet && (
+                <span className="row-actions">
+                  <IconAction icon="edit" label="Editar motorista" onClick={() => setDriver(d)} />
+                  <IconAction
+                    icon="power"
+                    label={d.is_active ? "Inativar" : "Reativar"}
+                    tone={d.is_active ? "danger" : "neutral"}
+                    onClick={() => void toggle("set_driver_active", d.id, !d.is_active)}
+                  />
+                </span>
+              )
+          }
+        ]}
+      />
+      {driver && (
+        <DriverForm
+          driver={driver === "new" ? null : driver}
+          onClose={() => setDriver(null)}
+          onSaved={async () => {
+            setDriver(null);
+            await reload();
+          }}
+        />
+      )}
+    </>
+  );
+}
 
+export function VehiclesSection() {
+  const user = useUser();
+  const { data, loading, error, reload } = useAsync(
+    () => Promise.all([q.vehicles(user.companyId), q.carriers(user.companyId)]),
+    [user.companyId]
+  );
+  const toggle = useToggleActive(reload);
+  const [search, setSearch] = useState("");
+  const [showInactive, setShowInactive] = useState(false);
+  const [vehicle, setVehicle] = useState<Vehicle | "new" | null>(null);
+  const [vehicles, carriers] = data ?? [[], []];
+  const carrierName = (id: string | null) => carriers.find((c) => c.id === id)?.name ?? "—";
+  const needle = search.trim().toLowerCase().replace(/[\s-]/g, "");
+  const rows = useMemo(
+    () =>
+      vehicles.filter(
+        (v) =>
+          (showInactive || v.is_active) &&
+          (!needle ||
+            v.plate.toLowerCase().includes(needle) ||
+            (v.description ?? "").toLowerCase().includes(needle))
+      ),
+    [vehicles, needle, showInactive]
+  );
+
+  return (
+    <>
+      <SectionHead
+        title="Placas"
+        count={vehicles.filter((v) => v.is_active).length}
+        description="Caminhoes identificados pela placa. A mesma placa pode atender varios clientes e transportadoras."
+        action={
+          user.canEditFleet && <NewButton onClick={() => setVehicle("new")}>Novo veiculo</NewButton>
+        }
+      />
+      {error && <Alert kind="error">{error}</Alert>}
+      <SearchBar
+        value={search}
+        onChange={setSearch}
+        placeholder="Buscar por placa..."
+        onRefresh={() => void reload()}
+      >
+        <InactiveToggle checked={showInactive} onChange={setShowInactive} />
+      </SearchBar>
+      <DataTable
+        rows={rows}
+        rowKey={(v) => v.id}
+        rowClassName={(v) => (v.is_active ? undefined : "inactive")}
+        empty={loading ? "Carregando..." : "Nenhum veiculo."}
+        columns={[
+          {
+            key: "plate",
+            header: "Placa",
+            render: (v) => <strong className="plate-badge">{formatPlate(v.plate)}</strong>
+          },
+          { key: "desc", header: "Descricao", render: (v) => v.description || "—" },
+          {
+            key: "carrier",
+            header: "Transportadora",
+            render: (v) => (
+              <>
+                {carrierName(v.carrier_id)}
+                {!v.is_active && <span className="cell-sub">Inativo</span>}
+              </>
+            )
+          },
+          {
+            key: "actions",
+            header: "Acoes",
+            numeric: true,
+            render: (v) =>
+              user.canEditFleet && (
+                <span className="row-actions">
+                  <IconAction icon="edit" label="Editar veiculo" onClick={() => setVehicle(v)} />
+                  <IconAction
+                    icon="power"
+                    label={v.is_active ? "Inativar" : "Reativar"}
+                    tone={v.is_active ? "danger" : "neutral"}
+                    onClick={() => void toggle("set_vehicle_active", v.id, !v.is_active)}
+                  />
+                </span>
+              )
+          }
+        ]}
+      />
       {vehicle && (
         <VehicleForm
           vehicle={vehicle === "new" ? null : vehicle}
@@ -212,16 +237,6 @@ export function VehiclesAndDrivers() {
           onClose={() => setVehicle(null)}
           onSaved={async () => {
             setVehicle(null);
-            await reload();
-          }}
-        />
-      )}
-      {driver && (
-        <DriverForm
-          driver={driver === "new" ? null : driver}
-          onClose={() => setDriver(null)}
-          onSaved={async () => {
-            setDriver(null);
             await reload();
           }}
         />
@@ -414,105 +429,90 @@ function DriverForm({
 
 // ---------------------------------------------------------------------------
 
-export function Carriers() {
+export function CarriersSection() {
   const user = useUser();
-  const toast = useToast();
   const { data, loading, error, reload } = useAsync(
     () => q.carriers(user.companyId),
     [user.companyId]
   );
+  const toggle = useToggleActive(reload);
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const [editing, setEditing] = useState<Carrier | "new" | null>(null);
   const carriers = data ?? [];
   const needle = search.trim().toLowerCase();
   const rows = carriers.filter(
-    (c) => (showInactive || c.is_active) && (!needle || c.name.toLowerCase().includes(needle))
+    (c) =>
+      (showInactive || c.is_active) &&
+      (!needle || c.name.toLowerCase().includes(needle) || (c.document ?? "").includes(needle))
   );
-
-  async function toggle(carrier: Carrier) {
-    try {
-      await callWebApi("set_carrier_active", { id: carrier.id, isActive: !carrier.is_active });
-      await reload();
-    } catch (caught) {
-      toast.push(errorMessage(caught), "error");
-    }
-  }
 
   return (
     <>
-      <PageHead
-        kicker="Cadastro"
+      <SectionHead
         title="Transportadoras"
-        description="Transportadora com CNPJ sobe para o OMIE como cadastro de transportador."
-        actions={
+        count={carriers.filter((c) => c.is_active).length}
+        description="Sincronizadas do OMIE pela tag 'transportadora' ou criadas aqui. Com CNPJ, sobem ao OMIE como transportador."
+        action={
           user.canEditFleet && (
-            <button className="btn primary" onClick={() => setEditing("new")}>
-              Nova transportadora
-            </button>
+            <NewButton onClick={() => setEditing("new")}>Nova transportadora</NewButton>
           )
         }
       />
       {error && <Alert kind="error">{error}</Alert>}
-      <div className="panel">
-        <div className="toolbar">
-          <input
-            className="input"
-            placeholder="Buscar"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ minWidth: 260 }}
-          />
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={showInactive}
-              onChange={(e) => setShowInactive(e.target.checked)}
-            />
-            Mostrar inativas
-          </label>
-        </div>
-        <DataTable
-          rows={rows}
-          rowKey={(c) => c.id}
-          rowClassName={(c) => (c.is_active ? undefined : "inactive")}
-          empty={loading ? "Carregando..." : "Nenhuma transportadora."}
-          columns={[
-            { key: "name", header: "Transportadora", render: (c) => <strong>{c.name}</strong> },
-            { key: "doc", header: "CNPJ/CPF", render: (c) => formatDocument(c.document) || "—" },
-            {
-              key: "omie",
-              header: "OMIE",
-              render: (c) =>
-                c.omie_customer_id ? (
-                  <Badge kind="ok">{c.omie_customer_id}</Badge>
+      <SearchBar
+        value={search}
+        onChange={setSearch}
+        placeholder="Buscar por nome ou documento..."
+        onRefresh={() => void reload()}
+      >
+        <InactiveToggle checked={showInactive} onChange={setShowInactive} label="Inativas" />
+      </SearchBar>
+      <DataTable
+        rows={rows}
+        rowKey={(c) => c.id}
+        rowClassName={(c) => (c.is_active ? undefined : "inactive")}
+        empty={loading ? "Carregando..." : "Nenhuma transportadora."}
+        columns={[
+          { key: "name", header: "Transportadora", render: (c) => <strong>{c.name}</strong> },
+          { key: "doc", header: "Documento", render: (c) => formatDocument(c.document) || "—" },
+          {
+            key: "origin",
+            header: "Origem",
+            render: (c) => (
+              <span className="row-actions" style={{ justifyContent: "flex-start" }}>
+                {c.omie_customer_id ? (
+                  <Pill tone="warning">OMIE</Pill>
                 ) : (
-                  <Badge kind="warn">nao enviada</Badge>
-                )
-            },
-            {
-              key: "status",
-              header: "Situacao",
-              render: (c) => (c.is_active ? <Badge kind="ok">ativa</Badge> : <Badge>inativa</Badge>)
-            },
-            {
-              key: "actions",
-              header: "",
-              render: (c) =>
-                user.canEditFleet && (
-                  <span className="actions">
-                    <button className="btn small" onClick={() => setEditing(c)}>
-                      Editar
-                    </button>
-                    <button className="btn small" onClick={() => void toggle(c)}>
-                      {c.is_active ? "Inativar" : "Reativar"}
-                    </button>
-                  </span>
-                )
-            }
-          ]}
-        />
-      </div>
+                  <Pill tone="success">LOCAL</Pill>
+                )}
+                {!c.is_active && <Pill>INATIVA</Pill>}
+              </span>
+            )
+          },
+          {
+            key: "actions",
+            header: "Acoes",
+            numeric: true,
+            render: (c) =>
+              user.canEditFleet && (
+                <span className="row-actions">
+                  <IconAction
+                    icon="edit"
+                    label="Editar transportadora"
+                    onClick={() => setEditing(c)}
+                  />
+                  <IconAction
+                    icon="power"
+                    label={c.is_active ? "Inativar" : "Reativar"}
+                    tone={c.is_active ? "danger" : "neutral"}
+                    onClick={() => void toggle("set_carrier_active", c.id, !c.is_active)}
+                  />
+                </span>
+              )
+          }
+        ]}
+      />
       {editing && (
         <CarrierForm
           carrier={editing === "new" ? null : editing}

@@ -37,18 +37,28 @@ consulta; `operacao` edita veículos, motoristas e transportadoras e faz pesagem
 também clientes; `gestor` tudo. O `loader` (carregador) só tem `/carregamento`. A pesagem pelo
 site é um PEDIDO que a balança executora da unidade registra (`docs/web-api.md` 4.9).
 
-| Rota                   | Quem                             | O que faz                                                                                        |
-| ---------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `/carregamento`        | carregador                       | Fila de carregamento da unidade: concluir e devolver carga                                       |
-| `/operacao`            | todos (pesar: operação e gestor) | Pátio: nova entrada (F2), fechar saída, alterar, cancelar; pedidos ao vivo                       |
-| `/operacao/concluidas` | todos (ações: operação e gestor) | Pesagens fechadas no dia: reimprimir na balança, alterar, cancelar                               |
-| `/clientes`            | todos                            | Lista; cadastro/edição (sobe ao OMIE) e inativar só comercial e gestor; bloco comercial (gestor) |
-| `/veiculos`            | todos                            | Veículos e motoristas (edição: operação, comercial e gestor)                                     |
-| `/transportadoras`     | todos                            | Transportadoras (sobem ao OMIE com CNPJ; edição: operação em diante)                             |
-| `/precos`              | gestor                           | Preço padrão por produto e especial por cliente                                                  |
-| `/vendas`              | todos                            | Relatório de vendas por cliente/produto/dia, CSV                                                 |
-| `/carteira`            | gestor                           | Fechamento e reabertura da carteira                                                              |
-| `/fechamento`          | gestor                           | Conferência do período e pedido de faturamento (a balança executa)                               |
+As telas seguem a disposicao do KyberRock Desktop (mesmo menu, mesmos nomes, abas por icone,
+botoes quadrados de acao): quem opera a balanca nao deve estranhar o site. As pecas comuns
+estao em `src/components/desk.tsx`.
+
+| Rota                       | Quem                             | O que faz                                                                                |
+| -------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------- |
+| `/carregamento`            | carregador                       | Fila de carregamento da unidade: concluir e devolver carga                               |
+| `/painel`                  | todos                            | Painel: resumo do dia, balanca executora, pendencias do OMIE, ultimas pesagens           |
+| `/nova-entrada`            | operacao e gestor                | Nova entrada (peso digitado, frete, condicao digitada) — vira pedido a balanca           |
+| `/operacoes`               | todos (acoes: operacao e gestor) | Operacoes: abertas, canceladas (`?aba=canceladas`), concluidas (`?aba=concluidas`)       |
+| `/carteira`                | gestor                           | Carteira: fechamento e reabertura                                                        |
+| `/cadastros/<aba>`         | todos (edicao conforme o perfil) | Clientes, Produtos (precos), Pagamento, Transporte (motoristas, transportadoras, placas) |
+| `/insights`                | todos                            | Insights: KPIs, graficos e tabela dinamica                                               |
+| `/controle-caminhoes`      | todos                            | Tempo de patio por caminhao                                                              |
+| `/relatorio-cliente`       | todos                            | Relatorio por cliente (simplificado/completo), CSV e impressao                           |
+| `/conferencia-faturamento` | todos                            | Conferencia de faturamento pesagem a pesagem                                             |
+| `/fechamento`              | gestor                           | Fechamento de faturas (pedido de faturamento; a balanca executa)                         |
+| `/relatorios`              | todos (destinatarios: gestor)    | Fechamento diario, periodo, tabela dinamica, mensal e destinatarios                      |
+| `/documentacao`            | todos                            | Central de ajuda (copia da do desktop, guardada por teste)                               |
+
+Os enderecos antigos (`/operacao`, `/clientes`, `/veiculos`, `/transportadoras`, `/precos`,
+`/vendas`) redirecionam para os novos.
 
 ## Deploy na Hostinger
 

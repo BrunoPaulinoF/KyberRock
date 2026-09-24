@@ -1,4 +1,6 @@
-import type { WeighingOperationSummary } from "./weighing-operations.js";
+import { getFreightModalityInfo, isFreightModality } from "./freight.js";
+import type { FreightModality, FreightRule } from "./freight.js";
+import type { OperationFreightInput, WeighingOperationSummary } from "./weighing-operations.js";
 
 /**
  * Executa os pedidos de pesagem que o site deixou na nuvem (`operation_requests`).
@@ -170,5 +172,64 @@ export function printOutcome(receipt: { status: string; errorMessage?: string | 
   return {
     status: "failed",
     message: receipt.errorMessage?.trim() || "A impressora nao confirmou a impressao."
+  };
+}
+
+/** O frete de um pedido de entrada do site, no formato do `startWeighing`. */
+export interface WebEntryFreight {
+  freightModality: FreightModality | null;
+  freight: OperationFreightInput | null;
+  deductFreightFromCredit: boolean;
+}
+
+const WEB_FREIGHT_CALCULATIONS: ReadonlyArray<FreightRule["type"]> = [
+  "per_ton",
+  "per_ton_km",
+  "fixed_plus_ton"
+];
+
+function nonNegativeNumber(value: unknown): number | undefined {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+/**
+ * Monta o frete da entrada pedida pelo site exatamente como o `buildFreightInput` da Nova
+ * entrada do desktop: o pagador vem da situacao escolhida, o valor so sai no cupom na situacao
+ * "valor na nota", e sem valor de frete (situacoes 3 e 4) nao ha regra. Pedido antigo, sem tipo
+ * de frete, fica com o padrao da balanca (`null`).
+ */
+export function webEntryFreight(payload: Record<string, unknown>): WebEntryFreight {
+  const modality = isFreightModality(payload.freightModality) ? payload.freightModality : null;
+  if (!modality) return { freightModality: null, freight: null, deductFreightFromCredit: false };
+  const info = getFreightModalityInfo(modality);
+  const raw =
+    payload.freight && typeof payload.freight === "object"
+      ? (payload.freight as Record<string, unknown>)
+      : null;
+  if (!info.supportsCharge || !raw) {
+    return { freightModality: modality, freight: null, deductFreightFromCredit: false };
+  }
+  const type = WEB_FREIGHT_CALCULATIONS.includes(raw.calculationType as FreightRule["type"])
+    ? (raw.calculationType as FreightRule["type"])
+    : "per_ton";
+  const destination = typeof raw.destination === "string" ? raw.destination.trim() : "";
+  return {
+    freightModality: modality,
+    freight: {
+      payer: info.defaultPayer,
+      destination: destination || null,
+      showOnReceipt: info.valueOnInvoice,
+      rule: {
+        id: "operation-freight",
+        name: "Frete da operacao",
+        type,
+        baseValueCents: nonNegativeNumber(raw.baseValueCents) ?? 0,
+        fixedValueCents: nonNegativeNumber(raw.fixedValueCents),
+        distanceKm: nonNegativeNumber(raw.distanceKm),
+        unit: "ton"
+      }
+    },
+    deductFreightFromCredit: payload.deductFreightFromCredit === true
   };
 }

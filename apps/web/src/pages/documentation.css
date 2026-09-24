@@ -1,0 +1,797 @@
+/*
+ * Central de ajuda (Documentacao) — a mesma folha do KyberRock Desktop
+ * (`apps/desktop/src/renderer/DocumentationView.tsx`): as classes `krdoc-*` interativas vem
+ * de `documentationCss`, e as demais sao o objeto `styles` de la, convertido em classes.
+ */
+
+.krdoc-page {
+  /* O desktop usa a altura de linha padrao do navegador; o body do site usa 1.45. */
+  line-height: normal;
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+  align-content: start;
+}
+
+/* ---------- busca ---------- */
+.krdoc-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--kr-surface);
+  border: 1px solid var(--kr-border);
+  box-shadow: var(--kr-shadow);
+}
+.krdoc-search-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--kr-text-strong);
+  font-weight: 800;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.krdoc-input {
+  flex: 1;
+  min-width: min(220px, 100%);
+  border: 1px solid var(--kr-input-border);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--kr-input-bg);
+  color: var(--kr-text-strong);
+}
+.krdoc-input:focus {
+  outline: none;
+  border-color: var(--kr-accent);
+  box-shadow: 0 0 0 3px var(--kr-focus-ring);
+}
+.krdoc-search-count {
+  color: var(--kr-muted);
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ---------- abas ---------- */
+.krdoc-tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.krdoc-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface);
+  color: var(--kr-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.krdoc-tab:hover {
+  background: var(--kr-card-hover);
+  color: var(--kr-text-strong);
+}
+.krdoc-tab-active,
+.krdoc-tab-active:hover {
+  background: var(--kr-primary-strong);
+  border-color: var(--kr-primary-strong);
+  color: var(--kr-primary-text);
+}
+
+/* ---------- botoes ---------- */
+.krdoc-ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 11px;
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface);
+  color: var(--kr-text-strong);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.krdoc-ghost-btn:hover {
+  background: var(--kr-card-hover);
+  border-color: var(--kr-accent);
+}
+.krdoc-ghost-btn.krdoc-btn-sm {
+  padding: 6px 9px;
+}
+.krdoc-ghost-btn.krdoc-btn-xs {
+  padding: 5px 9px;
+}
+.krdoc-ghost-btn.krdoc-btn-back {
+  justify-self: start;
+  padding: 7px 10px;
+}
+.krdoc-ghost-btn.krdoc-btn-faq {
+  padding: 6px 10px;
+}
+.krdoc-ghost-btn.krdoc-btn-glossary {
+  padding: 5px 9px;
+  font-size: 11px;
+}
+.krdoc-check {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin: 2px 0 0 0;
+  accent-color: var(--kr-accent);
+  cursor: pointer;
+}
+
+/* ---------- resultados da busca ---------- */
+.krdoc-result-group {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--kr-surface);
+  border: 1px solid var(--kr-border);
+  box-shadow: var(--kr-shadow);
+}
+.krdoc-result-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--kr-text-strong);
+  font-size: 13px;
+}
+.krdoc-result-list {
+  display: grid;
+  gap: 6px;
+}
+.krdoc-result,
+.krdoc-problem-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface-soft);
+  color: var(--kr-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease;
+}
+.krdoc-result:hover,
+.krdoc-problem-card:hover {
+  border-color: var(--kr-accent);
+  background: var(--kr-card-hover);
+}
+.krdoc-result-icon,
+.krdoc-flow-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: var(--kr-info-bg);
+  color: var(--kr-info-text);
+  flex-shrink: 0;
+}
+.krdoc-result-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.krdoc-result-kind {
+  color: var(--kr-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.krdoc-result-snippet {
+  color: var(--kr-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.krdoc-shrink-0 {
+  flex-shrink: 0;
+}
+.krdoc-empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 26px;
+  border-radius: 16px;
+  background: var(--kr-surface);
+  border: 1px solid var(--kr-border);
+  color: var(--kr-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+.krdoc-empty-title {
+  color: var(--kr-text-strong);
+  font-size: 14px;
+}
+
+/* ---------- cartoes ---------- */
+.krdoc-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--kr-surface);
+  border: 1px solid var(--kr-border);
+  box-shadow: var(--kr-shadow);
+  align-content: start;
+  min-width: 0;
+}
+.krdoc-panel-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.krdoc-panel-header-text {
+  flex: 1;
+  min-width: 0;
+}
+.krdoc-header-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  background: var(--kr-info-bg);
+  color: var(--kr-info-text);
+  flex: 0 0 auto;
+}
+.krdoc-panel-title {
+  margin: 0;
+  color: var(--kr-text-strong);
+  font-size: 16px;
+}
+.krdoc-panel-description {
+  margin: 4px 0 0 0;
+  color: var(--kr-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.krdoc-card-eyebrow {
+  margin: 0;
+  color: var(--kr-muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.krdoc-block-title {
+  margin: 0;
+  color: var(--kr-text-strong);
+  font-size: 13px;
+}
+
+/* ---------- aba Comecar ---------- */
+.krdoc-start-grid,
+.krdoc-support-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.krdoc-progress-badge {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--kr-accent-soft);
+  border: 1px solid var(--kr-accent-border);
+  color: var(--kr-info-text);
+  font-size: 12px;
+  font-weight: 900;
+}
+.krdoc-progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--kr-surface-soft);
+  border: 1px solid var(--kr-border);
+  overflow: hidden;
+}
+.krdoc-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--kr-accent);
+  transition: width 0.25s ease;
+}
+.krdoc-task-list,
+.krdoc-flow-list,
+.krdoc-step-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.krdoc-task-list {
+  gap: 8px;
+}
+.krdoc-flow-list {
+  gap: 4px;
+}
+.krdoc-step-list {
+  gap: 6px;
+}
+.krdoc-task {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface-soft);
+  transition: border-color 0.12s ease;
+}
+.krdoc-task:hover {
+  border-color: var(--kr-accent);
+}
+.krdoc-task-done {
+  border-color: var(--kr-success-border);
+  background: var(--kr-success-soft);
+}
+.krdoc-task-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+.krdoc-task-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.krdoc-task-title {
+  color: var(--kr-text-strong);
+  font-size: 13px;
+}
+.krdoc-task-done .krdoc-task-title {
+  color: var(--kr-muted);
+  text-decoration: line-through;
+}
+.krdoc-task-description {
+  color: var(--kr-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.krdoc-task .krdoc-ghost-btn {
+  align-self: center;
+}
+.krdoc-flow-item {
+  display: grid;
+  gap: 4px;
+}
+.krdoc-flow-stage {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface-soft);
+  color: var(--kr-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s ease;
+}
+.krdoc-flow-stage:hover {
+  border-color: var(--kr-accent);
+}
+.krdoc-flow-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--kr-primary-strong);
+  color: var(--kr-primary-text);
+  font-size: 12px;
+  font-weight: 900;
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+.krdoc-flow-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  line-height: 1.4;
+  min-width: 0;
+}
+.krdoc-flow-connector {
+  width: 2px;
+  height: 10px;
+  margin-left: 20px;
+  background: var(--kr-border);
+}
+.krdoc-hint-card {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--kr-info-bg);
+  border: 1px solid var(--kr-info-border);
+  color: var(--kr-info-text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* ---------- aba Guias ---------- */
+.krdoc-guides-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.krdoc-guide-nav {
+  position: sticky;
+  top: 0;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 16px;
+  background: var(--kr-surface);
+  border: 1px solid var(--kr-border);
+  box-shadow: var(--kr-shadow);
+}
+.krdoc-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--kr-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.krdoc-nav-item:hover {
+  background: var(--kr-card-hover);
+}
+.krdoc-nav-item-active,
+.krdoc-nav-item-active:hover {
+  background: var(--kr-accent-soft);
+  border-color: var(--kr-accent-border);
+}
+.krdoc-nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: var(--kr-info-bg);
+  color: var(--kr-info-text);
+  flex-shrink: 0;
+}
+.krdoc-nav-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.krdoc-nav-done {
+  color: var(--kr-success);
+  flex-shrink: 0;
+}
+.krdoc-guide-steps-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.krdoc-guide-steps-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.krdoc-guide-steps-count {
+  color: var(--kr-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.krdoc-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface-soft);
+  cursor: pointer;
+  transition: border-color 0.12s ease;
+}
+.krdoc-step:hover {
+  border-color: var(--kr-accent);
+}
+.krdoc-step-done {
+  border-color: var(--kr-success-border);
+  background: var(--kr-success-soft);
+}
+.krdoc-step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--kr-primary-strong);
+  color: var(--kr-primary-text);
+  font-size: 11px;
+  font-weight: 900;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.krdoc-step-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--kr-text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.krdoc-step-done .krdoc-step-text {
+  color: var(--kr-muted);
+  text-decoration: line-through;
+}
+.krdoc-detail-box {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--kr-surface-soft);
+  border: 1px solid var(--kr-border);
+}
+.krdoc-detail-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--kr-text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.krdoc-detail-list li {
+  margin-bottom: 5px;
+}
+.krdoc-guide-pager {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---------- aba Duvidas ---------- */
+.krdoc-category-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.krdoc-chip {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface);
+  color: var(--kr-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.krdoc-chip:hover {
+  color: var(--kr-text-strong);
+  border-color: var(--kr-accent);
+}
+.krdoc-chip-active,
+.krdoc-chip-active:hover {
+  background: var(--kr-accent-soft);
+  border-color: var(--kr-accent-border);
+  color: var(--kr-info-text);
+}
+.krdoc-faq-list {
+  display: grid;
+  gap: 8px;
+}
+.krdoc-faq-item {
+  border: 1px solid var(--kr-border);
+  border-radius: 12px;
+  background: var(--kr-surface-soft);
+  overflow: hidden;
+}
+.krdoc-faq-question {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 12px;
+  border: none;
+  background: transparent;
+  color: var(--kr-text-strong);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.krdoc-faq-question:hover {
+  background: var(--kr-card-hover);
+}
+.krdoc-faq-question-text {
+  flex: 1;
+  min-width: 0;
+}
+.krdoc-faq-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.krdoc-faq-question[aria-expanded="true"] .krdoc-faq-chevron {
+  transform: rotate(180deg);
+}
+.krdoc-faq-answer-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0 12px 11px 12px;
+}
+.krdoc-faq-answer {
+  margin: 0;
+  color: var(--kr-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ---------- aba Diagnostico ---------- */
+.krdoc-flow-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: 8px;
+}
+.krdoc-troubleshoot-hint {
+  margin: 0;
+  color: var(--kr-muted);
+  font-size: 12px;
+}
+.krdoc-escalation-box {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--kr-warning-soft);
+  border: 1px solid var(--kr-warning-border);
+  color: var(--kr-warning);
+}
+.krdoc-escalation-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.krdoc-escalation-title {
+  display: block;
+  font-size: 13px;
+}
+.krdoc-escalation-text {
+  margin: 4px 0 10px 0;
+  color: var(--kr-text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ---------- aba Glossario ---------- */
+.krdoc-glossary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  gap: 8px;
+}
+.krdoc-glossary-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  background: var(--kr-surface-soft);
+  border: 1px solid var(--kr-border);
+}
+.krdoc-glossary-term {
+  color: var(--kr-text-strong);
+  font-size: 13px;
+}
+.krdoc-glossary-definition {
+  color: var(--kr-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ---------- aba Suporte ---------- */
+.krdoc-checklist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
+  gap: 8px;
+}
+.krdoc-checklist-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--kr-surface-soft);
+  border: 1px solid var(--kr-border);
+  color: var(--kr-text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.krdoc-checklist-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.krdoc-support-footnote {
+  margin: 0;
+  color: var(--kr-muted);
+  font-size: 12px;
+}
+
+/* Na tela estreita (celular) o indice dos guias sobe para cima do artigo. */
+@media (max-width: 760px) {
+  .krdoc-guides-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .krdoc-guide-nav {
+    position: static;
+  }
+}

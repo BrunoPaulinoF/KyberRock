@@ -91,9 +91,12 @@ import { claimCloudBillingRequests, reportCloudBillingRequests } from "./billing
 import {
   printOutcome,
   runWebOperationRequests,
+  webEntryFreight,
   type WebOperationClaim,
   type WebOperationExecution
 } from "./web-operation-requests.js";
+import { conditionTermMatches } from "./payment-condition-match.js";
+import { tryParsePaymentCondition } from "./payment-condition-parser.js";
 import {
   claimCloudWebOperationRequests,
   reportCloudWebOperationRequests
@@ -606,6 +609,7 @@ import {
   createPaymentTerm,
   deletePaymentTerm,
   listOmiePaymentTerms,
+  listPaymentTerms,
   updatePaymentTerm,
   type CreatePaymentTermInput,
   type UpdatePaymentTermInput
@@ -1476,6 +1480,7 @@ export class DesktopRuntime {
       };
     }
     const payload = claim.payload;
+    const freight = webEntryFreight(payload);
     const input: StartWeighingInput = {
       operationType: payload.operationType === "internal" ? "internal" : "invoice",
       customerId: requiredText(payload.customerId, "Cliente"),
@@ -1486,6 +1491,13 @@ export class DesktopRuntime {
       paymentTermId: optionalText(payload.paymentTermId),
       paymentMethodId: optionalText(payload.paymentMethodId)
     };
+    // Tipo de frete e valor, como no bloco de frete da Nova entrada. Pedido sem tipo de frete
+    // (site antigo) segue o padrao da balanca, como antes.
+    if (freight.freightModality) {
+      input.freightModality = freight.freightModality;
+      input.freight = freight.freight;
+      input.deductFreightFromCredit = freight.deductFreightFromCredit;
+    }
     await this.ensureLocalRows([
       ["customers", input.customerId, "O cliente"],
       ["vehicles", input.vehicleId, "O veiculo"],
@@ -1496,6 +1508,18 @@ export class DesktopRuntime {
       ["payment_methods", input.paymentMethodId, "A forma de pagamento"]
     ]);
     this.assertCustomerReadyForOmie(input.customerId, input.operationType);
+    // Condicao digitada no site ("30", "7 14 21"): vira (ou reusa) uma condicao local, como o
+    // `resolveConditionTermId` da Nova entrada faz com o campo livre.
+    const conditionText = optionalText(payload.conditionText);
+    if (conditionText) input.paymentTermId = this.resolveWebConditionTerm(conditionText);
+    // "Frete pago pela Pedreira e forma de pagamento no credito do cliente: o frete entra
+    // automaticamente na fatura" — a mesma regra do `freightGoesToCustomerInvoice` da tela.
+    if (
+      input.freight?.payer === "quarry" &&
+      this.isCustomerCreditPaymentMethod(input.paymentMethodId)
+    ) {
+      input.deductFreightFromCredit = true;
+    }
     // A trava "dinheiro so a vista" morava so na tela do desktop; o pedido do site passa por ela
     // aqui, com a mesma mensagem.
     assertPaymentMethodConditionAllowed(this.database, input.paymentMethodId, input.paymentTermId);
@@ -1505,6 +1529,41 @@ export class DesktopRuntime {
       claim.operationId
     );
     return { message: `Entrada registrada: ${describeOperation(operation)}.`, operation };
+  }
+
+  /**
+   * Condicao de pagamento digitada num pedido do site. Reusa a condicao local com a mesma regra
+   * (texto e prazos iguais) ou cria uma nova — exatamente o que a Nova entrada faz com o campo
+   * livre, para o mesmo texto nao gerar duplicata no cadastro.
+   */
+  private resolveWebConditionTerm(conditionText: string): string {
+    const parsed = tryParsePaymentCondition(conditionText);
+    if (!parsed) {
+      throw new Error(
+        'Condicao de pagamento invalida. Use formatos como "30" (dias), "7 14 21", "3 parcelas" ' +
+          'ou periodo ("s+20" semana, "d+20" dezena, "q+20" quinzena, "m+20" mes).'
+      );
+    }
+    const identity = this.ensureIdentity();
+    const existing = listPaymentTerms(this.database, identity.companyId).find((term) =>
+      conditionTermMatches(term.rules_json, parsed)
+    );
+    if (existing) return existing.id;
+    const created = createPaymentTerm(this.database, {
+      companyId: identity.companyId,
+      name: parsed.summary,
+      condition: parsed.raw
+    });
+    this.cadastroChanged("payment_term", identity.companyId);
+    return created.id;
+  }
+
+  private isCustomerCreditPaymentMethod(paymentMethodId: string | undefined): boolean {
+    if (!paymentMethodId) return false;
+    const row = this.database
+      .prepare("SELECT is_customer_credit FROM payment_methods WHERE id = ?")
+      .get(paymentMethodId) as { is_customer_credit: number } | undefined;
+    return row?.is_customer_credit === 1;
   }
 
   private async executeWebExit(claim: WebOperationClaim): Promise<WebOperationExecution> {

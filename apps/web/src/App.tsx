@@ -4,19 +4,28 @@ import { Layout } from "./components/Layout";
 import { ToastProvider } from "./components/ui";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { ThemeProvider } from "./lib/theme";
-import { Carriers, VehiclesAndDrivers } from "./pages/Cadastros";
-import { Customers } from "./pages/Customers";
+import { BillingConference } from "./pages/BillingConference";
+import { CustomerReport } from "./pages/CustomerReport";
+import { Dashboard } from "./pages/Dashboard";
+import { Documentation } from "./pages/Documentation";
+import { Insights } from "./pages/Insights";
 import { InvoiceClosing } from "./pages/InvoiceClosing";
 import { Loading } from "./pages/Loading";
-import { OperationDone, OperationYard } from "./pages/Operation";
 import { Login } from "./pages/Login";
-import { Prices } from "./pages/Prices";
+import { NewEntry } from "./pages/NewEntry";
+import { Operations } from "./pages/Operation";
+import { Registrations } from "./pages/Registrations";
 import { SalesReport } from "./pages/SalesReport";
+import { TruckControl } from "./pages/TruckControl";
 import { Wallet } from "./pages/Wallet";
 
-/** Onde cada perfil comeca: o carregador na fila, os outros no cadastro. */
-function homeFor(user: { isLoader: boolean }): string {
-  return user.isLoader ? "/carregamento" : "/clientes";
+/**
+ * Onde cada perfil comeca: o carregador na fila, o comercial no cadastro e o resto na tela
+ * Operacoes — a mesma que o desktop abre para quem opera a balanca.
+ */
+function homeFor(user: { isLoader: boolean; role: string }): string {
+  if (user.isLoader) return "/carregamento";
+  return user.role === "comercial" ? "/cadastros" : "/operacoes";
 }
 
 /**
@@ -36,7 +45,7 @@ function Private({
   if (loading) return <div className="empty">Carregando...</div>;
   if (!user) return <Navigate to="/login" replace />;
   if (Boolean(loaderOnly) !== user.isLoader) return <Navigate to={homeFor(user)} replace />;
-  if (gestorOnly && !user.canManagePrices) return <Navigate to="/clientes" replace />;
+  if (gestorOnly && !user.canManagePrices) return <Navigate to={homeFor(user)} replace />;
   return children;
 }
 
@@ -77,20 +86,35 @@ export function App() {
                 }
               >
                 <Route index element={<Home />} />
-                <Route path="/clientes" element={<Customers />} />
-                <Route path="/veiculos" element={<VehiclesAndDrivers />} />
-                <Route path="/transportadoras" element={<Carriers />} />
-                <Route path="/vendas" element={<SalesReport />} />
-                <Route path="/operacao" element={<OperationYard />} />
-                <Route path="/operacao/concluidas" element={<OperationDone />} />
+                <Route path="/painel" element={<Dashboard />} />
+                <Route path="/nova-entrada" element={<NewEntry />} />
+                <Route path="/operacoes" element={<Operations />} />
+                <Route path="/cadastros" element={<Registrations />} />
+                <Route path="/cadastros/:tab" element={<Registrations />} />
+                <Route path="/cadastros/:tab/:sub" element={<Registrations />} />
+                <Route path="/insights" element={<Insights />} />
+                <Route path="/controle-caminhoes" element={<TruckControl />} />
+                <Route path="/relatorio-cliente" element={<CustomerReport />} />
+                <Route path="/conferencia-faturamento" element={<BillingConference />} />
+                <Route path="/relatorios" element={<SalesReport />} />
+                <Route path="/documentacao" element={<Documentation />} />
+                {/* Enderecos antigos (favoritos, links mandados por mensagem). */}
+                <Route path="/operacao" element={<Navigate to="/operacoes" replace />} />
                 <Route
-                  path="/precos"
-                  element={
-                    <Private gestorOnly>
-                      <Prices />
-                    </Private>
-                  }
+                  path="/operacao/concluidas"
+                  element={<Navigate to="/operacoes?aba=concluidas" replace />}
                 />
+                <Route path="/clientes" element={<Navigate to="/cadastros/clientes" replace />} />
+                <Route
+                  path="/veiculos"
+                  element={<Navigate to="/cadastros/transporte/placas" replace />}
+                />
+                <Route
+                  path="/transportadoras"
+                  element={<Navigate to="/cadastros/transporte/transportadoras" replace />}
+                />
+                <Route path="/precos" element={<Navigate to="/cadastros/produtos" replace />} />
+                <Route path="/vendas" element={<Navigate to="/relatorios" replace />} />
                 <Route
                   path="/carteira"
                   element={

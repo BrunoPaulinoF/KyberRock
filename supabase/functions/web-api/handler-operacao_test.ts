@@ -47,6 +47,7 @@ function harness(
     requiresPricePassword?: boolean;
     executorSeenAt?: string | null;
     executor?: boolean;
+    appVersion?: string;
   } = {}
 ) {
   const store = new MemoryStore();
@@ -70,6 +71,7 @@ function harness(
         name: "PC PRINCIPAL",
         is_active: true,
         executes_web_operations: true,
+        app_version: options.appVersion ?? "0.8.252",
         web_executor_seen_at:
           options.executorSeenAt === undefined ? "2026-09-25T14:59:40.000Z" : options.executorSeenAt
       }
@@ -303,6 +305,38 @@ describe("web-api: pesagem pelo site", () => {
     });
     expect(result.status).toBe(409);
     expect(String(result.body.error)).toContain("Ja existe um fechamento");
+  });
+
+  it("frete ou condicao digitada so vai para executora que entende (versao nova)", async () => {
+    const withFreight = {
+      kind: "entry",
+      data: {
+        ...ENTRY,
+        freightModality: "fob",
+        freight: { calculationType: "per_ton", baseValueCents: 1500 }
+      }
+    };
+    const old = await harness("operacao").call("request_operation", withFreight);
+    expect(old.status).toBe(409);
+    expect(String(old.body.error)).toContain("precisa ser atualizada");
+    const oldCondition = await harness("operacao").call("request_operation", {
+      kind: "entry",
+      data: { ...ENTRY, conditionText: "30" }
+    });
+    expect(oldCondition.status).toBe(409);
+    // Sem frete e sem condicao digitada, a executora antiga continua servindo.
+    const plain = await harness("operacao").call("request_operation", {
+      kind: "entry",
+      data: { ...ENTRY, freightModality: "third_party" }
+    });
+    expect(plain.status).toBe(200);
+    const h = harness("operacao", { appVersion: "0.8.260" });
+    const ok = await h.call("request_operation", withFreight);
+    expect(ok.status).toBe(200);
+    expect(h.store.rows("operation_requests")[0].payload).toMatchObject({
+      freightModality: "fob",
+      freight: { calculationType: "per_ton", baseValueCents: 1500 }
+    });
   });
 
   it("status da executora para a tela", async () => {

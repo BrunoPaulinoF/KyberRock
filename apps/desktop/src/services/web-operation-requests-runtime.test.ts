@@ -267,6 +267,92 @@ describe("pedidos de pesagem do site executados pela balanca", () => {
     }
   });
 
+  it("entrada do site leva o tipo de frete, o valor e a condicao digitada", async () => {
+    const { runtime, database } = createRuntime(tempDirectories);
+    try {
+      seedCatalog(database);
+      const entry = (id: string, operationId: string): Pending => ({
+        id,
+        kind: "entry",
+        operationId,
+        payload: {
+          customerId: "customer-1",
+          vehicleId: "vehicle-1",
+          driverId: "driver-1",
+          productId: "product-1",
+          entryWeightKg: 15_000,
+          freightModality: "fob",
+          freight: {
+            calculationType: "per_ton",
+            baseValueCents: 1_500,
+            destination: "obra do centro"
+          },
+          conditionText: "7 14 21"
+        }
+      });
+      queue.push(entry("r1", "77777777-7777-4777-8777-777777777777"));
+      await run(runtime);
+      expect(reports[0]).toMatchObject({ id: "r1", status: "done" });
+      const row = database
+        .prepare(
+          `SELECT freight_type, freight_json, payment_term_id FROM weighing_operations
+           WHERE id = '77777777-7777-4777-8777-777777777777'`
+        )
+        .get() as { freight_type: string; freight_json: string; payment_term_id: string };
+      expect(row.freight_type).toBe("fob");
+      expect(JSON.parse(row.freight_json)).toMatchObject({
+        payer: "customer",
+        destination: "obra do centro",
+        showOnReceipt: true,
+        rule: { type: "per_ton", baseValueCents: 1_500 }
+      });
+      const term = database
+        .prepare("SELECT rules_json FROM payment_terms WHERE id = ?")
+        .get(row.payment_term_id) as { rules_json: string };
+      expect(JSON.parse(term.rules_json)).toMatchObject({ raw: "7/14/21" });
+
+      // O mesmo texto reusa a condicao em vez de criar outra.
+      runtime.cancelWeighing("77777777-7777-4777-8777-777777777777", "teste");
+      queue.push(entry("r2", "88888888-8888-4888-8888-888888888888"));
+      await run(runtime);
+      expect(reports[1]).toMatchObject({ id: "r2", status: "done" });
+      expect(
+        database
+          .prepare("SELECT COUNT(*) FROM payment_terms WHERE rules_json LIKE '%7/14/21%'")
+          .pluck()
+          .get()
+      ).toBe(1);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("condicao digitada invalida volta com a mesma mensagem do desktop", async () => {
+    const { runtime, database } = createRuntime(tempDirectories);
+    try {
+      seedCatalog(database);
+      queue.push({
+        id: "r1",
+        kind: "entry",
+        operationId: "99999999-9999-4999-8999-999999999999",
+        payload: {
+          customerId: "customer-1",
+          vehicleId: "vehicle-1",
+          driverId: "driver-1",
+          productId: "product-1",
+          entryWeightKg: 15_000,
+          conditionText: "quando puder"
+        }
+      });
+      await run(runtime);
+      expect(reports[0]).toMatchObject({ id: "r1", status: "failed" });
+      expect(String(reports[0].message)).toContain("Condicao de pagamento invalida");
+      expect(database.prepare("SELECT COUNT(*) FROM weighing_operations").pluck().get()).toBe(0);
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("alteracao de preco que chega depois do fechamento e recusada, sem aplicar metade", async () => {
     const { runtime, database } = createRuntime(tempDirectories);
     try {

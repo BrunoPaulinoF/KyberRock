@@ -18,6 +18,11 @@ export type Operation = Tables<"weighing_operations">;
 export type BillingRequest = Tables<"billing_requests">;
 export type ProductDefaultPrice = Tables<"product_default_prices">;
 export type CustomerSpecialPrice = Tables<"customer_special_prices">;
+export type Account = Tables<"accounts">;
+export type LoadingRequest = Pick<
+  Tables<"loading_requests">,
+  "operation_id" | "loader_completed_at" | "status"
+>;
 
 function fail(error: { message: string } | null): void {
   if (error) throw new Error(error.message);
@@ -175,6 +180,62 @@ export const q = {
         .eq("unit_id", unitId)
         .eq("status", OPEN_STATUS)
         .order("created_at", { ascending: true })
+        .range(from, to)
+    ),
+  /** Pesagens canceladas da unidade desde `sinceIso` (a aba Canceladas). */
+  cancelledOperations: (companyId: string, unitId: string, sinceIso: string) =>
+    all<Operation>((from, to) =>
+      supabase
+        .from("weighing_operations")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("unit_id", unitId)
+        .eq("status", "cancelled")
+        .gte("updated_at", sinceIso)
+        .order("updated_at", { ascending: false })
+        .range(from, to)
+    ),
+  /** A luz do carregador na fila: carga concluida ou ainda aguardando. */
+  loadingRequests: async (companyId: string, operationIds: string[]): Promise<LoadingRequest[]> => {
+    if (operationIds.length === 0) return [];
+    const { data, error } = await supabase
+      .from("loading_requests")
+      .select("operation_id, loader_completed_at, status")
+      .eq("company_id", companyId)
+      .in("operation_id", operationIds);
+    fail(error);
+    return data ?? [];
+  },
+  /** As ultimas pesagens do cliente: a Nova entrada repete o arranjo da ultima vez. */
+  lastCustomerOperations: async (companyId: string, customerId: string): Promise<Operation[]> => {
+    const { data, error } = await supabase
+      .from("weighing_operations")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("customer_id", customerId)
+      .neq("status", "cancelled")
+      .order("created_at", { ascending: false })
+      .limit(5);
+    fail(error);
+    return data ?? [];
+  },
+  customerFreightRules: (companyId: string, customerId: string) =>
+    all<Tables<"customer_freight_rules">>((from, to) =>
+      supabase
+        .from("customer_freight_rules")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("customer_id", customerId)
+        .is("deleted_at", null)
+        .range(from, to)
+    ),
+  accounts: (companyId: string) =>
+    all<Account>((from, to) =>
+      supabase
+        .from("accounts")
+        .select("*")
+        .eq("company_id", companyId)
+        .order("sort_order")
         .range(from, to)
     ),
   /** Pedidos de pesagem feitos pelo site desde `sinceIso`, mais novo primeiro. */

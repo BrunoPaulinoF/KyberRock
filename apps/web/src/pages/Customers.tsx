@@ -1,15 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 
-import {
-  Alert,
-  Badge,
-  DataTable,
-  Field,
-  Modal,
-  PageHead,
-  Warnings,
-  useToast
-} from "../components/ui";
+import { IconAction, NewButton, Pill, SearchBar, SectionHead } from "../components/desk";
+import { Alert, Badge, DataTable, Field, Modal, Warnings, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { formatDocument, formatMoney, isValidDocument, normalizeDocument } from "../lib/format";
@@ -33,7 +25,8 @@ function matches(customer: Customer, search: string): boolean {
   );
 }
 
-export function Customers() {
+/** Aba Clientes da tela Cadastros (a `CustomersView` do desktop). */
+export function CustomersSection() {
   const user = useUser();
   const toast = useToast();
   const { data, loading, error, reload } = useAsync(
@@ -69,110 +62,99 @@ export function Customers() {
 
   return (
     <>
-      <PageHead
-        kicker="Cadastro"
+      <SectionHead
         title="Clientes"
-        description="Cadastro compartilhado com as balancas. Cliente com historico nunca e excluido: inative."
-        actions={
+        count={customers.filter((c) => c.is_active).length}
+        description="Clientes sincronizados do OMIE ou criados aqui. Clientes novos sao enviados ao OMIE na hora."
+        action={
           user.canEditCustomers && (
-            <button className="btn primary" onClick={() => setEditing("new")}>
-              Novo cliente
-            </button>
+            <NewButton onClick={() => setEditing("new")}>Novo cliente</NewButton>
           )
         }
       />
       {error && <Alert kind="error">{error}</Alert>}
-      <div className="panel">
-        <div className="toolbar">
+      <SearchBar
+        value={search}
+        onChange={setSearch}
+        placeholder="Buscar cliente por nome, fantasia ou CNPJ..."
+        onRefresh={() => void reload()}
+      >
+        <label className="check" style={{ margin: 0, whiteSpace: "nowrap" }}>
           <input
-            className="input"
-            placeholder="Buscar por nome ou CNPJ/CPF"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ minWidth: 280 }}
+            type="checkbox"
+            checked={showInactive}
+            onChange={(e) => setShowInactive(e.target.checked)}
           />
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={showInactive}
-              onChange={(e) => setShowInactive(e.target.checked)}
-            />
-            Mostrar inativos
-          </label>
-          <span style={{ marginLeft: "auto", color: "var(--kr-muted)" }}>
-            {loading ? "Carregando..." : `${rows.length} de ${customers.length}`}
-          </span>
-        </div>
-        <DataTable
-          rows={rows}
-          rowKey={(c) => c.id}
-          rowClassName={(c) => (c.is_active ? undefined : "inactive")}
-          empty={loading ? "Carregando..." : "Nenhum cliente encontrado."}
-          columns={[
-            {
-              key: "name",
-              header: "Cliente",
-              render: (c) => (
-                <>
-                  {c.trade_name}
-                  <span className="cell-sub">{c.legal_name}</span>
-                </>
-              )
-            },
-            { key: "doc", header: "CNPJ/CPF", render: (c) => formatDocument(c.document) || "—" },
-            {
-              key: "city",
-              header: "Cidade",
-              render: (c) => [c.city, c.state].filter(Boolean).join(" / ") || "—"
-            },
-            {
-              key: "omie",
-              header: "OMIE",
-              render: (c) =>
-                c.omie_customer_id ? (
-                  <Badge kind="ok">{c.omie_customer_id}</Badge>
+          Inativos
+        </label>
+      </SearchBar>
+      <DataTable
+        rows={rows}
+        rowKey={(c) => c.id}
+        rowClassName={(c) => (c.is_active ? undefined : "inactive")}
+        empty={loading ? "Carregando..." : "Nenhum cliente encontrado."}
+        columns={[
+          {
+            key: "name",
+            header: "Cliente",
+            render: (c) => (
+              <>
+                <strong>{c.trade_name || c.legal_name}</strong>
+                <span className="cell-sub">{c.legal_name}</span>
+              </>
+            )
+          },
+          { key: "doc", header: "Documento", render: (c) => formatDocument(c.document) || "—" },
+          {
+            key: "contact",
+            header: "Contato",
+            render: (c) => (
+              <>
+                <strong>{c.phone || "—"}</strong>
+                <span className="cell-sub">{c.email || ""}</span>
+              </>
+            )
+          },
+          {
+            key: "origin",
+            header: "Origem / Status",
+            render: (c) => (
+              <span className="row-actions" style={{ justifyContent: "flex-start" }}>
+                {c.omie_customer_id ? (
+                  <Pill tone="warning">OMIE</Pill>
                 ) : (
-                  <Badge kind="warn">nao enviado</Badge>
-                )
-            },
-            {
-              key: "credit",
-              header: "Credito",
-              render: (c) =>
-                c.credit_account_enabled ? (
+                  <Pill tone="success">LOCAL</Pill>
+                )}
+                {c.credit_account_enabled && (
                   <Badge kind="accent">{c.credit_mode === "prepaid" ? "pre-pago" : "fiado"}</Badge>
-                ) : (
-                  "—"
-                )
-            },
-            {
-              key: "status",
-              header: "Situacao",
-              render: (c) => (c.is_active ? <Badge kind="ok">ativo</Badge> : <Badge>inativo</Badge>)
-            },
-            {
-              key: "actions",
-              header: "",
-              render: (c) =>
-                user.canEditCustomers && (
-                  <span className="actions">
-                    <button className="btn small" onClick={() => setEditing(c)}>
-                      Editar
-                    </button>
-                    {user.canManagePrices && (
-                      <button className="btn small" onClick={() => setCommercial(c)}>
-                        Comercial
-                      </button>
-                    )}
-                    <button className="btn small" onClick={() => void toggleActive(c)}>
-                      {c.is_active ? "Inativar" : "Reativar"}
-                    </button>
-                  </span>
-                )
-            }
-          ]}
-        />
-      </div>
+                )}
+                {!c.is_active && <Pill>INATIVO</Pill>}
+              </span>
+            )
+          },
+          {
+            key: "actions",
+            header: "Acoes",
+            numeric: true,
+            render: (c) =>
+              user.canEditCustomers && (
+                <span className="row-actions">
+                  <IconAction icon="edit" label="Editar cliente" onClick={() => setEditing(c)} />
+                  {user.canManagePrices && (
+                    <IconAction
+                      icon="wallet"
+                      label="Comercial e credito"
+                      onClick={() => setCommercial(c)}
+                    />
+                  )}
+                  <button className="btn small" onClick={() => void toggleActive(c)}>
+                    {c.is_active ? "Inativar" : "Reativar"}
+                  </button>
+                </span>
+              )
+          }
+        ]}
+      />
 
       {editing && (
         <CustomerForm
