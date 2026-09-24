@@ -4,7 +4,7 @@
 
 - **Monorepo**: `npm` workspaces. Root `tsconfig.json` is `references`-only; each workspace has `composite: true` and excludes `**/*.test.ts` from build — use `import type` for test-only symbols.
 - **Desktop** (`apps/desktop`, `@kyberrock/desktop`): Electron 40 + React 19 + Vite 7 + `better-sqlite3`. Hardware integration (scale, printer) lives in `src/services/`; the renderer never imports Node.
-- **Loader web** (`apps/loader-web`, `@kyberrock/loader-web`): React 19 + Vite 7 + Supabase JS, served via nginx (Docker / EasyPanel).
+- **Loader web / KyberRock Portal** (`apps/loader-web`, `@kyberrock/loader-web`): React 19 + Vite 7 + Supabase JS, served via nginx (Docker / EasyPanel). Only the Kybernan admin panel now: the loader and comercial screens moved to `apps/web`, and the old routes redirect there (set `KYBERROCK_WEB_URL` in the container).
 - **Web (comercial/gestor)** (`apps/web`, `@kyberrock/web`): React 19 + Vite 7 + Supabase JS, static build published by Hostinger from `apps/web` (`npm run dev -w @kyberrock/web` → :5175). Writes only via the `web-api` Edge Function; see `docs/web-api.md`.
 - **Functions lib** (`functions`, `@kyberrock/functions`): TypeScript utils workspace (not to be confused with Deno Edge Functions in `supabase/functions/`).
 - **Shared packages** (`packages/`): `shared` (types), `scale-adapters` (balance), `omie-client` (OMIE), `print-templates` (80 mm / A4).
@@ -136,7 +136,8 @@ mora num lugar só — `operationSaleDateSql(alias)`, em
 `weighing-operations.ts`) — e vale para `reports.ts` (diário, mensal, produto, cliente,
 tabela dinâmica, série diária, mix, exportações), `weighing-billing-report.ts`,
 `customer-report.ts`, `invoice-closing.ts` e `wallet.ts`. Na nuvem a mesma regra é o
-`closed_at` do `daily-report-email` e do relatório de vendas do loader-web.
+`closed_at` do `daily-report-email` e da tabela dinâmica de vendas do `apps/web` (o antigo
+relatório de vendas do portal).
 
 O motivo é que essa é a data que o KyberRock manda ao OMIE como **emissão do pedido/OS**
 (`issueDate` em `buildOmieBillingJob`, alimentado por `exit_weight_captured_at`) — dela
@@ -211,6 +212,9 @@ npm run clientes -w @kyberrock/desktop -- importar --arquivo clientes-conciliado
 - `npm run dev -w @kyberrock/loader-web` → port 5173.
 - Docker: `docker build -f apps/loader-web/Dockerfile .`. The build context is the repo root; the stage installs root deps and then runs `npm run build -w @kyberrock/loader-web`.
 - `.dockerignore` excludes `apps/desktop`, `functions`, `supabase` and several root files (e.g. `PRD.md`, `PLAN.md`, `eslint.config.js`). Do not loosen it without revalidating image size and build time.
+- `KYBERROCK_WEB_URL` (or `VITE_KYBERROCK_WEB_URL` at build time): address of the KyberRock Web.
+  Without it the moved-routes page only tells the user to ask for the address; only `https://`
+  (or `http://localhost`) is accepted.
 - `nginx.conf` already does SPA fallback (`try_files $uri $uri/ /index.html`) and ships security + cache headers.
 
 ## Tests

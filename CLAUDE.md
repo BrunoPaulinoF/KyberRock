@@ -39,8 +39,8 @@ apps/desktop (Electron + SQLite)  --HTTPS when online-->  Supabase (Postgres + E
                                                                |  server-side only
                                                                v
                                                           OMIE ERP API
-apps/loader-web (React)  --read-only-->  Supabase Postgres   (loader sees open loading requests)
-apps/web (React)         --RLS read / writes only via `web-api`-->  Supabase   (comercial/gestor)
+apps/loader-web (React)  --admin-api-->  Supabase   (KyberRock Portal: only the Kybernan admin panel)
+apps/web (React)         --RLS read / writes only via `web-api`-->  Supabase   (loader/comercial/gestor)
 ```
 
 - **`apps/desktop`** — the operator app and the only place hardware lives. The Electron main
@@ -49,12 +49,15 @@ apps/web (React)         --RLS read / writes only via `web-api`-->  Supabase   (
   `contextIsolation`/`sandbox` boundary via `src/preload/preload.ts` and
   `ipcMain.handle("desktop:*", …)`. See AGENTS.md "Desktop quirks" for native-rebuild and
   workspace-copy gotchas.
-- **`apps/web`** — the comercial/gestor site (`docs/plano-migracao-web.md`, `docs/web-api.md`):
+- **`apps/web`** — the loader/comercial/gestor site (the loader queue is phone/tablet-first and
+  installable; the comercial starts on the sales report and edits customers and prices) (`docs/plano-migracao-web.md`, `docs/web-api.md`):
   reads Postgres under RLS with the user's login and writes **only** through the `web-api` Edge
   Function, acting as the virtual device `web-<company_id>`. Deployed by Hostinger from this
   folder; it imports no other workspace on purpose.
-- **`apps/loader-web`** — read-only React site where the loader (carregador) sees open loading
-  requests projected into Supabase Postgres. Served via nginx in Docker.
+- **`apps/loader-web`** — the KyberRock Portal: now only the Kybernan admin panel (`/admin`) and
+  the WhatsApp connect link. The loader and the comercial used to log in here; their old routes
+  (`/`, `/login`, `/loader`, `/relatorios`) now show `MovedToWeb` and send them to `apps/web`
+  (`KYBERROCK_WEB_URL` in the container). Served via nginx in Docker.
 - **`supabase/functions/*`** — Deno Edge Functions, the _only_ place sensitive integrations run:
   admin surface (`admin-api`, `admin-auth`), OMIE bridge (`omie-sync`), desktop sync/lifecycle
   (`desktop-sync`, `desktop-pull`, `desktop-status`, `desktop-activate`, `desktop-download`),

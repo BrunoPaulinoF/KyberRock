@@ -2,31 +2,20 @@ import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
-import { LoaderLogin } from "./pages/LoaderLogin";
-import { LoaderDashboard } from "./pages/LoaderDashboard";
+import { MovedToWeb } from "./pages/MovedToWeb";
 import { WhatsappConnect } from "./pages/WhatsappConnect";
 
 /**
- * As telas do painel administrativo saem do pacote inicial.
- *
- * Quem abre este site na esmagadora maioria das vezes e o carregador, no celular,
- * dentro da pedreira -- e ele so precisa de `LoaderDashboard`. O pacote unico fazia
- * esse celular baixar tambem o painel inteiro: `AdminDashboard` mais o backoffice
- * financeiro e a tela de atualizacoes do desktop, que ele nunca abre. Agora cada uma
- * vira um pedaco separado, buscado so quando alguem entra na rota.
- *
- * `LoaderLogin`, `LoaderDashboard` e `WhatsappConnect` ficam de fora do lazy de
- * proposito: sao o caminho comum e um pedaco separado so adicionaria uma ida a rede
- * na hora em que a conexao da pedreira e o gargalo.
+ * As telas do painel administrativo saem do pacote inicial: quem mais abre este endereco ainda
+ * e o celular do carregador com o app antigo instalado, que so precisa do aviso `MovedToWeb`
+ * (carregador e comercial entram pelo KyberRock Web). `WhatsappConnect` fica fora do lazy: e o
+ * link aberto no celular do dono do numero, na hora de conectar.
  */
 const AdminLogin = lazy(() =>
   import("./pages/AdminLogin").then((m) => ({ default: m.AdminLogin }))
 );
 const AdminDashboard = lazy(() =>
   import("./pages/AdminDashboard").then((m) => ({ default: m.AdminDashboard }))
-);
-const SalesReport = lazy(() =>
-  import("./pages/SalesReport").then((m) => ({ default: m.SalesReport }))
 );
 
 /** O mesmo texto que os guardas de rota ja mostram enquanto a sessao carrega. */
@@ -48,55 +37,14 @@ function PrivateAdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function PrivateLoaderRoute({ children }: { children: React.ReactNode }) {
-  const { isLoader, isLoading } = useAuth();
-
-  if (isLoading) {
-    return <div>Carregando...</div>;
-  }
-
-  if (!isLoader) {
-    return <Navigate to="/login" replace />;
-  }
-
-  return <>{children}</>;
-}
-
-function PrivateComercialRoute({ children }: { children: React.ReactNode }) {
-  const { isComercial, isLoading } = useAuth();
-
-  if (isLoading) {
-    return <div>Carregando...</div>;
-  }
-
-  if (!isComercial) {
-    return <Navigate to="/login" replace />;
-  }
-
-  return <>{children}</>;
-}
-
 function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<LoaderLogin />} />
-      <Route path="/login" element={<LoaderLogin />} />
-      <Route
-        path="/loader"
-        element={
-          <PrivateLoaderRoute>
-            <LoaderDashboard />
-          </PrivateLoaderRoute>
-        }
-      />
-      <Route
-        path="/relatorios"
-        element={
-          <PrivateComercialRoute>
-            <SalesReport />
-          </PrivateComercialRoute>
-        }
-      />
+      {/* Carregador e comercial mudaram para o KyberRock Web: as rotas antigas avisam e levam. */}
+      <Route path="/" element={<MovedToWeb />} />
+      <Route path="/login" element={<MovedToWeb />} />
+      <Route path="/loader" element={<MovedToWeb />} />
+      <Route path="/relatorios" element={<MovedToWeb />} />
       {/*
         Link temporario de conexao do WhatsApp. Publica de proposito e sem
         AuthProvider no caminho: quem abre e o dono do celular, que nao tem (nem

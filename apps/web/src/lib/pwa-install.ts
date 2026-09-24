@@ -1,6 +1,6 @@
 /*
- * Copia de `apps/loader-web/src/lib/pwa-install.ts` (o site nao importa outro workspace de
- * proposito): o "Instalar app" do carregador veio junto com a tela dele para o KyberRock Web.
+ * O "Instalar app" do carregador, que veio junto com a tela dele do KyberRock Portal (a copia
+ * de la, `apps/loader-web/src/lib/pwa-install.ts`, segue registrando o service worker do portal).
  * O caminho do service worker e relativo porque o site e publicado com `base: "./"`.
  */
 import { useEffect, useState } from "react";

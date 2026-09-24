@@ -136,7 +136,7 @@ export type SalesPivotGroupBy = "customer" | "product" | "customer_product" | "d
  * Filtro de frete do relatorio de vendas (o do antigo portal do comercial): "com frete" e a
  * pesagem que tem VALOR de frete — na nota (`fob`), so no sistema (`cif`) ou o transporte
  * proprio do catalogo antigo (`own_sender`); o resto (`third_party`, `own_recipient`, `none`)
- * e "sem frete". Mesma regra de `apps/loader-web/src/lib/sales-report.ts`.
+ * e "sem frete". Veio do relatorio de vendas do antigo portal do comercial.
  */
 export type SalesFreightFilter = "all" | "with" | "without";
 
