@@ -1056,6 +1056,11 @@ async function operationStatus(ctx: ActionContext): Promise<Row> {
           deviceId: executor.id,
           name: executor.name,
           seenAt: executor.web_executor_seen_at ?? null,
+          appVersion: typeof executor.app_version === "string" ? executor.app_version : null,
+          // A versao minima para a Nova entrada com frete/condicao digitada: a tela avisa
+          // antes, em vez de a pessoa preencher tudo e so descobrir no 409 do envio.
+          needsUpdate: !isVersionAtLeast(executor.app_version, ENTRY_FREIGHT_MIN_EXECUTOR_VERSION),
+          minVersion: ENTRY_FREIGHT_MIN_EXECUTOR_VERSION,
           online: isExecutorOnline(
             typeof executor.web_executor_seen_at === "string"
               ? executor.web_executor_seen_at

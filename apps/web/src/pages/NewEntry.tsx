@@ -652,7 +652,17 @@ function WeightCard({
 function ExecutorText({ status }: { status: ExecutorStatus | null }) {
   if (!status) return <>Verificando a balanca...</>;
   if (!status.executor) return <>Nenhuma balanca executa os pedidos do site.</>;
-  return status.executor.online ? (
+  const { name, online, needsUpdate, appVersion, minVersion } = status.executor;
+  if (needsUpdate) {
+    return (
+      <>
+        Balanca {name} {online ? "" : "fora do ar e "}desatualizada
+        {appVersion ? ` (versao ${appVersion})` : ""}: atualize para {minVersion ?? "a mais nova"}{" "}
+        para registrar entradas pelo site.
+      </>
+    );
+  }
+  return online ? (
     <>Balanca {status.executor.name} conectada: ela registra a entrada.</>
   ) : (
     <>Balanca {status.executor.name} fora do ar: o pedido espera ela voltar.</>

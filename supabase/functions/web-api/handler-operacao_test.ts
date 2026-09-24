@@ -353,4 +353,13 @@ describe("web-api: pesagem pelo site", () => {
     const none = await harness("operacao", { executor: false }).call("operation_status");
     expect(none.body).toMatchObject({ executor: null });
   });
+
+  it("status avisa quando a executora precisa ser atualizada", async () => {
+    const old = await harness().call("operation_status");
+    expect(old.body).toMatchObject({
+      executor: { appVersion: "0.8.252", needsUpdate: true, minVersion: "0.8.253" }
+    });
+    const current = await harness("operacao", { appVersion: "0.8.253" }).call("operation_status");
+    expect(current.body).toMatchObject({ executor: { needsUpdate: false } });
+  });
 });

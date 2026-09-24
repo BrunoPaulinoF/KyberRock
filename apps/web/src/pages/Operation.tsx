@@ -153,7 +153,17 @@ export function useCatalog(companyId: string) {
 }
 
 export interface ExecutorStatus {
-  executor: { deviceId: string; name: string; online: boolean; seenAt: string | null } | null;
+  executor: {
+    deviceId: string;
+    name: string;
+    online: boolean;
+    seenAt: string | null;
+    /** Versao do KyberRock Desktop da executora (nula em instalacao antiga). */
+    appVersion?: string | null;
+    /** A executora e mais velha que a versao que recebe frete e condicao digitada. */
+    needsUpdate?: boolean;
+    minVersion?: string;
+  } | null;
   requiresPricePassword: boolean;
 }
 

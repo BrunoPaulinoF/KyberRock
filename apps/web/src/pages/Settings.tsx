@@ -165,9 +165,11 @@ function ScaleSettings() {
               ? "Verificando..."
               : !executor.executor
                 ? "Nenhuma balanca executa o site"
-                : executor.executor.online
-                  ? `${executor.executor.name} conectada`
-                  : `${executor.executor.name} fora do ar`}
+                : executor.executor.needsUpdate
+                  ? `${executor.executor.name} precisa ser atualizada (versao ${executor.executor.minVersion ?? "mais nova"})`
+                  : executor.executor.online
+                    ? `${executor.executor.name} conectada`
+                    : `${executor.executor.name} fora do ar`}
           </strong>
           <span>
             O site nao le o peso da balanca: na Nova entrada o peso e digitado, e a balanca

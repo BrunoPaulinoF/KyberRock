@@ -12,7 +12,6 @@ import {
   PlusCircle,
   Printer,
   ReceiptText,
-  RefreshCw,
   Scale,
   Settings,
   Sun,
@@ -172,16 +171,6 @@ export function Layout() {
                   <button type="button" role="menuitem" onClick={() => openSettings("cloud")}>
                     <Cloud size={14} />
                     Cloud
-                  </button>
-                  <div className="settings-divider" />
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => window.location.reload()}
-                    title="Carrega a versao mais nova do site"
-                  >
-                    <RefreshCw size={14} />
-                    Atualizar site
                   </button>
                   <div className="settings-divider" />
                   <button
