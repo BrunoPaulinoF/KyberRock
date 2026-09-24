@@ -1,18 +1,17 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 
+import { capabilitiesFor, isRole, type Capabilities, type Role } from "./permissions";
 import { supabase, type Tables } from "./supabase";
 
-export type Role = "comercial" | "gestor";
+export type { Role } from "./permissions";
 
-export interface SessionUser {
+export interface SessionUser extends Capabilities {
   id: string;
   email: string;
   name: string;
   role: Role;
   companyId: string;
   unitId: string;
-  /** So o gestor mexe em preco, bloco comercial, carteira e fechamento. */
-  canManagePrices: boolean;
 }
 
 interface AuthState {
@@ -27,7 +26,7 @@ const AuthContext = createContext<AuthState | null>(null);
 
 function toUser(profile: Tables<"user_profiles">): SessionUser | null {
   if (!profile.is_active) return null;
-  if (profile.role !== "comercial" && profile.role !== "gestor") return null;
+  if (!isRole(profile.role)) return null;
   return {
     id: profile.id,
     email: profile.email,
@@ -35,7 +34,7 @@ function toUser(profile: Tables<"user_profiles">): SessionUser | null {
     role: profile.role,
     companyId: profile.company_id,
     unitId: profile.unit_id,
-    canManagePrices: profile.role === "gestor"
+    ...capabilitiesFor(profile.role)
   };
 }
 
@@ -87,8 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const profile = await loadProfile(data.user.id);
     if (!profile) {
       await supabase.auth.signOut();
-      const message =
-        "Este acesso e so para usuarios comerciais e gestores. Fale com o suporte da Kybernan.";
+      const message = "Este login nao tem perfil de acesso ativo. Fale com o suporte da Kybernan.";
       setError(message);
       throw new Error(message);
     }

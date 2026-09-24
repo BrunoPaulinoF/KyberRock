@@ -858,6 +858,139 @@ input[type="radio"] {
   font-weight: 700;
 }
 
+/* ---------- tela do carregador (celular na mao, dentro da pedreira) ---------- */
+.loading-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.loading-top {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--kr-surface);
+  border-bottom: 1px solid var(--kr-border);
+}
+.loading-top-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.loading-top-title strong {
+  color: var(--kr-text-strong);
+  font-size: 15px;
+}
+.loading-top-title span {
+  color: var(--kr-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.loading-main {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 12px 16px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.loading-kpis {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.loading-kpi-button {
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.loading-products {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.loading-products .badge {
+  font-size: 12px;
+  gap: 6px;
+  padding: 4px 10px;
+}
+.loading-products .badge strong {
+  color: var(--kr-text-strong);
+}
+.loading-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.loading-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--kr-card-bg);
+  border: 1px solid var(--kr-card-border);
+  border-radius: 12px;
+  box-shadow: var(--kr-shadow);
+}
+.loading-card.late {
+  border-color: var(--kr-warning-border);
+  background: var(--kr-warning-soft);
+}
+.loading-position {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--kr-muted);
+  min-width: 32px;
+}
+.loading-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.loading-headline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.loading-plate {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--kr-plate-bg);
+  border: 1px solid var(--kr-plate-border);
+  color: var(--kr-plate-text);
+}
+.loading-time {
+  color: var(--kr-muted);
+  font-weight: 700;
+}
+.loading-customer {
+  color: var(--kr-text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.loading-done {
+  padding: 12px 16px;
+  font-size: 15px;
+}
+
 /* ---------- celular ---------- */
 @media (max-width: 800px) {
   .shell {

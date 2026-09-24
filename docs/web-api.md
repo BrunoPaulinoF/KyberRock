@@ -34,13 +34,24 @@ const { data: profile } = await supabase
   .single();
 ```
 
-| `role`      | Lê                                        | Grava pela `web-api`                                     |
-| ----------- | ----------------------------------------- | -------------------------------------------------------- |
-| `comercial` | Todo o cadastro e as operações da empresa | Cliente, transportadora, motorista, veículo e vínculos   |
-| `gestor`    | O mesmo                                   | Tudo do comercial **+ preços + bloco comercial/crédito** |
-| `loader`    | Só a fila da unidade (site do carregador) | Nada — a `web-api` responde 403                          |
+| `role`          | Lê                                          | Grava pela `web-api`                                        |
+| --------------- | ------------------------------------------- | ----------------------------------------------------------- |
+| `monitoramento` | Todo o cadastro e as operações da empresa   | Nada — só consulta (403 em toda escrita)                    |
+| `operacao`      | O mesmo                                     | Transportadora, motorista, veículo e os vínculos entre eles |
+| `comercial`     | O mesmo                                     | Tudo da operação **+ cliente** e vínculos do cliente        |
+| `gestor`        | O mesmo                                     | Tudo do comercial **+ preços + bloco comercial/crédito**    |
+| `loader`        | Só a fila da unidade (tela `/carregamento`) | Nada — a `web-api` responde 403                             |
 
-Quem cria usuários hoje é o painel `/admin` da Kybernan (seção "Comercial", campo Perfil).
+`monitoramento` e `operacao` entraram na migração `202609240001_system_access_profiles`. A regra
+de quem grava o quê vive em `_shared/web-session.ts` (`canEditCustomers`, `canEditFleet`,
+`canManagePrices`) e o mapa ação → grupo em `web-api/handler.ts` (`actionDenial`); um teste
+garante que toda ação nova caia em algum grupo, para nenhuma nascer liberada a quem só consulta.
+`me` devolve `canManagePrices`, `canEditCustomers` e `canEditFleet`.
+
+Quem cria usuários é o painel `/admin` da Kybernan: aba **Acessos do sistema** (um login por
+computador cadastrado, coluna "Login do site", gravado com `user_profiles.device_id`) ou
+**Usuários do site** (login sem computador). O perfil troca na própria linha
+(`update_user_role` na `admin-api`).
 
 ## 3. Leitura (RLS)
 
@@ -131,7 +142,7 @@ repetido se unifica na balança ("Cadastros repetidos"). É a regra D7 do plano.
 Grava só o que veio e carimba `commercial_published_at` — é essa marca que faz as balanças
 adotarem o bloco. `defaultCarrierId` e `defaultPaymentMethodId` precisam existir na empresa.
 
-### 4.4 Transportadora, motorista, veículo (comercial e gestor)
+### 4.4 Transportadora, motorista, veículo (operação, comercial e gestor)
 
 | Ação                 | Payload                                                                                | Devolve                        |
 | -------------------- | -------------------------------------------------------------------------------------- | ------------------------------ |
@@ -144,7 +155,7 @@ adotarem o bloco. `defaultCarrierId` e `defaultPaymentMethodId` precisam existir
 
 A placa é gravada em maiúsculas, sem espaço nem hífen (`ABC1D23`); placa repetida na empresa é 409. A transportadora com documento também sobe para o OMIE (`push_carrier`).
 
-### 4.5 Vínculos (comercial e gestor)
+### 4.5 Vínculos (cliente: comercial e gestor; frota: também a operação)
 
 | Ação                   | Payload                               |
 | ---------------------- | ------------------------------------- |

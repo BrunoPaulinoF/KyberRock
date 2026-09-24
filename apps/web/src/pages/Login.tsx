@@ -13,7 +13,7 @@ export function Login() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  if (user) return <Navigate to="/clientes" replace />;
+  if (user) return <Navigate to="/" replace />;
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -21,7 +21,7 @@ export function Login() {
     setError(null);
     try {
       await login(email.trim().toLowerCase(), password);
-      navigate("/clientes", { replace: true });
+      navigate("/", { replace: true });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Falha no login.");
     } finally {

@@ -8,16 +8,27 @@
  * `company_id` daqui, nunca do payload: um usuario de uma pedreira nao grava cadastro em
  * outra, mesmo que mande outro id.
  *
- * Dois perfis entram: `comercial` e `gestor`. O carregador (`loader`) tem login valido mas nao
- * tem o que fazer aqui, e cai em 403 — nao em 401, que o site trataria como "faca login de
- * novo".
+ * Quatro perfis entram (migracoes `202609220003` e `202609240001`), do que menos pode ao que
+ * mais pode: `monitoramento` (so consulta), `operacao` (consulta + veiculo, motorista e
+ * transportadora), `comercial` (+ clientes) e `gestor` (+ precos, bloco comercial, carteira e
+ * fechamento). O carregador (`loader`) tem login valido mas nao tem o que fazer aqui — a tela
+ * dele le a fila direto, por RLS —, e cai em 403, nao em 401, que o site trataria como "faca
+ * login de novo".
  */
 
 import type { PostgrestLikeError } from "./db-read-error.ts";
 import { isReadUnavailable } from "./db-read-error.ts";
 
-export const WEB_ROLES = ["comercial", "gestor"] as const;
+export const WEB_ROLES = ["monitoramento", "operacao", "comercial", "gestor"] as const;
 export type WebRole = (typeof WEB_ROLES)[number];
+
+/** Nome do perfil para mensagem ao usuario. */
+export const WEB_ROLE_LABELS: Record<WebRole, string> = {
+  monitoramento: "Monitoramento",
+  operacao: "Operacao",
+  comercial: "Comercial",
+  gestor: "Gestor"
+};
 
 export interface WebSession {
   userId: string;
@@ -66,6 +77,19 @@ export function canManagePrices(role: WebRole): boolean {
   return role === "gestor";
 }
 
+/** Cadastro de cliente (sobe ao OMIE): comercial e gestor. */
+export function canEditCustomers(role: WebRole): boolean {
+  return role === "comercial" || role === "gestor";
+}
+
+/**
+ * Veiculo, motorista e transportadora: todo perfil que nao e so consulta. E o cadastro rapido
+ * que a balanca ja faz na hora (caminhao chegou sem cadastro), por isso a `operacao` tambem.
+ */
+export function canEditFleet(role: WebRole): boolean {
+  return role !== "monitoramento";
+}
+
 type ProfileRow = {
   id?: unknown;
   email?: unknown;
@@ -105,7 +129,7 @@ export async function resolveWebSession(
     return {
       ok: false,
       status: 403,
-      error: "Este acesso e so para usuarios comerciais e gestores."
+      error: "Este perfil de acesso nao usa o cadastro do site."
     };
   }
   if (typeof row.company_id !== "string" || typeof row.unit_id !== "string") {

@@ -78,12 +78,14 @@ export function VehiclesAndDrivers() {
         title="Veiculos e motoristas"
         description="Cadastro compartilhado com as balancas; a portaria tambem cadastra na hora quando o caminhao chega."
         actions={
-          <button
-            className="btn primary"
-            onClick={() => (tab === "vehicles" ? setVehicle("new") : setDriver("new"))}
-          >
-            {tab === "vehicles" ? "Novo veiculo" : "Novo motorista"}
-          </button>
+          user.canEditFleet && (
+            <button
+              className="btn primary"
+              onClick={() => (tab === "vehicles" ? setVehicle("new") : setDriver("new"))}
+            >
+              {tab === "vehicles" ? "Novo veiculo" : "Novo motorista"}
+            </button>
+          )
         }
       />
       {error && <Alert kind="error">{error}</Alert>}
@@ -146,19 +148,20 @@ export function VehiclesAndDrivers() {
               {
                 key: "actions",
                 header: "",
-                render: (v) => (
-                  <span className="actions">
-                    <button className="btn small" onClick={() => setVehicle(v)}>
-                      Editar
-                    </button>
-                    <button
-                      className="btn small"
-                      onClick={() => void toggle("set_vehicle_active", v.id, !v.is_active)}
-                    >
-                      {v.is_active ? "Inativar" : "Reativar"}
-                    </button>
-                  </span>
-                )
+                render: (v) =>
+                  user.canEditFleet && (
+                    <span className="actions">
+                      <button className="btn small" onClick={() => setVehicle(v)}>
+                        Editar
+                      </button>
+                      <button
+                        className="btn small"
+                        onClick={() => void toggle("set_vehicle_active", v.id, !v.is_active)}
+                      >
+                        {v.is_active ? "Inativar" : "Reativar"}
+                      </button>
+                    </span>
+                  )
               }
             ]}
           />
@@ -182,19 +185,20 @@ export function VehiclesAndDrivers() {
               {
                 key: "actions",
                 header: "",
-                render: (d) => (
-                  <span className="actions">
-                    <button className="btn small" onClick={() => setDriver(d)}>
-                      Editar
-                    </button>
-                    <button
-                      className="btn small"
-                      onClick={() => void toggle("set_driver_active", d.id, !d.is_active)}
-                    >
-                      {d.is_active ? "Inativar" : "Reativar"}
-                    </button>
-                  </span>
-                )
+                render: (d) =>
+                  user.canEditFleet && (
+                    <span className="actions">
+                      <button className="btn small" onClick={() => setDriver(d)}>
+                        Editar
+                      </button>
+                      <button
+                        className="btn small"
+                        onClick={() => void toggle("set_driver_active", d.id, !d.is_active)}
+                      >
+                        {d.is_active ? "Inativar" : "Reativar"}
+                      </button>
+                    </span>
+                  )
               }
             ]}
           />
@@ -442,9 +446,11 @@ export function Carriers() {
         title="Transportadoras"
         description="Transportadora com CNPJ sobe para o OMIE como cadastro de transportador."
         actions={
-          <button className="btn primary" onClick={() => setEditing("new")}>
-            Nova transportadora
-          </button>
+          user.canEditFleet && (
+            <button className="btn primary" onClick={() => setEditing("new")}>
+              Nova transportadora
+            </button>
+          )
         }
       />
       {error && <Alert kind="error">{error}</Alert>}
@@ -492,16 +498,17 @@ export function Carriers() {
             {
               key: "actions",
               header: "",
-              render: (c) => (
-                <span className="actions">
-                  <button className="btn small" onClick={() => setEditing(c)}>
-                    Editar
-                  </button>
-                  <button className="btn small" onClick={() => void toggle(c)}>
-                    {c.is_active ? "Inativar" : "Reativar"}
-                  </button>
-                </span>
-              )
+              render: (c) =>
+                user.canEditFleet && (
+                  <span className="actions">
+                    <button className="btn small" onClick={() => setEditing(c)}>
+                      Editar
+                    </button>
+                    <button className="btn small" onClick={() => void toggle(c)}>
+                      {c.is_active ? "Inativar" : "Reativar"}
+                    </button>
+                  </span>
+                )
             }
           ]}
         />

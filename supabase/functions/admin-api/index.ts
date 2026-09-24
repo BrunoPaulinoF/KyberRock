@@ -8,7 +8,8 @@ import { sha256Hex } from "../_shared/crypto.ts";
 import {
   deleteAuthUser,
   findAuthUserIdByEmail,
-  isEmailAlreadyRegisteredError
+  isEmailAlreadyRegisteredError,
+  parseAccessRole
 } from "../_shared/admin-users.ts";
 import type { AuthUserGateway } from "../_shared/admin-users.ts";
 import {
@@ -88,6 +89,7 @@ type AdminAction =
   | "toggle_loader"
   | "update_loader_unit"
   | "update_loader_password"
+  | "update_user_role"
   | "delete_loader"
   | "toggle_device"
   | "update_device_name"
@@ -557,13 +559,43 @@ Deno.serve(async (req) => {
         .toLowerCase();
       const password = String(payload.password ?? "");
       const name = String(payload.name ?? "").trim();
-      const unitId = String(payload.unitId ?? "");
-      // "loader" (carregador, ve fila da unidade), "comercial" (cadastro e relatorios da
-      // empresa inteira pelo site) ou "gestor" (comercial + precos e bloco comercial/credito;
-      // ver `web-api` e a migracao `202609220003_web_access_roles`).
-      const requestedRole = String(payload.role ?? "loader");
-      const role =
-        requestedRole === "comercial" || requestedRole === "gestor" ? requestedRole : "loader";
+      let unitId = String(payload.unitId ?? "");
+      // Perfil do login (migracao `202609240001_system_access_profiles`): `loader` ve a fila da
+      // unidade; os outros quatro entram no site, e o que cada um edita esta em
+      // `_shared/web-session.ts`. Sem perfil informado e o carregador, como sempre foi.
+      const role = parseAccessRole(payload.role ?? "loader");
+      if (!role) return jsonResponse({ error: "Perfil de acesso invalido." }, 400);
+      if (!email || password.length < 6) {
+        return jsonResponse(
+          { error: "Informe o e-mail e uma senha de ao menos 6 caracteres." },
+          400
+        );
+      }
+      // Login de um acesso do sistema (aba "Acessos do sistema"): a unidade vem do proprio
+      // computador cadastrado, e um acesso tem um login so.
+      const deviceId = String(payload.deviceId ?? "").trim() || null;
+      if (deviceId) {
+        const { data: device, error: deviceError } = await supabase
+          .from("device_registrations")
+          .select("id, unit_id")
+          .eq("id", deviceId)
+          .single();
+        if (deviceError) throw deviceError;
+        unitId = String(device.unit_id ?? "") || unitId;
+        const { data: linked, error: linkedError } = await supabase
+          .from("user_profiles")
+          .select("email")
+          .eq("device_id", deviceId)
+          .maybeSingle();
+        if (linkedError) throw linkedError;
+        if (linked) {
+          return jsonResponse(
+            { error: `Este acesso ja tem o login ${String(linked.email)}.` },
+            400
+          );
+        }
+      }
+      if (!unitId) return jsonResponse({ error: "Informe a unidade do login." }, 400);
       const { data: unit, error: unitError } = await supabase
         .from("units")
         .select("company_id")
@@ -610,7 +642,8 @@ Deno.serve(async (req) => {
         role,
         company_id: unit.company_id,
         unit_id: unitId,
-        is_active: true
+        is_active: true,
+        ...(deviceId ? { device_id: deviceId } : {})
       });
       if (profileError) throw profileError;
       await storePasswordInVault(supabase, userId, password);
@@ -670,6 +703,21 @@ Deno.serve(async (req) => {
       const updated = await supabase.auth.admin.updateUserById(userId, { password });
       if (updated.error) throw updated.error;
       await storePasswordInVault(supabase, userId, password);
+      return jsonResponse({ ok: true });
+    }
+
+    // Troca o perfil de um login ja cadastrado (ex.: a Fernanda passa de monitoramento a
+    // comercial). O efeito e imediato: a RLS e a `web-api` leem o perfil a cada requisicao.
+    if (body.action === "update_user_role") {
+      const userId = String(payload.userId ?? "");
+      const role = parseAccessRole(payload.role);
+      if (!userId) return jsonResponse({ error: "Usuario nao informado" }, 400);
+      if (!role) return jsonResponse({ error: "Perfil de acesso invalido." }, 400);
+      const { error } = await supabase
+        .from("user_profiles")
+        .update({ role, updated_at: new Date().toISOString() })
+        .eq("id", userId);
+      if (error) throw error;
       return jsonResponse({ ok: true });
     }
 

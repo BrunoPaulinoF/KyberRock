@@ -74,9 +74,11 @@ export function Customers() {
         title="Clientes"
         description="Cadastro compartilhado com as balancas. Cliente com historico nunca e excluido: inative."
         actions={
-          <button className="btn primary" onClick={() => setEditing("new")}>
-            Novo cliente
-          </button>
+          user.canEditCustomers && (
+            <button className="btn primary" onClick={() => setEditing("new")}>
+              Novo cliente
+            </button>
+          )
         }
       />
       {error && <Alert kind="error">{error}</Alert>}
@@ -151,21 +153,22 @@ export function Customers() {
             {
               key: "actions",
               header: "",
-              render: (c) => (
-                <span className="actions">
-                  <button className="btn small" onClick={() => setEditing(c)}>
-                    Editar
-                  </button>
-                  {user.canManagePrices && (
-                    <button className="btn small" onClick={() => setCommercial(c)}>
-                      Comercial
+              render: (c) =>
+                user.canEditCustomers && (
+                  <span className="actions">
+                    <button className="btn small" onClick={() => setEditing(c)}>
+                      Editar
                     </button>
-                  )}
-                  <button className="btn small" onClick={() => void toggleActive(c)}>
-                    {c.is_active ? "Inativar" : "Reativar"}
-                  </button>
-                </span>
-              )
+                    {user.canManagePrices && (
+                      <button className="btn small" onClick={() => setCommercial(c)}>
+                        Comercial
+                      </button>
+                    )}
+                    <button className="btn small" onClick={() => void toggleActive(c)}>
+                      {c.is_active ? "Inativar" : "Reativar"}
+                    </button>
+                  </span>
+                )
             }
           ]}
         />

@@ -68,3 +68,27 @@ export function isEmailAlreadyRegisteredError(error: unknown): boolean {
     message
   );
 }
+
+/**
+ * Perfis de acesso que o painel cria (`user_profiles.role`, migracao `202609240001`). Do
+ * carregador, que so ve a fila, ao gestor, que mexe em preco: o que cada um edita no site esta
+ * em `_shared/web-session.ts`.
+ */
+export const USER_ACCESS_ROLES = [
+  "loader",
+  "monitoramento",
+  "operacao",
+  "comercial",
+  "gestor"
+] as const;
+export type UserAccessRole = (typeof USER_ACCESS_ROLES)[number];
+
+/**
+ * Le o perfil pedido pela tela. Valor desconhecido e `null` (a acao recusa), nunca um padrao:
+ * cair em `loader` criaria um login que entra e nao ve nada, e cair em `gestor` daria preco a
+ * quem nao devia.
+ */
+export function parseAccessRole(value: unknown): UserAccessRole | null {
+  const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return (USER_ACCESS_ROLES as readonly string[]).includes(text) ? (text as UserAccessRole) : null;
+}

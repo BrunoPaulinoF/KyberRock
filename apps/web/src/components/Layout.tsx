@@ -13,6 +13,7 @@ import {
 import { NavLink, Outlet } from "react-router-dom";
 
 import { useAuth, useUser } from "../lib/auth";
+import { ROLE_LABELS } from "../lib/permissions";
 import { useTheme } from "../lib/theme";
 
 /**
@@ -24,7 +25,7 @@ export function Layout() {
   const user = useUser();
   const { logout } = useAuth();
   const { theme, toggle } = useTheme();
-  const roleLabel = user.role === "gestor" ? "Gestor" : "Comercial";
+  const roleLabel = ROLE_LABELS[user.role];
 
   return (
     <div className="shell">

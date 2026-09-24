@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { WebSession, WebSessionResult } from "../_shared/web-session";
 import {
+  actionDenial,
+  CUSTOMER_ACTIONS,
+  FLEET_ACTIONS,
+  GESTOR_ONLY_ACTIONS,
   handleWebApiRequest,
+  WEB_API_ACTIONS,
   type OmieBridge,
   type Row,
   type RowFilter,
@@ -160,6 +165,41 @@ describe("web-api: sessao e permissoes", () => {
     expect(h.store.rows("customers")).toHaveLength(0);
   });
 
+  it("monitoramento so consulta: nenhuma escrita passa", async () => {
+    const h = harness({ role: "monitoramento" });
+    for (const action of ["upsert_customer", "upsert_vehicle", "upsert_driver", "upsert_carrier"]) {
+      const result = await h.call(action, { name: "X", plate: "ABC1D23" });
+      expect(result.status, action).toBe(403);
+    }
+    expect(h.store.rows("customers")).toHaveLength(0);
+    expect(h.store.rows("vehicles")).toHaveLength(0);
+    expect((await h.call("me")).status).toBe(200);
+  });
+
+  it("operacao cadastra veiculo, mas nao cliente", async () => {
+    const h = harness({ role: "operacao" });
+    const vehicle = await h.call("upsert_vehicle", { plate: "ABC1D23" });
+    expect(vehicle.status).toBe(200);
+    const customer = await h.call("upsert_customer", { legalName: "X", document: "52998224725" });
+    expect(customer.status).toBe(403);
+    expect(customer.body.error).toContain("Operacao");
+    expect(h.store.rows("customers")).toHaveLength(0);
+  });
+
+  it("toda acao tem dono: nenhuma nasce liberada para quem so consulta", () => {
+    for (const action of WEB_API_ACTIONS) {
+      const groups = [
+        action === "me",
+        GESTOR_ONLY_ACTIONS.has(action),
+        CUSTOMER_ACTIONS.has(action),
+        FLEET_ACTIONS.has(action)
+      ].filter(Boolean);
+      expect(groups, action).toHaveLength(1);
+      expect(actionDenial("gestor", action), action).toBeNull();
+      if (action !== "me") expect(actionDenial("monitoramento", action), action).not.toBeNull();
+    }
+  });
+
   it("me devolve o perfil e as unidades da empresa", async () => {
     const h = harness({ role: "gestor" });
     h.store.seed("units", [
@@ -174,7 +214,12 @@ describe("web-api: sessao e permissoes", () => {
     ]);
     const result = await h.call("me");
     expect(result.status).toBe(200);
-    expect(result.body.user).toMatchObject({ role: "gestor", canManagePrices: true });
+    expect(result.body.user).toMatchObject({
+      role: "gestor",
+      canManagePrices: true,
+      canEditCustomers: true,
+      canEditFleet: true
+    });
     expect((result.body.units as Row[]).map((unit) => unit.id)).toEqual(["unit-1"]);
   });
 });

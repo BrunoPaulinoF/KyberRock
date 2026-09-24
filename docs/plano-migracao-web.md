@@ -117,16 +117,23 @@ dia em que o site novo absorver o carregador.
 
 ### D5 — Perfis de acesso no site
 
-`user_profiles.role` aceita `loader`, `comercial` e `gestor` (migração `202609220003`).
+`user_profiles.role` aceita `loader`, `monitoramento`, `operacao`, `comercial` e `gestor`
+(migrações `202609220003` e `202609240001`).
 
-| Perfil       | Vê                                                | Edita                                            |
-| ------------ | ------------------------------------------------- | ------------------------------------------------ |
-| `carregador` | Solicitações abertas da unidade (já existe)       | Nada                                             |
-| `comercial`  | Tudo do cadastro + relatórios                     | Clientes, veículos, motoristas, transportadoras  |
-| `gestor`     | Tudo do comercial + fechamento, carteira, crédito | Tudo do comercial + **preços** e bloco comercial |
+| Perfil          | Vê                                                             | Edita                                            |
+| --------------- | -------------------------------------------------------------- | ------------------------------------------------ |
+| `carregador`    | Só a fila de carregamento da unidade (`/carregamento` no site) | Marca carga concluída                            |
+| `monitoramento` | Todo o cadastro + relatórios                                   | Nada                                             |
+| `operacao`      | Todo o cadastro + relatórios                                   | Veículos, motoristas, transportadoras            |
+| `comercial`     | Todo o cadastro + relatórios                                   | Tudo da operação + clientes                      |
+| `gestor`        | Tudo do comercial + fechamento, carteira, crédito              | Tudo do comercial + **preços** e bloco comercial |
 
-O painel `/admin` já cria os dois (seção Comercial, campo Perfil). Alterar preço pelo site é
-só do gestor; a senha de alteração de preço da balança continua valendo na balança.
+O painel `/admin` cria os logins em **Acessos do sistema** (antiga aba "Balanças"): cada
+computador cadastrado ganha um login do site com e-mail, senha e perfil
+(`user_profiles.device_id`), e é esse login que a pessoa usa quando o desktop dela sair do ar na
+Etapa 4. Login sem computador (carregador, gestor de fora) segue em **Carregadores** e
+**Usuários do site**. O carregador entra no mesmo site e cai direto na fila. Alterar preço pelo
+site é só do gestor; a senha de alteração de preço da balança continua valendo na balança.
 
 ### D6 — Hospedagem — DECIDIDO: Hostinger, com deploy automático do GitHub
 

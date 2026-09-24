@@ -87,13 +87,53 @@ interface Unit {
 }
 
 /**
- * `gestor` e o perfil do site novo (comercial + precos e bloco comercial/credito). Neste
- * painel ele e listado junto com o comercial, com a coluna Perfil dizendo qual e.
+ * Perfil de acesso (`user_profiles.role`, migracao `202609240001`). O carregador ve so a fila
+ * da unidade; os outros quatro sao perfis do KyberRock Web, do que menos pode ao que mais pode.
+ * O que cada um edita la vive em `supabase/functions/_shared/web-session.ts`.
  */
-type UserRole = "loader" | "comercial" | "gestor";
+export type UserRole = "loader" | "monitoramento" | "operacao" | "comercial" | "gestor";
 
-function parseUserRole(value: unknown): UserRole {
-  return value === "comercial" || value === "gestor" ? value : "loader";
+/** Perfis do site, na ordem do seletor, com o que cada um pode. */
+export const SITE_ROLE_OPTIONS: ReadonlyArray<{ value: UserRole; label: string; hint: string }> = [
+  {
+    value: "monitoramento",
+    label: "Monitoramento",
+    hint: "So consulta: cadastros e relatorios, sem editar nada."
+  },
+  {
+    value: "operacao",
+    label: "Operacao",
+    hint: "Consulta tudo e cadastra veiculo, motorista e transportadora."
+  },
+  {
+    value: "comercial",
+    label: "Comercial",
+    hint: "Cadastro de clientes e da frota, e relatorios."
+  },
+  {
+    value: "gestor",
+    label: "Gestor",
+    hint: "Tudo do comercial, mais precos, bloco comercial, carteira e fechamento."
+  }
+];
+
+export const USER_ROLE_LABELS: Record<UserRole, string> = {
+  loader: "Carregador",
+  monitoramento: "Monitoramento",
+  operacao: "Operacao",
+  comercial: "Comercial",
+  gestor: "Gestor"
+};
+
+export function parseUserRole(value: unknown): UserRole {
+  return typeof value === "string" && Object.hasOwn(USER_ROLE_LABELS, value)
+    ? (value as UserRole)
+    : "loader";
+}
+
+/** O dispositivo virtual do site (`web-<company_id>`) nao e um computador: nao tem login. */
+export function isVirtualWebDevice(deviceId: string): boolean {
+  return deviceId.startsWith("web-");
 }
 
 interface LoaderUser {
@@ -104,6 +144,8 @@ interface LoaderUser {
   companyId: string;
   unitId: string;
   isActive: boolean;
+  /** Acesso do sistema (computador cadastrado) a que este login pertence, se houver. */
+  deviceId: string | null;
 }
 
 /** Anel de atualizacao: `beta` recebe as versoes em avaliacao antes da frota. */
@@ -291,6 +333,7 @@ export function AdminDashboard() {
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
   const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
   const [renamingDevice, setRenamingDevice] = useState<Device | null>(null);
+  const [creatingLoginFor, setCreatingLoginFor] = useState<Device | null>(null);
   const [resettingPasswordUser, setResettingPasswordUser] = useState<LoaderUser | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DeleteTarget | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -349,6 +392,7 @@ export function AdminDashboard() {
             company_id: string;
             unit_id: string;
             is_active: boolean;
+            device_id?: string | null;
           }>;
           devices: Array<{
             id: string;
@@ -402,7 +446,8 @@ export function AdminDashboard() {
             role: parseUserRole(user.role),
             companyId: user.company_id,
             unitId: user.unit_id,
-            isActive: user.is_active
+            isActive: user.is_active,
+            deviceId: user.device_id ?? null
           }))
         );
         setDevices(
@@ -553,11 +598,11 @@ export function AdminDashboard() {
     },
     {
       id: "comercial",
-      label: "Comercial",
+      label: "Usuarios do site",
       group: "Acessos",
       count: users.filter((user) => user.role !== "loader").length
     },
-    { id: "devices", label: "Balancas", group: "Acessos", count: devices.length },
+    { id: "devices", label: "Acessos do sistema", group: "Acessos", count: devices.length },
     { id: "updates", label: "Atualizacoes", group: "Plataforma" },
     { id: "financeiro", label: "Financeiro", group: "Plataforma" },
     { id: "ai", label: "Assistente de IA", group: "Plataforma" }
@@ -708,7 +753,7 @@ export function AdminDashboard() {
     { key: "company", header: "Pedreira", render: (unit) => companyName(unit.companyId) },
     {
       key: "devices",
-      header: "Balancas",
+      header: "Acessos",
       numeric: true,
       render: (unit) => devices.filter((device) => device.unitId === unit.id).length
     },
@@ -787,7 +832,28 @@ export function AdminDashboard() {
             {
               key: "role",
               header: "Perfil",
-              render: (user: LoaderUser) => (user.role === "gestor" ? "Gestor" : "Comercial")
+              render: (user: LoaderUser) => (
+                <RoleSelect
+                  user={user}
+                  onChange={(next) =>
+                    void run(
+                      "update_user_role",
+                      { userId: user.id, role: next },
+                      `${user.name} agora e ${USER_ROLE_LABELS[next]}.`
+                    )
+                  }
+                />
+              )
+            },
+            {
+              key: "device",
+              header: "Acesso",
+              render: (user: LoaderUser) =>
+                user.deviceId ? (
+                  (devices.find((device) => device.id === user.deviceId)?.name ?? "Removido")
+                ) : (
+                  <span className="adm-cell-sub">—</span>
+                )
             }
           ]
         : []),
@@ -876,13 +942,57 @@ export function AdminDashboard() {
   const deviceColumns: Array<Column<Device>> = [
     {
       key: "name",
-      header: "Balanca",
+      header: "Acesso",
       render: (device) => (
         <>
           <span className="adm-cell-primary">{device.name}</span>
           <p className="adm-cell-sub adm-mono">{device.id.slice(0, 12)}…</p>
         </>
       )
+    },
+    {
+      // Login do KyberRock Web deste acesso: e com ele que a pessoa daquele computador entra
+      // no site — inclusive depois que o desktop dela for desligado na virada.
+      key: "login",
+      header: "Login do site",
+      render: (device) => {
+        if (isVirtualWebDevice(device.id)) return <span className="adm-cell-sub">—</span>;
+        const login = users.find((user) => user.deviceId === device.id);
+        if (!login) {
+          return (
+            <Button size="sm" onClick={() => setCreatingLoginFor(device)}>
+              Criar login
+            </Button>
+          );
+        }
+        return (
+          <div className="adm-login-cell">
+            <span className="adm-cell-primary" title={login.email}>
+              {login.email}
+            </span>
+            <div className="adm-login-actions">
+              <RoleSelect
+                user={login}
+                onChange={(next) =>
+                  void run(
+                    "update_user_role",
+                    { userId: login.id, role: next },
+                    `${device.name} agora entra no site como ${USER_ROLE_LABELS[next]}.`
+                  )
+                }
+              />
+              <Button size="sm" onClick={() => setResettingPasswordUser(login)}>
+                Senha
+              </Button>
+            </div>
+            {!login.isActive && (
+              <Badge tone="danger" dot>
+                Bloqueado
+              </Badge>
+            )}
+          </div>
+        );
+      }
     },
     { key: "company", header: "Pedreira", render: (device) => companyName(device.companyId) },
     {
@@ -1248,18 +1358,18 @@ export function AdminDashboard() {
           {(section === "loaders" || section === "comercial") && (
             <>
               <PageHead
-                title={section === "comercial" ? "Usuarios comerciais" : "Carregadores"}
+                title={section === "comercial" ? "Usuarios do site" : "Carregadores"}
                 description={
                   section === "comercial"
-                    ? "Acessam os relatorios de venda da pedreira inteira."
-                    : "Acessam a fila de carregamento da unidade a que pertencem."
+                    ? "Todos os logins do KyberRock Web, com o perfil de cada um. O login de um computador cadastrado se cria em Acessos do sistema."
+                    : "Entram no KyberRock Web e veem so a fila de carregamento da unidade a que pertencem."
                 }
                 actions={
                   <Button
                     variant="primary"
                     onClick={() => setCreating(section === "comercial" ? "comercial" : "loader")}
                   >
-                    {section === "comercial" ? "Novo comercial" : "Novo carregador"}
+                    {section === "comercial" ? "Novo usuario do site" : "Novo carregador"}
                   </Button>
                 }
               />
@@ -1278,8 +1388,8 @@ export function AdminDashboard() {
           {section === "devices" && (
             <>
               <PageHead
-                title="Balancas e licencas"
-                description="Desktops ativados e o codigo de ativacao de cada pedreira. Em Precos, escolha a balanca que define os precos da pedreira — as demais passam a espelhar o cadastro dela."
+                title="Acessos do sistema"
+                description="Cada computador cadastrado da pedreira, com o login do site (e-mail, senha e perfil) de quem usa aquele computador. O perfil decide o que a pessoa ve e edita no KyberRock Web. Em Precos, escolha a balanca que define os precos da pedreira — as demais passam a espelhar o cadastro dela."
               />
               {generatedCode && (
                 <Note tone="ok">
@@ -1290,7 +1400,7 @@ export function AdminDashboard() {
                   </Button>
                 </Note>
               )}
-              <Panel title="Desktops ativados" flush toolbar={filterToolbar}>
+              <Panel title="Computadores cadastrados" flush toolbar={filterToolbar}>
                 <DataTable
                   columns={deviceColumns}
                   rows={filteredDevices}
@@ -1416,6 +1526,21 @@ export function AdminDashboard() {
           onSubmit={async (payload) => {
             const ok = await run("create_loader", payload, "Usuario criado.");
             if (ok) setCreating(null);
+          }}
+        />
+      )}
+
+      {creatingLoginFor && (
+        <DeviceLoginModal
+          device={creatingLoginFor}
+          onClose={() => setCreatingLoginFor(null)}
+          onSubmit={async (payload) => {
+            const ok = await run(
+              "create_loader",
+              { ...payload, deviceId: creatingLoginFor.id },
+              `Login do site criado para ${creatingLoginFor.name}.`
+            );
+            if (ok) setCreatingLoginFor(null);
           }}
         />
       )}
@@ -1836,7 +1961,7 @@ function UserFormModal({
   const formId = "user-form";
   return (
     <Modal
-      title={role === "comercial" ? "Novo usuario comercial" : "Novo carregador"}
+      title={role === "comercial" ? "Novo usuario do site" : "Novo carregador"}
       description={
         role === "comercial"
           ? "Acessa os relatorios de venda da pedreira."
@@ -1871,17 +1996,7 @@ function UserFormModal({
         <Field label="Nome completo">
           <input className="adm-input" name="name" required autoFocus />
         </Field>
-        {role === "comercial" && (
-          <Field
-            label="Perfil"
-            hint="Gestor e comercial mais precos e o bloco comercial/credito do cliente."
-          >
-            <select className="adm-select" name="role" defaultValue="comercial">
-              <option value="comercial">Comercial</option>
-              <option value="gestor">Gestor</option>
-            </select>
-          </Field>
-        )}
+        {role === "comercial" && <RoleField defaultValue="comercial" />}
         <Field label="E-mail">
           <input className="adm-input" name="email" type="email" required />
         </Field>
@@ -1899,6 +2014,105 @@ function UserFormModal({
                 </option>
               ))}
           </select>
+        </Field>
+      </form>
+    </Modal>
+  );
+}
+
+/** Seletor de perfil do site com o que cada um pode, logo abaixo. */
+function RoleField({ defaultValue }: { defaultValue: UserRole }) {
+  const [value, setValue] = useState<UserRole>(defaultValue);
+  const hint = SITE_ROLE_OPTIONS.find((option) => option.value === value)?.hint;
+  return (
+    <Field label="Perfil" hint={hint}>
+      <select
+        className="adm-select"
+        name="role"
+        value={value}
+        onChange={(event) => setValue(parseUserRole(event.target.value))}
+      >
+        {SITE_ROLE_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
+/** Troca o perfil de um login na propria linha da tabela. */
+function RoleSelect({ user, onChange }: { user: LoaderUser; onChange: (role: UserRole) => void }) {
+  return (
+    <select
+      className="adm-select"
+      aria-label={`Perfil de ${user.name}`}
+      title={SITE_ROLE_OPTIONS.find((option) => option.value === user.role)?.hint}
+      value={user.role}
+      onChange={(event) => onChange(parseUserRole(event.target.value))}
+    >
+      {user.role === "loader" && <option value="loader">Carregador</option>}
+      {SITE_ROLE_OPTIONS.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/**
+ * Cria o login do site de um acesso do sistema. A unidade e a pedreira vem do proprio
+ * computador cadastrado; o nome ja vem preenchido com o dele.
+ */
+function DeviceLoginModal({
+  device,
+  onClose,
+  onSubmit
+}: {
+  device: Device;
+  onClose: () => void;
+  onSubmit: (payload: Record<string, unknown>) => void | Promise<void>;
+}) {
+  const formId = "device-login-form";
+  return (
+    <Modal
+      title={`Login do site — ${device.name}`}
+      description="E com este e-mail e senha que a pessoa deste computador entra no KyberRock Web."
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button type="submit" variant="primary" form={formId}>
+            Criar login
+          </Button>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className="adm-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          void onSubmit({
+            name: form.get("name"),
+            email: form.get("email"),
+            password: form.get("password"),
+            role: form.get("role")
+          });
+        }}
+      >
+        <Field label="Nome" hint="Quem usa este computador. Aparece no rodape do site.">
+          <input className="adm-input" name="name" required defaultValue={device.name} />
+        </Field>
+        <RoleField defaultValue="monitoramento" />
+        <Field label="E-mail">
+          <input className="adm-input" name="email" type="email" required autoFocus />
+        </Field>
+        <Field label="Senha" hint="Minimo de 6 caracteres. Anote antes de repassar.">
+          <PasswordInput name="password" required minLength={6} />
         </Field>
       </form>
     </Modal>
