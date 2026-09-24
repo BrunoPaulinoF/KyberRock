@@ -131,7 +131,7 @@ export function AdminLogin() {
         </form>
 
         <p className="auth-switch">
-          Carregador ou comercial? <a href="/login">O acesso agora e pelo KyberRock Web</a>
+          Operacao de patio? <a href="/login">Entrar como carregador</a>
         </p>
       </section>
     </main>

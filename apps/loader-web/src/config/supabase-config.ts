@@ -14,8 +14,6 @@ interface SupabaseConfigEnv {
 interface LoaderRuntimeConfig {
   supabaseUrl?: string;
   supabasePublishableKey?: string;
-  /** Endereco do KyberRock Web, para onde vao o carregador e o comercial. */
-  kyberrockWebUrl?: string;
 }
 
 declare global {
@@ -75,25 +73,3 @@ export function assertSupabaseConfig(config: SupabaseConfig = supabaseConfig): v
     );
   }
 }
-
-/**
- * Endereco do KyberRock Web (sem barra no fim), ou nulo quando nao foi configurado. O carregador
- * e o comercial sairam deste portal: quem chega nas rotas antigas e mandado para la. Vem do
- * container (`KYBERROCK_WEB_URL`) ou do build (`VITE_KYBERROCK_WEB_URL`). So `https://` (ou
- * `http://localhost` no desenvolvimento) passa: um valor torto nao pode virar redirecionamento.
- */
-export function resolveKyberrockWebUrl(
-  env: { VITE_KYBERROCK_WEB_URL?: string },
-  runtimeConfig?: LoaderRuntimeConfig
-): string | null {
-  const value =
-    normalizeConfigValue(runtimeConfig?.kyberrockWebUrl) ??
-    normalizeConfigValue(env.VITE_KYBERROCK_WEB_URL);
-  if (!value) return null;
-  if (!/^https:\/\/[^\s/]+/i.test(value) && !/^http:\/\/localhost(:\d+)?(\/|$)/i.test(value)) {
-    return null;
-  }
-  return value.replace(/\/+$/, "");
-}
-
-export const kyberrockWebUrl = resolveKyberrockWebUrl(import.meta.env, getRuntimeConfig());

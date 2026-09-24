@@ -1,7 +1,7 @@
 /**
- * Regras da fila de carregamento — a tela do carregador. Vieram da tela que existia no
- * KyberRock Portal (`apps/loader-web`), que deixou de receber o carregador: a fila agora mora
- * so aqui.
+ * Regras da fila de carregamento — a tela do carregador. Mesmas regras do
+ * `apps/loader-web/src/pages/LoaderDashboard.tsx` (o site do carregador que este substitui);
+ * copiadas porque o site nao importa outro workspace de proposito (ver README).
  */
 
 export interface LoadingItem {

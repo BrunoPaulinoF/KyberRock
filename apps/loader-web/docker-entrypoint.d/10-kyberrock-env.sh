@@ -4,8 +4,6 @@ set -eu
 config_file="/usr/share/nginx/html/env-config.js"
 supabase_url="${VITE_SUPABASE_URL:-${SUPABASE_URL:-}}"
 supabase_publishable_key="${VITE_SUPABASE_PUBLISHABLE_KEY:-${SUPABASE_PUBLISHABLE_KEY:-}}"
-# Endereco do KyberRock Web: o carregador e o comercial entram por la (o portal manda para la).
-kyberrock_web_url="${VITE_KYBERROCK_WEB_URL:-${KYBERROCK_WEB_URL:-}}"
 
 # Aviso claro no log do container quando falta configuracao, em vez de gerar um env-config vazio
 # em silencio (o app cairia no projeto Supabase default com chave invalida).
@@ -20,7 +18,6 @@ escape_js_string() {
 cat > "$config_file" <<EOF
 globalThis.__KYBERROCK_LOADER_CONFIG__ = {
   supabaseUrl: "$(escape_js_string "$supabase_url")",
-  supabasePublishableKey: "$(escape_js_string "$supabase_publishable_key")",
-  kyberrockWebUrl: "$(escape_js_string "$kyberrock_web_url")"
+  supabasePublishableKey: "$(escape_js_string "$supabase_publishable_key")"
 };
 EOF
