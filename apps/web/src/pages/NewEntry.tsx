@@ -1,12 +1,31 @@
 import { BadgeDollarSign, Scale } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { DeskPanel, EmptyState } from "../components/desk";
 import { Picker } from "../components/Picker";
 import { Alert, Field, useToast } from "../components/ui";
 import { useUser } from "../lib/auth";
-import { formatMoney } from "../lib/format";
+import { getFreightModalityInfo } from "../lib/desktop/freight";
+import {
+  INITIAL_ENTRY_FREIGHT,
+  PAYMENT_CONDITION_FORMATS,
+  applyFreightGroup,
+  applyFreightInvoiceChoice,
+  conditionTextOf,
+  customerDefaultModality,
+  describePaymentCondition,
+  entryFreightPayload,
+  freightGoesToCustomerInvoice,
+  freightInvoiceChoice,
+  hasFreightValue,
+  isCarrierRequired,
+  resolveCustomerFreight,
+  validateEntryFreight,
+  type EntryFreightForm,
+  type FreightCalculationType
+} from "../lib/entry-freight";
+import { formatMoney, parseMoneyToCents } from "../lib/format";
 import { parseWeight } from "../lib/operation";
 import { q } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
@@ -20,9 +39,10 @@ import {
 
 /**
  * Nova entrada, na disposicao da tela do desktop: a faixa escura com o peso no alto e as tres
- * colunas (Dados comerciais, Transporte, Resumo da entrada). A diferenca e a de sempre do
- * site: o peso e DIGITADO (como na balanca virtual) e "Registrar entrada" vira um pedido que a
- * balanca executora registra com as mesmas regras do botao "Capturar peso".
+ * colunas (Dados comerciais, Transporte, Resumo da entrada), com o mesmo bloco de frete e o
+ * mesmo campo livre de condicao de pagamento. A diferenca e a de sempre do site: o peso e
+ * DIGITADO (como na balanca virtual) e "Registrar entrada" vira um pedido que a balanca
+ * executora registra com as mesmas regras do botao "Capturar peso".
  */
 export function NewEntry() {
   const user = useUser();
@@ -33,18 +53,34 @@ export function NewEntry() {
   const [customerId, setCustomerId] = useState("");
   const [productId, setProductId] = useState("");
   const [paymentMethodId, setPaymentMethodId] = useState("");
-  const [paymentTermId, setPaymentTermId] = useState("");
+  const [conditionText, setConditionText] = useState("");
   const [carrierId, setCarrierId] = useState("");
   const [vehicleId, setVehicleId] = useState("");
   const [driverId, setDriverId] = useState("");
   const [operationType, setOperationType] = useState<"invoice" | "internal">("invoice");
+  const [freight, setFreight] = useState<EntryFreightForm>(INITIAL_ENTRY_FREIGHT);
   const [weight, setWeight] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Ultimo par (cliente, produto) que ja puxou o frete: "sem frete" escolhido de proposito nao
+  // e desfeito pelo preenchimento automatico (mesma regra do desktop).
+  const lastFreightPullRef = useRef("");
+
+  const payment = useAsync(
+    () => Promise.all([q.paymentMethods(user.companyId), q.paymentTerms(user.companyId)]),
+    [user.companyId]
+  );
+  const [methods, terms] = payment.data ?? [[], []];
+  const selectedMethod = methods.find((method) => method.id === paymentMethodId) ?? null;
+  const paymentMethodIsCredit = selectedMethod?.is_customer_credit === true;
 
   const defaults = useAsync(() => q.productDefaultPrices(user.companyId), [user.companyId]);
   const special = useAsync(
     () => (customerId ? q.customerSpecialPrices(user.companyId, customerId) : Promise.resolve([])),
+    [user.companyId, customerId]
+  );
+  const freightRules = useAsync(
+    () => (customerId ? q.customerFreightRules(user.companyId, customerId) : Promise.resolve([])),
     [user.companyId, customerId]
   );
   const price = useMemo(() => {
@@ -67,6 +103,27 @@ export function NewEntry() {
     return () => window.removeEventListener("keydown", onKey);
   }, [navigate]);
 
+  // O frete do cliente assim que ele e o produto sao escolhidos: o do cadastro, senao o da
+  // ultima venda igual. Roda de novo ao voltar para "com frete".
+  const withFreight = hasFreightValue(freight);
+  useEffect(() => {
+    if (!customerId || !productId || !freightRules.data) return;
+    const pairKey = `${customerId}|${productId}`;
+    const isNewPair = lastFreightPullRef.current !== pairKey;
+    if (!isNewPair && !withFreight) return;
+    lastFreightPullRef.current = pairKey;
+    const rule = resolveCustomerFreight(freightRules.data, customerId, productId);
+    if (!rule) return;
+    setFreight((prev) => ({
+      ...applyFreightInvoiceChoice(applyFreightGroup(prev, "with_freight"), rule.showOnReceipt),
+      freightCalculationType: rule.calculationType,
+      freightBaseValueCents: rule.baseValueCents,
+      freightFixedValueCents: rule.fixedValueCents,
+      freightDistanceKm: rule.distanceKm ? String(rule.distanceKm) : prev.freightDistanceKm,
+      freightDestination: rule.destination ?? prev.freightDestination
+    }));
+  }, [customerId, productId, freightRules.data, withFreight]);
+
   if (!user.canOperate) {
     return (
       <DeskPanel>
@@ -78,40 +135,79 @@ export function NewEntry() {
     );
   }
 
-  // O cliente traz os padroes dele (forma, condicao, transportadora e se pede nota).
+  /**
+   * O cliente traz o arranjo dele: nota ou nao pelo cadastro, tipo de frete padrao, e — o que
+   * mais vale — a transportadora, forma e condicao da ULTIMA entrada dele. O padrao do cadastro
+   * so entra quando o cliente ainda nao tem entrada nenhuma (mesma regra do desktop).
+   */
   function chooseCustomer(id: string) {
     setCustomerId(id);
+    lastFreightPullRef.current = "";
     const preset = catalog.data?.customerDefaults.get(id);
     setCarrierId(preset?.carrierId ?? "");
-    if (!preset) return;
-    if (preset.paymentMethodId) setPaymentMethodId(preset.paymentMethodId);
-    setPaymentTermId(preset.paymentTermId);
-    if (preset.nfRequired === false) setOperationType("internal");
-    if (preset.nfRequired === true) setOperationType("invoice");
+    if (preset?.paymentMethodId) setPaymentMethodId(preset.paymentMethodId);
+    setConditionText("");
+    if (preset?.nfRequired === false) setOperationType("internal");
+    if (preset?.nfRequired === true) setOperationType("invoice");
+    const modality = customerDefaultModality(preset?.freightModality);
+    setFreight(
+      modality ? { ...INITIAL_ENTRY_FREIGHT, freightModality: modality } : INITIAL_ENTRY_FREIGHT
+    );
+    if (!id) return;
+    const defaultTermId = preset?.paymentTermId ?? "";
+    void q
+      .lastCustomerOperations(user.companyId, id)
+      .catch(() => [])
+      .then((recent) => {
+        const last = recent[0];
+        if (last) {
+          if (last.carrier_id) setCarrierId(last.carrier_id);
+          if (last.payment_method_id) setPaymentMethodId(last.payment_method_id);
+        }
+        const termId = last?.payment_term_id ?? defaultTermId;
+        const term = terms.find((row) => row.id === termId);
+        if (term) setConditionText(conditionTextOf(term.rules_json, term.name));
+        // A observacao ("Destino/obs.") da ultima entrada volta, so no campo vazio.
+        const note = recent
+          .map((operation) => readDestination(operation.freight_json))
+          .find(Boolean);
+        if (note) {
+          setFreight((prev) =>
+            prev.freightDestination.trim() ? prev : { ...prev, freightDestination: note }
+          );
+        }
+      });
   }
 
   function reset() {
     setCustomerId("");
     setProductId("");
     setPaymentMethodId("");
-    setPaymentTermId("");
+    setConditionText("");
     setCarrierId("");
     setVehicleId("");
     setDriverId("");
     setOperationType("invoice");
+    setFreight(INITIAL_ENTRY_FREIGHT);
+    lastFreightPullRef.current = "";
     setWeight("");
     setError(null);
   }
 
   const entryWeightKg = parseWeight(weight);
+  const carrierRequired = isCarrierRequired(freight.freightModality);
+  const freightToInvoice = freightGoesToCustomerInvoice(freight, paymentMethodIsCredit);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError(null);
-    if (!customerId) return setError("Escolha o cliente.");
-    if (!productId) return setError("Escolha o produto.");
-    if (!vehicleId) return setError("Escolha a placa.");
-    if (!driverId) return setError("Escolha o motorista.");
+    if (!vehicleId) return setError("Selecione a placa.");
+    if (!customerId) return setError("Selecione o cliente.");
+    if (!driverId) return setError("Selecione o motorista.");
+    if (!productId) return setError("Selecione o produto.");
+    if (carrierRequired && !carrierId) return setError("Selecione a transportadora.");
+    const freightError = validateEntryFreight(freight, conditionText);
+    if (freightError) return setError(freightError);
     if (entryWeightKg === null) return setError("Digite o peso de entrada em kg.");
     setBusy(true);
     const ok = await sendRequest(toast, "entry", {
@@ -122,9 +218,13 @@ export function NewEntry() {
         productId,
         carrierId: carrierId || undefined,
         paymentMethodId: paymentMethodId || undefined,
-        paymentTermId: paymentTermId || undefined,
+        conditionText: conditionText.trim() || undefined,
         operationType,
-        entryWeightKg
+        entryWeightKg,
+        ...entryFreightPayload({
+          ...freight,
+          deductFreightFromCredit: freight.deductFreightFromCredit || freightToInvoice
+        })
       }
     });
     setBusy(false);
@@ -135,6 +235,9 @@ export function NewEntry() {
   }
 
   const options = catalog.data;
+  const modalityInfo = getFreightModalityInfo(freight.freightModality);
+  const invoiceChoice = freightInvoiceChoice(freight.freightModality);
+  const conditionPreview = describePaymentCondition(conditionText);
 
   return (
     <form
@@ -193,17 +296,43 @@ export function NewEntry() {
               emptyLabel="Padrao do cliente"
             />
           </Field>
-          <Field label="Condicao de pagamento">
-            <Picker
-              value={paymentTermId}
-              options={options?.paymentTerms ?? []}
-              onChange={setPaymentTermId}
-              placeholder="Buscar condicao..."
-              allowEmpty
-              emptyLabel="A vista"
+          {selectedMethod?.is_wallet && (
+            <p className="helper">
+              Venda em carteira: a nota sai sem cobranca e a venda fica na tela Carteira ate o
+              fechamento, onde voce define como o cliente vai pagar.
+            </p>
+          )}
+          <Field
+            label="Condicao de pagamento"
+            hint="Se a condicao nao existir no OMIE, ela e criada automaticamente no envio."
+          >
+            <input
+              className="input"
+              value={conditionText}
+              placeholder='Ex.: "30", "7 14 21", "3 parcelas" ou "s+20"'
+              onChange={(event) => setConditionText(event.target.value)}
             />
           </Field>
-          <p className="helper">Vazio = a vista (vencimento no dia da venda).</p>
+          <div className="condition-legend">
+            <p className={`condition-preview is-${conditionPreview.status}`}>
+              {conditionPreview.message}
+            </p>
+            <details>
+              <summary>Como escrever</summary>
+              <table>
+                <tbody>
+                  {PAYMENT_CONDITION_FORMATS.map((format) => (
+                    <tr key={format.example}>
+                      <td>
+                        <code>{format.example}</code>
+                      </td>
+                      <td>{format.meaning}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          </div>
         </article>
 
         <article className="entry-card">
@@ -213,26 +342,124 @@ export function NewEntry() {
             description="Transportadora, placa e motorista"
           />
           <div className="choice-box">
-            <span>Nota fiscal</span>
+            <span>Tipo de frete</span>
             <div className="choice-row">
               <button
                 type="button"
-                className={`choice${operationType === "invoice" ? " active" : ""}`}
-                onClick={() => setOperationType("invoice")}
+                aria-pressed={withFreight}
+                className={`choice${withFreight ? " active" : ""}`}
+                onClick={() => setFreight((prev) => applyFreightGroup(prev, "with_freight"))}
               >
-                Com nota
+                Com frete
               </button>
               <button
                 type="button"
-                className={`choice${operationType === "internal" ? " active" : ""}`}
-                onClick={() => setOperationType("internal")}
+                aria-pressed={!withFreight}
+                className={`choice${!withFreight ? " active" : ""}`}
+                onClick={() => setFreight((prev) => applyFreightGroup(prev, "without_freight"))}
               >
-                Sem nota
+                Sem frete
               </button>
             </div>
             <span className="helper" style={{ margin: 0, fontWeight: 400 }}>
-              Vem do cadastro do cliente; da para trocar tambem no fechamento.
+              {modalityInfo.description}
             </span>
+            <label className="check" style={{ margin: 0 }}>
+              <input
+                type="checkbox"
+                checked={invoiceChoice.checked}
+                onChange={(event) =>
+                  setFreight((prev) => applyFreightInvoiceChoice(prev, event.target.checked))
+                }
+              />
+              {invoiceChoice.label}
+            </label>
+            {withFreight && (
+              <div className="freight-grid">
+                <Field label="Calculo">
+                  <select
+                    className="select"
+                    value={freight.freightCalculationType}
+                    onChange={(event) =>
+                      setFreight((prev) => ({
+                        ...prev,
+                        freightCalculationType: event.target.value as FreightCalculationType
+                      }))
+                    }
+                  >
+                    <option value="per_ton">Por tonelada</option>
+                    <option value="per_ton_km">Tonelada-km</option>
+                    <option value="fixed_plus_ton">Fixo + tonelada</option>
+                  </select>
+                </Field>
+                <MoneyField
+                  label={
+                    freight.freightCalculationType === "per_ton_km"
+                      ? "Frete por ton-km"
+                      : "Frete por tonelada"
+                  }
+                  cents={freight.freightBaseValueCents}
+                  onChange={(cents) =>
+                    setFreight((prev) => ({ ...prev, freightBaseValueCents: cents }))
+                  }
+                />
+                {freight.freightCalculationType === "fixed_plus_ton" && (
+                  <MoneyField
+                    label="Valor fixo do frete"
+                    cents={freight.freightFixedValueCents}
+                    onChange={(cents) =>
+                      setFreight((prev) => ({ ...prev, freightFixedValueCents: cents }))
+                    }
+                  />
+                )}
+                {freight.freightCalculationType === "per_ton_km" && (
+                  <Field label="Distancia km">
+                    <input
+                      className="input"
+                      inputMode="decimal"
+                      value={freight.freightDistanceKm}
+                      placeholder="Ex: 35"
+                      onChange={(event) =>
+                        setFreight((prev) => ({ ...prev, freightDistanceKm: event.target.value }))
+                      }
+                    />
+                  </Field>
+                )}
+                <Field
+                  label="Destino/obs."
+                  hint="Sai impressa no cupom e volta preenchida na proxima entrada deste cliente."
+                >
+                  <input
+                    className="input"
+                    value={freight.freightDestination}
+                    placeholder="Ex: entregar na obra do centro"
+                    onChange={(event) =>
+                      setFreight((prev) => ({ ...prev, freightDestination: event.target.value }))
+                    }
+                  />
+                </Field>
+                <label className="check" style={{ margin: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={freight.deductFreightFromCredit || freightToInvoice}
+                    disabled={freightToInvoice}
+                    onChange={(event) =>
+                      setFreight((prev) => ({
+                        ...prev,
+                        deductFreightFromCredit: event.target.checked
+                      }))
+                    }
+                  />
+                  Abater frete do credito do cliente
+                </label>
+                {freightToInvoice && (
+                  <p className="helper" style={{ margin: 0 }}>
+                    Frete pago pela Pedreira e forma de pagamento no credito do cliente: o frete
+                    entra automaticamente na fatura.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
           <Field label="Transportadora">
             <Picker
@@ -244,6 +471,11 @@ export function NewEntry() {
               emptyLabel="Sem transportadora"
             />
           </Field>
+          {!carrierRequired && (
+            <p className="helper">
+              Transportadora opcional: o tipo de frete escolhido nao leva transportador na nota.
+            </p>
+          )}
           <div className="entry-inline">
             <Field label="Placa">
               <Picker
@@ -268,12 +500,13 @@ export function NewEntry() {
           <CardHead
             icon={<BadgeDollarSign size={18} strokeWidth={2.4} />}
             title="Resumo da entrada"
-            description="Preco, peso e envio para a balanca"
+            description="Preco, frete e captura"
           />
           <PriceSummary
             price={price}
             weightKg={entryWeightKg}
             operationType={operationType}
+            freight={freight}
             ready={Boolean(customerId && productId)}
           />
           <div className="entry-actions">
@@ -298,6 +531,19 @@ export function NewEntry() {
   );
 }
 
+/** O destino/observacao gravado no frete de uma pesagem (`freight_json.destination`). */
+function readDestination(freightJson: string | null): string | null {
+  if (!freightJson) return null;
+  try {
+    const parsed = JSON.parse(freightJson) as { destination?: unknown };
+    return typeof parsed.destination === "string" && parsed.destination.trim()
+      ? parsed.destination.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function CardHead({
   icon,
   title,
@@ -315,6 +561,45 @@ function CardHead({
         <p>{description}</p>
       </div>
     </div>
+  );
+}
+
+/** Campo de dinheiro em reais ("15,00"), guardado em centavos. Vazio = sem valor. */
+function MoneyField({
+  label,
+  cents,
+  onChange
+}: {
+  label: string;
+  cents: number | null;
+  onChange: (cents: number | null) => void;
+}) {
+  const [text, setText] = useState(
+    cents === null ? "" : (cents / 100).toFixed(2).replace(".", ",")
+  );
+  // Valor que chega de fora (frete puxado do cliente) substitui o texto.
+  const lastCents = useRef(cents);
+  useEffect(() => {
+    if (cents !== lastCents.current) {
+      lastCents.current = cents;
+      setText(cents === null ? "" : (cents / 100).toFixed(2).replace(".", ","));
+    }
+  }, [cents]);
+  return (
+    <Field label={label}>
+      <input
+        className="input"
+        inputMode="decimal"
+        value={text}
+        placeholder="0,00"
+        onChange={(event) => {
+          setText(event.target.value);
+          const parsed = event.target.value.trim() ? parseMoneyToCents(event.target.value) : null;
+          lastCents.current = parsed;
+          onChange(parsed);
+        }}
+      />
+    </Field>
   );
 }
 
@@ -372,16 +657,30 @@ function PriceSummary({
   price,
   weightKg,
   operationType,
+  freight,
   ready
 }: {
   price: { cents: number | null; source: string } | null;
   weightKg: number | null;
   operationType: "invoice" | "internal";
+  freight: EntryFreightForm;
   ready: boolean;
 }) {
   if (!ready || !price) {
     return <div className="price-box">Selecione cliente e produto para ver o preco.</div>;
   }
+  const info = getFreightModalityInfo(freight.freightModality);
+  const freightText = !info.supportsCharge
+    ? info.label
+    : freight.freightBaseValueCents === null && freight.freightFixedValueCents === null
+      ? "Com frete (sem valor)"
+      : `${formatMoney(freight.freightBaseValueCents ?? 0)}${
+          freight.freightCalculationType === "per_ton_km" ? "/ton-km" : "/ton"
+        }${
+          freight.freightCalculationType === "fixed_plus_ton" && freight.freightFixedValueCents
+            ? ` + ${formatMoney(freight.freightFixedValueCents)}`
+            : ""
+        }`;
   return (
     <div className="price-box filled">
       <dl>
@@ -389,6 +688,8 @@ function PriceSummary({
         <dd>{price.cents === null ? "Sem preco" : `${formatMoney(price.cents)}/ton`}</dd>
         <dt>Origem</dt>
         <dd>{price.source}</dd>
+        <dt>Frete</dt>
+        <dd>{freightText}</dd>
         <dt>Peso de entrada</dt>
         <dd>{weightKg === null ? "—" : `${weightKg.toLocaleString("pt-BR")} kg`}</dd>
         <dt>Operacao</dt>

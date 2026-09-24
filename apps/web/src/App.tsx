@@ -4,6 +4,11 @@ import { Layout } from "./components/Layout";
 import { ToastProvider } from "./components/ui";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { ThemeProvider } from "./lib/theme";
+import { BillingConference } from "./pages/BillingConference";
+import { CustomerReport } from "./pages/CustomerReport";
+import { Dashboard } from "./pages/Dashboard";
+import { Documentation } from "./pages/Documentation";
+import { Insights } from "./pages/Insights";
 import { InvoiceClosing } from "./pages/InvoiceClosing";
 import { Loading } from "./pages/Loading";
 import { Login } from "./pages/Login";
@@ -11,6 +16,7 @@ import { NewEntry } from "./pages/NewEntry";
 import { Operations } from "./pages/Operation";
 import { Registrations } from "./pages/Registrations";
 import { SalesReport } from "./pages/SalesReport";
+import { TruckControl } from "./pages/TruckControl";
 import { Wallet } from "./pages/Wallet";
 
 /**
@@ -80,12 +86,18 @@ export function App() {
                 }
               >
                 <Route index element={<Home />} />
+                <Route path="/painel" element={<Dashboard />} />
                 <Route path="/nova-entrada" element={<NewEntry />} />
                 <Route path="/operacoes" element={<Operations />} />
                 <Route path="/cadastros" element={<Registrations />} />
                 <Route path="/cadastros/:tab" element={<Registrations />} />
                 <Route path="/cadastros/:tab/:sub" element={<Registrations />} />
+                <Route path="/insights" element={<Insights />} />
+                <Route path="/controle-caminhoes" element={<TruckControl />} />
+                <Route path="/relatorio-cliente" element={<CustomerReport />} />
+                <Route path="/conferencia-faturamento" element={<BillingConference />} />
                 <Route path="/relatorios" element={<SalesReport />} />
+                <Route path="/documentacao" element={<Documentation />} />
                 {/* Enderecos antigos (favoritos, links mandados por mensagem). */}
                 <Route path="/operacao" element={<Navigate to="/operacoes" replace />} />
                 <Route

@@ -1,0 +1,239 @@
+/* Controle de caminhoes — os `styles` de apps/desktop/src/renderer/TruckControlView.tsx. */
+
+.truck-control {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: calc(100vh - 20px);
+}
+.truck-control-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.truck-control-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.truck-control-title {
+  margin: 0;
+  color: var(--kr-text-strong);
+  font-size: 18px;
+}
+.truck-control-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  cursor: help;
+  opacity: 0.42;
+  color: var(--kr-muted);
+}
+.truck-control-help:hover {
+  opacity: 0.9;
+}
+.truck-control-actions {
+  display: flex;
+  gap: 6px;
+}
+.truck-control-filters {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  background: var(--kr-surface);
+  border: 1px solid var(--kr-border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow: var(--kr-shadow);
+  flex-shrink: 0;
+}
+.truck-control-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--kr-text-strong);
+}
+.truck-control-search {
+  flex: 1;
+  min-width: 200px;
+}
+.truck-control-input {
+  border: 1px solid var(--kr-input-border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--kr-input-bg);
+  color: var(--kr-text-strong);
+}
+.truck-control-input:focus {
+  outline: none;
+  border-color: var(--kr-accent);
+  box-shadow: 0 0 0 3px var(--kr-focus-ring);
+}
+.truck-control-filters .icon-action {
+  width: 36px;
+  height: 36px;
+}
+.truck-control-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  flex-shrink: 0;
+}
+.truck-control-card {
+  background: var(--kr-surface);
+  border: 1px solid var(--kr-border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow: var(--kr-shadow);
+}
+.truck-control-card-label {
+  display: block;
+  color: var(--kr-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.truck-control-card-value {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--kr-text-strong);
+}
+.truck-control-muted {
+  color: var(--kr-muted);
+  font-size: 12px;
+  margin: 0;
+}
+.truck-control-error {
+  margin: 0;
+  color: var(--kr-danger);
+  background: var(--kr-danger-soft);
+  border: 1px solid var(--kr-danger-border);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.truck-control-table-scroll {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--kr-border);
+  border-radius: 14px;
+  background: var(--kr-surface);
+  box-shadow: var(--kr-shadow);
+}
+.truck-control-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  color: var(--kr-text);
+}
+.truck-control-table > thead > tr > th {
+  padding: 9px 12px;
+  text-align: left;
+  color: var(--kr-muted);
+  background: var(--kr-surface-soft);
+  border-bottom: 1px solid var(--kr-border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.truck-control-table > tbody > tr > td {
+  padding: 10px 12px;
+  border-top: 1px solid var(--kr-border);
+  vertical-align: top;
+}
+.truck-control-table .num {
+  text-align: right;
+}
+.truck-control-plate {
+  display: inline-block;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  background: var(--kr-surface-soft);
+  border: 1px solid var(--kr-border);
+  border-radius: 8px;
+  padding: 2px 8px;
+  color: var(--kr-text-strong);
+}
+.truck-control-above {
+  color: var(--kr-warning);
+  font-weight: 800;
+}
+.truck-control-link {
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface-soft);
+  color: var(--kr-text-strong);
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.truck-control-table > tbody > tr > td.truck-control-trip-cell {
+  padding: 0 12px 12px;
+  border-top: none;
+  background: var(--kr-surface-soft);
+}
+.truck-control-trip-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  background: var(--kr-surface);
+}
+.truck-control-trip-table th {
+  padding: 6px 8px;
+  text-align: left;
+  color: var(--kr-muted);
+  border-bottom: 1px solid var(--kr-border);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.truck-control-trip-table td {
+  padding: 6px 8px;
+  border-top: 1px solid var(--kr-border);
+}
+.truck-control-trip-table .num {
+  text-align: right;
+}
+
+/* "Gerar PDF": a impressao do navegador so com a tela, sem o menu e sem os botoes. */
+@media print {
+  body:has(.truck-control) .sidebar,
+  .truck-control-actions,
+  .truck-control-filters .icon-action,
+  .truck-control-no-print {
+    display: none !important;
+  }
+  body:has(.truck-control) .shell {
+    padding: 0;
+  }
+  .truck-control {
+    min-height: 0;
+  }
+  .truck-control-table-scroll {
+    overflow: visible;
+    box-shadow: none;
+  }
+  .truck-control-table > thead > tr > th {
+    position: static;
+  }
+}

@@ -238,15 +238,31 @@ pelas mesmas funções dos botões do desktop e devolve o resultado.
 
 `kind` e `data`:
 
-| `kind`    | `data`                                                                                                                                                                                                                       |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `entry`   | `customerId`, `vehicleId`, `driverId`, `productId`, `entryWeightKg`; opcionais `carrierId`, `paymentMethodId`, `paymentTermId`, `operationType` (`invoice` padrão, ou `internal`)                                            |
-| `exit`    | `exitWeightKg`; opcional `operationType`. O cupom sai na impressora da executora, com o número de vias do perfil dela (1 ou 2)                                                                                               |
-| `update`  | só o que muda: `customerId`, `productId`, `vehicleId`, `driverId`, `carrierId` (`null` tira), `paymentMethodId`, `paymentTermId`, `operationType`, `unitPriceCents`. Pesagem concluída: só cliente, produto e transportadora |
-| `cancel`  | `reason`                                                                                                                                                                                                                     |
-| `reprint` | — (só pesagem concluída)                                                                                                                                                                                                     |
+| `kind`    | `data`                                                                                                                                                                                                                                                                   |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `entry`   | `customerId`, `vehicleId`, `driverId`, `productId`, `entryWeightKg`; opcionais `carrierId`, `paymentMethodId`, `paymentTermId`, `conditionText`, `operationType` (`invoice` padrão, ou `internal`), `freightModality`, `freight`, `deductFreightFromCredit` (ver abaixo) |
+| `exit`    | `exitWeightKg`; opcional `operationType`. O cupom sai na impressora da executora, com o número de vias do perfil dela (1 ou 2)                                                                                                                                           |
+| `update`  | só o que muda: `customerId`, `productId`, `vehicleId`, `driverId`, `carrierId` (`null` tira), `paymentMethodId`, `paymentTermId`, `operationType`, `unitPriceCents`. Pesagem concluída: só cliente, produto e transportadora                                             |
+| `cancel`  | `reason`                                                                                                                                                                                                                                                                 |
+| `reprint` | — (só pesagem concluída)                                                                                                                                                                                                                                                 |
 
 - O peso é **digitado** (como a balança virtual) e fica marcado `WEB:<kg>` na auditoria da pesagem.
+- **Frete e condição da entrada** — o mesmo bloco da Nova entrada do desktop:
+  - `freightModality`: `fob` (com frete, valor na nota), `cif` (com frete, valor só no sistema),
+    `third_party` (sem frete, transportador na nota) ou `none` (sem ocorrência). Ausente = o padrão
+    da balança (`third_party`), como antes.
+  - `freight` (só com `fob`/`cif`): `calculationType` (`per_ton` | `per_ton_km` | `fixed_plus_ton`),
+    `baseValueCents`, `fixedValueCents?`, `distanceKm` (obrigatória no ton-km), `destination?`. A
+    balança monta o frete como o `buildFreightInput` do desktop (pagador pela situação, valor no
+    cupom só no `fob`) e, com frete da Pedreira na forma "crédito do cliente", abate do crédito.
+  - `conditionText`: a condição digitada ("30", "7 14 21", "s+20"); vence `paymentTermId`. A
+    balança reusa a condição local com a mesma regra ou cria uma nova (a mesma do campo livre da
+    tela); texto que o desktop não entende volta como falha com a mensagem dele.
+  - Executora abaixo da `0.8.253` (`ENTRY_FREIGHT_MIN_EXECUTOR_VERSION`, lida de
+    `device_registrations.app_version`) registraria a entrada **ignorando** frete e condição, em
+    silêncio: por isso a ação responde 409 pedindo a atualização da balança.
+  - As regras de frete e de condição do site (`apps/web/src/lib/desktop/`) são cópias de
+    `apps/desktop/src/services/` guardadas por teste (`desktop-copies.test.ts`).
 - Na entrada o id da pesagem nasce na `web-api` (`operationId` da resposta): executar o mesmo
   pedido duas vezes (resposta perdida, pedido devolvido à fila) encontra a pesagem em vez de
   criar outro caminhão no pátio. Fechar ou cancelar de novo também é reconhecido como já feito.
@@ -260,7 +276,22 @@ pelas mesmas funções dos botões do desktop e devolve o resultado.
   ex.: "Ja existe uma operacao aberta para a placa ABC-1234."), `result` (número, pesos,
   totais) e `print_status`/`print_message` ("pesagem registrada, mas o cupom não imprimiu").
 
-### 4.10 O que ainda não está na `web-api` (próximas versões)
+### 4.10 Destinatários do fechamento diário (só gestor)
+
+| Ação                      | Payload                                                                                                                                                                    | Devolve                    |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `list_report_recipients`  | —                                                                                                                                                                          | `recipients[]`, `channels` |
+| `save_report_recipient`   | `id?`, `displayName`, `email`, `whatsappPhone`, `sendEmail`, `sendWhatsapp`, `reportTypes` (`sales`/`trucks`/`both`), `sendFinancial`, `financialScheduleTime`, `isActive` | `id`                       |
+| `delete_report_recipient` | `id`                                                                                                                                                                       | `id`                       |
+
+A tela Relatórios do desktop, na aba "Destinatarios" do `/relatorios`. Grava em
+`report_recipients` com as regras de `apps/desktop/src/services/report-recipients.ts`
+(`_shared/report-recipients.ts`): pelo menos um canal, e-mail e WhatsApp válidos, sem repetir
+e-mail nem WhatsApp. Excluir é tombstone (`deleted_at`), que a balança puxa no `desktop-pull`.
+`channels` diz só **se** o SMTP e o WhatsApp da pedreira estão configurados — senha e token
+nunca saem da nuvem; configurar os canais e o horário dos envios continua na balança.
+
+### 4.11 O que ainda não está na `web-api` (próximas versões)
 
 - Regra de frete do cliente (`customer_freight_rules.rule_json`) — o formato do JSON é o da
   balança (`apps/desktop/src/services/customer-freight-rules.ts`) e precisa ser documentado

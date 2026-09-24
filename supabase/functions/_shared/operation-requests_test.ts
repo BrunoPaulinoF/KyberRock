@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   changesPrice,
+  isVersionAtLeast,
   isExecutorOnline,
   isStaleOperationClaim,
   parseWeightKg,
@@ -58,6 +59,69 @@ describe("entrada", () => {
   it("recusa tipo de operacao desconhecido", () => {
     expect(validateOperationRequest("entry", { ...ENTRY, operationType: "doacao" }).ok).toBe(false);
   });
+
+  it("frete com valor leva o calculo; sem frete descarta o que vier", () => {
+    const withFreight = validateOperationRequest("entry", {
+      ...ENTRY,
+      freightModality: "fob",
+      freight: {
+        calculationType: "per_ton_km",
+        baseValueCents: 120,
+        distanceKm: "35,5",
+        destination: " obra do centro "
+      },
+      deductFreightFromCredit: true
+    });
+    expect(withFreight).toMatchObject({
+      ok: true,
+      value: {
+        freightModality: "fob",
+        freight: {
+          calculationType: "per_ton_km",
+          baseValueCents: 120,
+          distanceKm: 35.5,
+          destination: "obra do centro"
+        },
+        deductFreightFromCredit: true
+      }
+    });
+    const without = validateOperationRequest("entry", {
+      ...ENTRY,
+      freightModality: "none",
+      freight: { baseValueCents: 500 },
+      deductFreightFromCredit: true
+    });
+    expect(without).toEqual({
+      ok: true,
+      value: { ...ENTRY, operationType: "invoice", freightModality: "none" }
+    });
+  });
+
+  it("frete com valor exige valor e, no ton-km, a distancia", () => {
+    expect(validateOperationRequest("entry", { ...ENTRY, freightModality: "cif" }).ok).toBe(false);
+    expect(
+      validateOperationRequest("entry", {
+        ...ENTRY,
+        freightModality: "cif",
+        freight: { calculationType: "per_ton_km", baseValueCents: 100 }
+      }).ok
+    ).toBe(false);
+    expect(validateOperationRequest("entry", { ...ENTRY, freightModality: "own_sender" }).ok).toBe(
+      false
+    );
+  });
+
+  it("condicao digitada vence a condicao escolhida na lista", () => {
+    const result = validateOperationRequest("entry", {
+      ...ENTRY,
+      paymentTermId: "pt1",
+      conditionText: " 7 14 21 "
+    });
+    expect(result).toEqual({
+      ok: true,
+      value: { ...ENTRY, operationType: "invoice", conditionText: "7 14 21" }
+    });
+  });
 });
 
 describe("saida, alteracao, cancelamento e reimpressao", () => {
@@ -112,5 +176,16 @@ describe("executora e pedidos abandonados", () => {
     expect(isStaleOperationClaim("2026-09-25T11:57:00.000Z", now)).toBe(false);
     expect(isStaleOperationClaim("2026-09-25T11:54:00.000Z", now)).toBe(true);
     expect(isStaleOperationClaim(null, now)).toBe(true);
+  });
+});
+
+describe("versao da executora", () => {
+  it("compara pelos numeros", () => {
+    expect(isVersionAtLeast("0.8.253", "0.8.253")).toBe(true);
+    expect(isVersionAtLeast("0.8.1000", "0.8.253")).toBe(true);
+    expect(isVersionAtLeast("v0.9.1", "0.8.253")).toBe(true);
+    expect(isVersionAtLeast("0.8.60", "0.8.253")).toBe(false);
+    expect(isVersionAtLeast(null, "0.8.253")).toBe(false);
+    expect(isVersionAtLeast("dev", "0.8.253")).toBe(false);
   });
 });

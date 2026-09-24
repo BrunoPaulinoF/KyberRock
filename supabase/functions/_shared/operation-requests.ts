@@ -40,6 +40,61 @@ export const MAX_WEIGHT_KG = 150_000;
 
 export type OperationType = "invoice" | "internal";
 
+/**
+ * As quatro situacoes do tipo de frete da Nova entrada (`apps/desktop/src/services/freight.ts`):
+ * `fob` = com frete, valor na nota; `cif` = com frete, valor so no sistema; `third_party` = sem
+ * frete, transportador na nota; `none` = sem ocorrencia de frete. As chaves legadas nao entram
+ * aqui: o seletor do desktop tambem nao as oferece mais.
+ */
+export const ENTRY_FREIGHT_MODALITIES = ["fob", "cif", "third_party", "none"] as const;
+export type EntryFreightModality = (typeof ENTRY_FREIGHT_MODALITIES)[number];
+
+export const FREIGHT_CALCULATION_TYPES = ["per_ton", "per_ton_km", "fixed_plus_ton"] as const;
+export type FreightCalculationType = (typeof FREIGHT_CALCULATION_TYPES)[number];
+
+/** O frete da entrada "com frete" — os mesmos campos do bloco de frete do desktop. */
+export interface EntryFreightPayload {
+  calculationType: FreightCalculationType;
+  baseValueCents: number;
+  fixedValueCents?: number;
+  distanceKm?: number;
+  destination?: string;
+}
+
+/**
+ * Primeira versao do desktop que entende frete e condicao digitada no pedido de entrada. Uma
+ * executora mais antiga registraria a entrada IGNORANDO esses campos (sem frete, condicao a
+ * vista) — em silencio. Entao a `web-api` recusa o pedido com frete/condicao enquanto a
+ * executora da unidade nao estiver nesta versao.
+ */
+export const ENTRY_FREIGHT_MIN_EXECUTOR_VERSION = "0.8.253";
+
+/** Compara "0.8.253" com "0.8.60" pelos numeros (nao como texto). Nulo/invalido = mais antigo. */
+export function isVersionAtLeast(version: unknown, minimum: string): boolean {
+  if (typeof version !== "string") return false;
+  const parse = (value: string) => value.trim().replace(/^v/, "").split(".").map(Number);
+  const current = parse(version);
+  const target = parse(minimum);
+  if (current.some((part) => !Number.isInteger(part))) return false;
+  for (let index = 0; index < Math.max(current.length, target.length); index++) {
+    const a = current[index] ?? 0;
+    const b = target[index] ?? 0;
+    if (a !== b) return a > b;
+  }
+  return true;
+}
+
+/** O pedido de entrada usa frete ou condicao digitada (campos que so a versao nova entende)? */
+export function entryNeedsFreightSupport(payload: EntryRequestPayload): boolean {
+  return (
+    Boolean(payload.conditionText) ||
+    (payload.freightModality !== undefined && payload.freightModality !== "third_party")
+  );
+}
+
+/** Condicao digitada: o mesmo limite do campo livre do desktop, com folga. */
+export const MAX_CONDITION_TEXT = 80;
+
 export interface EntryRequestPayload {
   customerId: string;
   vehicleId: string;
@@ -50,6 +105,13 @@ export interface EntryRequestPayload {
   paymentMethodId?: string;
   operationType: OperationType;
   entryWeightKg: number;
+  /** Ausente = o padrao da balanca (sem frete, transportador na nota). */
+  freightModality?: EntryFreightModality;
+  /** So nas situacoes com frete (`fob`, `cif`). */
+  freight?: EntryFreightPayload;
+  deductFreightFromCredit?: boolean;
+  /** Condicao digitada ("30", "7 14 21"); vence `paymentTermId`. A balanca interpreta. */
+  conditionText?: string;
 }
 
 export interface ExitRequestPayload {
@@ -160,6 +222,64 @@ export function validateEntryPayload(payload: Row): ValidationResult<EntryReques
   if (carrierId) value.carrierId = carrierId;
   if (paymentTermId) value.paymentTermId = paymentTermId;
   if (paymentMethodId) value.paymentMethodId = paymentMethodId;
+  const conditionText = text(payload, "conditionText");
+  if (conditionText) {
+    if (conditionText.length > MAX_CONDITION_TEXT) {
+      return { ok: false, error: "Condicao de pagamento muito longa." };
+    }
+    value.conditionText = conditionText;
+    delete value.paymentTermId;
+  }
+  if (payload.freightModality !== undefined) {
+    const modality = payload.freightModality;
+    if (!(ENTRY_FREIGHT_MODALITIES as readonly unknown[]).includes(modality)) {
+      return { ok: false, error: "Tipo de frete invalido." };
+    }
+    value.freightModality = modality as EntryFreightModality;
+  }
+  if (value.freightModality === "fob" || value.freightModality === "cif") {
+    const freight = validateEntryFreight(payload.freight);
+    if (!freight.ok) return freight;
+    value.freight = freight.value;
+    if (payload.deductFreightFromCredit === true) value.deductFreightFromCredit = true;
+  }
+  return { ok: true, value };
+}
+
+function centsOrUndefined(value: unknown): number | undefined | null {
+  if (value === undefined || value === null || value === "") return undefined;
+  const cents = Number(value);
+  return Number.isInteger(cents) && cents >= 0 ? cents : null;
+}
+
+/** As mesmas exigencias do `validateWeighingForm` do desktop para o frete com valor. */
+function validateEntryFreight(raw: unknown): ValidationResult<EntryFreightPayload> {
+  if (!raw || typeof raw !== "object") return { ok: false, error: "Informe o valor do frete." };
+  const freight = raw as Row;
+  const calculationType = freight.calculationType ?? "per_ton";
+  if (!(FREIGHT_CALCULATION_TYPES as readonly unknown[]).includes(calculationType)) {
+    return { ok: false, error: "Calculo do frete invalido." };
+  }
+  const base = centsOrUndefined(freight.baseValueCents);
+  const fixed = centsOrUndefined(freight.fixedValueCents);
+  if (base === null || fixed === null) return { ok: false, error: "Valor do frete invalido." };
+  if (base === undefined && fixed === undefined) {
+    return { ok: false, error: "Informe o valor do frete." };
+  }
+  const value: EntryFreightPayload = {
+    calculationType: calculationType as FreightCalculationType,
+    baseValueCents: base ?? 0
+  };
+  if (fixed !== undefined) value.fixedValueCents = fixed;
+  if (calculationType === "per_ton_km") {
+    const distance = Number(String(freight.distanceKm ?? "").replace(",", "."));
+    if (!Number.isFinite(distance) || distance <= 0) {
+      return { ok: false, error: "Informe a distancia do frete em km." };
+    }
+    value.distanceKm = distance;
+  }
+  const destination = text(freight, "destination");
+  if (destination) value.destination = destination.slice(0, 200);
   return { ok: true, value };
 }
 

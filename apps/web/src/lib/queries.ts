@@ -206,6 +206,29 @@ export const q = {
     fail(error);
     return data ?? [];
   },
+  /** As ultimas pesagens do cliente: a Nova entrada repete o arranjo da ultima vez. */
+  lastCustomerOperations: async (companyId: string, customerId: string): Promise<Operation[]> => {
+    const { data, error } = await supabase
+      .from("weighing_operations")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("customer_id", customerId)
+      .neq("status", "cancelled")
+      .order("created_at", { ascending: false })
+      .limit(5);
+    fail(error);
+    return data ?? [];
+  },
+  customerFreightRules: (companyId: string, customerId: string) =>
+    all<Tables<"customer_freight_rules">>((from, to) =>
+      supabase
+        .from("customer_freight_rules")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("customer_id", customerId)
+        .is("deleted_at", null)
+        .range(from, to)
+    ),
   accounts: (companyId: string) =>
     all<Account>((from, to) =>
       supabase

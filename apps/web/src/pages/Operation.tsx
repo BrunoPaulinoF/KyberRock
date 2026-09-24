@@ -86,6 +86,8 @@ export interface Catalog {
       carrierId: string;
       /** Cadastro pede nota? Decide com/sem nota ao escolher o cliente, como no desktop. */
       nfRequired: boolean | null;
+      /** Tipo de frete padrao do cadastro (aba Transporte do cliente). */
+      freightModality: string | null;
     }
   >;
 }
@@ -141,7 +143,8 @@ export function useCatalog(companyId: string) {
             paymentMethodId: row.default_payment_method_id ?? "",
             paymentTermId: row.default_payment_term_id ?? "",
             carrierId: row.default_carrier_id ?? "",
-            nfRequired: row.nf_required
+            nfRequired: row.nf_required,
+            freightModality: row.default_freight_modality
           }
         ])
       )

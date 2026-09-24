@@ -1820,6 +1820,58 @@ input[type="radio"] {
   height: 40px;
 }
 
+.freight-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0 8px;
+  align-items: start;
+  margin-top: 4px;
+}
+.freight-grid > .field:last-of-type,
+.freight-grid > .check,
+.freight-grid > .helper {
+  grid-column: 1 / -1;
+}
+.condition-legend {
+  border: 1px solid var(--kr-border);
+  border-radius: 10px;
+  background: var(--kr-surface-soft);
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--kr-muted);
+  line-height: 1.45;
+  margin-bottom: 6px;
+}
+.condition-preview {
+  margin: 0;
+  font-weight: 700;
+}
+.condition-preview.is-ok {
+  color: var(--kr-text-strong);
+}
+.condition-preview.is-invalid {
+  color: var(--kr-danger);
+}
+.condition-legend summary {
+  cursor: pointer;
+  margin-top: 4px;
+  font-weight: 700;
+  color: var(--kr-text-strong);
+}
+.condition-legend table {
+  border-collapse: collapse;
+  margin-top: 4px;
+}
+.condition-legend td {
+  padding: 2px 8px 2px 0;
+  vertical-align: top;
+}
+.condition-legend code {
+  font-weight: 700;
+  color: var(--kr-text-strong);
+  white-space: nowrap;
+}
+
 /* ---------- celular ---------- */
 @media (max-width: 800px) {
   .shell {

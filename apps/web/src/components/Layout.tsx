@@ -1,12 +1,18 @@
 import {
+  BarChart3,
+  BookOpen,
+  ClipboardCheck,
   Database,
   FileText,
+  LayoutDashboard,
   ListChecks,
   LogOut,
   Moon,
   PlusCircle,
   ReceiptText,
   Sun,
+  Truck,
+  UserSearch,
   Wallet
 } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
@@ -37,6 +43,10 @@ export function Layout() {
         </div>
         <nav className="sidebar-nav" aria-label="Navegacao principal">
           <div className="nav-section">Operacional</div>
+          <NavLink to="/painel" className="nav-link">
+            <LayoutDashboard size={16} strokeWidth={2.2} />
+            Painel
+          </NavLink>
           {user.canOperate && (
             <NavLink to="/nova-entrada" className="nav-link">
               <PlusCircle size={16} strokeWidth={2.2} />
@@ -58,6 +68,22 @@ export function Layout() {
             Cadastros
           </NavLink>
           <div className="nav-section">Analise</div>
+          <NavLink to="/insights" className="nav-link">
+            <BarChart3 size={16} strokeWidth={2.2} />
+            Insights
+          </NavLink>
+          <NavLink to="/controle-caminhoes" className="nav-link">
+            <Truck size={16} strokeWidth={2.2} />
+            Controle de caminhoes
+          </NavLink>
+          <NavLink to="/relatorio-cliente" className="nav-link">
+            <UserSearch size={16} strokeWidth={2.2} />
+            Relatorio por cliente
+          </NavLink>
+          <NavLink to="/conferencia-faturamento" className="nav-link">
+            <ClipboardCheck size={16} strokeWidth={2.2} />
+            Conferencia de faturamento
+          </NavLink>
           {user.canManagePrices && (
             <NavLink to="/fechamento" className="nav-link">
               <ReceiptText size={16} strokeWidth={2.2} />
@@ -67,6 +93,10 @@ export function Layout() {
           <NavLink to="/relatorios" className="nav-link">
             <FileText size={16} strokeWidth={2.2} />
             Relatorios
+          </NavLink>
+          <NavLink to="/documentacao" className="nav-link">
+            <BookOpen size={16} strokeWidth={2.2} />
+            Documentacao
           </NavLink>
         </nav>
         <div className="sidebar-footer">

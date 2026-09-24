@@ -1,0 +1,314 @@
+/*
+ * Conferencia de faturamento — os `styles` de WeighingBillingReportView.tsx,
+ * WeighingLinesTable.tsx, Kpi.tsx, SituationPill.tsx e InvoiceNumberCell.tsx do desktop.
+ */
+
+.billing-conference {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.billing-conference-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.billing-conference-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.billing-conference-title {
+  margin: 0;
+  color: var(--kr-text-strong);
+  font-size: 18px;
+}
+.billing-conference-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  cursor: help;
+  opacity: 0.42;
+  color: var(--kr-muted);
+}
+.billing-conference-help:hover {
+  opacity: 0.9;
+}
+.billing-conference-card {
+  background: var(--kr-card-bg);
+  border: 1px solid var(--kr-card-border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: var(--kr-shadow);
+  min-width: 0;
+}
+.billing-conference-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--kr-text-strong);
+  margin: 0 0 8px;
+}
+.billing-conference-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+.billing-conference-filter-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.billing-conference-filter-label {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--kr-muted);
+}
+.billing-conference-input,
+.billing-conference-filters .picker .input {
+  border: 1px solid var(--kr-input-border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--kr-input-bg);
+  color: var(--kr-text-strong);
+  width: 100%;
+}
+.billing-conference-input:focus {
+  outline: none;
+  border-color: var(--kr-accent);
+  box-shadow: 0 0 0 3px var(--kr-focus-ring);
+}
+.billing-conference-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.billing-conference-chip {
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface);
+  color: var(--kr-muted);
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.billing-conference-chip.active {
+  border-color: var(--kr-primary-strong);
+  background: var(--kr-primary-strong);
+  color: var(--kr-primary-text);
+  font-weight: 700;
+}
+.billing-conference-dates {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.billing-conference-date {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--kr-muted);
+  flex: 1 1 120px;
+}
+.billing-conference-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kr-text-strong);
+  cursor: pointer;
+}
+.billing-conference-hint {
+  font-size: 12px;
+  color: var(--kr-muted);
+  margin: 0;
+  white-space: pre-line;
+}
+.billing-conference-foot-note {
+  font-size: 11px;
+  color: var(--kr-muted);
+  font-style: italic;
+  margin: 8px 0 0;
+}
+.billing-conference-error {
+  color: var(--kr-danger);
+  font-size: 13px;
+  background: var(--kr-danger-soft);
+  border: 1px solid var(--kr-danger-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0;
+}
+.billing-conference-info {
+  color: var(--kr-info-text);
+  background: var(--kr-info-bg);
+  border: 1px solid var(--kr-info-border);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin: 0;
+  white-space: pre-line;
+}
+.billing-conference-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+.billing-conference-kpi-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--kr-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+.billing-conference-kpi-value {
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--kr-text-strong);
+  margin: 4px 0 2px;
+}
+.billing-conference-kpi-value.danger {
+  color: var(--kr-danger);
+}
+.billing-conference-kpi-value.success {
+  color: var(--kr-success);
+}
+.billing-conference-scroll {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 320px;
+}
+.billing-conference-scroll.tall {
+  max-height: calc(100vh - 420px);
+  min-height: 240px;
+}
+.billing-conference-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.billing-conference-table th {
+  padding: 7px 10px;
+  border-bottom: 2px solid var(--kr-card-border);
+  color: var(--kr-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  position: sticky;
+  top: 0;
+  background: var(--kr-card-bg);
+  white-space: nowrap;
+  text-align: right;
+  z-index: 1;
+}
+.billing-conference-table tbody td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--kr-card-border);
+  color: var(--kr-text-strong);
+  white-space: nowrap;
+  text-align: right;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.billing-conference-table tfoot td {
+  padding: 8px 10px;
+  border-top: 2px solid var(--kr-card-border);
+  color: var(--kr-text-strong);
+  font-weight: 800;
+  white-space: nowrap;
+  text-align: right;
+  position: sticky;
+  bottom: 0;
+  background: var(--kr-card-bg);
+}
+.billing-conference-table th.left,
+.billing-conference-table td.left {
+  text-align: left;
+}
+.billing-conference-table td.strong {
+  font-weight: 700;
+}
+.billing-conference-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.billing-conference-pill.success {
+  background: var(--kr-success-soft);
+  color: var(--kr-success);
+}
+.billing-conference-pill.danger {
+  background: var(--kr-danger-soft);
+  color: var(--kr-danger);
+}
+.billing-conference-pill.warning {
+  background: var(--kr-warning-soft);
+  color: var(--kr-warning);
+}
+.billing-conference-pill.info {
+  background: var(--kr-info-bg);
+  color: var(--kr-info-text);
+}
+.billing-conference-invoice.number {
+  font-weight: 700;
+}
+.billing-conference-invoice.pending {
+  color: var(--kr-danger);
+}
+.billing-conference-invoice.not_applicable {
+  color: var(--kr-muted);
+}
+
+.billing-conference-print-only {
+  display: none;
+}
+
+/* "PDF": a impressao do navegador so com a tela, sem o menu, os filtros e o botao. */
+@media print {
+  body:has(.billing-conference) .sidebar,
+  .billing-conference-no-print,
+  .billing-conference-filters {
+    display: none !important;
+  }
+  .billing-conference-print-only {
+    display: inline;
+    margin-left: 12px;
+    color: var(--kr-muted);
+    font-size: 13px;
+  }
+  body:has(.billing-conference) .shell {
+    padding: 0;
+  }
+  .billing-conference-scroll,
+  .billing-conference-scroll.tall {
+    max-height: none;
+    overflow: visible;
+  }
+  .billing-conference-table th,
+  .billing-conference-table tfoot td {
+    position: static;
+  }
+  .billing-conference-table tbody td {
+    white-space: normal;
+    max-width: none;
+  }
+}
