@@ -37,18 +37,25 @@ consulta; `operacao` edita veículos, motoristas e transportadoras e faz pesagem
 também clientes; `gestor` tudo. O `loader` (carregador) só tem `/carregamento`. A pesagem pelo
 site é um PEDIDO que a balança executora da unidade registra (`docs/web-api.md` 4.9).
 
-| Rota                   | Quem                             | O que faz                                                                                        |
-| ---------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `/carregamento`        | carregador                       | Fila de carregamento da unidade: concluir e devolver carga                                       |
-| `/operacao`            | todos (pesar: operação e gestor) | Pátio: nova entrada (F2), fechar saída, alterar, cancelar; pedidos ao vivo                       |
-| `/operacao/concluidas` | todos (ações: operação e gestor) | Pesagens fechadas no dia: reimprimir na balança, alterar, cancelar                               |
-| `/clientes`            | todos                            | Lista; cadastro/edição (sobe ao OMIE) e inativar só comercial e gestor; bloco comercial (gestor) |
-| `/veiculos`            | todos                            | Veículos e motoristas (edição: operação, comercial e gestor)                                     |
-| `/transportadoras`     | todos                            | Transportadoras (sobem ao OMIE com CNPJ; edição: operação em diante)                             |
-| `/precos`              | gestor                           | Preço padrão por produto e especial por cliente                                                  |
-| `/vendas`              | todos                            | Relatório de vendas por cliente/produto/dia, CSV                                                 |
-| `/carteira`            | gestor                           | Fechamento e reabertura da carteira                                                              |
-| `/fechamento`          | gestor                           | Conferência do período e pedido de faturamento (a balança executa)                               |
+As telas seguem a disposicao do KyberRock Desktop (mesmo menu, mesmos nomes, abas por icone,
+botoes quadrados de acao): quem opera a balanca nao deve estranhar o site. As pecas comuns
+estao em `src/components/desk.tsx`.
+
+| Rota                                                              | Quem                               | O que faz                                                                                  |
+| ----------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------ |
+| `/carregamento`                                                   | carregador                         | Fila de carregamento da unidade: concluir e devolver carga                                 |
+| `/nova-entrada`                                                   | operacao e gestor                  | Nova entrada (faixa do peso + Dados comerciais, Transporte, Resumo); peso digitado         |
+| `/operacoes`                                                      | todos (acoes: operacao e gestor)   | Operacoes: abertas, canceladas (`?aba=canceladas`) e concluidas (`?aba=concluidas`)        |
+| `/cadastros/clientes`                                             | todos                              | Clientes; cadastro/edicao (sobe ao OMIE) so comercial e gestor; comercial e credito gestor |
+| `/cadastros/produtos`                                             | todos (publicar preco: gestor)     | Preco padrao por produto e preco especial por cliente                                      |
+| `/cadastros/pagamento`                                            | todos                              | Formas, contas e condicoes de pagamento (consulta)                                         |
+| `/cadastros/transporte/<motoristas \| transportadoras \| placas>` | todos (edicao: operacao em diante) | Motoristas, transportadoras e placas                                                       |
+| `/carteira`                                                       | gestor                             | Fechamento e reabertura da carteira                                                        |
+| `/fechamento`                                                     | gestor                             | Conferencia do periodo e pedido de faturamento (a balanca executa)                         |
+| `/relatorios`                                                     | todos                              | Relatorio de vendas por cliente/produto/dia, CSV                                           |
+
+Os enderecos antigos (`/operacao`, `/clientes`, `/veiculos`, `/transportadoras`, `/precos`,
+`/vendas`) redirecionam para os novos.
 
 ## Deploy na Hostinger
 

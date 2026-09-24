@@ -1,15 +1,12 @@
 import {
-  Building2,
-  ClipboardCheck,
+  Database,
+  FileText,
+  ListChecks,
   LogOut,
   Moon,
+  PlusCircle,
   ReceiptText,
-  Scale,
   Sun,
-  Tags,
-  TrendingUp,
-  Truck,
-  Users,
   Wallet
 } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
@@ -19,9 +16,10 @@ import { ROLE_LABELS } from "../lib/permissions";
 import { useTheme } from "../lib/theme";
 
 /**
- * A casca do site: o mesmo menu lateral do KyberRock Desktop (secoes, icones, item ativo com
- * a barra ambar) e o rodape com usuario, tema e saida. Os icones sao os do desktop
- * (`lucide-react`), para a mesma tela ter o mesmo simbolo nos dois lugares.
+ * A casca do site: o mesmo menu lateral do KyberRock Desktop — mesmas secoes (Operacional e
+ * Analise), mesmos nomes, mesma ordem e mesmos icones (`lucide-react`) —, com o rodape de
+ * usuario, tema e saida. Fica de fora so o que nao existe no site; o que o perfil nao pode
+ * usar nem aparece.
  */
 export function Layout() {
   const user = useUser();
@@ -38,51 +36,38 @@ export function Layout() {
           <span className="sidebar-meta">Web</span>
         </div>
         <nav className="sidebar-nav" aria-label="Navegacao principal">
-          <div className="nav-section">Operacao</div>
-          <NavLink to="/operacao" end className="nav-link">
-            <Scale size={16} strokeWidth={2.2} />
-            Patio
-          </NavLink>
-          <NavLink to="/operacao/concluidas" className="nav-link">
-            <ClipboardCheck size={16} strokeWidth={2.2} />
-            Concluidas
-          </NavLink>
-          <div className="nav-section">Cadastro</div>
-          <NavLink to="/clientes" className="nav-link">
-            <Users size={16} strokeWidth={2.2} />
-            Clientes
-          </NavLink>
-          <NavLink to="/veiculos" className="nav-link">
-            <Truck size={16} strokeWidth={2.2} />
-            Veiculos e motoristas
-          </NavLink>
-          <NavLink to="/transportadoras" className="nav-link">
-            <Building2 size={16} strokeWidth={2.2} />
-            Transportadoras
-          </NavLink>
-          {user.canManagePrices && (
-            <NavLink to="/precos" className="nav-link">
-              <Tags size={16} strokeWidth={2.2} />
-              Precos
+          <div className="nav-section">Operacional</div>
+          {user.canOperate && (
+            <NavLink to="/nova-entrada" className="nav-link">
+              <PlusCircle size={16} strokeWidth={2.2} />
+              Nova entrada
             </NavLink>
           )}
-          <div className="nav-section">Financeiro</div>
-          <NavLink to="/vendas" className="nav-link">
-            <TrendingUp size={16} strokeWidth={2.2} />
-            Relatorio de vendas
+          <NavLink to="/operacoes" className="nav-link">
+            <ListChecks size={16} strokeWidth={2.2} />
+            Operacoes
           </NavLink>
           {user.canManagePrices && (
-            <>
-              <NavLink to="/carteira" className="nav-link">
-                <Wallet size={16} strokeWidth={2.2} />
-                Carteira
-              </NavLink>
-              <NavLink to="/fechamento" className="nav-link">
-                <ReceiptText size={16} strokeWidth={2.2} />
-                Fechamento de faturas
-              </NavLink>
-            </>
+            <NavLink to="/carteira" className="nav-link">
+              <Wallet size={16} strokeWidth={2.2} />
+              Carteira
+            </NavLink>
           )}
+          <NavLink to="/cadastros" className="nav-link">
+            <Database size={16} strokeWidth={2.2} />
+            Cadastros
+          </NavLink>
+          <div className="nav-section">Analise</div>
+          {user.canManagePrices && (
+            <NavLink to="/fechamento" className="nav-link">
+              <ReceiptText size={16} strokeWidth={2.2} />
+              Fechamento de faturas
+            </NavLink>
+          )}
+          <NavLink to="/relatorios" className="nav-link">
+            <FileText size={16} strokeWidth={2.2} />
+            Relatorios
+          </NavLink>
         </nav>
         <div className="sidebar-footer">
           <div className="sidebar-user">

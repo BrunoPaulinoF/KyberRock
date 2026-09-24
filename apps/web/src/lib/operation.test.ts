@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   changedFields,
+  countByProduct,
   estimateClose,
+  fiscalStatus,
   formatDuration,
+  formatElapsedSince,
+  formatWeightNumber,
   matchesSearch,
   parsePriceCents,
   parseWeight,
@@ -83,5 +87,66 @@ describe("pesagem pelo site: regras de tela", () => {
     expect(matchesSearch("ABC-1D23", "abc1d")).toBe(true);
     expect(matchesSearch("Brita 1", "areia")).toBe(false);
     expect(matchesSearch("qualquer", "")).toBe(true);
+  });
+});
+
+describe("tela Operacoes no molde do desktop", () => {
+  const now = Date.parse("2026-09-24T15:00:00.000Z");
+
+  it("tempo no patio com o mesmo texto do desktop", () => {
+    expect(formatElapsedSince("2026-09-24T14:59:40.000Z", now)).toBe("agora mesmo");
+    expect(formatElapsedSince("2026-09-24T14:48:00.000Z", now)).toBe("ha 12 min");
+    expect(formatElapsedSince("2026-09-24T12:55:00.000Z", now)).toBe("ha 2 h 05 min");
+    expect(formatElapsedSince("2026-09-23T12:00:00.000Z", now)).toBe("ha 1 d 3 h");
+    expect(formatElapsedSince(null, now)).toBe("-");
+  });
+
+  it("peso so com o numero", () => {
+    expect(formatWeightNumber(15420)).toBe("15.420");
+    expect(formatWeightNumber(null)).toBe("0");
+  });
+
+  it("contadores por produto, o mais cheio primeiro", () => {
+    expect(
+      countByProduct([
+        { product_description: "BRITA 1" },
+        { product_description: "PEDRISCO" },
+        { product_description: "PEDRISCO" },
+        { product_description: null }
+      ])
+    ).toEqual([
+      { label: "PEDRISCO", count: 2 },
+      { label: "BRITA 1", count: 1 },
+      { label: "Sem produto", count: 1 }
+    ]);
+  });
+
+  it("coluna Fiscal OMIE com as regras do desktop", () => {
+    const base = {
+      operation_type: "invoice",
+      omie_billing_status: null,
+      omie_billing_message: null,
+      omie_sales_order_id: null,
+      omie_service_order_id: null,
+      omie_invoice_number: null
+    };
+    expect(fiscalStatus(base)).toMatchObject({ label: "Enviando ao OMIE", tone: "neutral" });
+    expect(fiscalStatus({ ...base, omie_sales_order_id: 42 })).toMatchObject({
+      label: "Enviada ao OMIE",
+      tone: "success"
+    });
+    expect(
+      fiscalStatus({ ...base, omie_billing_status: "billed", omie_invoice_number: "4521" })
+    ).toMatchObject({ label: "Faturada", detail: "NF 4521" });
+    expect(fiscalStatus({ ...base, omie_billing_status: "failed" })).toMatchObject({
+      label: "Falhou",
+      tone: "danger"
+    });
+    expect(fiscalStatus({ ...base, operation_type: "internal" })).toMatchObject({
+      label: "Enviando OS"
+    });
+    expect(fiscalStatus({ ...base, omie_billing_message: "OMIE fora do ar" }).detail).toContain(
+      "nova tentativa automatica"
+    );
   });
 });

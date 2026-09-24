@@ -179,3 +179,127 @@ export function matchesSearch(text: string, search: string): boolean {
   const needle = normalize(search);
   return needle.length === 0 || normalize(text).includes(needle);
 }
+
+/** Peso em kg, so o numero ("15.420"): o cabecalho da coluna ja diz que e peso (desktop). */
+export function formatWeightNumber(kg: number | null | undefined): string {
+  return (kg ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
+/** "agora mesmo", "ha 12 min", "ha 2 h 05 min", "ha 1 d 3 h" — o mesmo texto do desktop. */
+export function formatElapsedSince(
+  iso: string | null | undefined,
+  now: number = Date.now()
+): string {
+  if (!iso) return "-";
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "-";
+  const diffMs = now - then;
+  const totalMinutes = Math.floor(diffMs / 60_000);
+  if (diffMs < 0 || totalMinutes < 1) return "agora mesmo";
+  if (totalMinutes < 60) return `ha ${totalMinutes} min`;
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (totalHours < 24) return `ha ${totalHours} h ${String(minutes).padStart(2, "0")} min`;
+  return `ha ${Math.floor(totalHours / 24)} d ${totalHours % 24} h`;
+}
+
+/** Quanto de cada produto esta no patio (os contadores acima da fila do desktop). */
+export function countByProduct(
+  operations: ReadonlyArray<{ product_description: string | null }>
+): Array<{ label: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const operation of operations) {
+    const label = operation.product_description?.trim() || "Sem produto";
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "pt-BR"));
+}
+
+export interface FiscalStatus {
+  label: string;
+  detail: string;
+  tone: "success" | "warning" | "danger" | "neutral";
+}
+
+/**
+ * A coluna "Fiscal OMIE" das concluidas, com as mesmas regras e textos de
+ * `getFiscalBillingStatus` do desktop (menos o botao de reenviar, que e da balanca).
+ */
+export function fiscalStatus(operation: {
+  operation_type: string;
+  omie_billing_status: string | null;
+  omie_billing_message: string | null;
+  omie_sales_order_id: number | null;
+  omie_service_order_id: number | null;
+  omie_invoice_number: string | null;
+}): FiscalStatus {
+  const message = operation.omie_billing_message?.trim() || null;
+  const pending = (fallback: string) =>
+    message ? `${message} — nova tentativa automatica em andamento.` : fallback;
+  if (operation.omie_billing_status === "billed") {
+    const document = operation.omie_invoice_number ? `NF ${operation.omie_invoice_number}` : null;
+    return {
+      label: "Faturada",
+      detail: document ?? message ?? "Faturado no OMIE.",
+      tone: "success"
+    };
+  }
+  if (operation.operation_type !== "invoice") {
+    if (operation.omie_service_order_id) {
+      return {
+        label: "OS enviada",
+        detail: `Ordem de servico OMIE ${operation.omie_service_order_id} — fature na etapa "Faturar" do OMIE.`,
+        tone: "success"
+      };
+    }
+    if (operation.omie_billing_status === "cadastro_incompleto") {
+      return {
+        label: "Cadastro incompleto",
+        detail:
+          message ??
+          "Falta o CNPJ/CPF do cliente para cadastra-lo no OMIE e enviar a ordem de servico.",
+        tone: "warning"
+      };
+    }
+    if (operation.omie_billing_status === "service_order_failed") {
+      return {
+        label: "OS falhou",
+        detail: message ?? "O OMIE recusou a ordem de servico. Corrija o cadastro e reenvie.",
+        tone: "danger"
+      };
+    }
+    return {
+      label: "Enviando OS",
+      detail: pending("Ordem de servico sera enviada ao OMIE na proxima sincronizacao."),
+      tone: "neutral"
+    };
+  }
+  if (operation.omie_sales_order_id) {
+    return {
+      label: "Enviada ao OMIE",
+      detail: `Pedido OMIE ${operation.omie_sales_order_id} — fature na coluna "Faturar" do OMIE.`,
+      tone: "success"
+    };
+  }
+  if (operation.omie_billing_status === "cadastro_incompleto") {
+    return {
+      label: "Cadastro incompleto",
+      detail: message ?? "Falta Numero do Endereco e E-mail do cliente para emitir a NF-e.",
+      tone: "warning"
+    };
+  }
+  if (operation.omie_billing_status === "failed") {
+    return {
+      label: "Falhou",
+      detail: message ?? "Envio do pedido nao confirmado.",
+      tone: "danger"
+    };
+  }
+  return {
+    label: "Enviando ao OMIE",
+    detail: pending("Pedido sera enviado ao OMIE na proxima sincronizacao."),
+    tone: "neutral"
+  };
+}
