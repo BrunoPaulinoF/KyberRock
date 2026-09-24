@@ -105,6 +105,15 @@ export function buildCompanyCredentials(company: CompanyCredentialSource): Crede
   };
 }
 
+/** Nome de cada perfil de `user_profiles.role` (migracao `202609240001`). */
+const ACCESS_ROLE_LABELS: Record<string, string> = {
+  loader: "Carregador",
+  monitoramento: "Monitoramento",
+  operacao: "Operacao",
+  comercial: "Comercial",
+  gestor: "Gestor"
+};
+
 export interface UserCredentialSource {
   name?: string | null;
   email?: string | null;
@@ -133,7 +142,7 @@ export function buildUserCredentials(
   user: UserCredentialSource,
   vault: PasswordVaultState = { password: null, cipherConfigured: false }
 ): CredentialBundle {
-  const roleLabel = text(user.role) === "comercial" ? "Comercial" : "Carregador";
+  const roleLabel = ACCESS_ROLE_LABELS[text(user.role)] ?? "Carregador";
   const password = text(vault.password);
   const savedAt = text(vault.savedAt);
 

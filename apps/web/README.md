@@ -7,7 +7,10 @@ O contrato completo está em `docs/web-api.md`; o plano em `docs/plano-migracao-
 ## Regras desta pasta
 
 1. **Nenhum `insert`/`update` direto do navegador.** Toda escrita é `callWebApi(...)`
-   (`src/lib/api.ts`). As tabelas recusam escrita do cliente de propósito.
+   (`src/lib/api.ts`). As tabelas recusam escrita do cliente de propósito. Única exceção: a tela
+   do carregador carimba `loading_requests.loader_completed_at` direto, pela política que o
+   carregador já usava (só solicitação aberta da própria unidade) — carimbo operacional, não
+   cadastro.
 2. **Regra de negócio nova nasce em `supabase/functions/_shared/`.** Aqui é tela.
 3. Tipos do banco: `src/lib/database.types.ts` é gerado (`npm run types -w @kyberrock/web`);
    não editar à mão. Ele está no `.prettierignore` da raiz.
@@ -29,15 +32,20 @@ Acessos de homologação (Pedreira Teste): `gestor.teste@kyberrock.app` e
 
 ## Telas
 
-| Rota               | Quem   | O que faz                                                                 |
-| ------------------ | ------ | ------------------------------------------------------------------------- |
-| `/clientes`        | todos  | Lista, cadastro/edição (sobe ao OMIE), inativar; bloco comercial (gestor) |
-| `/veiculos`        | todos  | Veículos e motoristas                                                     |
-| `/transportadoras` | todos  | Transportadoras (sobem ao OMIE com CNPJ)                                  |
-| `/precos`          | gestor | Preço padrão por produto e especial por cliente                           |
-| `/vendas`          | todos  | Relatório de vendas por cliente/produto/dia, CSV                          |
-| `/carteira`        | gestor | Fechamento e reabertura da carteira                                       |
-| `/fechamento`      | gestor | Conferência do período e pedido de faturamento (a balança executa)        |
+Perfis (`src/lib/permissions.ts`, espelho de `_shared/web-session.ts`): `monitoramento` só
+consulta; `operacao` edita veículos, motoristas e transportadoras; `comercial` também clientes;
+`gestor` também preços, carteira e fechamento. O `loader` (carregador) só tem `/carregamento`.
+
+| Rota               | Quem       | O que faz                                                                                        |
+| ------------------ | ---------- | ------------------------------------------------------------------------------------------------ |
+| `/carregamento`    | carregador | Fila de carregamento da unidade: concluir e devolver carga                                       |
+| `/clientes`        | todos      | Lista; cadastro/edição (sobe ao OMIE) e inativar só comercial e gestor; bloco comercial (gestor) |
+| `/veiculos`        | todos      | Veículos e motoristas (edição: operação, comercial e gestor)                                     |
+| `/transportadoras` | todos      | Transportadoras (sobem ao OMIE com CNPJ; edição: operação em diante)                             |
+| `/precos`          | gestor     | Preço padrão por produto e especial por cliente                                                  |
+| `/vendas`          | todos      | Relatório de vendas por cliente/produto/dia, CSV                                                 |
+| `/carteira`        | gestor     | Fechamento e reabertura da carteira                                                              |
+| `/fechamento`      | gestor     | Conferência do período e pedido de faturamento (a balança executa)                               |
 
 ## Deploy na Hostinger
 

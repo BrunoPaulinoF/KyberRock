@@ -118,6 +118,16 @@ export function todayIso(now: Date = new Date()): string {
   return now.toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
 }
 
+/**
+ * Dia local (AAAA-MM-DD) de um instante ISO, no fuso da pedreira. `iso.slice(0, 10)` daria o
+ * dia em UTC: a pesagem fechada as 21h30 de Brasilia cairia no dia seguinte.
+ */
+export function localDay(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso.slice(0, 10);
+  return todayIso(date);
+}
+
 /** Primeiro dia do mes de uma data AAAA-MM-DD. */
 export function firstDayOfMonth(iso: string): string {
   return `${iso.slice(0, 7)}-01`;

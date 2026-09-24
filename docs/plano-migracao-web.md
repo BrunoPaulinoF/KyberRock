@@ -117,16 +117,23 @@ dia em que o site novo absorver o carregador.
 
 ### D5 — Perfis de acesso no site
 
-`user_profiles.role` aceita `loader`, `comercial` e `gestor` (migração `202609220003`).
+`user_profiles.role` aceita `loader`, `monitoramento`, `operacao`, `comercial` e `gestor`
+(migrações `202609220003` e `202609240001`).
 
-| Perfil       | Vê                                                | Edita                                            |
-| ------------ | ------------------------------------------------- | ------------------------------------------------ |
-| `carregador` | Solicitações abertas da unidade (já existe)       | Nada                                             |
-| `comercial`  | Tudo do cadastro + relatórios                     | Clientes, veículos, motoristas, transportadoras  |
-| `gestor`     | Tudo do comercial + fechamento, carteira, crédito | Tudo do comercial + **preços** e bloco comercial |
+| Perfil          | Vê                                                             | Edita                                            |
+| --------------- | -------------------------------------------------------------- | ------------------------------------------------ |
+| `carregador`    | Só a fila de carregamento da unidade (`/carregamento` no site) | Marca carga concluída                            |
+| `monitoramento` | Todo o cadastro + relatórios                                   | Nada                                             |
+| `operacao`      | Todo o cadastro + relatórios                                   | Veículos, motoristas, transportadoras            |
+| `comercial`     | Todo o cadastro + relatórios                                   | Tudo da operação + clientes                      |
+| `gestor`        | Tudo do comercial + fechamento, carteira, crédito              | Tudo do comercial + **preços** e bloco comercial |
 
-O painel `/admin` já cria os dois (seção Comercial, campo Perfil). Alterar preço pelo site é
-só do gestor; a senha de alteração de preço da balança continua valendo na balança.
+O painel `/admin` cria os logins em **Acessos do sistema** (antiga aba "Balanças"): cada
+computador cadastrado ganha um login do site com e-mail, senha e perfil
+(`user_profiles.device_id`), e é esse login que a pessoa usa quando o desktop dela sair do ar na
+Etapa 4. Login sem computador (carregador, gestor de fora) segue em **Carregadores** e
+**Usuários do site**. O carregador entra no mesmo site e cai direto na fila. Alterar preço pelo
+site é só do gestor; a senha de alteração de preço da balança continua valendo na balança.
 
 ### D6 — Hospedagem — DECIDIDO: Hostinger, com deploy automático do GitHub
 
@@ -163,9 +170,8 @@ Estado em 22/09 (lido direto do banco de produção):
 
 - [x] Balanças ativas na versão atual (0.8.244): PC PRINCIPAL, RAFAELA COMERCIAL, fernanda,
       pc hellen, suporte, Desktop balanca.
-- [ ] Duas máquinas paradas: **"PC pedro kyber"** (0.8.240, visto em 09/09) e **"Lg gram"**
-      (nunca reportou versão, visto em 04/08). Se não estão em uso, **desativar no painel** —
-      máquina parada com SQLite é uma fonte de divergência esperando para voltar.
+- [x] Duas máquinas paradas: **"PC pedro kyber"** (0.8.240, visto em 09/09) e **"Lg gram"**
+      (nunca reportou versão, visto em 04/08) — **desativadas no painel** (conferido em 24/09).
 - [x] Migrations aplicadas em produção até `202609220002` (`list_migrations` conferido).
 - [x] Inventário (8 máquinas, 1 unidade): principais de preço hoje são **PC PRINCIPAL**,
       **RAFAELA COMERCIAL** e **fernanda**; as outras são secundárias.
@@ -275,6 +281,24 @@ Agora sim mexer no desktop, com o problema já resolvido do lado de fora:
 - [ ] Remover do desktop o código de eleição de principal entre balanças (não precisa mais).
 - [ ] Desligar a VPS quando carregador e painel estiverem na Hostinger.
 - [ ] `VACUUM FULL` no Supabase para devolver espaço.
+
+### Situação em 24/09 (conferida no banco de produção)
+
+- Site no ar na Hostinger, com as variáveis de build (`VITE_SUPABASE_*`).
+- Balança de teste na 0.8.250 (anel teste); a frota da Ibiúna segue na 0.8.244. A 0.8.251
+  (carga cancelada fora do fechamento de frete) está em rascunho — é ela que deve ser
+  promovida, não a 0.8.250.
+- Fechamento de faturas pelo site **ainda não provado**: a Pedreira Teste não tem pesagem nem
+  `billing_requests`, e **não tem credencial OMIE** — sem ela não sai nota. Não copiar a
+  credencial da Ibiúna: o teste viraria pedido e NF-e reais.
+- Acessos da Fernanda (Ibiúna) e da Rafaela (Pedreira Teste) ainda não criados.
+- PC PRINCIPAL com 70 envios OMIE parados (`health_queue_blocked`), o mais antigo de 03/08.
+- Antes da Virada 1, **desmarcar a fernanda como principal de preços** (hoje são três
+  principais: PC PRINCIPAL, RAFAELA COMERCIAL e fernanda).
+- Ponto de conferência dos relatórios: pesagem concluída **excluída** na balança
+  (`deleteClosedWeighingOperation` / `clearClosedWeighingOperations`, soft-delete local) some
+  do relatório do desktop, mas a nuvem não tem `deleted_at` em `weighing_operations` e o site
+  continua contando. Diferença nesse sentido é isso, não dado preso.
 
 ## 5. O que NÃO vamos fazer (para não errar por pressa)
 

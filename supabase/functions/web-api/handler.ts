@@ -34,7 +34,15 @@ import {
   parsePriceInput,
   parseVehicleInput
 } from "../_shared/web-cadastro.ts";
-import { canManagePrices, type WebSession, type WebSessionResult } from "../_shared/web-session.ts";
+import {
+  canEditCustomers,
+  canEditFleet,
+  canManagePrices,
+  WEB_ROLE_LABELS,
+  type WebRole,
+  type WebSession,
+  type WebSessionResult
+} from "../_shared/web-session.ts";
 import { selectOperationsForBillingRequest } from "../_shared/billing-requests.ts";
 
 export type Row = Record<string, unknown>;
@@ -134,6 +142,50 @@ export const GESTOR_ONLY_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiActi
   "reopen_wallet",
   "request_invoice_closing"
 ]);
+
+/** Cadastro de cliente e os vinculos que partem dele: comercial e gestor. */
+export const CUSTOMER_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
+  "upsert_customer",
+  "set_customer_active",
+  "set_customer_vehicle",
+  "set_customer_carrier"
+]);
+
+/** Veiculo, motorista, transportadora e os vinculos entre eles: tambem a operacao. */
+export const FLEET_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
+  "upsert_carrier",
+  "set_carrier_active",
+  "upsert_driver",
+  "set_driver_active",
+  "upsert_vehicle",
+  "set_vehicle_active",
+  "set_driver_carrier",
+  "set_vehicle_carrier"
+]);
+
+/**
+ * O que o perfil pode executar, ou a mensagem do 403. Toda acao cai em exatamente um grupo:
+ * `me` (todos), cliente, frota ou gestor — o teste confere que nenhuma ficou de fora, para uma
+ * acao nova nao nascer liberada para o monitoramento por esquecimento.
+ */
+export function actionDenial(role: WebRole, action: WebApiAction): string | null {
+  if (action === "me") return null;
+  const profile = WEB_ROLE_LABELS[role];
+  if (GESTOR_ONLY_ACTIONS.has(action)) {
+    return canManagePrices(role)
+      ? null
+      : "So o gestor altera precos, o bloco comercial do cliente, a carteira e o fechamento.";
+  }
+  if (CUSTOMER_ACTIONS.has(action)) {
+    return canEditCustomers(role)
+      ? null
+      : `O perfil ${profile} so consulta clientes. Cadastro de cliente e do comercial.`;
+  }
+  if (FLEET_ACTIONS.has(action)) {
+    return canEditFleet(role) ? null : `O perfil ${profile} so consulta, nao edita cadastro.`;
+  }
+  return `Acao nao liberada para o perfil ${profile}.`;
+}
 
 export class WebApiError extends Error {
   constructor(
@@ -940,7 +992,9 @@ async function me(ctx: ActionContext): Promise<Row> {
       name: ctx.session.name,
       role: ctx.session.role,
       unitId: ctx.session.unitId,
-      canManagePrices: canManagePrices(ctx.session.role)
+      canManagePrices: canManagePrices(ctx.session.role),
+      canEditCustomers: canEditCustomers(ctx.session.role),
+      canEditFleet: canEditFleet(ctx.session.role)
     },
     companyId: ctx.session.companyId,
     units
@@ -1021,12 +1075,8 @@ export async function handleWebApiRequest(
   if (!isAction(body.action)) {
     return jsonResponse({ error: "Acao desconhecida", actions: WEB_API_ACTIONS }, 400);
   }
-  if (GESTOR_ONLY_ACTIONS.has(body.action) && !canManagePrices(session.role)) {
-    return jsonResponse(
-      { error: "So o gestor altera precos e o bloco comercial do cliente." },
-      403
-    );
-  }
+  const denial = actionDenial(session.role, body.action);
+  if (denial) return jsonResponse({ error: denial }, 403);
 
   const payload =
     body.payload && typeof body.payload === "object" ? (body.payload as Row) : ({} as Row);

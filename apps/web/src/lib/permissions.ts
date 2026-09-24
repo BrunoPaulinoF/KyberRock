@@ -1,0 +1,48 @@
+/**
+ * Perfis de acesso e o que cada um pode no site — espelho de
+ * `supabase/functions/_shared/web-session.ts` (que e quem de fato recusa, com 403). Aqui a regra
+ * so decide o que aparece na tela: esconder um botao nao protege nada, e mostrar um botao que a
+ * `web-api` recusa so irrita.
+ *
+ * Do que menos pode ao que mais pode:
+ *   - `loader`        carregador: so a fila de carregamento da propria unidade;
+ *   - `monitoramento` so consulta: cadastro e relatorios;
+ *   - `operacao`      consulta + veiculo, motorista e transportadora;
+ *   - `comercial`     + clientes;
+ *   - `gestor`        + precos, bloco comercial, carteira e fechamento.
+ */
+
+export const ROLES = ["loader", "monitoramento", "operacao", "comercial", "gestor"] as const;
+export type Role = (typeof ROLES)[number];
+
+export const ROLE_LABELS: Record<Role, string> = {
+  loader: "Carregador",
+  monitoramento: "Monitoramento",
+  operacao: "Operacao",
+  comercial: "Comercial",
+  gestor: "Gestor"
+};
+
+export function isRole(value: unknown): value is Role {
+  return typeof value === "string" && (ROLES as readonly string[]).includes(value);
+}
+
+export interface Capabilities {
+  /** Carregador: o site mostra so a fila de carregamento. */
+  isLoader: boolean;
+  /** Cliente (sobe ao OMIE): comercial e gestor. */
+  canEditCustomers: boolean;
+  /** Veiculo, motorista e transportadora: operacao, comercial e gestor. */
+  canEditFleet: boolean;
+  /** Preco, bloco comercial, carteira e fechamento: so o gestor. */
+  canManagePrices: boolean;
+}
+
+export function capabilitiesFor(role: Role): Capabilities {
+  return {
+    isLoader: role === "loader",
+    canEditCustomers: role === "comercial" || role === "gestor",
+    canEditFleet: role === "operacao" || role === "comercial" || role === "gestor",
+    canManagePrices: role === "gestor"
+  };
+}

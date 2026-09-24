@@ -116,6 +116,8 @@ describe("buildUserCredentials", () => {
 
   it("marca o papel e o bloqueio no subtitulo", () => {
     expect(buildUserCredentials({ ...user, role: "comercial" }).subtitle).toBe("Comercial");
+    expect(buildUserCredentials({ ...user, role: "gestor" }).subtitle).toBe("Gestor");
+    expect(buildUserCredentials({ ...user, role: "monitoramento" }).subtitle).toBe("Monitoramento");
     expect(buildUserCredentials({ ...user, is_active: false }).subtitle).toContain(
       "acesso bloqueado"
     );

@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildDeleteConfirmationMessage,
   buildDeleteRequest,
+  isVirtualWebDevice,
   matchesCadastroSearch,
+  parseUserRole,
+  SITE_ROLE_OPTIONS,
   toDeviceUpdateChannel
 } from "./AdminDashboard";
 
@@ -156,5 +159,30 @@ describe("toDeviceUpdateChannel", () => {
     for (const value of ["latest", "", "   ", "Beta2", null, undefined, 1, {}]) {
       expect(toDeviceUpdateChannel(value)).toBe("latest");
     }
+  });
+});
+
+describe("perfis de acesso", () => {
+  it("le os cinco perfis e trata o desconhecido como carregador", () => {
+    for (const role of ["loader", "monitoramento", "operacao", "comercial", "gestor"]) {
+      expect(parseUserRole(role)).toBe(role);
+    }
+    expect(parseUserRole("admin")).toBe("loader");
+    expect(parseUserRole("toString")).toBe("loader");
+    expect(parseUserRole(undefined)).toBe("loader");
+  });
+
+  it("o seletor do site oferece so os perfis do site, do menor ao maior", () => {
+    expect(SITE_ROLE_OPTIONS.map((option) => option.value)).toEqual([
+      "monitoramento",
+      "operacao",
+      "comercial",
+      "gestor"
+    ]);
+  });
+
+  it("o dispositivo virtual do site nao ganha login", () => {
+    expect(isVirtualWebDevice("web-9489c3ef-9e10-4eb1-bc50-26137dca5e5e")).toBe(true);
+    expect(isVirtualWebDevice("desktop-2427a458-a03e-49f0-b1db-7e901d2607fa")).toBe(false);
   });
 });

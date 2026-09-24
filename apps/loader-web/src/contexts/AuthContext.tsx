@@ -45,7 +45,7 @@ interface LoaderProfileRow {
   id: string;
   email: string;
   name: string;
-  role: "loader" | "comercial" | "gestor";
+  role: "loader" | "monitoramento" | "operacao" | "comercial" | "gestor";
   company_id: string;
   unit_id: string;
   is_active: boolean;
@@ -129,9 +129,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         uid: data.id,
         email: data.email,
         name: data.name,
-        // O gestor (perfil do site novo) entra aqui como comercial: neste site ele so tem o
-        // relatorio de vendas, igual ao comercial.
-        role: data.role === "comercial" || data.role === "gestor" ? "comercial" : "loader",
+        // Todo perfil do site (monitoramento, operacao, comercial, gestor) cai no relatorio;
+        // so o carregador ve a fila.
+        role: data.role === "loader" ? "loader" : "comercial",
         companyId: data.company_id,
         unitId: data.unit_id,
         isActive: data.is_active

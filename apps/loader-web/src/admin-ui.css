@@ -400,6 +400,19 @@
   color: var(--adm-muted);
 }
 
+/* Coluna "Login do site" da aba Acessos do sistema: e-mail em cima, perfil e senha embaixo. */
+.adm-login-cell {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.adm-login-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
 .adm-mono {
   font-family: var(--adm-mono);
   font-size: 12px;

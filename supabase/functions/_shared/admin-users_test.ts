@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  parseAccessRole,
   deleteAuthUser,
   findAuthUserIdByEmail,
   isEmailAlreadyRegisteredError
@@ -121,5 +122,20 @@ describe("isEmailAlreadyRegisteredError", () => {
     ).toBe(false);
     expect(isEmailAlreadyRegisteredError(null)).toBe(false);
     expect(isEmailAlreadyRegisteredError("erro")).toBe(false);
+  });
+});
+
+describe("parseAccessRole", () => {
+  it("aceita os cinco perfis, sem diferenciar caixa", () => {
+    for (const role of ["loader", "monitoramento", "operacao", "comercial", "gestor"]) {
+      expect(parseAccessRole(role)).toBe(role);
+    }
+    expect(parseAccessRole(" Gestor ")).toBe("gestor");
+  });
+
+  it("perfil desconhecido e recusado, nunca vira um padrao", () => {
+    expect(parseAccessRole("admin")).toBeNull();
+    expect(parseAccessRole("")).toBeNull();
+    expect(parseAccessRole(undefined)).toBeNull();
   });
 });

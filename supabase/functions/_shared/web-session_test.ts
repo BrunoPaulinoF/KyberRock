@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   bearerToken,
+  canEditCustomers,
+  canEditFleet,
   canManagePrices,
   resolveWebSession,
   type WebSessionClient
@@ -102,6 +104,16 @@ describe("resolveWebSession", () => {
     expect(result).toMatchObject({ ok: false, status: 403 });
   });
 
+  it("monitoramento e operacao entram no site", async () => {
+    for (const role of ["monitoramento", "operacao"]) {
+      const result = await resolveWebSession(
+        clientWith({ profile: { ...PERFIL_COMERCIAL, role } }),
+        "Bearer token"
+      );
+      expect(result, role).toMatchObject({ ok: true, session: { role } });
+    }
+  });
+
   it("perfil inativo ou ausente e 403", async () => {
     expect(
       await resolveWebSession(
@@ -131,5 +143,21 @@ describe("canManagePrices", () => {
   it("so o gestor mexe em preco", () => {
     expect(canManagePrices("gestor")).toBe(true);
     expect(canManagePrices("comercial")).toBe(false);
+  });
+});
+
+describe("o que cada perfil edita", () => {
+  it("cliente: comercial e gestor", () => {
+    expect(canEditCustomers("gestor")).toBe(true);
+    expect(canEditCustomers("comercial")).toBe(true);
+    expect(canEditCustomers("operacao")).toBe(false);
+    expect(canEditCustomers("monitoramento")).toBe(false);
+  });
+
+  it("frota: todos menos o monitoramento", () => {
+    expect(canEditFleet("gestor")).toBe(true);
+    expect(canEditFleet("comercial")).toBe(true);
+    expect(canEditFleet("operacao")).toBe(true);
+    expect(canEditFleet("monitoramento")).toBe(false);
   });
 });
