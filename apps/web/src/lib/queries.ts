@@ -4,16 +4,8 @@
  * a intencao ficar explicita no codigo.
  */
 
-import type { SupabaseClient } from "@supabase/supabase-js";
-
 import { OPEN_STATUS, type OperationRequest } from "./operation";
 import { supabase, type Tables } from "./supabase";
-
-/**
- * `operation_requests` e mais nova que o `database.types.ts` gerado (migracao `202609250001`):
- * ate o proximo `npm run types`, a leitura dela passa pelo cliente sem tipo.
- */
-const untyped = supabase as unknown as SupabaseClient;
 
 export type Customer = Tables<"customers">;
 export type Product = Tables<"products">;
@@ -187,7 +179,7 @@ export const q = {
     ),
   /** Pedidos de pesagem feitos pelo site desde `sinceIso`, mais novo primeiro. */
   operationRequests: async (companyId: string, sinceIso: string): Promise<OperationRequest[]> => {
-    const { data, error } = await untyped
+    const { data, error } = await supabase
       .from("operation_requests")
       .select(
         "id, kind, operation_id, status, requested_by_name, requested_at, processed_at, result_message, result, print_status, print_message"
@@ -197,7 +189,9 @@ export const q = {
       .order("requested_at", { ascending: false })
       .limit(50);
     fail(error);
-    return (data ?? []) as OperationRequest[];
+    // `kind`/`status`/`result` sao texto e JSON no banco; os valores possiveis estao nos CHECKs
+    // da migracao `202609250001`.
+    return (data ?? []) as unknown as OperationRequest[];
   },
   billingRequests: (companyId: string, operationIds: string[]) =>
     operationIds.length === 0
