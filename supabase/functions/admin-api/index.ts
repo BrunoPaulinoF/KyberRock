@@ -818,6 +818,10 @@ Deno.serve(async (req) => {
         .from("device_registrations")
         .update({
           ...deviceUnitAssignment(device.unit_id as string | null, unitId),
+          // A executora dos pedidos do site e POR UNIDADE: levar a marca junto derrubaria o
+          // indice unico (se a outra unidade ja tem executora) ou deixaria a unidade de origem
+          // sem executora sem ninguem ver. Na unidade nova, marca-se de novo no painel.
+          ...(unitId !== device.unit_id ? { executes_web_operations: false } : {}),
           updated_at: new Date().toISOString()
         })
         .eq("id", deviceId);

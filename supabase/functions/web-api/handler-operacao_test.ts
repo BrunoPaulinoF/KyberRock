@@ -274,6 +274,37 @@ describe("web-api: pesagem pelo site", () => {
     expect((await free.call("request_operation", change)).status).toBe(200);
   });
 
+  it("5 senhas erradas travam o login por 15 min, mesmo acertando depois", async () => {
+    const h = harness("operacao", { requiresPricePassword: true });
+    const change = { kind: "update", operationId: "op-open", data: { unitPriceCents: 6500 } };
+    for (let attempt = 0; attempt < 5; attempt++) {
+      expect((await h.call("request_operation", { ...change, pricePassword: "0000" })).status).toBe(
+        403
+      );
+    }
+    const locked = await h.call("request_operation", { ...change, pricePassword: "4321" });
+    expect(locked.status).toBe(429);
+    expect(h.store.rows("operation_requests")).toHaveLength(0);
+  });
+
+  it("fechamento duplicado barrado pelo indice do banco vira o mesmo 409", async () => {
+    const h = harness();
+    const insert = h.store.insertRow.bind(h.store);
+    h.store.insertRow = async (table, row) => {
+      if (table === "operation_requests") {
+        throw new Error("operation_requests: duplicate key value (code=23505)");
+      }
+      return insert(table, row);
+    };
+    const result = await h.call("request_operation", {
+      kind: "exit",
+      operationId: "op-open",
+      data: { exitWeightKg: 40000 }
+    });
+    expect(result.status).toBe(409);
+    expect(String(result.body.error)).toContain("Ja existe um fechamento");
+  });
+
   it("status da executora para a tela", async () => {
     const online = await harness().call("operation_status");
     expect(online.body).toMatchObject({

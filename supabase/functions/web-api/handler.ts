@@ -21,6 +21,7 @@
  */
 
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { safeEqual } from "../_shared/crypto.ts";
 import { normalizeDocument } from "../_shared/document.ts";
 import {
   buildOmieCarrierPayload,
@@ -1078,10 +1079,27 @@ async function checkReferences(ctx: ActionContext, payload: Row): Promise<void> 
   }
 }
 
+/** Tentativas erradas da senha de preco antes de travar o login por um tempo. */
+const PRICE_PASSWORD_MAX_FAILURES = 5;
+const PRICE_PASSWORD_WINDOW_MS = 15 * 60 * 1000;
+
 async function checkPricePassword(ctx: ActionContext): Promise<void> {
   if (!ctx.session.requiresPricePassword) return;
   const typed = optionalText(ctx.payload, "pricePassword");
   if (!typed) throw new WebApiError(403, "Digite a senha de alteracao de preco.");
+  // A senha tem 4 digitos e e a mesma da balanca: sem limite, bastaria tentar todas.
+  const since = Date.parse(ctx.nowIso) - PRICE_PASSWORD_WINDOW_MS;
+  const failures = (
+    await ctx.store.listRows("price_password_failures", ctx.session.companyId, "attempted_at", [
+      { column: "user_id", value: ctx.session.userId }
+    ])
+  ).filter((row) => Date.parse(String(row.attempted_at ?? "")) >= since);
+  if (failures.length >= PRICE_PASSWORD_MAX_FAILURES) {
+    throw new WebApiError(
+      429,
+      "Muitas tentativas erradas da senha de preco. Espere 15 minutos e tente de novo."
+    );
+  }
   const [company] = await ctx.store.listRows(
     "companies",
     ctx.session.companyId,
@@ -1090,7 +1108,13 @@ async function checkPricePassword(ctx: ActionContext): Promise<void> {
     { anyCompany: true }
   );
   const expected = String(company?.price_change_password ?? "");
-  if (!expected || typed !== expected) {
+  if (!expected || !safeEqual(typed, expected)) {
+    await ctx.store.insertRow("price_password_failures", {
+      id: ctx.newId(),
+      company_id: ctx.session.companyId,
+      user_id: ctx.session.userId,
+      attempted_at: ctx.nowIso
+    });
     throw new WebApiError(403, "Senha de alteracao de preco incorreta.");
   }
 }
@@ -1132,7 +1156,7 @@ async function requestOperation(ctx: ActionContext): Promise<Row> {
   }
 
   const id = ctx.newId();
-  await ctx.store.insertRow("operation_requests", {
+  await insertOperationRequest(ctx, {
     id,
     company_id: ctx.session.companyId,
     unit_id: unitId,
@@ -1157,6 +1181,25 @@ async function requestOperation(ctx: ActionContext): Promise<Row> {
     );
   }
   return { requestId: id, operationId };
+}
+
+/**
+ * Grava o pedido. O indice `operation_requests_one_close_or_cancel` e a garantia contra dois
+ * fechamentos/cancelamentos simultaneos que passaram juntos pela checagem de leitura: vira o
+ * mesmo 409 dela.
+ */
+async function insertOperationRequest(ctx: ActionContext, row: Row): Promise<void> {
+  try {
+    await ctx.store.insertRow("operation_requests", row);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("23505")) {
+      throw new WebApiError(
+        409,
+        "Ja existe um fechamento ou cancelamento desta pesagem esperando a balanca."
+      );
+    }
+    throw error;
+  }
 }
 
 async function checkOperationState(

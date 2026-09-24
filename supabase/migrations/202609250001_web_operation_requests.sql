@@ -65,6 +65,13 @@ create index if not exists idx_operation_requests_company_requested
 create index if not exists idx_operation_requests_operation
   on public.operation_requests (operation_id);
 
+-- A checagem da `web-api` ("ja existe fechamento ou cancelamento desta pesagem na fila") e
+-- ler-e-depois-gravar: dois cliques simultaneos passariam os dois, e a balanca fecharia (cupom,
+-- pedido no OMIE) e cancelaria em seguida. O indice e a garantia no banco.
+create unique index if not exists operation_requests_one_close_or_cancel
+  on public.operation_requests (operation_id)
+  where status in ('pending', 'processing') and kind in ('exit', 'cancel');
+
 alter table public.operation_requests enable row level security;
 
 -- Escrita so pela web-api e pela desktop-operation-requests (chave de servico).
@@ -176,6 +183,27 @@ comment on column public.device_registrations.executes_web_operations is
 -- `web-api`, nunca no navegador.
 alter table public.user_profiles
   add column if not exists requires_price_password boolean not null default false;
+
+-- Tentativas erradas da senha de preco pelo site. A senha e de 4 digitos e vale tambem na
+-- balanca: sem limite, 10 mil pedidos descobririam. A `web-api` recusa depois de 5 erros em
+-- 15 minutos por login.
+create table if not exists public.price_password_failures (
+  id uuid primary key default gen_random_uuid(),
+  company_id uuid not null references public.companies (id) on delete cascade,
+  user_id uuid not null references public.user_profiles (id) on delete cascade,
+  attempted_at timestamptz not null default now()
+);
+
+create index if not exists idx_price_password_failures_user
+  on public.price_password_failures (user_id, attempted_at desc);
+
+alter table public.price_password_failures enable row level security;
+
+drop policy if exists "no direct client access" on public.price_password_failures;
+create policy "no direct client access"
+  on public.price_password_failures for all
+  to anon, authenticated
+  using (false);
 
 comment on column public.user_profiles.requires_price_password is
   'Pede a senha de alteracao de preco da pedreira quando este login muda o preco de uma pesagem pelo site.';

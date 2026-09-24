@@ -99,6 +99,7 @@ import {
   reportCloudWebOperationRequests
 } from "./web-operation-requests-cloud.js";
 import { isClosedOperationStatus } from "./weighing-operation-status.js";
+import { assertPaymentMethodConditionAllowed } from "./payment-method-condition-guard.js";
 
 /** Tabela de aviso de pedido do site (migracao `202609250001_web_operation_requests`). */
 const WEB_OPERATION_PING_TABLE = "operation_request_pings";
@@ -688,9 +689,6 @@ export class DesktopRuntime {
   /** Junta os avisos de pedido e garante uma passada por vez. */
   private webOperationPingScheduler: CadastroPingSchedulerHandle | null = null;
   private webOperationTimer: ReturnType<typeof setInterval> | null = null;
-  private webOperationsProcessing = false;
-  /** Chegou aviso com uma passada em andamento: roda outra logo que ela terminar. */
-  private webOperationsRerunRequested = false;
   /**
    * Esta balanca e a executora dos pedidos do site? `null` = ainda nao perguntou. As que nao
    * sao so voltam a perguntar a cada `WEB_OPERATION_NON_EXECUTOR_RECHECK_MS`, para a frota
@@ -1406,12 +1404,12 @@ export class DesktopRuntime {
     this.webOperationPingScheduler = null;
   }
 
-  /** Pega os pedidos do site e executa um por vez. Uma passada por vez; aviso no meio espera. */
+  /**
+   * Pega os pedidos do site e executa um por vez. Quem chama e o agendador do aviso
+   * (`webOperationPingScheduler`): e ele que garante uma passada por vez e roda outra logo
+   * depois quando chega aviso no meio — e que o `stop()` do fechamento do programa cancela.
+   */
   private async runWebOperationRequests(): Promise<void> {
-    if (this.webOperationsProcessing) {
-      this.webOperationsRerunRequested = true;
-      return;
-    }
     if (!this.hasCloudCredentials()) return;
     if (
       this.webOperationExecutor === false &&
@@ -1421,8 +1419,7 @@ export class DesktopRuntime {
     }
     initializeSupabaseFromSettings(this.database);
     if (!isSupabaseInitialized()) return;
-    this.webOperationsProcessing = true;
-    try {
+    {
       const identity = this.ensureIdentity();
       const result = await runWebOperationRequests({
         claim: async () => {
@@ -1446,14 +1443,6 @@ export class DesktopRuntime {
             done: result.done,
             failed: result.failed
           }
-        );
-      }
-    } finally {
-      this.webOperationsProcessing = false;
-      if (this.webOperationsRerunRequested) {
-        this.webOperationsRerunRequested = false;
-        void this.runWebOperationRequests().catch((error: unknown) =>
-          console.error("Nova passada dos pedidos do site falhou", error)
         );
       }
     }
@@ -1507,6 +1496,9 @@ export class DesktopRuntime {
       ["payment_methods", input.paymentMethodId, "A forma de pagamento"]
     ]);
     this.assertCustomerReadyForOmie(input.customerId, input.operationType);
+    // A trava "dinheiro so a vista" morava so na tela do desktop; o pedido do site passa por ela
+    // aqui, com a mesma mensagem.
+    assertPaymentMethodConditionAllowed(this.database, input.paymentMethodId, input.paymentTermId);
     const operation = this.registerEntry(
       input,
       this.webScaleReading(Number(payload.entryWeightKg)),
@@ -1577,11 +1569,26 @@ export class DesktopRuntime {
         input.operationType = payload.operationType;
       }
       if (typeof payload.unitPriceCents === "number") input.unitPriceCents = payload.unitPriceCents;
+      assertPaymentMethodConditionAllowed(
+        this.database,
+        input.paymentMethodId !== undefined ? input.paymentMethodId : current.paymentMethodId,
+        input.paymentTermId !== undefined ? input.paymentTermId : current.paymentTermId
+      );
       const operation = this.updateWeighingOperation(input);
       return { message: `Pesagem alterada: ${describeOperation(operation)}.`, operation };
     }
 
-    // Concluida: os mesmos tres "Alterar" da lista de concluidas do desktop.
+    // Concluida: os mesmos tres "Alterar" da lista de concluidas do desktop. O site pode ter
+    // pedido mais (a pesagem fechou entre o pedido e a execucao): aplicar so uma parte e dizer
+    // "alterada" esconderia que o preco, por exemplo, nao mudou — entao recusa inteiro.
+    const notApplicable = Object.keys(payload).filter(
+      (key) => !["customerId", "productId", "carrierId"].includes(key)
+    );
+    if (notApplicable.length > 0) {
+      throw new Error(
+        "A pesagem foi fechada antes desta alteracao chegar. Pesagem concluida so muda cliente, produto ou transportadora — confira e peca de novo."
+      );
+    }
     if (typeof payload.productId === "string") {
       this.updateWeighingProduct({
         operationId: claim.operationId,
@@ -1669,7 +1676,7 @@ export class DesktopRuntime {
    */
   private async ensureLocalOperation(operationId: string): Promise<void> {
     if (this.localOperationStatus(operationId) !== null) return;
-    await this.pullCloudNow().catch(() => undefined);
+    await this.pullForWebOperation();
     if (this.localOperationStatus(operationId) === null) {
       throw new Error(
         "Esta pesagem ainda nao chegou na balanca executora. Tente de novo em alguns segundos."
@@ -1684,20 +1691,52 @@ export class DesktopRuntime {
   private async ensureLocalRows(
     refs: Array<[table: string, id: string | undefined, label: string]>
   ): Promise<void> {
+    // Tombstone nao vale: cliente unificado (ou transportadora excluida) continua na tabela com
+    // `deleted_at`, e a unificacao existe justamente para nada novo nascer nele.
     const missing = () =>
       refs.filter(
         ([table, id]) =>
           id !== undefined &&
-          this.database.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(id) === undefined
+          this.database
+            .prepare(
+              `SELECT 1 FROM ${table} WHERE id = ?${this.tableHasDeletedAt(table) ? " AND deleted_at IS NULL" : ""}`
+            )
+            .get(id) === undefined
       );
     if (missing().length === 0) return;
-    await this.pullCloudNow().catch(() => undefined);
+    await this.pullForWebOperation();
     const still = missing();
     if (still.length > 0) {
       throw new Error(
         `${still[0][2]} ainda nao chegou na balanca executora. Tente de novo em alguns segundos.`
       );
     }
+  }
+
+  private readonly deletedAtColumnCache = new Map<string, boolean>();
+
+  private tableHasDeletedAt(table: string): boolean {
+    const cached = this.deletedAtColumnCache.get(table);
+    if (cached !== undefined) return cached;
+    const columns = this.database.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>;
+    const has = columns.some((column) => column.name === "deleted_at");
+    this.deletedAtColumnCache.set(table, has);
+    return has;
+  }
+
+  /**
+   * Puxa da nuvem para achar o que o pedido cita. O `pullCloudNow` nao faz nada enquanto a
+   * sincronizacao completa roda — e ai o pedido falharia a toa. Espera ela terminar (ate 90 s)
+   * e so entao puxa.
+   */
+  private async pullForWebOperation(): Promise<void> {
+    const deadline = Date.now() + 90_000;
+    while (this.cloudSyncInProgress && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    await this.pullCloudNow().catch(() => undefined);
   }
 
   /** Leitura "de balanca" para o peso digitado no site — marcada como tal na auditoria. */

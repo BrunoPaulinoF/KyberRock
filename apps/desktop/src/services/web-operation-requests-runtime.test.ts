@@ -222,6 +222,90 @@ describe("pedidos de pesagem do site executados pela balanca", () => {
     }
   });
 
+  it("dinheiro parcelado e recusado com a mesma mensagem do desktop", async () => {
+    const { runtime, database } = createRuntime(tempDirectories);
+    try {
+      seedCatalog(database);
+      const at = "2026-09-25T09:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO payment_methods (id, company_id, code, name, is_system, created_at, updated_at)
+           VALUES ('pm-cash-test', 'company-1', 'cash', 'Dinheiro', 1, ?, ?)
+           ON CONFLICT DO NOTHING`
+        )
+        .run(at, at);
+      const cashId = database
+        .prepare("SELECT id FROM payment_methods WHERE company_id = 'company-1' AND code = 'cash'")
+        .pluck()
+        .get() as string;
+      database
+        .prepare(
+          `INSERT INTO payment_terms (id, company_id, name, rules_json, created_at, updated_at)
+           VALUES ('term-7-14-21', 'company-1', '7/14/21', '{"raw":"7/14/21"}', ?, ?)`
+        )
+        .run(at, at);
+      queue.push({
+        id: "r1",
+        kind: "entry",
+        operationId: "66666666-6666-4666-8666-666666666666",
+        payload: {
+          customerId: "customer-1",
+          vehicleId: "vehicle-1",
+          driverId: "driver-1",
+          productId: "product-1",
+          paymentMethodId: cashId,
+          paymentTermId: "term-7-14-21",
+          entryWeightKg: 15_000
+        }
+      });
+      await run(runtime);
+      expect(reports[0]).toMatchObject({ id: "r1", status: "failed" });
+      expect(String(reports[0].message)).toContain("Dinheiro so aceita pagamento a vista");
+      expect(database.prepare("SELECT COUNT(*) FROM weighing_operations").pluck().get()).toBe(0);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("alteracao de preco que chega depois do fechamento e recusada, sem aplicar metade", async () => {
+    const { runtime, database } = createRuntime(tempDirectories);
+    try {
+      seedCatalog(database);
+      const operationId = "77777777-7777-4777-8777-777777777777";
+      queue.push(
+        {
+          id: "r1",
+          kind: "entry",
+          operationId,
+          payload: {
+            customerId: "customer-1",
+            vehicleId: "vehicle-1",
+            driverId: "driver-1",
+            productId: "product-1",
+            entryWeightKg: 15_000
+          }
+        },
+        { id: "r2", kind: "exit", operationId, payload: { exitWeightKg: 40_000 } },
+        {
+          id: "r3",
+          kind: "update",
+          operationId,
+          payload: { unitPriceCents: 9900, productId: "product-1" }
+        }
+      );
+      await run(runtime);
+      expect(reports[2]).toMatchObject({ id: "r3", status: "failed" });
+      expect(String(reports[2].message)).toContain("foi fechada antes");
+      const price = database
+        .prepare("SELECT unit_price_cents FROM weighing_operations WHERE id = ?")
+        .pluck()
+        .get(operationId);
+      expect(price).toBe(12000);
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("balanca que nao e a executora pergunta e depois fica quieta", async () => {
     const { runtime } = createRuntime(tempDirectories);
     try {
