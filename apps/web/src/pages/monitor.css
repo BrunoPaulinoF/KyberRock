@@ -1633,12 +1633,12 @@ label.mon-fieldset .mon-legend-text {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
   }
-  .mon-w-hourly,
-  .mon-w-payments,
-  .mon-board.is-single-ticket .mon-w-feed,
-  .mon-board.is-single-ticket .mon-w-yard,
-  .mon-board.is-single-rank .mon-w-products,
-  .mon-board.is-single-rank .mon-w-customers {
+  .mon:not(.is-fit) .mon-w-hourly,
+  .mon:not(.is-fit) .mon-w-payments,
+  .mon:not(.is-fit) .mon-board.is-single-ticket .mon-w-feed,
+  .mon:not(.is-fit) .mon-board.is-single-ticket .mon-w-yard,
+  .mon:not(.is-fit) .mon-board.is-single-rank .mon-w-products,
+  .mon:not(.is-fit) .mon-board.is-single-rank .mon-w-customers {
     grid-column: 1 / -1;
   }
 }
@@ -1668,7 +1668,7 @@ label.mon-fieldset .mon-legend-text {
 }
 .mon.is-fit .mon-title {
   order: 0;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   max-width: 220px;
 }
 .mon.is-fit .mon-filterbar {
@@ -1679,15 +1679,16 @@ label.mon-fieldset .mon-legend-text {
   overflow: hidden;
   padding: 2px 0;
 }
+/* sem espaco, a frase da variacao encolhe antes das etiquetas de filtro (e a medida nunca some) */
 .mon.is-fit .mon-top-caption {
   order: 0;
-  flex: 0 1 auto;
+  flex: 0 100 auto;
   flex-basis: auto;
   margin-left: 2px;
 }
 .mon.is-fit .mon-chip {
   flex: 0 1 auto;
-  min-width: 64px;
+  min-width: 0;
 }
 .mon.is-fit .mon-chip-period,
 .mon.is-fit .mon-chip-more {
@@ -1861,10 +1862,15 @@ label.mon-fieldset .mon-legend-text {
 }
 
 /* notebook pequeno e tablet deitado: graficos a esquerda, vendas e patio empilhados a direita */
-@media (max-width: 1439.98px) {
-  /* o "atualizado ha" vai para a dica do "Ao vivo"; "No tempo" ja esta escrito em cada cartao */
-  .mon.is-fit .mon-live-detail,
+/* "No tempo" ja esta escrito em cada cartao: sem espaco, a legenda fica so com os limites */
+@media (max-width: 1599.98px) {
   .mon.is-fit .mon-levels li.is-normal {
+    display: none;
+  }
+}
+/* o "atualizado ha" vai para a dica do "Ao vivo" */
+@media (max-width: 1439.98px) {
+  .mon.is-fit .mon-live-detail {
     display: none;
   }
 }
@@ -1874,7 +1880,8 @@ label.mon-fieldset .mon-legend-text {
   }
   .mon.is-fit .mon-board {
     grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
-    grid-template-rows: repeat(2, minmax(0, 1fr));
+    /* o cartao de venda e mais baixo que o do patio: um pouco mais de altura para as vendas */
+    grid-template-rows: minmax(0, 1.15fr) minmax(0, 1fr);
   }
   .mon.is-fit .mon-col-charts,
   .mon.is-fit .mon-sk-charts {

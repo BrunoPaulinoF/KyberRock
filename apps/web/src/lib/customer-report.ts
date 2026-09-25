@@ -16,220 +16,83 @@
  *    leitura volta no tempo o prazo mais longo das condicoes de pagamento;
  *  - o agrupamento e feito sobre uma leitura so, para o detalhe e os resumos nunca divergirem.
  *
- * O que a nuvem nao tem fica de fora (ver o relatorio da tela): a hora da captura dos pesos
- * (o "Tempo" usa entrada = criacao e saida = fechamento), o parcelamento manual da pesagem e
- * o espelho de condicoes OMIE (`omie_payment_terms`) — o prazo vem do `rules_json` da
- * condicao, que e o que a nuvem guarda.
+ * Os objetos montados aqui tem o formato EXATO do desktop (`desktop/customer-report-types.ts`)
+ * porque o PDF e a planilha saem do mesmo montador do desktop
+ * (`desktop/customer-report-render.ts`, copia guardada por teste): o arquivo baixado do site e
+ * o da balanca sao o mesmo documento.
+ *
+ * O que a nuvem nao tem sai como o desktop mostra o campo vazio: a hora da captura dos pesos
+ * (o "Tempo" usa entrada = criacao e saida = fechamento), o parcelamento manual da pesagem, o
+ * espelho de condicoes OMIE (`omie_payment_terms`) — o prazo vem do `rules_json` da condicao,
+ * que e o que a nuvem guarda — e os campos que nenhum documento mostra (descricao do veiculo,
+ * documento do motorista, data/URL do faturamento OMIE).
  */
 
+import {
+  INSTALLMENT_NOTE,
+  INSTALLMENT_SITUATION_LABEL,
+  customerReportFileBaseName,
+  customersOverviewFileBaseName,
+  formatDatesSummary,
+  renderCustomerReportHtml,
+  renderCustomerReportSpreadsheet,
+  renderCustomersOverviewHtml,
+  renderCustomersOverviewSpreadsheet
+} from "./desktop/customer-report-render";
+import type {
+  CustomerReport,
+  CustomerReportCarrierRow,
+  CustomerReportCustomer,
+  CustomerReportCustomerKey,
+  CustomerReportInstallment,
+  CustomerReportInstallmentMonthRow,
+  CustomerReportInstallmentTotals,
+  CustomerReportOperation,
+  CustomerReportOption,
+  CustomerReportPaymentRow,
+  CustomerReportPeriodRow,
+  CustomerReportPlateRow,
+  CustomerReportProductDayRow,
+  CustomerReportProductRow,
+  CustomerReportTotals,
+  CustomerReportVariant,
+  CustomersOverview
+} from "./desktop/customer-report-types";
+import { getFreightModalityInfo, type FreightRule } from "./desktop/freight";
+import { formatCouponNumber } from "./desktop/invoice-closing-cycle";
+import { invoiceNumberText } from "./desktop/invoice-number-label";
 import { localDay, normalizeDocument, periodToIso } from "./format";
+import type { ReportFile } from "./report-output";
 import { supabase, type Tables } from "./supabase";
 
-// ---------------------------------------------------------------------------------------
-// Tipos (os mesmos nomes do desktop)
-// ---------------------------------------------------------------------------------------
-
-export type CustomerReportVariant = "simplified" | "complete";
-
-export interface CustomerReportOption {
-  id: string;
-  name: string;
-  document: string | null;
-}
-
-export interface CustomerReportCustomer {
-  id: string;
-  legalName: string;
-  tradeName: string;
-  document: string | null;
-  phone: string | null;
-  email: string | null;
-  city: string | null;
-  state: string | null;
-  creditLimitCents: number | null;
-  openReceivablesCents: number;
-  omieCustomerId: number | null;
-  defaultPaymentTermName: string | null;
-  defaultCarrierName: string | null;
-}
-
-export interface CustomerReportCustomerKey {
-  id: string | null;
-  name: string;
-  document: string | null;
-}
-
-export interface CustomerReportOperation {
-  id: string;
-  couponNumber: number | null;
-  date: string;
-  createdAt: string;
-  status: string;
-  statusLabel: string;
-  operationType: "invoice" | "internal";
-  cancelled: boolean;
-  cancelReason: string | null;
-  productCode: string | null;
-  productDescription: string;
-  plate: string;
-  driverName: string;
-  carrierName: string | null;
-  carrierDocument: string | null;
-  freightModalityLabel: string;
-  freightDestination: string | null;
-  freightTotalCents: number;
-  netWeightKg: number;
-  minutesInside: number | null;
-  unitPriceCents: number | null;
-  productTotalCents: number;
-  totalCents: number;
-  paymentMethodName: string | null;
-  paymentTermName: string | null;
-  omieSalesOrderId: number | null;
-  omieInvoiceNumber: string | null;
-}
-
-export interface CustomerReportTotals {
-  operations: number;
-  netWeightKg: number;
-  productCents: number;
-  freightCents: number;
-  totalCents: number;
-  avgPriceCentsPerTon: number;
-  avgTicketCents: number;
-  cancelledOperations: number;
-}
-
-export interface CustomerReportProductRow {
-  productCode: string | null;
-  productDescription: string;
-  operations: number;
-  netWeightKg: number;
-  productCents: number;
-  freightCents: number;
-  totalCents: number;
-  avgPriceCentsPerTon: number;
-  dates: string[];
-}
-
-export interface CustomerReportProductDayRow {
-  date: string;
-  productCode: string | null;
-  productDescription: string;
-  operations: number;
-  netWeightKg: number;
-  productCents: number;
-  freightCents: number;
-  totalCents: number;
-  avgPriceCentsPerTon: number;
-}
-
-export interface CustomerReportPlateRow {
-  plate: string;
-  driverName: string | null;
-  carrierName: string | null;
-  operations: number;
-  netWeightKg: number;
-  totalCents: number;
-  avgMinutes: number;
-}
-
-export interface CustomerReportCarrierRow {
-  carrierName: string;
-  carrierDocument: string | null;
-  operations: number;
-  netWeightKg: number;
-  freightCents: number;
-  plates: string[];
-}
-
-export interface CustomerReportPaymentRow {
-  name: string;
-  operations: number;
-  netWeightKg: number;
-  totalCents: number;
-}
-
-export interface CustomerReportPeriodRow {
-  period: string;
-  operations: number;
-  netWeightKg: number;
-  productCents: number;
-  freightCents: number;
-  totalCents: number;
-}
-
-export type CustomerReportInstallmentSituation = "overdue" | "today" | "upcoming";
-
-export interface CustomerReportInstallment {
-  operationId: string;
-  operationDate: string;
-  dueDate: string;
-  number: number;
-  installmentCount: number;
-  amountCents: number;
-  situation: CustomerReportInstallmentSituation;
-  productDescription: string;
-  plate: string;
-  paymentTermName: string | null;
-  paymentMethodName: string | null;
-  omieSalesOrderId: number | null;
-}
-
-export interface CustomerReportInstallmentMonthRow {
-  period: string;
-  installments: number;
-  amountCents: number;
-}
-
-export interface CustomerReportInstallmentTotals {
-  installments: number;
-  amountCents: number;
-  overdueInstallments: number;
-  overdueCents: number;
-  upcomingInstallments: number;
-  upcomingCents: number;
-  nextDueDate: string | null;
-  nextDueCents: number;
-}
-
-export interface CustomerReport {
-  customer: CustomerReportCustomer;
-  startDate: string;
-  endDate: string;
-  totals: CustomerReportTotals;
-  byProduct: CustomerReportProductRow[];
-  byProductDay: CustomerReportProductDayRow[];
-  byPlate: CustomerReportPlateRow[];
-  tripsByPlate: CustomerReportOperation[];
-  byCarrier: CustomerReportCarrierRow[];
-  byPaymentMethod: CustomerReportPaymentRow[];
-  byPaymentTerm: CustomerReportPaymentRow[];
-  byFreightModality: CustomerReportPaymentRow[];
-  byMonth: CustomerReportPeriodRow[];
-  operations: CustomerReportOperation[];
-  cancelledOperations: CustomerReportOperation[];
-  installments: CustomerReportInstallment[];
-  installmentsByMonth: CustomerReportInstallmentMonthRow[];
-  installmentTotals: CustomerReportInstallmentTotals;
-  referenceDate: string;
-}
-
-export interface CustomersOverviewRow {
-  customer: CustomerReportCustomerKey;
-  totals: CustomerReportTotals;
-  installmentTotals: CustomerReportInstallmentTotals;
-  byProduct: CustomerReportProductRow[];
-}
-
-export interface CustomersOverview {
-  startDate: string;
-  endDate: string;
-  referenceDate: string;
-  customers: CustomersOverviewRow[];
-  totals: CustomerReportTotals;
-  installmentTotals: CustomerReportInstallmentTotals;
-}
+// Os tipos sao os do desktop (copiados em `desktop/customer-report-types.ts`): o montador do
+// PDF e da planilha e o mesmo do desktop e le exatamente esses campos.
+export type {
+  CustomerReport,
+  CustomerReportCarrierRow,
+  CustomerReportCustomer,
+  CustomerReportCustomerKey,
+  CustomerReportInstallment,
+  CustomerReportInstallmentMonthRow,
+  CustomerReportInstallmentTotals,
+  CustomerReportOperation,
+  CustomerReportOption,
+  CustomerReportPaymentRow,
+  CustomerReportPeriodRow,
+  CustomerReportPlateRow,
+  CustomerReportProductDayRow,
+  CustomerReportProductRow,
+  CustomerReportTotals,
+  CustomerReportVariant,
+  CustomersOverview
+};
+export {
+  INSTALLMENT_NOTE,
+  INSTALLMENT_SITUATION_LABEL,
+  formatCouponNumber,
+  formatDatesSummary,
+  invoiceNumberText
+};
 
 // ---------------------------------------------------------------------------------------
 // Periodo (os atalhos da tela)
@@ -335,6 +198,9 @@ export type ReportCustomerRow = Pick<
   | "document"
   | "phone"
   | "email"
+  | "address_street"
+  | "address_number"
+  | "neighborhood"
   | "city"
   | "state"
   | "credit_limit_cents"
@@ -438,22 +304,32 @@ export type ReportOperationRow = Pick<
   | "freight_type"
   | "freight_json"
   | "freight_total_cents"
+  | "entry_weight_kg"
+  | "exit_weight_kg"
   | "net_weight_kg"
   | "unit_price_cents"
+  | "base_unit_price_cents"
+  | "applied_price_table_name"
+  | "price_savings_percent"
   | "product_total_cents"
   | "total_cents"
   | "payment_method_id"
   | "payment_term_id"
   | "omie_sales_order_id"
+  | "omie_service_order_id"
   | "omie_invoice_number"
+  | "omie_billing_status"
+  | "cloud_synced_at"
 >;
 
 const REPORT_OPERATION_COLUMNS =
   "id, operation_code, status, operation_type, cancel_reason, created_at, closed_at, " +
   "customer_id, customer_name, product_id, product_description, plate, driver_name, " +
-  "carrier_id, carrier_name, freight_type, freight_json, freight_total_cents, net_weight_kg, " +
-  "unit_price_cents, product_total_cents, total_cents, payment_method_id, payment_term_id, " +
-  "omie_sales_order_id, omie_invoice_number";
+  "carrier_id, carrier_name, freight_type, freight_json, freight_total_cents, " +
+  "entry_weight_kg, exit_weight_kg, net_weight_kg, unit_price_cents, base_unit_price_cents, " +
+  "applied_price_table_name, price_savings_percent, product_total_cents, total_cents, " +
+  "payment_method_id, payment_term_id, omie_sales_order_id, omie_service_order_id, " +
+  "omie_invoice_number, omie_billing_status, cloud_synced_at";
 
 export const CLOSED_STATUSES = [
   "closed_local",
@@ -465,7 +341,6 @@ export const CLOSED_STATUSES = [
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Rascunho",
-  open: "No patio",
   entry_registered: "Entrada registrada",
   loading_requested: "Carregamento solicitado",
   awaiting_exit: "Aguardando saida",
@@ -477,20 +352,6 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: "Cancelada"
 };
 
-/** Rotulo do tipo de frete (`getFreightModalityInfo` do desktop); o desconhecido e "sem frete". */
-const FREIGHT_LABELS: Record<string, string> = {
-  fob: "Valor na nota",
-  cif: "Valor so no sistema",
-  third_party: "So o transportador na nota",
-  none: "Sem ocorrencia de frete",
-  own_sender: "Com frete (transp. proprio da Pedreira)",
-  own_recipient: "Com frete (transp. proprio do cliente)"
-};
-
-export function freightModalityLabel(key: string | null | undefined): string {
-  return (key && FREIGHT_LABELS[key]) || FREIGHT_LABELS.none;
-}
-
 export function isClosedStatus(status: string): boolean {
   return (CLOSED_STATUSES as readonly string[]).includes(status);
 }
@@ -498,7 +359,7 @@ export function isClosedStatus(status: string): boolean {
 /** Tabelas de apoio para dar nome ao que a pesagem so guarda como id. */
 export interface ReportLookups {
   customers: readonly ReportCustomerRow[];
-  products: ReadonlyArray<Pick<Tables<"products">, "id" | "code" | "description">>;
+  products: ReadonlyArray<Pick<Tables<"products">, "id" | "code" | "description" | "unit">>;
   carriers: ReadonlyArray<Pick<Tables<"carriers">, "id" | "name" | "document">>;
   paymentMethods: ReadonlyArray<Pick<Tables<"payment_methods">, "id" | "name">>;
   paymentTerms: ReadonlyArray<Pick<Tables<"payment_terms">, "id" | "name" | "rules_json">>;
@@ -506,7 +367,7 @@ export interface ReportLookups {
 
 interface IndexedLookups {
   customers: Map<string, ReportCustomerRow>;
-  products: Map<string, { code: string; description: string }>;
+  products: Map<string, { code: string; description: string; unit: string }>;
   carriers: Map<string, { name: string; document: string | null }>;
   paymentMethods: Map<string, string>;
   paymentTerms: Map<string, { name: string; dueDays: number[] }>;
@@ -557,14 +418,23 @@ export function maxDueDays(lookups: Pick<ReportLookups, "paymentTerms">): number
   return max;
 }
 
-function parseFreightDestination(freightJson: string | null): string | null {
-  if (!freightJson) return null;
+/** A regra de frete gravada na pesagem (`parseFreight` do desktop). */
+function parseFreight(freightJson: string | null): {
+  ruleName: string | null;
+  destination: string | null;
+  distanceKm: number | null;
+} {
+  if (!freightJson) return { ruleName: null, destination: null, distanceKm: null };
   try {
-    const parsed = JSON.parse(freightJson) as { destination?: string | null };
-    return parsed.destination ?? null;
+    const parsed = JSON.parse(freightJson) as { rule?: FreightRule; destination?: string | null };
+    return {
+      ruleName: parsed.rule?.name ?? null,
+      destination: parsed.destination ?? null,
+      distanceKm: parsed.rule?.distanceKm ?? null
+    };
   } catch {
     // Regra de frete corrompida nao pode derrubar o relatorio inteiro.
-    return null;
+    return { ruleName: null, destination: null, distanceKm: null };
   }
 }
 
@@ -595,13 +465,21 @@ export function readCustomerKey(
   return { id: row.customer_id, name, document: customer?.document ?? null };
 }
 
+/**
+ * A pesagem da nuvem no formato do desktop (`mapOperation` de `customer-report.ts`). A nuvem
+ * nao guarda a hora da captura dos pesos: a entrada e a criacao da pesagem e a saida e o
+ * fechamento — as mesmas datas que recortam o periodo.
+ */
 export function mapOperation(
   row: ReportOperationRow,
   lookups: IndexedLookups
 ): CustomerReportOperation {
   const product = row.product_id ? lookups.products.get(row.product_id) : undefined;
   const carrier = row.carrier_id ? lookups.carriers.get(row.carrier_id) : undefined;
+  const modalityInfo = getFreightModalityInfo(row.freight_type);
+  const freight = parseFreight(row.freight_json);
   const invoiceNumber = (row.omie_invoice_number ?? "").trim();
+  const operationType = row.operation_type === "internal" ? "internal" : "invoice";
   return {
     id: row.id,
     couponNumber: row.operation_code,
@@ -609,7 +487,8 @@ export function mapOperation(
     createdAt: row.created_at,
     status: row.status,
     statusLabel: STATUS_LABELS[row.status] ?? row.status,
-    operationType: row.operation_type === "internal" ? "internal" : "invoice",
+    operationType,
+    operationTypeLabel: operationType === "internal" ? "Interna" : "Com nota",
     cancelled: !isClosedStatus(row.status),
     cancelReason: row.cancel_reason,
     productCode: product?.code ?? null,
@@ -617,16 +496,30 @@ export function mapOperation(
       (product?.description ?? row.product_description ?? "").trim() ||
       (row.product_description ?? "").trim() ||
       "N/A",
+    productUnit: product?.unit ?? null,
     plate: (row.plate ?? "").trim() || "SEM PLACA",
+    // A nuvem guarda so a placa e o nome do motorista da pesagem, sem o cadastro ligado.
+    vehicleDescription: null,
     driverName: (row.driver_name ?? "").trim() || "N/A",
+    driverDocument: null,
     carrierName: carrier?.name ?? row.carrier_name ?? null,
     carrierDocument: carrier?.document ?? null,
-    freightModalityLabel: freightModalityLabel(row.freight_type),
-    freightDestination: parseFreightDestination(row.freight_json),
+    freightModality: modalityInfo.key,
+    freightModalityLabel: modalityInfo.label,
+    freightRuleName: freight.ruleName,
+    freightDestination: freight.destination,
+    freightDistanceKm: freight.distanceKm,
     freightTotalCents: row.freight_total_cents ?? 0,
+    entryWeightKg: row.entry_weight_kg,
+    exitWeightKg: row.exit_weight_kg,
     netWeightKg: row.net_weight_kg ?? 0,
+    entryAt: row.created_at,
+    exitAt: row.closed_at,
     minutesInside: minutesBetween(row.created_at, row.closed_at),
     unitPriceCents: row.unit_price_cents,
+    baseUnitPriceCents: row.base_unit_price_cents,
+    priceTableName: row.applied_price_table_name,
+    priceSavingsPercent: row.price_savings_percent,
     productTotalCents: row.product_total_cents ?? 0,
     totalCents: row.total_cents ?? 0,
     paymentMethodName: row.payment_method_id
@@ -635,8 +528,17 @@ export function mapOperation(
     paymentTermName: row.payment_term_id
       ? (lookups.paymentTerms.get(row.payment_term_id)?.name ?? null)
       : null,
+    // Parcelamento manual da pesagem nao sobe para a nuvem.
+    installments: null,
+    downPaymentCents: null,
     omieSalesOrderId: row.omie_sales_order_id,
-    omieInvoiceNumber: invoiceNumber || null
+    omieServiceOrderId: row.omie_service_order_id,
+    omieInvoiceNumber: invoiceNumber || null,
+    omieBillingStatus: row.omie_billing_status,
+    omieBilledAt: null,
+    omieDocumentUrl: null,
+    cloudSyncedAt: row.cloud_synced_at,
+    omieSyncedAt: null
   };
 }
 
@@ -703,6 +605,7 @@ export function buildInstallments(
         installmentCount: dueDays.length,
         amountCents: amounts[index] ?? 0,
         situation: daysUntilDue < 0 ? "overdue" : daysUntilDue === 0 ? "today" : "upcoming",
+        daysUntilDue,
         productDescription: (product?.description ?? row.product_description ?? "").trim() || "N/A",
         plate: (row.plate ?? "").trim() || "SEM PLACA",
         paymentTermName: term?.name ?? null,
@@ -780,16 +683,24 @@ export function buildTotals(
 ): CustomerReportTotals {
   const netWeightKg = sum(operations, (op) => op.netWeightKg);
   const productCents = sum(operations, (op) => op.productTotalCents);
+  const freightCents = sum(operations, (op) => op.freightTotalCents);
   const totalCents = sum(operations, (op) => op.totalCents);
+  const dates = operations.map((op) => op.date).sort();
   return {
     operations: operations.length,
     netWeightKg,
     productCents,
-    freightCents: sum(operations, (op) => op.freightTotalCents),
+    freightCents,
     totalCents,
     avgPriceCentsPerTon: avgPriceCentsPerTon(productCents, netWeightKg),
     avgTicketCents: operations.length > 0 ? Math.round(totalCents / operations.length) : 0,
-    cancelledOperations: cancelled.length
+    avgNetWeightKg: operations.length > 0 ? Math.round(netWeightKg / operations.length) : 0,
+    invoiceOperations: operations.filter((op) => op.operationType === "invoice").length,
+    internalOperations: operations.filter((op) => op.operationType === "internal").length,
+    cancelledOperations: cancelled.length,
+    cancelledNetWeightKg: sum(cancelled, (op) => op.netWeightKg),
+    firstOperationDate: dates[0] ?? null,
+    lastOperationDate: dates[dates.length - 1] ?? null
   };
 }
 
@@ -813,6 +724,8 @@ export function groupByProduct(
       totalCents: 0,
       avgPriceCentsPerTon: 0,
       dates: [],
+      firstDate: null,
+      lastDate: null,
       dateSet: new Set<string>()
     };
     row.operations += 1;
@@ -824,11 +737,16 @@ export function groupByProduct(
     map.set(key, row);
   }
   return [...map.values()]
-    .map(({ dateSet, ...row }) => ({
-      ...row,
-      avgPriceCentsPerTon: avgPriceCentsPerTon(row.productCents, row.netWeightKg),
-      dates: [...dateSet].sort()
-    }))
+    .map(({ dateSet, ...row }) => {
+      const dates = [...dateSet].sort();
+      return {
+        ...row,
+        avgPriceCentsPerTon: avgPriceCentsPerTon(row.productCents, row.netWeightKg),
+        dates,
+        firstDate: dates[0] ?? null,
+        lastDate: dates[dates.length - 1] ?? null
+      };
+    })
     .sort((a, b) => b.netWeightKg - a.netWeightKg);
 }
 
@@ -876,10 +794,7 @@ export function groupByProductDay(
 export function groupByPlate(
   operations: readonly CustomerReportOperation[]
 ): CustomerReportPlateRow[] {
-  const map = new Map<
-    string,
-    CustomerReportPlateRow & { totalMinutes: number; minutesSamples: number }
-  >();
+  const map = new Map<string, CustomerReportPlateRow & { minutesSamples: number }>();
   for (const op of operations) {
     const row = map.get(op.plate) ?? {
       plate: op.plate,
@@ -888,8 +803,9 @@ export function groupByPlate(
       operations: 0,
       netWeightKg: 0,
       totalCents: 0,
-      avgMinutes: 0,
       totalMinutes: 0,
+      avgMinutes: 0,
+      lastOperationAt: null,
       minutesSamples: 0
     };
     row.operations += 1;
@@ -901,12 +817,14 @@ export function groupByPlate(
     }
     if (op.driverName !== "N/A") row.driverName = op.driverName;
     if (op.carrierName) row.carrierName = op.carrierName;
+    const reference = op.exitAt ?? op.createdAt;
+    if (!row.lastOperationAt || reference > row.lastOperationAt) row.lastOperationAt = reference;
     map.set(op.plate, row);
   }
   return [...map.values()]
-    .map(({ minutesSamples, totalMinutes, ...row }) => ({
+    .map(({ minutesSamples, ...row }) => ({
       ...row,
-      avgMinutes: minutesSamples > 0 ? Math.round(totalMinutes / minutesSamples) : 0
+      avgMinutes: minutesSamples > 0 ? Math.round(row.totalMinutes / minutesSamples) : 0
     }))
     .sort((a, b) => b.netWeightKg - a.netWeightKg || b.operations - a.operations);
 }
@@ -1008,6 +926,23 @@ function inPeriod(date: string, startDate: string, endDate: string): boolean {
   return date >= startDate && date <= endDate;
 }
 
+/** Instante da venda em milissegundos: o fechamento, ou a criacao na pesagem antiga. */
+function saleTime(row: Pick<ReportOperationRow, "closed_at" | "created_at">): number {
+  const time = Date.parse(row.closed_at ?? row.created_at);
+  return Number.isNaN(time) ? 0 : time;
+}
+
+/**
+ * As pesagens na ordem da consulta do desktop (`ORDER BY` data da venda): e ela que decide a
+ * ordem da lista operacao a operacao e o desempate dos agrupamentos. O id desempata o mesmo
+ * instante para a ordem nao depender da pagina lida.
+ */
+export function sortBySaleTime<
+  T extends Pick<ReportOperationRow, "id" | "closed_at" | "created_at">
+>(rows: readonly T[]): T[] {
+  return [...rows].sort((a, b) => saleTime(a) - saleTime(b) || a.id.localeCompare(b.id));
+}
+
 export function buildCustomerHeader(
   customerId: string,
   lookups: ReportLookups
@@ -1020,6 +955,8 @@ export function buildCustomerHeader(
   const carrier = row.default_carrier_id
     ? lookups.carriers.find((item) => item.id === row.default_carrier_id)
     : undefined;
+  const street = [row.address_street, row.address_number].filter(Boolean).join(", ");
+  const addressLine = [street, row.neighborhood].filter(Boolean).join(" - ") || null;
   return {
     id: row.id,
     legalName: row.legal_name,
@@ -1027,6 +964,7 @@ export function buildCustomerHeader(
     document: row.document,
     phone: row.phone,
     email: row.email,
+    addressLine,
     city: row.city,
     state: row.state,
     creditLimitCents: row.credit_limit_cents,
@@ -1048,14 +986,16 @@ export function buildCustomerReport(input: {
   lookups: ReportLookups;
   startDate: string;
   endDate: string;
+  /** O rotulo do atalho de periodo ("Mes atual"), que sai no cabecalho do documento. */
+  periodLabel?: string | null;
   referenceDate: string;
 }): CustomerReport {
-  const { rows, startDate, endDate, referenceDate } = input;
+  const { startDate, endDate, referenceDate } = input;
+  const rows = sortBySaleTime(input.rows);
   const indexed = indexLookups(input.lookups);
   const all = rows
     .filter((row) => inPeriod(operationSaleDay(row), startDate, endDate))
-    .map((row) => mapOperation(row, indexed))
-    .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt));
+    .map((row) => mapOperation(row, indexed));
   const operations = all.filter((op) => !op.cancelled);
   const cancelledOperations = all.filter((op) => op.cancelled);
   const installments = buildInstallments(rows, indexed, startDate, endDate, referenceDate).map(
@@ -1065,6 +1005,7 @@ export function buildCustomerReport(input: {
     customer: buildCustomerHeader(input.customerId, input.lookups),
     startDate,
     endDate,
+    periodLabel: input.periodLabel ?? null,
     referenceDate,
     totals: buildTotals(operations, cancelledOperations),
     byProduct: groupByProduct(operations),
@@ -1075,6 +1016,7 @@ export function buildCustomerReport(input: {
     byPaymentMethod: groupByLabel(operations, (op) => op.paymentMethodName ?? "Nao informado"),
     byPaymentTerm: groupByLabel(operations, (op) => op.paymentTermName ?? "Nao informado"),
     byFreightModality: groupByLabel(operations, (op) => op.freightModalityLabel),
+    byDay: groupByPeriod(operations, (op) => op.date),
     byMonth: groupByPeriod(operations, (op) => op.date.slice(0, 7)),
     operations,
     cancelledOperations,
@@ -1093,9 +1035,11 @@ export function buildCustomersOverview(input: {
   lookups: ReportLookups;
   startDate: string;
   endDate: string;
+  periodLabel?: string | null;
   referenceDate: string;
 }): CustomersOverview {
-  const { rows, startDate, endDate, referenceDate } = input;
+  const { startDate, endDate, referenceDate } = input;
+  const rows = sortBySaleTime(input.rows);
   const indexed = indexLookups(input.lookups);
   const buckets = new Map<
     string,
@@ -1155,6 +1099,7 @@ export function buildCustomersOverview(input: {
   return {
     startDate,
     endDate,
+    periodLabel: input.periodLabel ?? null,
     referenceDate,
     customers,
     totals: buildTotals(allOperations, allCancelled),
@@ -1165,17 +1110,6 @@ export function buildCustomersOverview(input: {
 // ---------------------------------------------------------------------------------------
 // Formatacao (a mesma da tela do desktop)
 // ---------------------------------------------------------------------------------------
-
-export const INSTALLMENT_SITUATION_LABEL: Record<CustomerReportInstallmentSituation, string> = {
-  overdue: "Vencida",
-  today: "Vence hoje",
-  upcoming: "A vencer"
-};
-
-export const INSTALLMENT_NOTE =
-  "Vencimentos calculados pela condicao de pagamento de cada operacao (mesma regra do pedido " +
-  "enviado ao OMIE). A baixa dos titulos e feita no OMIE: uma parcela marcada como vencida " +
-  "pode ja ter sido paga.";
 
 export function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
@@ -1217,26 +1151,6 @@ export function formatMonthLabel(iso: string): string {
   if (parts.length !== 2) return iso;
   const [year, month] = parts;
   return `${month}/${year}`;
-}
-
-export function formatDatesSummary(dates: readonly string[]): string {
-  if (dates.length === 0) return "-";
-  if (dates.length <= 2) return dates.map(formatDayLabel).join(", ");
-  return `${formatDayLabel(dates[0])} a ${formatDayLabel(dates[dates.length - 1])} (${dates.length} dias)`;
-}
-
-export function formatCouponNumber(code: number | null): string {
-  return code === null ? "-" : String(code).padStart(6, "0");
-}
-
-/** A coluna "Nota fiscal": o numero, "Sem nota" (venda com nota sem numero) ou interna. */
-export function invoiceNumberText(
-  invoiceNumber: string | null,
-  operationType: "invoice" | "internal"
-): string {
-  const number = (invoiceNumber ?? "").trim();
-  if (number) return number;
-  return operationType === "internal" ? "Interna (sem NF-e)" : "Sem nota";
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1560,82 +1474,70 @@ export function overviewTables(overview: CustomersOverview): ReportTable[] {
 }
 
 // ---------------------------------------------------------------------------------------
-// Planilha (o "Excel" do site: CSV com `;`, que o Excel abre direto)
+// Arquivos (os mesmos documentos que o desktop salva)
 // ---------------------------------------------------------------------------------------
 
-function csvLine(cells: readonly string[]): string {
-  return cells.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(";");
+export type ReportFormat = "pdf" | "excel";
+
+/** Os documentos que o desktop gera, separados em PDF (impressao) e planilha (`.xls`). */
+export interface ReportDocuments {
+  pdf: ReportFile[];
+  xls: ReportFile[];
 }
 
-export function tablesToCsv(header: string[][], tables: readonly ReportTable[]): string {
-  const lines: string[] = header.map(csvLine);
-  for (const table of tables) {
-    lines.push("", csvLine([table.title]), csvLine(table.headers));
-    if (table.rows.length === 0)
-      lines.push(csvLine([table.emptyMessage ?? "Sem dados no periodo."]));
-    for (const row of table.rows) lines.push(csvLine(row));
-    if (table.footNote) lines.push(csvLine([table.footNote]));
+/**
+ * Os arquivos do relatorio de um cliente, um por modelo x formato, na ordem e com os nomes
+ * de `buildCustomerReportDocuments` do desktop (runtime): modelo por modelo, PDF antes do
+ * Excel. O HTML e o do mesmo montador do desktop.
+ */
+export function buildCustomerReportFiles(
+  report: CustomerReport,
+  variants: readonly CustomerReportVariant[],
+  formats: readonly ReportFormat[],
+  generatedAt: Date = new Date()
+): ReportDocuments {
+  const files: ReportDocuments = { pdf: [], xls: [] };
+  for (const variant of variants) {
+    const baseName = customerReportFileBaseName(report, variant);
+    for (const format of formats) {
+      if (format === "pdf") {
+        files.pdf.push({
+          filename: `${baseName}.pdf`,
+          html: renderCustomerReportHtml(report, variant, generatedAt)
+        });
+      } else {
+        files.xls.push({
+          filename: `${baseName}.xls`,
+          html: renderCustomerReportSpreadsheet(report, variant, generatedAt)
+        });
+      }
+    }
   }
-  return lines.join("\n");
+  return files;
 }
 
-function slug(text: string, fallback: string): string {
-  const value = text
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-  return value || fallback;
-}
-
-export function customerReportFileBaseName(
-  report: CustomerReport,
-  variant: CustomerReportVariant
-): string {
-  const name = slug(report.customer.tradeName || report.customer.legalName, "cliente");
-  return `relatorio-cliente-${name}-${variant === "complete" ? "completo" : "simplificado"}-${report.startDate}-a-${report.endDate}`;
-}
-
-export function customerReportCsv(
-  report: CustomerReport,
-  variant: CustomerReportVariant,
-  periodLabel: string
-): string {
-  const { customer, totals, installmentTotals: dues } = report;
-  return tablesToCsv(
-    [
-      [`Relatorio por cliente - ${variant === "complete" ? "completo" : "simplificado"}`],
-      ["Cliente", customer.tradeName || customer.legalName],
-      ["Razao social", customer.legalName || "-"],
-      ["CNPJ / CPF", customer.document ?? "-"],
-      [
-        "Periodo",
-        `${periodLabel}: ${formatDayLabel(report.startDate)} a ${formatDayLabel(report.endDate)}`
-      ],
-      ["Carregamentos", formatNumber(totals.operations)],
-      ["Tonelagem", formatReportTons(totals.netWeightKg)],
-      ["Total comprado", formatBRL(totals.totalCents)],
-      ["Titulos em aberto", formatBRL(customer.openReceivablesCents)],
-      ["A vencer no periodo", formatBRL(dues.upcomingCents)],
-      ["Vencidas no periodo", formatBRL(dues.overdueCents)]
-    ],
-    customerReportTables(report, variant)
-  );
-}
-
-export function overviewCsv(overview: CustomersOverview, periodLabel: string): string {
-  return tablesToCsv(
-    [
-      ["Relatorio por cliente - todos os clientes"],
-      [
-        "Periodo",
-        `${periodLabel}: ${formatDayLabel(overview.startDate)} a ${formatDayLabel(overview.endDate)}`
-      ]
-    ],
-    overviewTables(overview)
-  );
+/** Os arquivos do resumo de todos os clientes (`buildCustomersOverviewDocuments`). */
+export function buildCustomersOverviewFiles(
+  overview: CustomersOverview,
+  formats: readonly ReportFormat[],
+  generatedAt: Date = new Date()
+): ReportDocuments {
+  const baseName = customersOverviewFileBaseName(overview);
+  const files: ReportDocuments = { pdf: [], xls: [] };
+  for (const format of formats) {
+    if (format === "pdf") {
+      files.pdf.push({
+        filename: `${baseName}.pdf`,
+        html: renderCustomersOverviewHtml(overview, generatedAt)
+      });
+    } else {
+      files.xls.push({
+        filename: `${baseName}.xls`,
+        html: renderCustomersOverviewSpreadsheet(overview, generatedAt)
+      });
+    }
+  }
+  return files;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1674,7 +1576,8 @@ export async function loadReportLookups(companyId: string): Promise<ReportLookup
       supabase
         .from("customers")
         .select(
-          "id, legal_name, trade_name, document, phone, email, city, state, credit_limit_cents, " +
+          "id, legal_name, trade_name, document, phone, email, address_street, address_number, " +
+            "neighborhood, city, state, credit_limit_cents, " +
             "open_receivables_cents, omie_customer_id, default_payment_term_id, " +
             "default_carrier_id, is_active, deleted_at"
         )
@@ -1686,7 +1589,7 @@ export async function loadReportLookups(companyId: string): Promise<ReportLookup
     readAll<ReportLookups["products"][number]>((from, to) =>
       supabase
         .from("products")
-        .select("id, code, description")
+        .select("id, code, description, unit")
         .eq("company_id", companyId)
         .order("id")
         .range(from, to)

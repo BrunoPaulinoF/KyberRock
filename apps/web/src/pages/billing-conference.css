@@ -277,38 +277,3 @@
 .billing-conference-invoice.not_applicable {
   color: var(--kr-muted);
 }
-
-.billing-conference-print-only {
-  display: none;
-}
-
-/* "PDF": a impressao do navegador so com a tela, sem o menu, os filtros e o botao. */
-@media print {
-  body:has(.billing-conference) .sidebar,
-  .billing-conference-no-print,
-  .billing-conference-filters {
-    display: none !important;
-  }
-  .billing-conference-print-only {
-    display: inline;
-    margin-left: 12px;
-    color: var(--kr-muted);
-    font-size: 13px;
-  }
-  body:has(.billing-conference) .shell {
-    padding: 0;
-  }
-  .billing-conference-scroll,
-  .billing-conference-scroll.tall {
-    max-height: none;
-    overflow: visible;
-  }
-  .billing-conference-table th,
-  .billing-conference-table tfoot td {
-    position: static;
-  }
-  .billing-conference-table tbody td {
-    white-space: normal;
-    max-width: none;
-  }
-}
