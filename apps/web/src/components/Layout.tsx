@@ -5,6 +5,7 @@ import {
   Cloud,
   Database,
   FileText,
+  Handshake,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -58,6 +59,7 @@ const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
   {
     title: "Analise",
     items: [
+      { screen: "comercial", to: "/comercial", label: "Comercial", icon: Handshake },
       { screen: "insights", to: "/insights", label: "Insights", icon: BarChart3 },
       {
         screen: "controle-caminhoes",

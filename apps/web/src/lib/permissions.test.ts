@@ -18,10 +18,11 @@ describe("telas de cada perfil", () => {
     expect(usesSidebar("monitoramento")).toBe(false);
   });
 
-  it("comercial ve as cinco telas de analise e os cadastros, sem configuracoes", () => {
+  it("comercial ve a aba Comercial, as cinco telas de analise e os cadastros", () => {
     expect([...SCREENS_BY_ROLE.comercial].sort()).toEqual(
       [
         "cadastros",
+        "comercial",
         "conferencia-faturamento",
         "controle-caminhoes",
         "insights",
