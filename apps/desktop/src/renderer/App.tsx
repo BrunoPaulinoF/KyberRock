@@ -7398,10 +7398,10 @@ function WeighingForm({
                 // um valor de frete de verdade vale mais que um padrao generico.
                 ...customerFreightModalityPatch(item)
               }));
-              // O que vale e o que foi feito da ULTIMA vez para este cliente: a pedreira
-              // repete o mesmo arranjo (mesma transportadora, mesma condicao, mesma forma
-              // de pagamento) quase sempre. O padrao do cadastro so entra quando o cliente
-              // ainda nao tem entrada nenhuma.
+              // Transportadora e forma de pagamento: o que foi feito da ULTIMA vez para este
+              // cliente (a pedreira repete o mesmo arranjo quase sempre). A CONDICAO de
+              // pagamento, nao: ela segue o cadastro do cliente — o que foi combinado com
+              // ele —, e nao a da ultima entrada, que podia ter sido uma excecao.
               const defaultTermId =
                 typeof item?.defaultPaymentTermId === "string" ? item.defaultPaymentTermId : "";
               if (desktopApi) {
@@ -7423,14 +7423,15 @@ function WeighingForm({
                     // este preenchimento e a reconciliacao ficaria a sorte do relogio.
                     if (last.carrierId) setCarrierRefreshKey((k) => k + 1);
                   }
-                  const termId = last?.paymentTermId ?? defaultTermId;
-                  if (!termId) return;
+                  if (!defaultTermId) return;
+                  // Pelo id, nao pelas 200 primeiras: condicao cadastrada depois delas nao
+                  // era encontrada e o campo ficava vazio.
                   const result = await desktopApi
-                    .queryCache({ entityType: "payment_term", limit: 200 })
+                    .queryCache({ entityType: "payment_term", ids: [defaultTermId], limit: 1 })
                     .catch(() => null);
                   if (!result) return;
                   const term = (result.rows as PaymentTermCacheEntry[]).find(
-                    (t) => t.id === termId
+                    (t) => t.id === defaultTermId
                   );
                   if (!term) return;
                   setForm((prev) =>
@@ -9389,11 +9390,13 @@ function PriceDetailsPanel({ details }: { details: PriceDetails | null }) {
   }
 
   const sourceLabel =
-    details.source === "special"
-      ? "Preco especial do cliente"
-      : details.source === "default"
-        ? "Preco padrao da empresa"
-        : "Sem preco cadastrado";
+    details.source === "last_used"
+      ? "Ultima operacao do cliente"
+      : details.source === "special"
+        ? "Preco especial do cliente"
+        : details.source === "default"
+          ? "Preco padrao da empresa"
+          : "Sem preco cadastrado";
   const savingsLabel = details.savingsPercent
     ? `${details.savingsPercent.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`
     : "Sem desconto";

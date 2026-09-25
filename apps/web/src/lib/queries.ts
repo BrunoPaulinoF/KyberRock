@@ -219,6 +219,28 @@ export const q = {
     fail(error);
     return data ?? [];
   },
+  /**
+   * O preco da ultima pesagem do cliente com este produto — e o primeiro que a balanca usa
+   * (`PricingService`, fonte `last_used`); sem ela vale o cadastro. Nulo quando nao ha.
+   */
+  lastCustomerProductPrice: async (
+    companyId: string,
+    customerId: string,
+    productId: string
+  ): Promise<number | null> => {
+    const { data, error } = await supabase
+      .from("weighing_operations")
+      .select("unit_price_cents")
+      .eq("company_id", companyId)
+      .eq("customer_id", customerId)
+      .eq("product_id", productId)
+      .neq("status", "cancelled")
+      .gt("unit_price_cents", 0)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    fail(error);
+    return data?.[0]?.unit_price_cents ?? null;
+  },
   customerFreightRules: (companyId: string, customerId: string) =>
     all<Tables<"customer_freight_rules">>((from, to) =>
       supabase

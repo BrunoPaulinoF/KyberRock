@@ -83,14 +83,24 @@ export function NewEntry() {
     () => (customerId ? q.customerFreightRules(user.companyId, customerId) : Promise.resolve([])),
     [user.companyId, customerId]
   );
+  const lastPrice = useAsync(
+    () =>
+      customerId && productId
+        ? q.lastCustomerProductPrice(user.companyId, customerId, productId)
+        : Promise.resolve(null),
+    [user.companyId, customerId, productId]
+  );
+  // A mesma ordem da balanca (`PricingService`): o preco da ULTIMA operacao do cliente com
+  // este produto e, sem ela, o cadastro (especial do cliente, depois o padrao do produto).
   const price = useMemo(() => {
     if (!productId) return null;
+    if (lastPrice.data) return { cents: lastPrice.data, source: "Ultima operacao do cliente" };
     const own = (special.data ?? []).find((row) => row.product_id === productId);
     if (own) return { cents: own.unit_price_cents, source: "Preco especial do cliente" };
     const standard = (defaults.data ?? []).find((row) => row.product_id === productId);
     if (standard) return { cents: standard.unit_price_cents, source: "Preco padrao do produto" };
     return { cents: null, source: "Produto sem preco cadastrado" };
-  }, [productId, special.data, defaults.data]);
+  }, [productId, lastPrice.data, special.data, defaults.data]);
 
   // Esc volta para a fila, como o "Voltar" do rodape do desktop.
   useEffect(() => {
@@ -136,9 +146,9 @@ export function NewEntry() {
   }
 
   /**
-   * O cliente traz o arranjo dele: nota ou nao pelo cadastro, tipo de frete padrao, e — o que
-   * mais vale — a transportadora, forma e condicao da ULTIMA entrada dele. O padrao do cadastro
-   * so entra quando o cliente ainda nao tem entrada nenhuma (mesma regra do desktop).
+   * O cliente traz o arranjo dele: nota ou nao pelo cadastro, tipo de frete padrao, a
+   * transportadora e a forma da ULTIMA entrada dele — e a CONDICAO do cadastro, nao a da ultima
+   * entrada (mesma regra do desktop): o combinado com o cliente vale mais que uma excecao.
    */
   function chooseCustomer(id: string) {
     setCustomerId(id);
@@ -154,7 +164,8 @@ export function NewEntry() {
       modality ? { ...INITIAL_ENTRY_FREIGHT, freightModality: modality } : INITIAL_ENTRY_FREIGHT
     );
     if (!id) return;
-    const defaultTermId = preset?.paymentTermId ?? "";
+    const defaultTerm = terms.find((row) => row.id === preset?.paymentTermId);
+    if (defaultTerm) setConditionText(conditionTextOf(defaultTerm.rules_json, defaultTerm.name));
     void q
       .lastCustomerOperations(user.companyId, id)
       .catch(() => [])
@@ -164,9 +175,6 @@ export function NewEntry() {
           if (last.carrier_id) setCarrierId(last.carrier_id);
           if (last.payment_method_id) setPaymentMethodId(last.payment_method_id);
         }
-        const termId = last?.payment_term_id ?? defaultTermId;
-        const term = terms.find((row) => row.id === termId);
-        if (term) setConditionText(conditionTextOf(term.rules_json, term.name));
         // A observacao ("Destino/obs.") da ultima entrada volta, so no campo vazio.
         const note = recent
           .map((operation) => readDestination(operation.freight_json))
