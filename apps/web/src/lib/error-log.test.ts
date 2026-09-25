@@ -199,6 +199,9 @@ describe("createErrorLog", () => {
     tabA.record({ source: "app", message: "da aba A" });
     tabB.record({ source: "app", message: "da aba B" });
     expect(tabA.read().map((entry) => entry.message)).toEqual(["da aba B", "da aba A"]);
+    // Limpar numa aba limpa a outra: o storage e a verdade enquanto ele aceita gravar.
+    tabB.clear();
+    expect(tabA.read()).toEqual([]);
   });
 });
 

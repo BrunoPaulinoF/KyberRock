@@ -206,7 +206,7 @@ export const SUPPORT_TABS: ReadonlyArray<{ id: SupportTab; label: string }> = [
   { id: "pedidos", label: "Pedidos do site" },
   { id: "omie", label: "Envios OMIE" },
   { id: "fechamentos", label: "Fechamentos" },
-  { id: "relatorios", label: "Relatorios automaticos" },
+  { id: "relatorios", label: "Relatorios" },
   { id: "acessos", label: "Acessos" },
   { id: "navegador", label: "Navegador" }
 ];
