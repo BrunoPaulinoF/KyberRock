@@ -1114,11 +1114,11 @@ export function closeWeighingOperation(
 
 /**
  * O que a ultima entrada daquele cliente usou de transporte e pagamento. A pedreira
- * repete o mesmo arranjo quase sempre (mesma transportadora, mesma condicao, mesma forma
- * de pagamento), entao a entrada seguinte ja nasce preenchida com isso.
+ * repete o mesmo arranjo quase sempre (mesma transportadora, mesma forma de pagamento),
+ * entao a entrada seguinte ja nasce preenchida com isso.
  *
- * Vem da ULTIMA operacao, nao do cadastro: o cadastro guarda um padrao que quase ninguem
- * mantem atualizado, e o que vale na balanca e o que foi feito da ultima vez.
+ * A CONDICAO de pagamento vem junto, mas a Nova entrada nao a usa mais: ela segue o
+ * cadastro do cliente (o combinado com ele), nao a ultima entrada, que podia ser excecao.
  */
 export interface CustomerLastEntryPreferences {
   carrierId: string | null;

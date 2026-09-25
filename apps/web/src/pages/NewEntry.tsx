@@ -136,9 +136,9 @@ export function NewEntry() {
   }
 
   /**
-   * O cliente traz o arranjo dele: nota ou nao pelo cadastro, tipo de frete padrao, e — o que
-   * mais vale — a transportadora, forma e condicao da ULTIMA entrada dele. O padrao do cadastro
-   * so entra quando o cliente ainda nao tem entrada nenhuma (mesma regra do desktop).
+   * O cliente traz o arranjo dele: nota ou nao pelo cadastro, tipo de frete padrao, a
+   * transportadora e a forma da ULTIMA entrada dele — e a CONDICAO do cadastro, nao a da ultima
+   * entrada (mesma regra do desktop): o combinado com o cliente vale mais que uma excecao.
    */
   function chooseCustomer(id: string) {
     setCustomerId(id);
@@ -154,7 +154,8 @@ export function NewEntry() {
       modality ? { ...INITIAL_ENTRY_FREIGHT, freightModality: modality } : INITIAL_ENTRY_FREIGHT
     );
     if (!id) return;
-    const defaultTermId = preset?.paymentTermId ?? "";
+    const defaultTerm = terms.find((row) => row.id === preset?.paymentTermId);
+    if (defaultTerm) setConditionText(conditionTextOf(defaultTerm.rules_json, defaultTerm.name));
     void q
       .lastCustomerOperations(user.companyId, id)
       .catch(() => [])
@@ -164,9 +165,6 @@ export function NewEntry() {
           if (last.carrier_id) setCarrierId(last.carrier_id);
           if (last.payment_method_id) setPaymentMethodId(last.payment_method_id);
         }
-        const termId = last?.payment_term_id ?? defaultTermId;
-        const term = terms.find((row) => row.id === termId);
-        if (term) setConditionText(conditionTextOf(term.rules_json, term.name));
         // A observacao ("Destino/obs.") da ultima entrada volta, so no campo vazio.
         const note = recent
           .map((operation) => readDestination(operation.freight_json))

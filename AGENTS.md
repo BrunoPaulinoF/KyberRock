@@ -427,6 +427,16 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   sobre o cadastro inteiro. `linkedCarrierIds` continua alimentando o seletor de
   transportadora padrao da aba Comercial — nao o remova junto.
 
+## Condicao de pagamento da nova entrada
+
+- A Nova entrada (desktop `App.tsx` e site `NewEntry.tsx`) preenche a **condicao** com a
+  condicao **padrao do cadastro** do cliente, nao com a da ultima entrada — o combinado com o
+  cliente vale mais que uma excecao. Transportadora e **forma** de pagamento continuam vindo
+  da ultima entrada (`getCustomerLastEntryPreferences`).
+- O **preco** continua vindo so do cadastro (`PricingService`): preco especial do cliente,
+  depois o preco padrao do produto. Nao ha memoria de preco da ultima venda de proposito:
+  mudar o preco no cadastro precisa valer na proxima entrada sem ajuste manual.
+
 ## Balanca principal de precos
 
 As balancas marcadas como **principais** sao as donas do cadastro de preco; as demais espelham o que
