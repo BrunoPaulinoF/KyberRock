@@ -1235,3 +1235,37 @@ export function formatShare(share: number): string {
   if (percent > 0 && percent < 1) return "<1%";
   return `${Math.round(percent)}%`;
 }
+
+/**
+ * Marcas do eixo em numeros redondos (passo 1, 2, 2,5 ou 5 vezes uma potencia de 10), de 0 ate
+ * cobrir `max` — "0, 50, 100, 150, 200 t" le melhor numa TV do que "0, 65, 130, 195 t".
+ */
+export function chartTicks(max: number, target = 4): number[] {
+  if (!Number.isFinite(max) || max <= 0) return [0];
+  const rough = max / Math.max(1, target);
+  const magnitude = 10 ** Math.floor(Math.log10(rough));
+  const step = [1, 2, 2.5, 5, 10].map((factor) => factor * magnitude).find((s) => s >= rough);
+  const size = step ?? 10 * magnitude;
+  const count = Math.ceil(Number((max / size).toFixed(9)));
+  return Array.from({ length: count + 1 }, (_, index) => Number((index * size).toPrecision(12)));
+}
+
+/**
+ * Rotulo do eixo na medida escolhida. Dinheiro usa a mesma unidade em todas as marcas (a da
+ * maior), senao o eixo misturaria "R$ 5.000" com "R$ 10 mil".
+ */
+export function formatAxisValue(value: number, top: number, metric: MonitorMetric): string {
+  if (metric === "tons") {
+    const tons = value / 1000;
+    return `${tons.toLocaleString("pt-BR", { maximumFractionDigits: top / 1000 <= 10 ? 1 : 0 })} t`;
+  }
+  const reais = value / 100;
+  const topReais = top / 100;
+  if (topReais >= 1_000_000) {
+    return `R$ ${(reais / 1_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} mi`;
+  }
+  if (topReais >= 10_000) {
+    return `R$ ${(reais / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mil`;
+  }
+  return `R$ ${reais.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`;
+}

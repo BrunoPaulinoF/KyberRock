@@ -10,6 +10,7 @@ import {
   activeFilterChips,
   averageYardMinutes,
   buildYard,
+  chartTicks,
   clearDimensionFilters,
   compareCutoff,
   computeKpis,
@@ -20,6 +21,7 @@ import {
   deltaTone,
   detectNewIds,
   formatAgo,
+  formatAxisValue,
   formatClock,
   formatDelta,
   formatDuration,
@@ -693,5 +695,25 @@ describe("formatacao", () => {
     expect(plain(formatMoneyShort(95_000))).toBe("R$ 950");
     expect(plain(formatMoneyShort(1_234_500))).toBe("R$ 12,3 mil");
     expect(plain(formatMoneyShort(125_000_000))).toBe("R$ 1,25 mi");
+  });
+});
+
+describe("eixo dos graficos", () => {
+  it("marca numeros redondos de 0 ate cobrir o maximo", () => {
+    expect(chartTicks(199_000)).toEqual([0, 50_000, 100_000, 150_000, 200_000]);
+    expect(chartTicks(260_000)).toEqual([0, 100_000, 200_000, 300_000]);
+    expect(chartTicks(9_000)).toEqual([0, 2_500, 5_000, 7_500, 10_000]);
+    expect(chartTicks(100)).toEqual([0, 25, 50, 75, 100]);
+    expect(chartTicks(0)).toEqual([0]);
+    expect(chartTicks(Number.NaN)).toEqual([0]);
+  });
+
+  it("usa a mesma unidade em todas as marcas de dinheiro", () => {
+    const plain = (text: string) => text.replace(/\s/g, " ");
+    expect(plain(formatAxisValue(500_000, 2_000_000, "revenue"))).toBe("R$ 5 mil");
+    expect(plain(formatAxisValue(2_000_000, 2_000_000, "revenue"))).toBe("R$ 20 mil");
+    expect(plain(formatAxisValue(250_000, 500_000, "revenue"))).toBe("R$ 2.500");
+    expect(formatAxisValue(2_500, 10_000, "tons")).toBe("2,5 t");
+    expect(formatAxisValue(150_000, 200_000, "tons")).toBe("150 t");
   });
 });
