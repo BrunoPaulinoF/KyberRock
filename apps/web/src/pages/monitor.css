@@ -80,6 +80,7 @@
   gap: 8px 10px;
   padding: 10px 16px;
   padding-top: max(10px, env(safe-area-inset-top));
+  background: var(--kr-surface);
   background: color-mix(in srgb, var(--kr-surface) 92%, transparent);
   backdrop-filter: saturate(1.4) blur(10px);
   -webkit-backdrop-filter: saturate(1.4) blur(10px);
@@ -398,7 +399,9 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
+/* o numero grande acompanha a largura do cartao (cqi): cabe "R$ 1.234.567" em 6 colunas */
 .mon-kpi {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -434,7 +437,8 @@
 }
 .mon-kpi-value {
   color: var(--kr-text-strong);
-  font-size: 24px;
+  font-size: 22px;
+  font-size: clamp(20px, 12cqi, 30px);
   line-height: 1.1;
   font-weight: 800;
   letter-spacing: -0.02em;
@@ -444,7 +448,8 @@
   white-space: nowrap;
 }
 .mon-kpi.is-hero .mon-kpi-value {
-  font-size: 32px;
+  font-size: 28px;
+  font-size: clamp(22px, 14cqi, 36px);
 }
 .mon-kpi-foot {
   display: flex;
@@ -690,10 +695,12 @@
   border-left: 4px solid var(--mon-series);
   background: var(--kr-surface-soft);
 }
+/* sem espaco, o valor desce para a linha de baixo (a direita) em vez de ser cortado */
 .mon-ticket-top {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 2px 8px;
   min-width: 0;
 }
 .mon-ticket-time {
@@ -890,6 +897,7 @@
 }
 .mon-yard.is-attention .mon-meter,
 .mon-yard.is-late .mon-meter {
+  background: var(--mon-track);
   background: color-mix(in srgb, var(--kr-card-bg) 70%, transparent);
 }
 
@@ -1519,11 +1527,11 @@ label.mon-fieldset .mon-legend-text {
   .mon-kpi {
     padding: 10px 12px;
   }
-  .mon-kpi-value {
-    font-size: 21px;
-  }
-  .mon-kpi.is-hero .mon-kpi-value {
-    font-size: 30px;
+  .mon-kpi.is-hero .mon-kpi-foot {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
   }
   .mon-card {
     padding: 12px;
@@ -1595,16 +1603,6 @@ label.mon-fieldset .mon-legend-text {
   .mon-main {
     padding: 14px 20px 28px;
   }
-  .mon-kpi-grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 10px;
-  }
-  .mon-kpi-value {
-    font-size: 26px;
-  }
-  .mon-kpi.is-hero .mon-kpi-value {
-    font-size: 30px;
-  }
   .mon-board {
     grid-template-columns: var(--mon-zones, 1fr);
   }
@@ -1644,6 +1642,14 @@ label.mon-fieldset .mon-legend-text {
   }
 }
 
+/* os seis indicadores numa linha so quando cabem sem cortar o rotulo */
+@media (min-width: 1280px) {
+  .mon-kpi-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 10px;
+  }
+}
+
 /* ---------- TV da expedicao ---------- */
 @media (min-width: 1600px) {
   .mon {
@@ -1663,10 +1669,10 @@ label.mon-fieldset .mon-legend-text {
     font-size: 14px;
   }
   .mon-kpi-value {
-    font-size: 36px;
+    font-size: clamp(24px, 12cqi, 44px);
   }
   .mon-kpi.is-hero .mon-kpi-value {
-    font-size: 48px;
+    font-size: clamp(28px, 14cqi, 56px);
   }
   .mon-kpi-foot {
     font-size: 13px;

@@ -122,12 +122,13 @@ import { useTheme } from "../lib/theme";
  * `operation_change_pings` (uma linha por empresa, carimbada por gatilho a cada escrita em
  * `weighing_operations`) — o aviso nao carrega pesagem, so faz a tela reler, e varios avisos
  * seguidos viram uma leitura so. A releitura periodica e a rede de seguranca: 30 s enquanto o
- * aviso nao esta de pe e 2 min com ele funcionando, sempre parada com a aba escondida.
+ * aviso nao esta de pe e 90 s com ele funcionando, sempre parada com a aba escondida.
  */
 
 const REALTIME_DEBOUNCE_MS = 1_500;
 const POLL_FALLBACK_MS = 30_000;
-const POLL_WITH_REALTIME_MS = 120_000;
+/** Abaixo do `STALE_AFTER_MS` (2 min): com o aviso de pe e nada mudando, o "Ao vivo" nao pisca. */
+const POLL_WITH_REALTIME_MS = 90_000;
 const CLOCK_MS = 15_000;
 const FRESH_HIGHLIGHT_MS = 8_000;
 /** Voltar para a aba/foco nao rele se a ultima leitura comecou ha menos que isso. */
@@ -493,7 +494,9 @@ export function Monitor() {
       paymentMethods={methods}
       unitAvgYardMinutes={unit?.avgQuarryMinutes ?? null}
       status={{
-        loading: snapshot === null && error === null,
+        // Sem nenhuma leitura boa ainda, o esqueleto fica (com o aviso de erro em cima): tela
+        // vazia diria "nenhuma venda" sem saber.
+        loading: snapshot === null,
         switching: snapshot !== null && snapshot.key !== fetchKey,
         refreshing,
         error,
@@ -1002,10 +1005,16 @@ function KpiTile({
         <Icon size={15} aria-hidden="true" />
         <span>{label}</span>
       </div>
-      <div className="mon-kpi-value">{value}</div>
+      <div className="mon-kpi-value" title={value}>
+        {value}
+      </div>
       <div className="mon-kpi-foot">
         {delta}
-        {foot && <span className="mon-kpi-note">{foot}</span>}
+        {foot && (
+          <span className="mon-kpi-note" title={typeof foot === "string" ? foot : undefined}>
+            {foot}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -1026,7 +1035,7 @@ function KpiRow({ kpis, period }: { kpis: MonitorKpis; period: PeriodWindow }) {
           label="Toneladas vendidas"
           value={formatTonnes(current.kg)}
           delta={<Delta value={deltas.kg} context={context} />}
-          foot={`${period.compareLabel}${period.live ? " ate agora" : ""}: ${formatTonnes(previous.kg)}`}
+          foot={`${period.compareLabel}: ${formatTonnes(previous.kg)}`}
         />
         <KpiTile
           hero
@@ -1226,7 +1235,8 @@ function FeedPanel({
               className="mon-more"
               onClick={() => setLimit((value) => value + FEED_PAGE)}
             >
-              Mostrar mais {Math.min(FEED_PAGE, sales.length - limit)} de {sales.length - limit}
+              Mostrar mais {Math.min(FEED_PAGE, sales.length - limit)} ({sales.length - limit}{" "}
+              restantes)
             </button>
           )}
         </>
@@ -1338,11 +1348,14 @@ function YardPanel({
 // Graficos
 // ---------------------------------------------------------------------------
 
+/**
+ * Largura do elemento, acompanhando o redimensionamento. Ref de callback: o grafico sai e volta
+ * (tabela <-> grafico) e o observador precisa seguir o elemento NOVO.
+ */
 function useElementWidth<T extends HTMLElement>() {
-  const ref = useRef<T>(null);
+  const [element, setElement] = useState<T | null>(null);
   const [width, setWidth] = useState(0);
   useEffect(() => {
-    const element = ref.current;
     if (!element) return;
     setWidth(element.clientWidth);
     if (typeof ResizeObserver === "undefined") return;
@@ -1351,8 +1364,8 @@ function useElementWidth<T extends HTMLElement>() {
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
-  return { ref, width };
+  }, [element]);
+  return { ref: setElement, width };
 }
 
 /**
@@ -1535,7 +1548,10 @@ function SalesChart({
               width={width}
               height={height}
               aria-hidden="true"
-              onPointerLeave={() => setActive(null)}
+              onPointerLeave={(event) => {
+                // No toque o "leave" vem logo depois do toque: a dica fica ate tocar fora.
+                if (event.pointerType === "mouse") setActive(null);
+              }}
             >
               <g className="mon-grid">
                 {ticks.map((tick) => (
@@ -1841,7 +1857,29 @@ function FiltersDrawer({
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     panelRef.current?.focus();
     const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      // O foco nao sai da gaveta com Tab (ela e modal).
+      const panel = panelRef.current;
+      if (event.key !== "Tab" || !panel) return;
+      const focusable = [
+        ...panel.querySelectorAll<HTMLElement>(
+          "button, input, select, [tabindex]:not([tabindex='-1'])"
+        )
+      ].filter((element) => !element.hasAttribute("disabled"));
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || active === panel)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => {
