@@ -110,7 +110,7 @@ export const SITE_ROLE_OPTIONS: ReadonlyArray<{ value: UserRole; label: string; 
   {
     value: "comercial",
     label: "Comercial",
-    hint: "Insights, conferencia de faturamento, relatorios, controle de caminhoes e relatorio por cliente. So consulta, sem configuracoes."
+    hint: "Insights, conferencia de faturamento, relatorios, controle de caminhoes, relatorio por cliente e cadastros. Cadastra tudo e muda preco sem senha. Sem configuracoes."
   },
   {
     value: "gestor",
@@ -139,13 +139,13 @@ export const USER_ROLE_LABELS: Record<UserRole, string> = {
 };
 
 /**
- * A senha de preco depende do perfil antes da marca do login: a operacao sempre pede e o
- * administrador nunca (`requiresPricePasswordFor` em `_shared/web-session.ts`). So nos outros
- * perfis a marca do painel decide.
+ * A senha de preco depende do perfil antes da marca do login: a operacao sempre pede, o
+ * administrador e o comercial nunca (`requiresPricePasswordFor` em `_shared/web-session.ts`). So
+ * nos outros perfis a marca do painel decide.
  */
 export function pricePasswordRule(role: UserRole): "always" | "never" | "flag" {
   if (role === "operacao") return "always";
-  if (role === "administrador") return "never";
+  if (role === "administrador" || role === "comercial") return "never";
   return "flag";
 }
 
@@ -2153,7 +2153,7 @@ function PricePasswordToggle({
         rule === "always"
           ? "O perfil Operacao sempre pede a senha de preco."
           : rule === "never"
-            ? "O perfil Administrador nunca pede senha."
+            ? "Os perfis Administrador e Comercial nunca pedem senha."
             : "A senha e a de alteracao de preco da pedreira."
       }
     >

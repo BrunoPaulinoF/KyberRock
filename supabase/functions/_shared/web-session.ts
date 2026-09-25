@@ -12,7 +12,8 @@
  * fechado de telas (`apps/web/src/lib/permissions.ts`); aqui mora o que cada um GRAVA:
  *
  *   - `monitoramento` so consulta (a tela dele e o painel de vendas em tempo real);
- *   - `comercial`     so consulta (insights, conferencia, relatorios, caminhoes, cliente);
+ *   - `comercial`     todo o CADASTRO (cliente, bloco comercial, frota e preco), sem senha de
+ *                     preco; nao pesa, nao mexe em carteira, fechamento nem destinatarios;
  *   - `gestor`        tudo, menos a Nova entrada (fecha, altera, cancela e reimprime);
  *   - `operacao`      tudo, e mudanca de preco SEMPRE pede a senha da pedreira;
  *   - `administrador` tudo, sem senha nenhuma, mais os logs de suporte.
@@ -89,25 +90,30 @@ export function isWebRole(value: unknown): value is WebRole {
   return typeof value === "string" && (WEB_ROLES as readonly string[]).includes(value);
 }
 
-/**
- * Gestor, operacao e administrador: os perfis que alteram alguma coisa pelo site. Monitoramento e
- * comercial so consultam — o comercial so ve as telas de analise.
- */
+/** Todo perfil menos o monitoramento grava alguma coisa pelo site. */
 export function canWrite(role: WebRole): boolean {
+  return role !== "monitoramento";
+}
+
+/** Gestor, operacao e administrador: pesagem, carteira, fechamento e destinatarios. */
+function runsTheQuarry(role: WebRole): boolean {
   return role === "gestor" || role === "operacao" || role === "administrador";
 }
 
-/** Bloco comercial/credito do cliente, carteira, fechamento e destinatarios dos relatorios. */
+/**
+ * Carteira, fechamento de faturas e destinatarios dos relatorios. O nome ficou da epoca em que
+ * isso era so do gestor.
+ */
 export function canManagePrices(role: WebRole): boolean {
-  return canWrite(role);
+  return runsTheQuarry(role);
 }
 
-/** Preco (padrao, especial por cliente e tabelas de preco). */
+/** Preco (padrao, especial por cliente e tabelas de preco): tambem o comercial. */
 export function canEditPrices(role: WebRole): boolean {
   return canWrite(role);
 }
 
-/** Cadastro de cliente (sobe ao OMIE). */
+/** Cadastro de cliente (sobe ao OMIE) e o bloco comercial/credito dele: tambem o comercial. */
 export function canEditCustomers(role: WebRole): boolean {
   return canWrite(role);
 }
@@ -117,7 +123,7 @@ export function canEditCustomers(role: WebRole): boolean {
  * balanca da unidade — o site so pede (`operation_requests`).
  */
 export function canOperate(role: WebRole): boolean {
-  return canWrite(role);
+  return runsTheQuarry(role);
 }
 
 /** Nova entrada pelo site: o gestor faz tudo MENOS isto. */
@@ -137,10 +143,11 @@ export function canSeeSupport(role: WebRole): boolean {
 
 /**
  * Quem digita a senha de alteracao de preco da pedreira: a `operacao` sempre, o `administrador`
- * nunca, e os outros perfis conforme a marca do login no painel (`requires_price_password`).
+ * e o `comercial` nunca (negociar preco e o trabalho do comercial), e o gestor conforme a marca do
+ * login no painel (`requires_price_password`).
  */
 export function requiresPricePasswordFor(role: WebRole, flagged: boolean): boolean {
-  if (role === "administrador") return false;
+  if (role === "administrador" || role === "comercial") return false;
   if (role === "operacao") return true;
   return flagged;
 }

@@ -39,16 +39,16 @@ Perfis (`src/lib/permissions.ts`; o que cada um grava espelha `_shared/web-sessi
 perfil ve um conjunto FECHADO de telas (`SCREENS_BY_ROLE`) — o resto nem aparece no menu, e o
 endereco digitado a mao volta para a tela inicial dele:
 
-| Perfil          | Telas                                                                                          | Configuracoes |
-| --------------- | ---------------------------------------------------------------------------------------------- | ------------- |
-| `monitoramento` | So `/monitoramento` (vendas em tempo real, tela cheia)                                         | Nao           |
-| `comercial`     | Insights, conferencia de faturamento, relatorios, controle de caminhoes, relatorio por cliente | Nao           |
-| `gestor`        | Todas, menos a Nova entrada                                                                    | Sim           |
-| `operacao`      | Todas; mudar preco sempre pede a senha da pedreira                                             | Sim           |
-| `administrador` | Todas + `/suporte` (Logs), sem pedir senha                                                     | Sim           |
-| `loader`        | So `/carregamento` (celular e tablet, instalavel como app)                                     | —             |
+| Perfil          | Telas                                                                                                                                       | Configuracoes |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `monitoramento` | So `/monitoramento` (vendas em tempo real, tela cheia)                                                                                      | Nao           |
+| `comercial`     | Insights, conferencia de faturamento, relatorios, controle de caminhoes, relatorio por cliente e cadastros (cadastra tudo, preco sem senha) | Nao           |
+| `gestor`        | Todas, menos a Nova entrada                                                                                                                 | Sim           |
+| `operacao`      | Todas; mudar preco sempre pede a senha da pedreira                                                                                          | Sim           |
+| `administrador` | Todas + `/suporte` (Logs), sem pedir senha                                                                                                  | Sim           |
+| `loader`        | So `/carregamento` (celular e tablet, instalavel como app)                                                                                  | —             |
 
-Monitoramento e comercial so consultam. Quem nao tem configuracoes ve so o botao Sair no rodape.
+Monitoramento so consulta. Quem nao tem configuracoes ve so o botao Sair no rodape.
 A pesagem pelo site e um PEDIDO que a balanca executora da unidade registra
 (`docs/web-api.md` 4.9). O app instalavel e `public/manifest.webmanifest` + `public/sw.js`.
 
@@ -64,7 +64,7 @@ estao em `src/components/desk.tsx`.
 | `/nova-entrada`            | operacao e administrador                | Nova entrada (peso digitado, frete, condicao digitada) — vira pedido a balanca           |
 | `/operacoes`               | gestor, operacao, administrador         | Operacoes: abertas, canceladas (`?aba=canceladas`), concluidas (`?aba=concluidas`)       |
 | `/carteira`                | gestor, operacao, administrador         | Carteira: fechamento e reabertura                                                        |
-| `/cadastros/<aba>`         | gestor, operacao, administrador         | Clientes, Produtos (precos), Pagamento, Transporte (motoristas, transportadoras, placas) |
+| `/cadastros/<aba>`         | + comercial                             | Clientes, Produtos (precos), Pagamento, Transporte (motoristas, transportadoras, placas) |
 | `/insights`                | + comercial                             | Insights: KPIs, graficos e tabela dinamica                                               |
 | `/controle-caminhoes`      | + comercial                             | Tempo de patio por caminhao                                                              |
 | `/relatorio-cliente`       | + comercial                             | Relatorio por cliente (simplificado/completo), CSV e impressao                           |

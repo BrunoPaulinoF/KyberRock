@@ -4,8 +4,8 @@
 -- site passa a ver um conjunto FECHADO de telas (o que nao e dele nem aparece):
 --
 --   - `monitoramento` so o painel de vendas em tempo real (tela Monitoramento);
---   - `comercial`     insights, conferencia de faturamento, relatorios, controle de caminhoes e
---                     relatorio por cliente — so consulta;
+--   - `comercial`     insights, conferencia de faturamento, relatorios, controle de caminhoes,
+--                     relatorio por cliente e cadastros — cadastra tudo e muda preco sem senha;
 --   - `gestor`        tudo, menos a Nova entrada;
 --   - `operacao`      tudo; mudar preco SEMPRE pede a senha da pedreira;
 --   - `administrador` tudo, sem senha, mais os logs de suporte (novo).

@@ -18,9 +18,10 @@ describe("telas de cada perfil", () => {
     expect(usesSidebar("monitoramento")).toBe(false);
   });
 
-  it("comercial ve as cinco telas de analise, sem configuracoes", () => {
+  it("comercial ve as cinco telas de analise e os cadastros, sem configuracoes", () => {
     expect([...SCREENS_BY_ROLE.comercial].sort()).toEqual(
       [
+        "cadastros",
         "conferencia-faturamento",
         "controle-caminhoes",
         "insights",
@@ -29,7 +30,7 @@ describe("telas de cada perfil", () => {
       ].sort()
     );
     expect(canSee("comercial", "configuracoes")).toBe(false);
-    expect(canSee("comercial", "cadastros")).toBe(false);
+    expect(canSee("comercial", "nova-entrada")).toBe(false);
   });
 
   it("gestor ve tudo menos a Nova entrada (e os logs)", () => {
@@ -62,8 +63,8 @@ describe("telas de cada perfil", () => {
 });
 
 describe("o que cada perfil faz", () => {
-  it("monitoramento e comercial so consultam", () => {
-    for (const role of ["loader", "monitoramento", "comercial"] as const) {
+  it("carregador e monitoramento so consultam", () => {
+    for (const role of ["loader", "monitoramento"] as const) {
       expect(capabilitiesFor(role)).toMatchObject({
         canEditCustomers: false,
         canEditFleet: false,
@@ -73,6 +74,17 @@ describe("o que cada perfil faz", () => {
         canCreateEntry: false
       });
     }
+  });
+
+  it("comercial cadastra tudo e mexe em preco, mas nao pesa nem fecha", () => {
+    expect(capabilitiesFor("comercial")).toMatchObject({
+      canEditCustomers: true,
+      canEditFleet: true,
+      canEditPrices: true,
+      canManagePrices: false,
+      canOperate: false,
+      canCreateEntry: false
+    });
   });
 
   it("gestor faz tudo menos a Nova entrada", () => {
@@ -96,9 +108,10 @@ describe("o que cada perfil faz", () => {
     }
   });
 
-  it("senha de preco: operacao sempre, administrador nunca, o resto pela marca", () => {
+  it("senha de preco: operacao sempre, administrador e comercial nunca, gestor pela marca", () => {
     expect(requiresPricePasswordFor("operacao", false)).toBe(true);
     expect(requiresPricePasswordFor("administrador", true)).toBe(false);
+    expect(requiresPricePasswordFor("comercial", true)).toBe(false);
     expect(requiresPricePasswordFor("gestor", true)).toBe(true);
     expect(requiresPricePasswordFor("gestor", false)).toBe(false);
   });

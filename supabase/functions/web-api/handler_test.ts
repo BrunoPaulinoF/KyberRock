@@ -173,27 +173,47 @@ describe("web-api: sessao e permissoes", () => {
     expect(result.body.actions).toContain("upsert_customer");
   });
 
-  it("monitoramento e comercial so consultam: nenhuma escrita passa", async () => {
-    for (const role of ["monitoramento", "comercial"] as const) {
-      const h = harness({ role });
-      for (const action of [
-        "upsert_customer",
-        "upsert_vehicle",
-        "upsert_driver",
-        "upsert_carrier",
-        "set_product_default_price",
-        "set_customer_commercial",
-        "settle_wallet",
-        "request_invoice_closing",
-        "save_report_recipient"
-      ]) {
-        const result = await h.call(action, { name: "X", plate: "ABC1D23", id: "x" });
-        expect(result.status, `${role} ${action}`).toBe(403);
-        expect(result.body.error, `${role} ${action}`).toContain("so consulta");
-      }
-      expect(h.store.rows("customers")).toHaveLength(0);
-      expect(h.store.rows("vehicles")).toHaveLength(0);
-      expect((await h.call("me")).status).toBe(200);
+  it("monitoramento so consulta: nenhuma escrita passa", async () => {
+    const h = harness({ role: "monitoramento" });
+    for (const action of [
+      "upsert_customer",
+      "upsert_vehicle",
+      "upsert_driver",
+      "upsert_carrier",
+      "set_product_default_price",
+      "set_customer_commercial",
+      "settle_wallet",
+      "request_invoice_closing",
+      "save_report_recipient"
+    ]) {
+      const result = await h.call(action, { name: "X", plate: "ABC1D23", id: "x" });
+      expect(result.status, action).toBe(403);
+      expect(result.body.error, action).toContain("so consulta");
+    }
+    expect(h.store.rows("customers")).toHaveLength(0);
+    expect(h.store.rows("vehicles")).toHaveLength(0);
+    expect((await h.call("me")).status).toBe(200);
+  });
+
+  it("comercial cadastra tudo e muda preco sem senha, mas nao pesa nem fecha", async () => {
+    const h = harness({ role: "comercial", requiresPricePassword: false });
+    h.store.seed("products", [{ id: "p-1", company_id: COMPANY }]);
+    expect((await h.call("upsert_vehicle", { plate: "ABC1D23" })).status).toBe(200);
+    const customer = await h.call("upsert_customer", { legalName: "X", document: "52998224725" });
+    expect(customer.status).toBe(200);
+    expect(
+      (await h.call("set_customer_commercial", { id: customer.body.id, nfRequired: true })).status
+    ).toBe(200);
+    expect(
+      (await h.call("set_product_default_price", { productId: "p-1", unitPriceCents: 6500 })).status
+    ).toBe(200);
+    for (const action of [
+      "request_operation",
+      "settle_wallet",
+      "request_invoice_closing",
+      "save_report_recipient"
+    ]) {
+      expect((await h.call(action, { id: "x" })).status, action).toBe(403);
     }
   });
 
@@ -228,8 +248,12 @@ describe("web-api: sessao e permissoes", () => {
       }
       if (!READ_ACTIONS.has(action)) {
         expect(actionDenial("monitoramento", action), action).not.toBeNull();
-        expect(actionDenial("comercial", action), action).not.toBeNull();
       }
+      const cadastro =
+        CUSTOMER_ACTIONS.has(action) || FLEET_ACTIONS.has(action) || PRICE_ACTIONS.has(action);
+      expect(actionDenial("comercial", action) === null, action).toBe(
+        cadastro || READ_ACTIONS.has(action)
+      );
     }
   });
 

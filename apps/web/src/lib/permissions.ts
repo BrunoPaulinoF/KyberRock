@@ -8,8 +8,9 @@
  * endereco digitado a mao volta para a tela inicial dele:
  *   - `loader`        carregador: so a fila de carregamento da propria unidade;
  *   - `monitoramento` so o painel de vendas em tempo real, sem configuracoes;
- *   - `comercial`     insights, conferencia de faturamento, relatorios, controle de caminhoes e
- *                     relatorio por cliente — so consulta, sem configuracoes;
+ *   - `comercial`     insights, conferencia de faturamento, relatorios, controle de caminhoes,
+ *                     relatorio por cliente e cadastros — cadastra tudo e muda preco sem
+ *                     senha; sem configuracoes;
  *   - `gestor`        tudo, menos a Nova entrada, com configuracoes;
  *   - `operacao`      tudo, com configuracoes; mudar preco sempre pede a senha da pedreira;
  *   - `administrador` tudo, sem senha, mais os logs de suporte, com configuracoes.
@@ -81,6 +82,7 @@ export const SCREENS_BY_ROLE: Record<Role, readonly Screen[]> = {
   loader: ["carregamento"],
   monitoramento: ["monitoramento"],
   comercial: [
+    "cadastros",
     "insights",
     "controle-caminhoes",
     "relatorio-cliente",
@@ -118,11 +120,11 @@ export function usesSidebar(role: Role): boolean {
 export interface Capabilities {
   /** Carregador: o site mostra so a fila de carregamento. */
   isLoader: boolean;
-  /** Cliente (sobe ao OMIE). */
+  /** Cliente (sobe ao OMIE) e o bloco comercial/credito dele. */
   canEditCustomers: boolean;
   /** Veiculo, motorista e transportadora. */
   canEditFleet: boolean;
-  /** Bloco comercial/credito, carteira, fechamento e destinatarios. */
+  /** Carteira, fechamento e destinatarios (o nome ficou de quando era so do gestor). */
   canManagePrices: boolean;
   /** Preco padrao, especial por cliente e tabelas de preco. */
   canEditPrices: boolean;
@@ -138,14 +140,15 @@ export interface Capabilities {
 }
 
 export function capabilitiesFor(role: Role): Capabilities {
-  const writes = role === "gestor" || role === "operacao" || role === "administrador";
+  const runsTheQuarry = role === "gestor" || role === "operacao" || role === "administrador";
+  const editsCadastro = runsTheQuarry || role === "comercial";
   return {
     isLoader: role === "loader",
-    canEditCustomers: writes,
-    canEditFleet: writes,
-    canManagePrices: writes,
-    canEditPrices: writes,
-    canOperate: writes,
+    canEditCustomers: editsCadastro,
+    canEditFleet: editsCadastro,
+    canManagePrices: runsTheQuarry,
+    canEditPrices: editsCadastro,
+    canOperate: runsTheQuarry,
     canCreateEntry: role === "operacao" || role === "administrador",
     hasSettings: canSee(role, "configuracoes")
   };
@@ -153,11 +156,11 @@ export function capabilitiesFor(role: Role): Capabilities {
 
 /**
  * Quem digita a senha de alteracao de preco da pedreira: a `operacao` sempre, o `administrador`
- * nunca, e os outros perfis conforme a marca do login no painel. Mesma regra de
+ * e o `comercial` nunca, e o gestor conforme a marca do login no painel. Mesma regra de
  * `requiresPricePasswordFor` na `web-api`, que e quem confere a senha.
  */
 export function requiresPricePasswordFor(role: Role, flagged: boolean): boolean {
-  if (role === "administrador") return false;
+  if (role === "administrador" || role === "comercial") return false;
   if (role === "operacao") return true;
   return flagged;
 }

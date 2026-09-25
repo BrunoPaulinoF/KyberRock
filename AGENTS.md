@@ -443,15 +443,17 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   `apps/web/src/lib/permissions.ts`. Tela que nao e do perfil nao aparece no menu, e o endereco
   digitado a mao volta para a tela inicial dele (`homeFor`). Tela nova entra nessa lista e no
   `NAV_SECTIONS` do `Layout.tsx`; rota nova usa o `only("<tela>", ...)` do `App.tsx`.
-- `monitoramento` so ve `/monitoramento`; `comercial` so as cinco telas de analise; `gestor` tudo
-  menos a Nova entrada; `operacao` tudo; `administrador` tudo mais `/suporte` (Logs). So gestor,
-  operacao e administrador tem a engrenagem de configuracoes; os outros tem so o botao Sair.
+- `monitoramento` so ve `/monitoramento`; `comercial` as cinco telas de analise mais Cadastros;
+  `gestor` tudo menos a Nova entrada; `operacao` tudo; `administrador` tudo mais `/suporte` (Logs).
+  So gestor, operacao e administrador tem a engrenagem de configuracoes; os outros tem so o botao
+  Sair.
 - O que cada perfil **grava** mora na `web-api` (`_shared/web-session.ts`, `actionDenial` no
-  `handler.ts`) — esconder a tela nao protege nada. Monitoramento e comercial so consultam. A
-  Nova entrada e conferida dentro do `request_operation` (`canCreateEntry`), porque o tipo do
-  pedido vem no payload.
-- Senha de preco: `requiresPricePasswordFor` — a `operacao` SEMPRE pede, o `administrador` NUNCA,
-  os outros seguem a marca do login no painel. Vale para o preco da pesagem e para todas as
+  `handler.ts`) — esconder a tela nao protege nada. O monitoramento so consulta; o comercial
+  grava todo o cadastro (cliente, bloco comercial, frota e preco), mas nao pesa nem mexe em
+  carteira, fechamento e destinatarios. A Nova entrada e conferida dentro do `request_operation`
+  (`canCreateEntry`), porque o tipo do pedido vem no payload.
+- Senha de preco: `requiresPricePasswordFor` — a `operacao` SEMPRE pede, o `administrador` e o
+  `comercial` NUNCA, o `gestor` segue a marca do login no painel. Vale para o preco da pesagem e para todas as
   acoes de preco do cadastro (`PRICE_ACTIONS`, inclusive remover), como no desktop. A mesma
   regra existe no site (`permissions.ts`, para mostrar o campo) e no painel
   (`pricePasswordRule`, que so mostra a regra nos dois perfis fixos).

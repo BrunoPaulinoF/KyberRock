@@ -190,9 +190,10 @@ describe("perfis de acesso", () => {
     ]);
   });
 
-  it("senha de preco: operacao sempre, administrador nunca, o resto pela marca", () => {
+  it("senha de preco: operacao sempre, administrador e comercial nunca, gestor pela marca", () => {
     expect(pricePasswordRule("operacao")).toBe("always");
     expect(pricePasswordRule("administrador")).toBe("never");
+    expect(pricePasswordRule("comercial")).toBe("never");
     expect(pricePasswordRule("gestor")).toBe("flag");
   });
 

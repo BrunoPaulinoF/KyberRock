@@ -147,19 +147,20 @@ describe("resolveWebSession", () => {
 });
 
 describe("o que cada perfil grava", () => {
-  const writers = ["gestor", "operacao", "administrador"] as const;
-  const readers = ["monitoramento", "comercial"] as const;
+  it("cadastro e preco: todos menos o monitoramento", () => {
+    for (const check of [canEditPrices, canEditCustomers, canEditFleet]) {
+      expect(WEB_ROLES.filter(check), check.name).toEqual([
+        "comercial",
+        "gestor",
+        "operacao",
+        "administrador"
+      ]);
+    }
+  });
 
-  it("gestor, operacao e administrador gravam; monitoramento e comercial so consultam", () => {
-    for (const check of [
-      canManagePrices,
-      canEditPrices,
-      canEditCustomers,
-      canEditFleet,
-      canOperate
-    ]) {
-      for (const role of writers) expect(check(role), `${check.name} ${role}`).toBe(true);
-      for (const role of readers) expect(check(role), `${check.name} ${role}`).toBe(false);
+  it("pesagem, carteira, fechamento e destinatarios: gestor, operacao e administrador", () => {
+    for (const check of [canManagePrices, canOperate]) {
+      expect(WEB_ROLES.filter(check), check.name).toEqual(["gestor", "operacao", "administrador"]);
     }
   });
 
@@ -173,9 +174,10 @@ describe("o que cada perfil grava", () => {
 });
 
 describe("senha de preco", () => {
-  it("operacao sempre pede, administrador nunca, os outros seguem a marca do painel", () => {
+  it("operacao sempre pede, administrador e comercial nunca, o gestor segue a marca", () => {
     expect(requiresPricePasswordFor("operacao", false)).toBe(true);
     expect(requiresPricePasswordFor("administrador", true)).toBe(false);
+    expect(requiresPricePasswordFor("comercial", true)).toBe(false);
     expect(requiresPricePasswordFor("gestor", true)).toBe(true);
     expect(requiresPricePasswordFor("gestor", false)).toBe(false);
   });

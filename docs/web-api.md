@@ -34,14 +34,14 @@ const { data: profile } = await supabase
   .single();
 ```
 
-| `role`          | Telas no site                                                                                                      | Grava pela `web-api`                                     |
-| --------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
-| `monitoramento` | Só **Monitoramento** (vendas em tempo real), sem configurações                                                     | Nada — só consulta (403 em toda escrita)                 |
-| `comercial`     | Insights, Conferência de faturamento, Relatórios, Controle de caminhões e Relatório por cliente, sem configurações | Nada — só consulta                                       |
-| `gestor`        | Todas, **menos a Nova entrada**, com configurações                                                                 | Tudo, menos a Nova entrada (`request_operation` `entry`) |
-| `operacao`      | Todas, com configurações                                                                                           | Tudo; mudar preço **sempre** pede a senha da pedreira    |
-| `administrador` | Todas **+ Logs** (suporte), com configurações                                                                      | Tudo, sem senha nenhuma, **+ `support_overview`**        |
-| `loader`        | Só a fila da unidade (tela `/carregamento`)                                                                        | Nada — a `web-api` responde 403                          |
+| `role`          | Telas no site                                                                                                                     | Grava pela `web-api`                                                                                                                            |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `monitoramento` | Só **Monitoramento** (vendas em tempo real), sem configurações                                                                    | Nada — só consulta (403 em toda escrita)                                                                                                        |
+| `comercial`     | Insights, Conferência de faturamento, Relatórios, Controle de caminhões, Relatório por cliente e **Cadastros**, sem configurações | Todo o cadastro (cliente, bloco comercial, frota e preço), **sem senha de preço**; não pesa, não mexe em carteira, fechamento nem destinatários |
+| `gestor`        | Todas, **menos a Nova entrada**, com configurações                                                                                | Tudo, menos a Nova entrada (`request_operation` `entry`)                                                                                        |
+| `operacao`      | Todas, com configurações                                                                                                          | Tudo; mudar preço **sempre** pede a senha da pedreira                                                                                           |
+| `administrador` | Todas **+ Logs** (suporte), com configurações                                                                                     | Tudo, sem senha nenhuma, **+ `support_overview`**                                                                                               |
+| `loader`        | Só a fila da unidade (tela `/carregamento`)                                                                                       | Nada — a `web-api` responde 403                                                                                                                 |
 
 Para LEITURA (RLS) os cinco perfis do site enxergam o mesmo — a empresa inteira; o que muda é a
 tela e a escrita. As telas de cada perfil estão em `apps/web/src/lib/permissions.ts`
@@ -57,8 +57,9 @@ consulta. `me` devolve `canManagePrices`, `canEditPrices`, `canEditCustomers`, `
 **Senha de preço.** Quem tem `requiresPricePassword` digita a senha de alteração de preço da
 pedreira (`companies.price_change_password`, a mesma da balança) para mudar preço — o da
 pesagem (`request_operation` `update` com `unitPriceCents`) e o do cadastro (todas as ações de
-4.6, inclusive remover). A `operacao` sempre pede, o `administrador` nunca, e os outros perfis
-seguem a marca "Pede senha de preço" do login no painel. Cinco erros em 15 minutos travam o
+4.6, inclusive remover). A `operacao` sempre pede, o `administrador` e o `comercial` nunca
+(negociar preço é o trabalho do comercial), e o `gestor` segue a marca "Pede senha de preço" do
+login no painel. Cinco erros em 15 minutos travam o
 login por 15 minutos (429). Pedreira sem senha definida responde 403 pedindo para definir no
 painel, sem contar como erro.
 
@@ -113,14 +114,14 @@ const { data, error } = await supabase.functions.invoke("web-api", {
 O `supabase-js` manda o token da sessão sozinho. Toda resposta de sucesso é
 `{ ok: true, ...resultado, warnings: string[] }`; erro é `{ error: string }` com o status HTTP:
 
-| Status | Significado                                                                                 |
-| ------ | ------------------------------------------------------------------------------------------- |
-| 400    | Payload inválido — a mensagem é para mostrar ao usuário                                     |
-| 401    | Sem sessão — mandar para o login                                                            |
-| 403    | Perfil sem permissão para a ação (ex.: comercial mexendo em preço) ou senha de preço errada |
-| 404    | Id não encontrado **na empresa do usuário**                                                 |
-| 409    | Conflito: CNPJ/CPF ou placa já cadastrados (a mensagem diz quem)                            |
-| 503    | Banco indisponível — tentar de novo                                                         |
+| Status | Significado                                                                                |
+| ------ | ------------------------------------------------------------------------------------------ |
+| 400    | Payload inválido — a mensagem é para mostrar ao usuário                                    |
+| 401    | Sem sessão — mandar para o login                                                           |
+| 403    | Perfil sem permissão para a ação (ex.: comercial pedindo pesagem) ou senha de preço errada |
+| 404    | Id não encontrado **na empresa do usuário**                                                |
+| 409    | Conflito: CNPJ/CPF ou placa já cadastrados (a mensagem diz quem)                           |
+| 503    | Banco indisponível — tentar de novo                                                        |
 
 `warnings` nunca é erro: o cadastro **foi gravado**. Ele avisa, por exemplo, que o OMIE não
 aceitou agora (a próxima edição tenta de novo) ou que o cliente ficou sem documento.
@@ -134,7 +135,7 @@ Convenções de payload: campos em **camelCase**; campo **ausente** não mexe na
 | ---- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `me` | —       | `user { id, email, name, role, unitId, canManagePrices, canEditPrices, canEditCustomers, canEditFleet, canOperate, canCreateEntry, canSeeSupport, requiresPricePassword }`, `companyId`, `units[]` |
 
-### 4.2 Cliente (gestor, operação e administrador)
+### 4.2 Cliente (comercial, gestor, operação e administrador)
 
 | Ação                  | Payload                                                                                                                                                                                                                                                                                                                  | Devolve                        |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------ |
@@ -150,7 +151,7 @@ vai ao OMIE (o OMIE exige) — vem um `warning`.
 **Não existe excluir cliente pela `web-api`.** Cliente com histórico só inativa; cadastro
 repetido se unifica na balança ("Cadastros repetidos"). É a regra D7 do plano.
 
-### 4.3 Bloco comercial e crédito (gestor, operação e administrador)
+### 4.3 Bloco comercial e crédito (comercial, gestor, operação e administrador)
 
 | Ação                      | Payload                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -159,7 +160,7 @@ repetido se unifica na balança ("Cadastros repetidos"). É a regra D7 do plano.
 Grava só o que veio e carimba `commercial_published_at` — é essa marca que faz as balanças
 adotarem o bloco. `defaultCarrierId` e `defaultPaymentMethodId` precisam existir na empresa.
 
-### 4.4 Transportadora, motorista, veículo (gestor, operação e administrador)
+### 4.4 Transportadora, motorista, veículo (comercial, gestor, operação e administrador)
 
 | Ação                 | Payload                                                                                | Devolve                        |
 | -------------------- | -------------------------------------------------------------------------------------- | ------------------------------ |
@@ -172,7 +173,7 @@ adotarem o bloco. `defaultCarrierId` e `defaultPaymentMethodId` precisam existir
 
 A placa é gravada em maiúsculas, sem espaço nem hífen (`ABC1D23`); placa repetida na empresa é 409. A transportadora com documento também sobe para o OMIE (`push_carrier`).
 
-### 4.5 Vínculos (gestor, operação e administrador)
+### 4.5 Vínculos (comercial, gestor, operação e administrador)
 
 | Ação                   | Payload                               |
 | ---------------------- | ------------------------------------- |
@@ -184,7 +185,7 @@ A placa é gravada em maiúsculas, sem espaço nem hífen (`ABC1D23`); placa rep
 `isActive: false` desfaz o vínculo (a linha fica, inativa). Repetir com `true` reaproveita a
 mesma linha — nunca nasce um par duplicado.
 
-### 4.6 Preços (gestor, operação e administrador — com a senha de preço de quem precisa)
+### 4.6 Preços (comercial, gestor, operação e administrador — com a senha de preço de quem precisa)
 
 | Ação                            | Payload                                                                          | Devolve                |
 | ------------------------------- | -------------------------------------------------------------------------------- | ---------------------- |

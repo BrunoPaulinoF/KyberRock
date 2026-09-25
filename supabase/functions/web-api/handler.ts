@@ -15,9 +15,9 @@
  * - `company_id` vem da SESSAO, nunca do payload. Linha de outra empresa e "nao encontrada".
  * - Toda escrita carimba `updated_at` com a hora da nuvem: e ela que decide o desempate
  *   quando uma balanca principal editou a mesma linha (`cloudRowWins`, `newest`).
- * - Quem grava e so gestor, operacao e administrador (`_shared/web-session.ts`); monitoramento
- *   e comercial recebem 403 e nada e gravado. Mudar preco pede a senha da pedreira a quem tem
- *   `requiresPricePassword` (a operacao sempre).
+ * - O que cada perfil grava esta em `_shared/web-session.ts`: o monitoramento so consulta (403
+ *   e nada e gravado) e o comercial grava so cadastro. Mudar preco pede a senha da pedreira a
+ *   quem tem `requiresPricePassword` (a operacao sempre).
  * - Falha no OMIE nao desfaz o cadastro: a linha fica gravada e a resposta traz `warnings`.
  *   A proxima edicao tenta de novo. O que nao pode e o site "salvar" sem gravar.
  */
@@ -165,11 +165,10 @@ export const WEB_API_ACTIONS = [
 export type WebApiAction = (typeof WEB_API_ACTIONS)[number];
 
 /**
- * Bloco comercial/credito, carteira, fechamento e destinatarios. O nome ficou da epoca em que
- * era so do gestor; hoje e de todo perfil que grava (`canManagePrices`).
+ * Carteira, fechamento e destinatarios: gestor, operacao e administrador (`canManagePrices`). O
+ * nome ficou da epoca em que era so do gestor.
  */
 export const GESTOR_ONLY_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
-  "set_customer_commercial",
   "settle_wallet",
   "reopen_wallet",
   "request_invoice_closing",
@@ -205,10 +204,11 @@ export const OPERATION_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction
   "request_operation"
 ]);
 
-/** Cadastro de cliente e os vinculos que partem dele. */
+/** Cadastro de cliente, o bloco comercial/credito dele e os vinculos que partem dele. */
 export const CUSTOMER_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "upsert_customer",
   "set_customer_active",
+  "set_customer_commercial",
   "set_customer_vehicle",
   "set_customer_carrier"
 ]);
