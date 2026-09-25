@@ -105,13 +105,14 @@ export function buildCompanyCredentials(company: CompanyCredentialSource): Crede
   };
 }
 
-/** Nome de cada perfil de `user_profiles.role` (migracao `202609240001`). */
+/** Nome de cada perfil de `user_profiles.role` (migracoes `202609240001` e `202609260001`). */
 const ACCESS_ROLE_LABELS: Record<string, string> = {
   loader: "Carregador",
   monitoramento: "Monitoramento",
-  operacao: "Operacao",
   comercial: "Comercial",
-  gestor: "Gestor"
+  gestor: "Gestor",
+  operacao: "Operacao",
+  administrador: "Administrador"
 };
 
 export interface UserCredentialSource {

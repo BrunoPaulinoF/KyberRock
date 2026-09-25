@@ -437,6 +437,31 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   depois o preco padrao do produto. Nao ha memoria de preco da ultima venda de proposito:
   mudar o preco no cadastro precisa valer na proxima entrada sem ajuste manual.
 
+## Perfis e telas do KyberRock Web
+
+- Cada perfil ve um conjunto **fechado** de telas: `SCREENS_BY_ROLE` em
+  `apps/web/src/lib/permissions.ts`. Tela que nao e do perfil nao aparece no menu, e o endereco
+  digitado a mao volta para a tela inicial dele (`homeFor`). Tela nova entra nessa lista e no
+  `NAV_SECTIONS` do `Layout.tsx`; rota nova usa o `only("<tela>", ...)` do `App.tsx`.
+- `monitoramento` so ve `/monitoramento`; `comercial` as cinco telas de analise mais Cadastros;
+  `gestor` tudo menos a Nova entrada; `operacao` tudo; `administrador` tudo mais `/suporte` (Logs).
+  So gestor, operacao e administrador tem a engrenagem de configuracoes; os outros tem so o botao
+  Sair.
+- O que cada perfil **grava** mora na `web-api` (`_shared/web-session.ts`, `actionDenial` no
+  `handler.ts`) — esconder a tela nao protege nada. O monitoramento so consulta; o comercial
+  grava todo o cadastro (cliente, bloco comercial, frota e preco), mas nao pesa nem mexe em
+  carteira, fechamento e destinatarios. A Nova entrada e conferida dentro do `request_operation`
+  (`canCreateEntry`), porque o tipo do pedido vem no payload.
+- Senha de preco: `requiresPricePasswordFor` — a `operacao` SEMPRE pede, o `administrador` e o
+  `comercial` NUNCA, o `gestor` segue a marca do login no painel. Vale para o preco da pesagem e para todas as
+  acoes de preco do cadastro (`PRICE_ACTIONS`, inclusive remover), como no desktop. A mesma
+  regra existe no site (`permissions.ts`, para mostrar o campo) e no painel
+  (`pricePasswordRule`, que so mostra a regra nos dois perfis fixos).
+- A tela Monitoramento atualiza pelo aviso `operation_change_pings` (uma linha por empresa,
+  carimbada por gatilho de STATEMENT em `weighing_operations`, migracao `202609260001`), com uma
+  consulta de reserva lenta. Nao troque isso por consulta a cada poucos segundos: o banco ja
+  estourou cota uma vez.
+
 ## Balanca principal de precos
 
 As balancas marcadas como **principais** sao as donas do cadastro de preco; as demais espelham o que

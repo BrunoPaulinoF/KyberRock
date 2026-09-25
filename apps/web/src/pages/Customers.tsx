@@ -140,13 +140,11 @@ export function CustomersSection() {
               user.canEditCustomers && (
                 <span className="row-actions">
                   <IconAction icon="edit" label="Editar cliente" onClick={() => setEditing(c)} />
-                  {user.canManagePrices && (
-                    <IconAction
-                      icon="wallet"
-                      label="Comercial e credito"
-                      onClick={() => setCommercial(c)}
-                    />
-                  )}
+                  <IconAction
+                    icon="wallet"
+                    label="Comercial e credito"
+                    onClick={() => setCommercial(c)}
+                  />
                   <button className="btn small" onClick={() => void toggleActive(c)}>
                     {c.is_active ? "Inativar" : "Reativar"}
                   </button>

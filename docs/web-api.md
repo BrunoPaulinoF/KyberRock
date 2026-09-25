@@ -34,27 +34,37 @@ const { data: profile } = await supabase
   .single();
 ```
 
-| `role`          | Lê                                          | Grava pela `web-api`                                         |
-| --------------- | ------------------------------------------- | ------------------------------------------------------------ |
-| `monitoramento` | Todo o cadastro e as operações da empresa   | Nada — só consulta (403 em toda escrita)                     |
-| `operacao`      | O mesmo                                     | Transportadora, motorista, veículo e os vínculos entre eles  |
-| `comercial`     | O mesmo                                     | Tudo da operação **+ cliente**, vínculos do cliente e preços |
-| `gestor`        | O mesmo                                     | Tudo do comercial **+ bloco comercial/crédito**, carteira…   |
-| `loader`        | Só a fila da unidade (tela `/carregamento`) | Nada — a `web-api` responde 403                              |
+| `role`          | Telas no site                                                                                                                     | Grava pela `web-api`                                                                                                                            |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `monitoramento` | Só **Monitoramento** (vendas em tempo real), sem configurações                                                                    | Nada — só consulta (403 em toda escrita)                                                                                                        |
+| `comercial`     | Insights, Conferência de faturamento, Relatórios, Controle de caminhões, Relatório por cliente e **Cadastros**, sem configurações | Todo o cadastro (cliente, bloco comercial, frota e preço), **sem senha de preço**; não pesa, não mexe em carteira, fechamento nem destinatários |
+| `gestor`        | Todas, **menos a Nova entrada**, com configurações                                                                                | Tudo, menos a Nova entrada (`request_operation` `entry`)                                                                                        |
+| `operacao`      | Todas, com configurações                                                                                                          | Tudo; mudar preço **sempre** pede a senha da pedreira                                                                                           |
+| `administrador` | Todas **+ Logs** (suporte), com configurações                                                                                     | Tudo, sem senha nenhuma, **+ `support_overview`**                                                                                               |
+| `loader`        | Só a fila da unidade (tela `/carregamento`)                                                                                       | Nada — a `web-api` responde 403                                                                                                                 |
 
-`monitoramento` e `operacao` entraram na migração `202609240001_system_access_profiles`. A regra
-de quem grava o quê vive em `_shared/web-session.ts` (`canEditCustomers`, `canEditFleet`,
-`canEditPrices`, `canManagePrices`) e o mapa ação → grupo em `web-api/handler.ts`
-(`actionDenial`); um teste garante que toda ação nova caia em algum grupo, para nenhuma nascer
-liberada a quem só consulta. `me` devolve `canManagePrices`, `canEditPrices`, `canEditCustomers`
-e `canEditFleet`.
+Para LEITURA (RLS) os cinco perfis do site enxergam o mesmo — a empresa inteira; o que muda é a
+tela e a escrita. As telas de cada perfil estão em `apps/web/src/lib/permissions.ts`
+(`SCREENS_BY_ROLE`): a que não é do perfil nem aparece no menu, e o endereço digitado à mão volta
+para a tela inicial dele. `administrador` entrou na migração
+`202609260001_perfis_por_tela_e_aviso_de_vendas`. A regra de quem grava o quê vive em
+`_shared/web-session.ts` (`canWrite`, `canCreateEntry`, `canSeeSupport`,
+`requiresPricePasswordFor`) e o mapa ação → grupo em `web-api/handler.ts` (`actionDenial`); um
+teste garante que toda ação nova caia em algum grupo, para nenhuma nascer liberada a quem só
+consulta. `me` devolve `canManagePrices`, `canEditPrices`, `canEditCustomers`, `canEditFleet`,
+`canOperate`, `canCreateEntry`, `canSeeSupport` e `requiresPricePassword`.
 
-O carregador e o comercial entram pelo KyberRock Portal (`apps/loader-web`) e agora também pelo
-KyberRock Web, que tem as mesmas telas deles (a fila do carregador, feita para celular e tablet,
-e o relatório de vendas do comercial). Por enquanto os dois ficam no ar; o portal deixa de
-receber carregador e comercial depois dos testes. O comercial passou a mexer em **preço**
-(antes só do gestor), porque negociar preço é o trabalho dele; o bloco comercial/crédito, a
-carteira, o fechamento e os destinatários continuam só do gestor.
+**Senha de preço.** Quem tem `requiresPricePassword` digita a senha de alteração de preço da
+pedreira (`companies.price_change_password`, a mesma da balança) para mudar preço — o da
+pesagem (`request_operation` `update` com `unitPriceCents`) e o do cadastro (todas as ações de
+4.6, inclusive remover). A `operacao` sempre pede, o `administrador` e o `comercial` nunca
+(negociar preço é o trabalho do comercial), e o `gestor` segue a marca "Pede senha de preço" do
+login no painel. Cinco erros em 15 minutos travam o
+login por 15 minutos (429). Pedreira sem senha definida responde 403 pedindo para definir no
+painel, sem contar como erro.
+
+O carregador e o comercial ainda entram também pelo KyberRock Portal (`apps/loader-web`); o
+portal deixa de receber os dois depois dos testes.
 
 Quem cria usuários é o painel `/admin` da Kybernan: aba **Acessos do sistema** (um login por
 computador cadastrado, coluna "Login do site", gravado com `user_profiles.device_id`) ou
@@ -104,14 +114,14 @@ const { data, error } = await supabase.functions.invoke("web-api", {
 O `supabase-js` manda o token da sessão sozinho. Toda resposta de sucesso é
 `{ ok: true, ...resultado, warnings: string[] }`; erro é `{ error: string }` com o status HTTP:
 
-| Status | Significado                                                        |
-| ------ | ------------------------------------------------------------------ |
-| 400    | Payload inválido — a mensagem é para mostrar ao usuário            |
-| 401    | Sem sessão — mandar para o login                                   |
-| 403    | Perfil sem permissão para a ação (ex.: comercial mexendo em preço) |
-| 404    | Id não encontrado **na empresa do usuário**                        |
-| 409    | Conflito: CNPJ/CPF ou placa já cadastrados (a mensagem diz quem)   |
-| 503    | Banco indisponível — tentar de novo                                |
+| Status | Significado                                                                                |
+| ------ | ------------------------------------------------------------------------------------------ |
+| 400    | Payload inválido — a mensagem é para mostrar ao usuário                                    |
+| 401    | Sem sessão — mandar para o login                                                           |
+| 403    | Perfil sem permissão para a ação (ex.: comercial pedindo pesagem) ou senha de preço errada |
+| 404    | Id não encontrado **na empresa do usuário**                                                |
+| 409    | Conflito: CNPJ/CPF ou placa já cadastrados (a mensagem diz quem)                           |
+| 503    | Banco indisponível — tentar de novo                                                        |
 
 `warnings` nunca é erro: o cadastro **foi gravado**. Ele avisa, por exemplo, que o OMIE não
 aceitou agora (a próxima edição tenta de novo) ou que o cliente ficou sem documento.
@@ -121,11 +131,11 @@ Convenções de payload: campos em **camelCase**; campo **ausente** não mexe na
 
 ### 4.1 Sessão
 
-| Ação | Payload | Devolve                                                                           |
-| ---- | ------- | --------------------------------------------------------------------------------- |
-| `me` | —       | `user { id, email, name, role, unitId, canManagePrices }`, `companyId`, `units[]` |
+| Ação | Payload | Devolve                                                                                                                                                                                            |
+| ---- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `me` | —       | `user { id, email, name, role, unitId, canManagePrices, canEditPrices, canEditCustomers, canEditFleet, canOperate, canCreateEntry, canSeeSupport, requiresPricePassword }`, `companyId`, `units[]` |
 
-### 4.2 Cliente (comercial e gestor)
+### 4.2 Cliente (comercial, gestor, operação e administrador)
 
 | Ação                  | Payload                                                                                                                                                                                                                                                                                                                  | Devolve                        |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------ |
@@ -141,7 +151,7 @@ vai ao OMIE (o OMIE exige) — vem um `warning`.
 **Não existe excluir cliente pela `web-api`.** Cliente com histórico só inativa; cadastro
 repetido se unifica na balança ("Cadastros repetidos"). É a regra D7 do plano.
 
-### 4.3 Bloco comercial e crédito (só gestor)
+### 4.3 Bloco comercial e crédito (comercial, gestor, operação e administrador)
 
 | Ação                      | Payload                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -150,7 +160,7 @@ repetido se unifica na balança ("Cadastros repetidos"). É a regra D7 do plano.
 Grava só o que veio e carimba `commercial_published_at` — é essa marca que faz as balanças
 adotarem o bloco. `defaultCarrierId` e `defaultPaymentMethodId` precisam existir na empresa.
 
-### 4.4 Transportadora, motorista, veículo (operação, comercial e gestor)
+### 4.4 Transportadora, motorista, veículo (comercial, gestor, operação e administrador)
 
 | Ação                 | Payload                                                                                | Devolve                        |
 | -------------------- | -------------------------------------------------------------------------------------- | ------------------------------ |
@@ -163,7 +173,7 @@ adotarem o bloco. `defaultCarrierId` e `defaultPaymentMethodId` precisam existir
 
 A placa é gravada em maiúsculas, sem espaço nem hífen (`ABC1D23`); placa repetida na empresa é 409. A transportadora com documento também sobe para o OMIE (`push_carrier`).
 
-### 4.5 Vínculos (cliente: comercial e gestor; frota: também a operação)
+### 4.5 Vínculos (comercial, gestor, operação e administrador)
 
 | Ação                   | Payload                               |
 | ---------------------- | ------------------------------------- |
@@ -175,7 +185,7 @@ A placa é gravada em maiúsculas, sem espaço nem hífen (`ABC1D23`); placa rep
 `isActive: false` desfaz o vínculo (a linha fica, inativa). Repetir com `true` reaproveita a
 mesma linha — nunca nasce um par duplicado.
 
-### 4.6 Preços (comercial e gestor)
+### 4.6 Preços (comercial, gestor, operação e administrador — com a senha de preço de quem precisa)
 
 | Ação                            | Payload                                                                          | Devolve                |
 | ------------------------------- | -------------------------------------------------------------------------------- | ---------------------- |
@@ -188,12 +198,15 @@ mesma linha — nunca nasce um par duplicado.
 | `remove_price_table_item`       | `priceTableId`, `productId`                                                      | `removed`              |
 | `set_customer_price_table`      | `customerId`, `priceTableId` (`null` desvincula)                                 | `id`, `priceTableId`   |
 
+Toda ação desta seção aceita `pricePassword` — obrigatório para quem tem `requiresPricePassword`
+(ver seção 2). A senha é conferida e descartada; nunca é gravada.
+
 Regra de ouro do preço: **uma linha viva por chave natural** (produto; cliente+produto;
 tabela+produto). A `web-api` atualiza a linha que existe em vez de criar outra — era o segundo id
 para o mesmo par que fazia duas balanças brigarem. Remover é exclusão lógica (`deleted_at`),
 que chega às balanças como tombstone.
 
-### 4.7 Carteira (só gestor)
+### 4.7 Carteira (gestor, operação e administrador)
 
 | Ação            | Payload                                                                  | Devolve    |
 | --------------- | ------------------------------------------------------------------------ | ---------- |
@@ -206,7 +219,7 @@ e não pode estar cancelada; venda quitada pelo adiantamento não reabre. A leit
 direta: `weighing_operations` com `payment_method_id` de uma forma `is_wallet` — em aberto é
 `wallet_settled_at is null`; `omie_advance_settle_cents` é quanto o adiantamento já cobriu.
 
-### 4.8 Fechamento de faturas (só gestor)
+### 4.8 Fechamento de faturas (gestor, operação e administrador)
 
 | Ação                      | Payload          | Devolve                                                         |
 | ------------------------- | ---------------- | --------------------------------------------------------------- |
@@ -229,7 +242,7 @@ Para montar a tela do fechamento: `weighing_operations` (período pela data de *
 balança projeta essas três colunas a partir da versão que traz a migração `202609220004`.
 Se a balança da unidade estiver desligada, o pedido fica `pending` até ela ligar.
 
-### 4.9 Pesagem pelo site (operação e gestor)
+### 4.9 Pesagem pelo site (operação e administrador; o gestor tudo menos a entrada)
 
 | Ação                | Payload                                          | Devolve                                              |
 | ------------------- | ------------------------------------------------ | ---------------------------------------------------- |
@@ -284,7 +297,7 @@ pelas mesmas funções dos botões do desktop e devolve o resultado.
   ex.: "Ja existe uma operacao aberta para a placa ABC-1234."), `result` (número, pesos,
   totais) e `print_status`/`print_message` ("pesagem registrada, mas o cupom não imprimiu").
 
-### 4.10 Destinatários do fechamento diário (só gestor)
+### 4.10 Destinatários do fechamento diário (gestor, operação e administrador)
 
 | Ação                      | Payload                                                                                                                                                                    | Devolve                    |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
@@ -313,7 +326,25 @@ até 15 min), se é a principal de preços, se executa os pedidos do site e o re
 fila (`health`: pendentes, parados, mais antigo, último erro). Só leitura; fica de fora o
 dispositivo virtual do site (`web-…`), a balança inativa e — sempre — o token.
 
-### 4.12 O que ainda não está na `web-api` (próximas versões)
+### 4.12 Logs de suporte (só administrador)
+
+| Ação               | Payload | Devolve                                                                                                                                                                                |
+| ------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `support_overview` | —       | `generatedAt`, `units[]`, `devices[]`, `latestAppVersion`, `operationRequests[]`, `billingRequests[]`, `omieProblems[]`, `reportDispatches[]`, `pricePasswordFailures[]`, `webUsers[]` |
+
+A tela **Logs** do administrador (suporte da Kybernan): tudo o que ajuda a achar a falha sem ir
+até a pedreira, só leitura e com janela e teto em cada lista. `devices` são todas as balanças da
+empresa (de todas as unidades, inclusive as inativas) no mesmo formato de `unit_devices`, e
+`latestAppVersion` é a maior versão entre as ativas, para marcar as desatualizadas. Os pedidos
+de pesagem do site são os dos últimos 7 dias (até 300) e os de fechamento, os de 30 dias (até
+200). `omieProblems` são as pesagens dos últimos 30 dias com `sync_error`, com faturamento no
+OMIE parado por falha (`failed`, `cadastro_incompleto`, `service_order_failed`,
+`missing_in_omie`) ou fechadas há mais de 2 h e ainda sem subir (`closed_local`,
+`pending_cloud`, `pending_omie`) — cada pesagem uma vez só. Entram também os relatórios
+automáticos (diário e financeiro) de 30 dias, as senhas de preço erradas de 7 dias e os logins
+da empresa (sem senha, claro).
+
+### 4.13 O que ainda não está na `web-api` (próximas versões)
 
 - Regra de frete do cliente (`customer_freight_rules.rule_json`) — o formato do JSON é o da
   balança (`apps/desktop/src/services/customer-freight-rules.ts`) e precisa ser documentado

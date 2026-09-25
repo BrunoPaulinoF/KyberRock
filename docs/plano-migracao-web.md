@@ -117,23 +117,26 @@ dia em que o site novo absorver o carregador.
 
 ### D5 — Perfis de acesso no site
 
-`user_profiles.role` aceita `loader`, `monitoramento`, `operacao`, `comercial` e `gestor`
-(migrações `202609220003` e `202609240001`).
+`user_profiles.role` aceita `loader`, `monitoramento`, `comercial`, `gestor`, `operacao` e
+`administrador` (migrações `202609220003`, `202609240001` e `202609260001`). Em 26/09 cada perfil
+passou a ter um conjunto **fechado de telas** — o que não é dele nem aparece:
 
-| Perfil          | Vê                                                             | Edita                                            |
-| --------------- | -------------------------------------------------------------- | ------------------------------------------------ |
-| `carregador`    | Só a fila de carregamento da unidade (`/carregamento` no site) | Marca carga concluída                            |
-| `monitoramento` | Todo o cadastro + relatórios                                   | Nada                                             |
-| `operacao`      | Todo o cadastro + relatórios                                   | Veículos, motoristas, transportadoras            |
-| `comercial`     | Todo o cadastro + relatórios                                   | Tudo da operação + clientes                      |
-| `gestor`        | Tudo do comercial + fechamento, carteira, crédito              | Tudo do comercial + **preços** e bloco comercial |
+| Perfil          | Vê                                                                                                         | Edita                                             |
+| --------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `carregador`    | Só a fila de carregamento da unidade (`/carregamento` no site)                                             | Marca carga concluída                             |
+| `monitoramento` | Só a tela Monitoramento (vendas em tempo real), sem configurações                                          | Nada                                              |
+| `comercial`     | Insights, conferência de faturamento, relatórios, controle de caminhões, relatório por cliente e cadastros | Todo o cadastro e preço, sem senha de preço       |
+| `gestor`        | Tudo, menos a Nova entrada, com configurações                                                              | Tudo, menos a Nova entrada                        |
+| `operacao`      | Tudo, com configurações                                                                                    | Tudo; mudar preço sempre pede a senha da pedreira |
+| `administrador` | Tudo + Logs de suporte, com configurações                                                                  | Tudo, sem senha                                   |
 
 O painel `/admin` cria os logins em **Acessos do sistema** (antiga aba "Balanças"): cada
 computador cadastrado ganha um login do site com e-mail, senha e perfil
 (`user_profiles.device_id`), e é esse login que a pessoa usa quando o desktop dela sair do ar na
 Etapa 4. Login sem computador (carregador, gestor de fora) segue em **Carregadores** e
-**Usuários do site**. O carregador entra no mesmo site e cai direto na fila. Alterar preço pelo
-site é só do gestor; a senha de alteração de preço da balança continua valendo na balança.
+**Usuários do site**. O carregador entra no mesmo site e cai direto na fila. A senha de alteração
+de preço da pedreira vale na balança e no site (sempre para a `operacao`; para o `gestor`,
+conforme a marca do login no painel; nunca para o `administrador` nem para o `comercial`).
 
 ### D6 — Hospedagem — DECIDIDO: Hostinger, com deploy automático do GitHub
 

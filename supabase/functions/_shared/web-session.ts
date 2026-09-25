@@ -8,26 +8,39 @@
  * `company_id` daqui, nunca do payload: um usuario de uma pedreira nao grava cadastro em
  * outra, mesmo que mande outro id.
  *
- * Quatro perfis entram (migracoes `202609220003` e `202609240001`), do que menos pode ao que
- * mais pode: `monitoramento` (so consulta), `operacao` (consulta + veiculo, motorista e
- * transportadora), `comercial` (+ clientes) e `gestor` (+ precos, bloco comercial, carteira e
- * fechamento). O carregador (`loader`) tem login valido mas nao tem o que fazer aqui — a tela
- * dele le a fila direto, por RLS —, e cai em 403, nao em 401, que o site trataria como "faca
- * login de novo".
+ * Cinco perfis entram (migracoes `202609240001` e `202609260001`). Cada um ve um conjunto
+ * fechado de telas (`apps/web/src/lib/permissions.ts`); aqui mora o que cada um GRAVA:
+ *
+ *   - `monitoramento` so consulta (a tela dele e o painel de vendas em tempo real);
+ *   - `comercial`     todo o CADASTRO (cliente, bloco comercial, frota e preco), sem senha de
+ *                     preco; nao pesa, nao mexe em carteira, fechamento nem destinatarios;
+ *   - `gestor`        tudo, menos a Nova entrada (fecha, altera, cancela e reimprime);
+ *   - `operacao`      tudo, e mudanca de preco SEMPRE pede a senha da pedreira;
+ *   - `administrador` tudo, sem senha nenhuma, mais os logs de suporte.
+ *
+ * O carregador (`loader`) tem login valido mas nao tem o que fazer aqui — a tela dele le a fila
+ * direto, por RLS —, e cai em 403, nao em 401, que o site trataria como "faca login de novo".
  */
 
 import type { PostgrestLikeError } from "./db-read-error.ts";
 import { isReadUnavailable } from "./db-read-error.ts";
 
-export const WEB_ROLES = ["monitoramento", "operacao", "comercial", "gestor"] as const;
+export const WEB_ROLES = [
+  "monitoramento",
+  "comercial",
+  "gestor",
+  "operacao",
+  "administrador"
+] as const;
 export type WebRole = (typeof WEB_ROLES)[number];
 
 /** Nome do perfil para mensagem ao usuario. */
 export const WEB_ROLE_LABELS: Record<WebRole, string> = {
   monitoramento: "Monitoramento",
-  operacao: "Operacao",
   comercial: "Comercial",
-  gestor: "Gestor"
+  gestor: "Gestor",
+  operacao: "Operacao",
+  administrador: "Administrador"
 };
 
 export interface WebSession {
@@ -37,7 +50,10 @@ export interface WebSession {
   role: WebRole;
   companyId: string;
   unitId: string;
-  /** Pede a senha de preco da pedreira para mudar preco de pesagem (migracao `202609250001`). */
+  /**
+   * Pede a senha de preco da pedreira para mudar preco (da pesagem e do cadastro). Ja resolvido
+   * pelo perfil: ver `requiresPricePasswordFor`.
+   */
   requiresPricePassword: boolean;
 }
 
@@ -74,41 +90,66 @@ export function isWebRole(value: unknown): value is WebRole {
   return typeof value === "string" && (WEB_ROLES as readonly string[]).includes(value);
 }
 
+/** Todo perfil menos o monitoramento grava alguma coisa pelo site. */
+export function canWrite(role: WebRole): boolean {
+  return role !== "monitoramento";
+}
+
+/** Gestor, operacao e administrador: pesagem, carteira, fechamento e destinatarios. */
+function runsTheQuarry(role: WebRole): boolean {
+  return role === "gestor" || role === "operacao" || role === "administrador";
+}
+
 /**
- * So o gestor mexe no bloco comercial/credito do cliente, na carteira, no fechamento e nos
- * destinatarios dos relatorios.
+ * Carteira, fechamento de faturas e destinatarios dos relatorios. O nome ficou da epoca em que
+ * isso era so do gestor.
  */
 export function canManagePrices(role: WebRole): boolean {
-  return role === "gestor";
+  return runsTheQuarry(role);
 }
 
-/**
- * Preco (padrao, especial por cliente e tabelas de preco): comercial e gestor. O comercial
- * passou a entrar pelo KyberRock Web em vez do portal, e negociar preco e o trabalho dele.
- */
+/** Preco (padrao, especial por cliente e tabelas de preco): tambem o comercial. */
 export function canEditPrices(role: WebRole): boolean {
-  return role === "comercial" || role === "gestor";
+  return canWrite(role);
 }
 
-/** Cadastro de cliente (sobe ao OMIE): comercial e gestor. */
+/** Cadastro de cliente (sobe ao OMIE) e o bloco comercial/credito dele: tambem o comercial. */
 export function canEditCustomers(role: WebRole): boolean {
-  return role === "comercial" || role === "gestor";
+  return canWrite(role);
 }
 
 /**
- * Pesagem pelo site (entrada, saida, alterar, cancelar, reimprimir): operacao e gestor. Quem
- * executa e a balanca da unidade — o site so pede (`operation_requests`).
+ * Pesagem que ja existe pelo site (saida, alterar, cancelar, reimprimir). Quem executa e a
+ * balanca da unidade — o site so pede (`operation_requests`).
  */
 export function canOperate(role: WebRole): boolean {
-  return role === "operacao" || role === "gestor";
+  return runsTheQuarry(role);
+}
+
+/** Nova entrada pelo site: o gestor faz tudo MENOS isto. */
+export function canCreateEntry(role: WebRole): boolean {
+  return role === "operacao" || role === "administrador";
+}
+
+/** Veiculo, motorista e transportadora. */
+export function canEditFleet(role: WebRole): boolean {
+  return canWrite(role);
+}
+
+/** Logs de suporte (saude das balancas, pedidos que falharam, envios parados): administrador. */
+export function canSeeSupport(role: WebRole): boolean {
+  return role === "administrador";
 }
 
 /**
- * Veiculo, motorista e transportadora: todo perfil que nao e so consulta. E o cadastro rapido
- * que a balanca ja faz na hora (caminhao chegou sem cadastro), por isso a `operacao` tambem.
+ * Quem digita a senha de alteracao de preco da pedreira: a `operacao` sempre, o `administrador`
+ * e o `comercial` nunca (negociar preco e o trabalho do comercial), e o gestor conforme a marca do
+ * login no painel (`requires_price_password`).
  */
-export function canEditFleet(role: WebRole): boolean {
-  return role !== "monitoramento";
+export function requiresPricePasswordFor(role: WebRole, flagged: boolean): boolean {
+  if (role === "administrador" || role === "comercial") return false;
+  if (role === "operacao") return true;
+  return flagged;
 }
 
 type ProfileRow = {
@@ -169,7 +210,10 @@ export async function resolveWebSession(
       role: row.role,
       companyId: row.company_id,
       unitId: row.unit_id,
-      requiresPricePassword: row.requires_price_password === true
+      requiresPricePassword: requiresPricePasswordFor(
+        row.role,
+        row.requires_price_password === true
+      )
     }
   };
 }

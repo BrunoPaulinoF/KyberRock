@@ -6,6 +6,15 @@ import { handleWebApiRequest, type Row, type RowFilter, type WebApiStore } from 
 const COMPANY = "company-1";
 const NOW = "2026-09-22T15:00:00.000Z";
 
+/** Mesma leitura de filtro do `index.ts`: igualdade, `in`, `gte` e `lte`. */
+function matchesFilter(row: Row, filter: RowFilter): boolean {
+  const value = row[filter.column];
+  if (filter.op === "in") return (filter.value as unknown[]).includes(value);
+  if (filter.op === "gte") return value != null && String(value) >= String(filter.value);
+  if (filter.op === "lte") return value != null && String(value) <= String(filter.value);
+  return filter.value === null ? value == null : value === filter.value;
+}
+
 class MemoryStore implements WebApiStore {
   readonly tables = new Map<string, Row[]>();
   seed(table: string, rows: Row[]): void {
@@ -28,7 +37,7 @@ class MemoryStore implements WebApiStore {
       (row) =>
         (options?.anyCompany || row.company_id === companyId) &&
         (!options?.live || !row.deleted_at) &&
-        filters.every((f) => (f.value === null ? row[f.column] == null : row[f.column] === f.value))
+        filters.every((f) => matchesFilter(row, f))
     );
   }
   async insertRow(table: string, row: Row): Promise<void> {

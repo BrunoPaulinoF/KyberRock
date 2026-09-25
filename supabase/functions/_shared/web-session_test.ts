@@ -2,11 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   bearerToken,
+  canCreateEntry,
   canEditCustomers,
   canEditFleet,
   canEditPrices,
   canManagePrices,
+  canOperate,
+  canSeeSupport,
+  requiresPricePasswordFor,
   resolveWebSession,
+  WEB_ROLES,
   type WebSessionClient
 } from "./web-session";
 
@@ -106,8 +111,8 @@ describe("resolveWebSession", () => {
     expect(result).toMatchObject({ ok: false, status: 403 });
   });
 
-  it("monitoramento e operacao entram no site", async () => {
-    for (const role of ["monitoramento", "operacao"]) {
+  it("monitoramento, operacao e administrador entram no site", async () => {
+    for (const role of ["monitoramento", "operacao", "administrador"]) {
       const result = await resolveWebSession(
         clientWith({ profile: { ...PERFIL_COMERCIAL, role } }),
         "Bearer token"
@@ -141,34 +146,56 @@ describe("resolveWebSession", () => {
   });
 });
 
-describe("canManagePrices", () => {
-  it("so o gestor mexe no bloco comercial, carteira e fechamento", () => {
-    expect(canManagePrices("gestor")).toBe(true);
-    expect(canManagePrices("comercial")).toBe(false);
+describe("o que cada perfil grava", () => {
+  it("cadastro e preco: todos menos o monitoramento", () => {
+    for (const check of [canEditPrices, canEditCustomers, canEditFleet]) {
+      expect(WEB_ROLES.filter(check), check.name).toEqual([
+        "comercial",
+        "gestor",
+        "operacao",
+        "administrador"
+      ]);
+    }
+  });
+
+  it("pesagem, carteira, fechamento e destinatarios: gestor, operacao e administrador", () => {
+    for (const check of [canManagePrices, canOperate]) {
+      expect(WEB_ROLES.filter(check), check.name).toEqual(["gestor", "operacao", "administrador"]);
+    }
+  });
+
+  it("Nova entrada: operacao e administrador, nao o gestor", () => {
+    expect(WEB_ROLES.filter(canCreateEntry)).toEqual(["operacao", "administrador"]);
+  });
+
+  it("logs de suporte: so o administrador", () => {
+    expect(WEB_ROLES.filter(canSeeSupport)).toEqual(["administrador"]);
   });
 });
 
-describe("canEditPrices", () => {
-  it("preco: comercial e gestor", () => {
-    expect(canEditPrices("gestor")).toBe(true);
-    expect(canEditPrices("comercial")).toBe(true);
-    expect(canEditPrices("operacao")).toBe(false);
-    expect(canEditPrices("monitoramento")).toBe(false);
-  });
-});
-
-describe("o que cada perfil edita", () => {
-  it("cliente: comercial e gestor", () => {
-    expect(canEditCustomers("gestor")).toBe(true);
-    expect(canEditCustomers("comercial")).toBe(true);
-    expect(canEditCustomers("operacao")).toBe(false);
-    expect(canEditCustomers("monitoramento")).toBe(false);
+describe("senha de preco", () => {
+  it("operacao sempre pede, administrador e comercial nunca, o gestor segue a marca", () => {
+    expect(requiresPricePasswordFor("operacao", false)).toBe(true);
+    expect(requiresPricePasswordFor("administrador", true)).toBe(false);
+    expect(requiresPricePasswordFor("comercial", true)).toBe(false);
+    expect(requiresPricePasswordFor("gestor", true)).toBe(true);
+    expect(requiresPricePasswordFor("gestor", false)).toBe(false);
   });
 
-  it("frota: todos menos o monitoramento", () => {
-    expect(canEditFleet("gestor")).toBe(true);
-    expect(canEditFleet("comercial")).toBe(true);
-    expect(canEditFleet("operacao")).toBe(true);
-    expect(canEditFleet("monitoramento")).toBe(false);
+  it("a sessao ja chega resolvida pelo perfil", async () => {
+    const operacao = await resolveWebSession(
+      clientWith({
+        profile: { ...PERFIL_COMERCIAL, role: "operacao", requires_price_password: false }
+      }),
+      "Bearer token"
+    );
+    expect(operacao).toMatchObject({ ok: true, session: { requiresPricePassword: true } });
+    const admin = await resolveWebSession(
+      clientWith({
+        profile: { ...PERFIL_COMERCIAL, role: "administrador", requires_price_password: true }
+      }),
+      "Bearer token"
+    );
+    expect(admin).toMatchObject({ ok: true, session: { requiresPricePassword: false } });
   });
 });

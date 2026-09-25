@@ -447,7 +447,7 @@ export function Operations() {
 
   // F2 abre a Nova entrada, como no desktop.
   useEffect(() => {
-    if (!user.canOperate) return;
+    if (!user.canCreateEntry) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "F2") {
         event.preventDefault();
@@ -456,7 +456,7 @@ export function Operations() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [user.canOperate, navigate]);
+  }, [user.canCreateEntry, navigate]);
 
   const pendingOps = useMemo(
     () =>

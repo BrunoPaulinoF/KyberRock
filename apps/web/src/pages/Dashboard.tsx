@@ -157,7 +157,7 @@ export function Dashboard() {
           </h1>
         </div>
         <div className="dash-hero-actions">
-          {user.canOperate && (
+          {user.canCreateEntry && (
             <button type="button" className="btn primary" onClick={() => navigate("/nova-entrada")}>
               <PlusCircle size={16} />
               Nova entrada

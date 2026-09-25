@@ -1,0 +1,629 @@
+/* Logs (suporte) — so o que as pecas comuns (desk.tsx, ui.tsx, styles.css) nao tem. */
+
+.support {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* ---------- cabecalho ---------- */
+.support-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px 20px;
+  flex-wrap: wrap;
+}
+.support-head-text {
+  min-width: 0;
+  flex: 1 1 360px;
+}
+.support-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.support-title {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.15;
+  color: var(--kr-text-strong);
+}
+.support-lead {
+  margin: 4px 0 0;
+  max-width: 680px;
+  color: var(--kr-muted);
+  font-size: 13px;
+}
+.support-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.support-generated {
+  color: var(--kr-muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.support-head-actions .icon-action {
+  width: 36px;
+  height: 36px;
+}
+.support-refresh.loading svg,
+.support-loading svg {
+  animation: support-spin 0.9s linear infinite;
+}
+@keyframes support-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- cartoes de saude ---------- */
+.support-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.support-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface-soft);
+  color: var(--kr-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.support-card:hover {
+  border-color: var(--kr-input-border);
+}
+.support-card.current {
+  box-shadow: inset 0 0 0 1px var(--kr-input-border);
+}
+/* rotulo e detalhe quebram em ate duas linhas: com o menu lateral aberto num notebook o
+   cartao fica estreito, e "BALANCAS DESATUALI..." nao diz nada */
+.support-card-label,
+.support-card-detail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.support-card-label {
+  color: var(--kr-muted);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.support-card-label .support-dot {
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+.support-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--kr-input-border);
+}
+.support-card-value {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.2;
+  color: var(--kr-text-strong);
+}
+.support-card-detail {
+  color: var(--kr-muted);
+  font-size: 12px;
+}
+.support-card.ok .support-dot {
+  background: var(--kr-success);
+}
+.support-card.warning {
+  background: var(--kr-warning-soft);
+  border-color: var(--kr-warning-border);
+}
+.support-card.warning .support-dot {
+  background: var(--kr-warning);
+}
+.support-card.warning .support-card-value {
+  color: var(--kr-warning);
+}
+.support-card.danger {
+  background: var(--kr-danger-soft);
+  border-color: var(--kr-danger-border);
+}
+.support-card.danger .support-dot {
+  background: var(--kr-danger);
+}
+.support-card.danger .support-card-value {
+  color: var(--kr-danger);
+}
+/* No escuro o "soft" do tema e quase o fundo da cor: oito cartoes assim viram um painel de
+   alarme. Aqui so um veu da cor, com a borda e o numero dizendo a gravidade. */
+:root[data-theme="dark"] .support-card.warning {
+  background: rgba(251, 191, 36, 0.07);
+}
+:root[data-theme="dark"] .support-card.danger {
+  background: rgba(248, 113, 113, 0.08);
+}
+.support-card.warning.current {
+  box-shadow: inset 0 0 0 1px var(--kr-warning);
+}
+.support-card.danger.current {
+  box-shadow: inset 0 0 0 1px var(--kr-danger);
+}
+
+/* ---------- abas (o `.tabs` do site, com contador e rolando de lado no celular) ---------- */
+.support-tabs {
+  position: relative;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  border-bottom: none;
+  box-shadow: inset 0 -1px 0 var(--kr-border);
+  scrollbar-width: thin;
+}
+.support-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  margin-bottom: 0;
+  padding: 8px 11px;
+  white-space: nowrap;
+}
+.support-tab svg {
+  flex-shrink: 0;
+}
+.support-tab-count {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface-soft);
+  color: var(--kr-muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+}
+.support-tab-count.warning {
+  background: var(--kr-warning-soft);
+  border-color: var(--kr-warning-border);
+  color: var(--kr-warning);
+}
+.support-tab-count.danger {
+  background: var(--kr-danger-soft);
+  border-color: var(--kr-danger-border);
+  color: var(--kr-danger);
+}
+
+/* ---------- conteudo ---------- */
+.support-body {
+  min-width: 0;
+}
+.support-body > .section-head:first-child,
+.support-browser-log > .section-head:first-child {
+  margin-top: 2px;
+}
+.support-body .section-head p {
+  max-width: 760px;
+}
+.support-body .search-bar {
+  flex-wrap: wrap;
+}
+.support-body .search-bar .search-box {
+  min-width: 220px;
+}
+.support-filter {
+  min-width: 190px;
+  height: 36px;
+}
+.support-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 36px 16px;
+  color: var(--kr-muted);
+  font-weight: 600;
+}
+.support-clear {
+  align-items: center;
+}
+.support-clear svg {
+  color: var(--kr-success);
+}
+.support-ok {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--kr-success-border);
+  background: var(--kr-success-soft);
+  color: var(--kr-success);
+  font-size: 13px;
+  font-weight: 600;
+}
+.support-ok svg {
+  flex-shrink: 0;
+}
+
+/* linhas com problema: faixa na borda (e fundo, quando e grave) */
+.support table.data tr.support-row-danger td {
+  background: var(--kr-danger-surface);
+}
+.support table.data tr.support-row-danger td:first-child {
+  box-shadow: inset 3px 0 0 var(--kr-danger);
+}
+.support table.data tr.support-row-warning td:first-child {
+  box-shadow: inset 3px 0 0 var(--kr-warning);
+}
+.support table.data tr.support-row-danger:hover td {
+  background: var(--kr-danger-soft);
+}
+.support table.data td {
+  vertical-align: top;
+}
+.support table.data .cell-sub {
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.support table.data .cell-sub.support-wrap {
+  white-space: normal;
+}
+.support table.data td .plate-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  font-size: 12px;
+  color: var(--kr-plate-text);
+}
+.support-customer {
+  min-width: 150px;
+  max-width: 220px;
+}
+.support table.data .pill {
+  vertical-align: middle;
+}
+
+/* pecas de celula */
+.support-mono {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+}
+.support-id {
+  color: var(--kr-muted);
+}
+.support-dim {
+  color: var(--kr-muted);
+}
+.support-dim-text {
+  color: var(--kr-muted);
+  font-size: 12px;
+}
+.support-warn-text {
+  color: var(--kr-warning);
+  font-weight: 700;
+}
+.support-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.support-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.support-hint {
+  min-width: 170px;
+  max-width: 240px;
+  margin-top: 3px;
+}
+/* texto de mensagem: quebra linha em vez de alargar a tabela */
+.support-text {
+  display: inline-block;
+  min-width: 160px;
+  max-width: 300px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* texto comprido que abre */
+.support-long {
+  min-width: 190px;
+  max-width: 300px;
+}
+.support-long.wide {
+  max-width: none;
+}
+.support-long-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.support-long-toggle:hover .support-long-preview {
+  color: var(--kr-text-strong);
+}
+.support-long-preview {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  min-width: 0;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.support-long.open .support-long-preview {
+  color: var(--kr-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.support-long-chevron {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--kr-muted);
+  transition: transform 140ms ease;
+}
+.support-long.open .support-long-chevron {
+  transform: rotate(90deg);
+}
+.support-pre {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-width: 560px;
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--kr-border);
+  border-radius: 8px;
+  background: var(--kr-surface-soft);
+  color: var(--kr-text-strong);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.support-long.wide .support-pre {
+  max-width: none;
+}
+
+/* resumo por motivo (Envios OMIE) */
+.support-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.support-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface-soft);
+  color: var(--kr-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+.support-chip.warning {
+  background: var(--kr-warning-soft);
+  border-color: var(--kr-warning-border);
+  color: var(--kr-warning);
+}
+.support-chip.danger {
+  background: var(--kr-danger-soft);
+  border-color: var(--kr-danger-border);
+  color: var(--kr-danger);
+}
+
+/* ---------- aba Navegador ---------- */
+.support-browser {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(280px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.support-browser-log {
+  min-width: 0;
+}
+.support-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--kr-border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.support-log-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--kr-border);
+}
+.support-log-item:last-child {
+  border-bottom: none;
+}
+.support-log-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  color: var(--kr-muted);
+  font-size: 12px;
+}
+.support-log-message {
+  color: var(--kr-text-strong);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.support-diag {
+  min-width: 0;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--kr-border);
+  border-radius: 14px;
+  background: var(--kr-surface-soft);
+}
+.support-diag h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.support-diag dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 12px;
+}
+.support-diag dt {
+  color: var(--kr-muted);
+  font-weight: 700;
+}
+.support-diag dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--kr-text-strong);
+  overflow-wrap: anywhere;
+}
+.support-ua {
+  color: var(--kr-muted) !important;
+  font-size: 11px;
+}
+.support-probe {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--kr-border);
+}
+.support-probe ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.support-probe li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.support-probe-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+  text-align: right;
+}
+.support-probe-error {
+  color: var(--kr-danger);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.support-probe p {
+  margin: 0;
+}
+
+.support-report-text {
+  width: 100%;
+  min-height: 320px;
+  resize: vertical;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* ---------- telas menores ---------- */
+@media (max-width: 1100px) {
+  .support-browser {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 900px) {
+  .support-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 520px) {
+  .support-head-actions {
+    width: 100%;
+  }
+  .support-head-actions .btn {
+    flex: 1 1 auto;
+  }
+  .support-generated {
+    flex: 1 1 auto;
+  }
+  .support-card {
+    padding: 8px 10px;
+  }
+  .support-card-value {
+    font-size: 19px;
+  }
+  .support .section-head h2 {
+    font-size: 16px;
+  }
+  .support-body .search-bar .search-box {
+    min-width: 0;
+    flex-basis: 100%;
+  }
+  .support-filter {
+    flex: 1 1 auto;
+  }
+  .support-diag dl {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .support-diag dd {
+    margin-bottom: 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .support-refresh.loading svg,
+  .support-loading svg,
+  .support-long-chevron {
+    animation: none;
+    transition: none;
+  }
+}

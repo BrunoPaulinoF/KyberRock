@@ -124,12 +124,12 @@ export function NewEntry() {
     }));
   }, [customerId, productId, freightRules.data, withFreight]);
 
-  if (!user.canOperate) {
+  if (!user.canCreateEntry) {
     return (
       <DeskPanel>
         <EmptyState
           title="Seu acesso nao registra pesagens"
-          hint="Nova entrada e para os perfis Operacao e Gestor."
+          hint="Nova entrada e para os perfis Operacao e Administrador."
         />
       </DeskPanel>
     );

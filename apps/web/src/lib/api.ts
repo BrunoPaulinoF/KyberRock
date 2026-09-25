@@ -6,6 +6,7 @@
  * com o status HTTP — a mensagem ja vem pronta para mostrar ao usuario.
  */
 
+import { recordError } from "./error-log";
 import { supabase } from "./supabase";
 
 export type WebApiAction =
@@ -39,7 +40,8 @@ export type WebApiAction =
   | "list_report_recipients"
   | "save_report_recipient"
   | "delete_report_recipient"
-  | "unit_devices";
+  | "unit_devices"
+  | "support_overview";
 
 export class WebApiError extends Error {
   constructor(
@@ -73,14 +75,31 @@ export async function callWebApi(
         .clone()
         .json()
         .catch(() => null)) as { error?: string } | null;
-      throw new WebApiError(context.status, body?.error ?? error.message);
+      throw logged(action, new WebApiError(context.status, body?.error ?? error.message));
     }
-    throw new WebApiError(0, error.message);
+    throw logged(action, new WebApiError(0, error.message));
   }
   if (!data || (data as { error?: string }).error) {
-    throw new WebApiError(400, (data as { error?: string })?.error ?? "Resposta vazia da web-api.");
+    throw logged(
+      action,
+      new WebApiError(400, (data as { error?: string })?.error ?? "Resposta vazia da web-api.")
+    );
   }
   return data as WebApiResult;
+}
+
+/**
+ * Anota a falha no diario do navegador (tela Logs do administrador). So a acao e o status: o
+ * payload fica de fora, que pode ter senha de preco.
+ */
+function logged(action: WebApiAction, error: WebApiError): WebApiError {
+  recordError({
+    source: "api",
+    message: error.message,
+    detail: `HTTP ${error.status} · acao ${action}`,
+    path: typeof location === "undefined" ? undefined : location.pathname
+  });
+  return error;
 }
 
 /** Sessao 401 = mandar para o login; o resto e mensagem para a tela. */
