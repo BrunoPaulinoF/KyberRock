@@ -907,3 +907,92 @@ describe("web-api: logs de suporte", () => {
     ]);
   });
 });
+
+describe("web-api: condicao de pagamento digitada no cliente", () => {
+  it("cria a condicao a partir do texto e a usa como padrao do cliente", async () => {
+    const h = harness({ role: "comercial" });
+    const result = await h.call("upsert_customer", {
+      legalName: "Polymix Ltda",
+      defaultPaymentCondition: "7 14 21"
+    });
+    expect(result.status).toBe(200);
+    const [term] = h.store.rows("payment_terms");
+    expect(term).toMatchObject({
+      company_id: COMPANY,
+      omie_code: null,
+      is_active: true,
+      rules_json: { raw: "7/14/21", installmentCount: 3 }
+    });
+    expect(h.store.rows("customers")[0].default_payment_term_id).toBe(term.id);
+  });
+
+  it("reusa a condicao que ja existe com a mesma regra", async () => {
+    const h = harness();
+    h.store.seed("payment_terms", [
+      {
+        id: "pt-30",
+        company_id: COMPANY,
+        name: "30 dias",
+        rules_json: { raw: "30", installments: [{ number: 1, dueDays: 30 }] }
+      }
+    ]);
+    await h.call("upsert_customer", { legalName: "X", defaultPaymentCondition: "30" });
+    expect(h.store.rows("payment_terms")).toHaveLength(1);
+    expect(h.store.rows("customers")[0].default_payment_term_id).toBe("pt-30");
+  });
+
+  it("texto invalido e 400 e nada e gravado; vazio limpa o padrao", async () => {
+    const h = harness();
+    const bad = await h.call("upsert_customer", {
+      legalName: "X",
+      defaultPaymentCondition: "quando der"
+    });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toContain("invalida");
+    expect(h.store.rows("customers")).toHaveLength(0);
+
+    h.store.seed("customers", [{ id: "c-1", company_id: COMPANY, default_payment_term_id: "x" }]);
+    const cleared = await h.call("upsert_customer", { id: "c-1", defaultPaymentCondition: "" });
+    expect(cleared.body).toMatchObject({ ok: true });
+    expect(h.store.rows("customers")[0].default_payment_term_id).toBeNull();
+  });
+});
+
+describe("web-api: buscar CNPJ", () => {
+  it("devolve os dados da Receita para quem cadastra cliente", async () => {
+    const response = await handleWebApiRequest(
+      new Request("https://example.supabase.co/functions/v1/web-api", {
+        method: "POST",
+        body: JSON.stringify({ action: "lookup_cnpj", payload: { cnpj: "11222333000181" } })
+      }),
+      {
+        store: new MemoryStore(),
+        resolveSession: async () => ({ ok: true, session: session("comercial") }),
+        omie: { push: async () => ({ omieCustomerId: 1 }) },
+        cnpjLookup: async (cnpj) => ({
+          found: true,
+          cnpj,
+          legalName: "POLYMIX LTDA",
+          tradeName: null,
+          email: null,
+          phone: null,
+          zipcode: null,
+          addressStreet: null,
+          addressNumber: null,
+          addressComplement: null,
+          neighborhood: null,
+          city: "IBIUNA",
+          state: "SP",
+          status: "ATIVA"
+        })
+      }
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ found: true, legalName: "POLYMIX LTDA" });
+  });
+
+  it("monitoramento nao usa", async () => {
+    const result = await harness({ role: "monitoramento" }).call("lookup_cnpj", { cnpj: "x" });
+    expect(result.status).toBe(403);
+  });
+});

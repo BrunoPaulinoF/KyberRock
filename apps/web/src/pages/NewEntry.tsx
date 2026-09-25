@@ -2,6 +2,7 @@ import { BadgeDollarSign, Scale } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { ConditionLegend } from "../components/ConditionLegend";
 import { DeskPanel, EmptyState } from "../components/desk";
 import { Picker } from "../components/Picker";
 import { Alert, Field, useToast } from "../components/ui";
@@ -9,12 +10,10 @@ import { useUser } from "../lib/auth";
 import { getFreightModalityInfo } from "../lib/desktop/freight";
 import {
   INITIAL_ENTRY_FREIGHT,
-  PAYMENT_CONDITION_FORMATS,
   applyFreightGroup,
   applyFreightInvoiceChoice,
   conditionTextOf,
   customerDefaultModality,
-  describePaymentCondition,
   entryFreightPayload,
   freightGoesToCustomerInvoice,
   freightInvoiceChoice,
@@ -235,7 +234,6 @@ export function NewEntry() {
   const options = catalog.data;
   const modalityInfo = getFreightModalityInfo(freight.freightModality);
   const invoiceChoice = freightInvoiceChoice(freight.freightModality);
-  const conditionPreview = describePaymentCondition(conditionText);
 
   return (
     <form
@@ -314,26 +312,7 @@ export function NewEntry() {
               onChange={(event) => setConditionText(event.target.value)}
             />
           </Field>
-          <div className="condition-legend">
-            <p className={`condition-preview is-${conditionPreview.status}`}>
-              {conditionPreview.message}
-            </p>
-            <details>
-              <summary>Como escrever</summary>
-              <table>
-                <tbody>
-                  {PAYMENT_CONDITION_FORMATS.map((format) => (
-                    <tr key={format.example}>
-                      <td>
-                        <code>{format.example}</code>
-                      </td>
-                      <td>{format.meaning}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </details>
-          </div>
+          <ConditionLegend value={conditionText} />
         </article>
 
         <article className="entry-card">

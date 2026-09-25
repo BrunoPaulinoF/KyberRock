@@ -1,7 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
-import { documentKind, normalizeDocument } from "../_shared/document.ts";
+import { CnpjLookupError, lookupCnpj } from "../_shared/cnpj-lookup.ts";
 
 type DeviceRow = {
   id: string;
@@ -10,78 +10,6 @@ type DeviceRow = {
   token_hash: string;
   is_active: boolean;
 };
-
-// Resposta normalizada devolvida ao desktop. Campos ausentes vem como null.
-type CnpjLookupResult = {
-  found: boolean;
-  cnpj: string;
-  legalName: string | null;
-  tradeName: string | null;
-  email: string | null;
-  phone: string | null;
-  zipcode: string | null;
-  addressStreet: string | null;
-  addressNumber: string | null;
-  addressComplement: string | null;
-  neighborhood: string | null;
-  city: string | null;
-  state: string | null;
-  status: string | null;
-};
-
-// Campos da BrasilAPI (/cnpj/v1) que consumimos. Fonte: Receita Federal.
-type BrasilApiCnpj = {
-  razao_social?: string | null;
-  nome_fantasia?: string | null;
-  cep?: string | number | null;
-  logradouro?: string | null;
-  numero?: string | number | null;
-  complemento?: string | null;
-  bairro?: string | null;
-  municipio?: string | null;
-  uf?: string | null;
-  ddd_telefone_1?: string | null;
-  email?: string | null;
-  descricao_situacao_cadastral?: string | null;
-};
-
-function onlyDigits(value: string): string {
-  return value.replace(/\D/g, "");
-}
-
-function clean(value: string | number | null | undefined): string | null {
-  if (value === null || value === undefined) return null;
-  const text = String(value).trim();
-  return text.length > 0 ? text : null;
-}
-
-/** "1130611000" -> "(11) 30611000"; devolve o texto original quando nao casa. */
-function formatPhone(raw: string | null | undefined): string | null {
-  const digits = onlyDigits(String(raw ?? ""));
-  if (digits.length < 10) return clean(raw ?? null);
-  const ddd = digits.slice(0, 2);
-  const rest = digits.slice(2);
-  return `(${ddd}) ${rest}`;
-}
-
-function mapBrasilApi(cnpj: string, data: BrasilApiCnpj): CnpjLookupResult {
-  return {
-    found: true,
-    cnpj,
-    legalName: clean(data.razao_social),
-    tradeName: clean(data.nome_fantasia) ?? clean(data.razao_social),
-    email: clean(data.email),
-    phone: formatPhone(data.ddd_telefone_1),
-    zipcode: clean(onlyDigits(String(data.cep ?? ""))),
-    addressStreet: clean(data.logradouro),
-    addressNumber: clean(data.numero),
-    addressComplement: clean(data.complemento),
-    neighborhood: clean(data.bairro),
-    city: clean(data.municipio),
-    state: clean(data.uf),
-    status: clean(data.descricao_situacao_cadastral)
-  };
-}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -98,8 +26,6 @@ Deno.serve(async (req) => {
 
   const deviceId = String(body.deviceId ?? "");
   const deviceToken = String(body.deviceToken ?? "");
-  const cnpj = normalizeDocument(String(body.cnpj ?? ""));
-
   const { data: device, error: deviceError } = await supabase
     .from("device_registrations")
     .select("id, company_id, unit_id, token_hash, is_active")
@@ -117,33 +43,14 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Dispositivo bloqueado" }, 401);
   }
 
-  // 14 posicoes, numerico ou alfanumerico (IN RFB 2.229/2024). A consulta segue com o
-  // documento como ele foi digitado: quem nao existe na base volta como "nao encontrado",
-  // e isso e melhor do que recusar aqui um CNPJ novo que o operador tem no papel.
-  if (documentKind(cnpj) !== "cnpj") {
-    return jsonResponse({ error: "CNPJ invalido. Informe as 14 posicoes." }, 400);
-  }
-
   try {
-    const response = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`, {
-      headers: { Accept: "application/json" }
-    });
-    if (response.status === 404) {
-      return jsonResponse({
-        found: false,
-        cnpj,
-        message: "CNPJ nao encontrado na base da Receita."
-      });
-    }
-    if (!response.ok) {
-      return jsonResponse(
-        { error: `Consulta CNPJ indisponivel (HTTP ${response.status}). Tente novamente.` },
-        502
-      );
-    }
-    const data = (await response.json()) as BrasilApiCnpj;
-    return jsonResponse(mapBrasilApi(cnpj, data) satisfies CnpjLookupResult);
+    const result = await lookupCnpj(String(body.cnpj ?? ""));
+    return jsonResponse(
+      result.found ? result : { ...result, message: "CNPJ nao encontrado na base da Receita." }
+    );
   } catch (error) {
+    if (error instanceof CnpjLookupError)
+      return jsonResponse({ error: error.message }, error.status);
     const message = error instanceof Error ? error.message : "Falha na consulta do CNPJ.";
     return jsonResponse({ error: message }, 502);
   }
