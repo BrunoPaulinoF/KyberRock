@@ -39,14 +39,14 @@ Perfis (`src/lib/permissions.ts`; o que cada um grava espelha `_shared/web-sessi
 perfil ve um conjunto FECHADO de telas (`SCREENS_BY_ROLE`) — o resto nem aparece no menu, e o
 endereco digitado a mao volta para a tela inicial dele:
 
-| Perfil          | Telas                                                                                                                                       | Configuracoes |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| `monitoramento` | So `/monitoramento` (vendas em tempo real, tela cheia)                                                                                      | Nao           |
-| `comercial`     | Insights, conferencia de faturamento, relatorios, controle de caminhoes, relatorio por cliente e cadastros (cadastra tudo, preco sem senha) | Nao           |
-| `gestor`        | Todas, menos a Nova entrada                                                                                                                 | Sim           |
-| `operacao`      | Todas; mudar preco sempre pede a senha da pedreira                                                                                          | Sim           |
-| `administrador` | Todas + `/suporte` (Logs), sem pedir senha                                                                                                  | Sim           |
-| `loader`        | So `/carregamento` (celular e tablet, instalavel como app)                                                                                  | —             |
+| Perfil          | Telas                                                                                                                                                                   | Configuracoes |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `monitoramento` | So `/monitoramento` (vendas em tempo real, tela cheia)                                                                                                                  | Nao           |
+| `comercial`     | Comercial (tela do portal), insights, conferencia de faturamento, relatorios, controle de caminhoes, relatorio por cliente e cadastros (cadastra tudo, preco sem senha) | Nao           |
+| `gestor`        | Todas, menos a Nova entrada                                                                                                                                             | Sim           |
+| `operacao`      | Todas; mudar preco sempre pede a senha da pedreira                                                                                                                      | Sim           |
+| `administrador` | Todas + `/suporte` (Logs), sem pedir senha                                                                                                                              | Sim           |
+| `loader`        | So `/carregamento` (celular e tablet, instalavel como app)                                                                                                              | —             |
 
 Monitoramento so consulta. Quem nao tem configuracoes ve so o botao Sair no rodape.
 A pesagem pelo site e um PEDIDO que a balanca executora da unidade registra
@@ -56,24 +56,25 @@ As telas seguem a disposicao do KyberRock Desktop (mesmo menu, mesmos nomes, aba
 botoes quadrados de acao): quem opera a balanca nao deve estranhar o site. As pecas comuns
 estao em `src/components/desk.tsx`.
 
-| Rota                       | Quem                                    | O que faz                                                                                |
-| -------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `/carregamento`            | carregador                              | Fila de carregamento da unidade: concluir e devolver carga                               |
-| `/monitoramento`           | monitoramento, gestor, operacao, admin. | Vendas em tempo real (tela cheia, estilo KDS): numeros, graficos, ultimas vendas, patio  |
-| `/painel`                  | gestor, operacao, administrador         | Painel: resumo do dia, balanca executora, pendencias do OMIE, ultimas pesagens           |
-| `/nova-entrada`            | operacao e administrador                | Nova entrada (peso digitado, frete, condicao digitada) — vira pedido a balanca           |
-| `/operacoes`               | gestor, operacao, administrador         | Operacoes: abertas, canceladas (`?aba=canceladas`), concluidas (`?aba=concluidas`)       |
-| `/carteira`                | gestor, operacao, administrador         | Carteira: fechamento e reabertura                                                        |
-| `/cadastros/<aba>`         | + comercial                             | Clientes, Produtos (precos), Pagamento, Transporte (motoristas, transportadoras, placas) |
-| `/insights`                | + comercial                             | Insights: KPIs, graficos e tabela dinamica                                               |
-| `/controle-caminhoes`      | + comercial                             | Tempo de patio por caminhao                                                              |
-| `/relatorio-cliente`       | + comercial                             | Relatorio por cliente (simplificado/completo), PDF e Excel iguais aos do desktop         |
-| `/conferencia-faturamento` | + comercial                             | Conferencia de faturamento pesagem a pesagem                                             |
-| `/fechamento`              | gestor, operacao, administrador         | Fechamento de faturas (pedido de faturamento; a balanca executa)                         |
-| `/relatorios`              | + comercial (destinatarios: nao)        | Fechamento diario, periodo, tabela dinamica, mensal e destinatarios                      |
-| `/documentacao`            | gestor, operacao, administrador         | Central de ajuda (copia da do desktop, guardada por teste)                               |
-| `/suporte`                 | administrador                           | Logs: saude das balancas, pedidos que falharam, envios OMIE, relatorios, navegador       |
-| `/configuracoes/<aba>`     | gestor, operacao, administrador         | Balanca, Impressao e Cloud: estado das balancas da unidade, cupons do site, fila OMIE    |
+| Rota                       | Quem                                    | O que faz                                                                                            |
+| -------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `/carregamento`            | carregador                              | Fila de carregamento da unidade: concluir e devolver carga                                           |
+| `/monitoramento`           | monitoramento, gestor, operacao, admin. | Vendas em tempo real (tela cheia, estilo KDS): numeros, graficos, ultimas vendas, patio              |
+| `/painel`                  | gestor, operacao, administrador         | Painel: resumo do dia, balanca executora, pendencias do OMIE, ultimas pesagens                       |
+| `/nova-entrada`            | operacao e administrador                | Nova entrada (peso digitado, frete, condicao digitada) — vira pedido a balanca                       |
+| `/operacoes`               | gestor, operacao, administrador         | Operacoes: abertas, canceladas (`?aba=canceladas`), concluidas (`?aba=concluidas`)                   |
+| `/carteira`                | gestor, operacao, administrador         | Carteira: fechamento e reabertura                                                                    |
+| `/cadastros/<aba>`         | + comercial                             | Clientes, Produtos (precos), Pagamento, Transporte (motoristas, transportadoras, placas)             |
+| `/comercial`               | comercial, gestor, operacao, admin.     | Relatorio de vendas do KyberRock Portal: visoes, filtros, imprimir e CSV (tela inicial do comercial) |
+| `/insights`                | + comercial                             | Insights: KPIs, graficos e tabela dinamica                                                           |
+| `/controle-caminhoes`      | + comercial                             | Tempo de patio por caminhao                                                                          |
+| `/relatorio-cliente`       | + comercial                             | Relatorio por cliente (simplificado/completo), PDF e Excel iguais aos do desktop                     |
+| `/conferencia-faturamento` | + comercial                             | Conferencia de faturamento pesagem a pesagem                                                         |
+| `/fechamento`              | gestor, operacao, administrador         | Fechamento de faturas (pedido de faturamento; a balanca executa)                                     |
+| `/relatorios`              | + comercial (destinatarios: nao)        | Fechamento diario, periodo, tabela dinamica, mensal e destinatarios                                  |
+| `/documentacao`            | gestor, operacao, administrador         | Central de ajuda (copia da do desktop, guardada por teste)                                           |
+| `/suporte`                 | administrador                           | Logs: saude das balancas, pedidos que falharam, envios OMIE, relatorios, navegador                   |
+| `/configuracoes/<aba>`     | gestor, operacao, administrador         | Balanca, Impressao e Cloud: estado das balancas da unidade, cupons do site, fila OMIE                |
 
 **Relatorios iguais aos do desktop.** Insights, Controle de caminhoes, Relatorio por cliente,
 Conferencia de faturamento e Fechamento de faturas geram o MESMO documento que o KyberRock Desktop:

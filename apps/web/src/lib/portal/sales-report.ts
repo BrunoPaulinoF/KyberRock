@@ -1,0 +1,282 @@
+/**
+ * Agregacao pura do relatorio de vendas do Comercial: visoes por produto,
+ * por cliente, cliente x produto e por dia, a partir das operacoes de pesagem
+ * fechadas projetadas no Supabase (`weighing_operations`).
+ */
+
+/** Mesmo criterio de "venda concluida" do daily-report-email. */
+export const SALES_CLOSED_STATUSES = [
+  "closed_local",
+  "pending_cloud",
+  "pending_omie",
+  "synced",
+  "sync_error"
+] as const;
+
+/** Offset fixo de Brasilia usado nos relatorios (igual a _shared/report-schedule). */
+export const REPORT_UTC_OFFSET_MINUTES = -180;
+
+export type SalesGroupBy = "product" | "customer" | "customer_product" | "day";
+
+/**
+ * Tipo de frete da operacao (`weighing_operations.freight_type`), espelhado do desktop
+ * (`apps/desktop/src/services/freight.ts`). A balanca grava quatro situacoes em dois
+ * grupos; o comercial filtra pelo grupo: "com frete" (a operacao tem valor de frete,
+ * saia ele na nota ou fique so no sistema) e "sem frete".
+ */
+export type SalesFreightType = "cif" | "none";
+
+/** Valor usado no filtro quando nenhuma modalidade esta selecionada. */
+export const SALES_FREIGHT_ALL = "all" as const;
+
+export type SalesFreightFilter = SalesFreightType | typeof SALES_FREIGHT_ALL;
+
+export const SALES_FREIGHT_TYPES: ReadonlyArray<{ value: SalesFreightType; label: string }> = [
+  { value: "cif", label: "Com frete" },
+  { value: "none", label: "Sem frete" }
+];
+
+/**
+ * Situacoes gravadas que significam "a operacao tem valor de frete": valor na nota
+ * (`fob`), valor so no sistema (`cif`) e o transporte proprio da Pedreira do catalogo
+ * antigo (`own_sender`). `third_party` (so o transportador na nota), `own_recipient`
+ * (cliente busca) e `none` ficam em "sem frete".
+ */
+const FREIGHT_TYPES_WITH_FREIGHT = ["cif", "fob", "own_sender"];
+
+/** Grupo de frete da linha. */
+export function normalizeFreightType(value: unknown): SalesFreightType {
+  return typeof value === "string" && FREIGHT_TYPES_WITH_FREIGHT.includes(value) ? "cif" : "none";
+}
+
+export function freightTypeLabel(value: unknown): string {
+  const key = normalizeFreightType(value);
+  return SALES_FREIGHT_TYPES.find((type) => type.value === key)?.label ?? "Sem frete";
+}
+
+export function isSalesFreightFilter(value: unknown): value is SalesFreightFilter {
+  return value === SALES_FREIGHT_ALL || SALES_FREIGHT_TYPES.some((type) => type.value === value);
+}
+
+export interface SalesOperationRow {
+  customer_id?: string | null;
+  customer_name?: string | null;
+  product_id?: string | null;
+  product_description?: string | null;
+  freight_type?: string | null;
+  net_weight_kg?: number | string | null;
+  product_total_cents?: number | string | null;
+  freight_total_cents?: number | string | null;
+  total_cents?: number | string | null;
+  created_at: string;
+  /**
+   * Fechamento da pesagem (saida da balanca). E esta a data da venda — a mesma que o
+   * KyberRock manda ao OMIE como emissao do pedido —, e nao `created_at`, que e a
+   * ENTRADA do caminhao. Nulo nas operacoes antigas, gravadas antes da coluna.
+   */
+  closed_at?: string | null;
+}
+
+/** O dia a que a venda pertence: o do fechamento, com a entrada como reserva. */
+export function saleDayOf(row: SalesOperationRow): string | null {
+  return toReportDay(row.closed_at || row.created_at);
+}
+
+/** `all` passa tudo; caso contrario compara com a modalidade normalizada da linha. */
+export function matchesFreightFilter(row: SalesOperationRow, filter: SalesFreightFilter): boolean {
+  if (filter === SALES_FREIGHT_ALL) return true;
+  return normalizeFreightType(row.freight_type) === filter;
+}
+
+export interface SalesReportLine {
+  key: string;
+  day: string | null;
+  customerName: string | null;
+  productDescription: string | null;
+  operations: number;
+  netWeightKg: number;
+  productTotalCents: number;
+  freightTotalCents: number;
+  totalCents: number;
+  avgPriceCentsPerTon: number | null;
+}
+
+export interface SalesReportTotals {
+  operations: number;
+  netWeightKg: number;
+  productTotalCents: number;
+  freightTotalCents: number;
+  totalCents: number;
+  avgPriceCentsPerTon: number | null;
+}
+
+export interface SalesReportResult {
+  lines: SalesReportLine[];
+  totals: SalesReportTotals;
+}
+
+/** Dia (AAAA-MM-DD) no fuso do relatorio, a partir do timestamp UTC da nuvem. */
+export function toReportDay(
+  createdAt: string,
+  offsetMinutes: number = REPORT_UTC_OFFSET_MINUTES
+): string | null {
+  const parsed = Date.parse(createdAt);
+  if (!Number.isFinite(parsed)) return null;
+  return new Date(parsed + offsetMinutes * 60_000).toISOString().slice(0, 10);
+}
+
+function toNumber(value: number | string | null | undefined): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function groupKey(row: SalesOperationRow, groupBy: SalesGroupBy): string {
+  const customer = row.customer_id || row.customer_name || "sem-cliente";
+  const product = row.product_id || row.product_description || "sem-produto";
+  if (groupBy === "product") return `p:${product}`;
+  if (groupBy === "customer") return `c:${customer}`;
+  if (groupBy === "customer_product") return `cp:${customer}|${product}`;
+  return `d:${saleDayOf(row) ?? "sem-data"}`;
+}
+
+export function aggregateSalesReport(
+  rows: SalesOperationRow[],
+  groupBy: SalesGroupBy
+): SalesReportResult {
+  const byKey = new Map<string, SalesReportLine>();
+
+  for (const row of rows) {
+    const key = groupKey(row, groupBy);
+    let line = byKey.get(key);
+    if (!line) {
+      line = {
+        key,
+        day: groupBy === "day" ? saleDayOf(row) : null,
+        customerName:
+          groupBy === "customer" || groupBy === "customer_product"
+            ? row.customer_name || "Cliente nao informado"
+            : null,
+        productDescription:
+          groupBy === "product" || groupBy === "customer_product"
+            ? row.product_description || "Produto nao informado"
+            : null,
+        operations: 0,
+        netWeightKg: 0,
+        productTotalCents: 0,
+        freightTotalCents: 0,
+        totalCents: 0,
+        avgPriceCentsPerTon: null
+      };
+      byKey.set(key, line);
+    }
+    line.operations += 1;
+    line.netWeightKg += toNumber(row.net_weight_kg);
+    line.productTotalCents += Math.round(toNumber(row.product_total_cents));
+    line.freightTotalCents += Math.round(toNumber(row.freight_total_cents));
+    line.totalCents += Math.round(toNumber(row.total_cents));
+  }
+
+  const lines = Array.from(byKey.values());
+  for (const line of lines) {
+    line.avgPriceCentsPerTon = averagePriceCentsPerTon(line.productTotalCents, line.netWeightKg);
+  }
+
+  if (groupBy === "day") {
+    lines.sort((a, b) => (a.day ?? "").localeCompare(b.day ?? ""));
+  } else {
+    lines.sort((a, b) => b.totalCents - a.totalCents);
+  }
+
+  const totals: SalesReportTotals = {
+    operations: 0,
+    netWeightKg: 0,
+    productTotalCents: 0,
+    freightTotalCents: 0,
+    totalCents: 0,
+    avgPriceCentsPerTon: null
+  };
+  for (const line of lines) {
+    totals.operations += line.operations;
+    totals.netWeightKg += line.netWeightKg;
+    totals.productTotalCents += line.productTotalCents;
+    totals.freightTotalCents += line.freightTotalCents;
+    totals.totalCents += line.totalCents;
+  }
+  totals.avgPriceCentsPerTon = averagePriceCentsPerTon(
+    totals.productTotalCents,
+    totals.netWeightKg
+  );
+
+  return { lines, totals };
+}
+
+function averagePriceCentsPerTon(productTotalCents: number, netWeightKg: number): number | null {
+  if (netWeightKg <= 0) return null;
+  return Math.round(productTotalCents / (netWeightKg / 1000));
+}
+
+const CSV_GROUP_LABEL: Record<SalesGroupBy, string[]> = {
+  product: ["Produto"],
+  customer: ["Cliente"],
+  customer_product: ["Cliente", "Produto"],
+  day: ["Dia"]
+};
+
+function csvNumber(value: number, decimals = 2): string {
+  return value.toFixed(decimals).replace(".", ",");
+}
+
+function csvCell(value: string): string {
+  return /[";\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
+}
+
+/** CSV pt-BR (separador ';', decimal ',') pronto para abrir no Excel. */
+export function buildSalesReportCsv(result: SalesReportResult, groupBy: SalesGroupBy): string {
+  const header = [
+    ...CSV_GROUP_LABEL[groupBy],
+    "Operacoes",
+    "Peso liquido (t)",
+    "Preco medio (R$/t)",
+    "Valor produto (R$)",
+    "Frete (R$)",
+    "Total (R$)"
+  ];
+
+  const rows = result.lines.map((line) => {
+    const groupCells =
+      groupBy === "customer_product"
+        ? [line.customerName ?? "", line.productDescription ?? ""]
+        : groupBy === "customer"
+          ? [line.customerName ?? ""]
+          : groupBy === "product"
+            ? [line.productDescription ?? ""]
+            : [line.day ?? ""];
+    return [
+      ...groupCells.map(csvCell),
+      String(line.operations),
+      csvNumber(line.netWeightKg / 1000, 3),
+      line.avgPriceCentsPerTon === null ? "" : csvNumber(line.avgPriceCentsPerTon / 100),
+      csvNumber(line.productTotalCents / 100),
+      csvNumber(line.freightTotalCents / 100),
+      csvNumber(line.totalCents / 100)
+    ].join(";");
+  });
+
+  const totals = result.totals;
+  const totalRow = [
+    ...CSV_GROUP_LABEL[groupBy].map((_, index) => (index === 0 ? "TOTAL" : "")),
+    String(totals.operations),
+    csvNumber(totals.netWeightKg / 1000, 3),
+    totals.avgPriceCentsPerTon === null ? "" : csvNumber(totals.avgPriceCentsPerTon / 100),
+    csvNumber(totals.productTotalCents / 100),
+    csvNumber(totals.freightTotalCents / 100),
+    csvNumber(totals.totalCents / 100)
+  ].join(";");
+
+  // BOM para o Excel reconhecer UTF-8.
+  return `\uFEFF${[header.join(";"), ...rows, totalRow].join("\r\n")}`;
+}

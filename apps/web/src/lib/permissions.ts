@@ -8,9 +8,9 @@
  * endereco digitado a mao volta para a tela inicial dele:
  *   - `loader`        carregador: so a fila de carregamento da propria unidade;
  *   - `monitoramento` so o painel de vendas em tempo real, sem configuracoes;
- *   - `comercial`     insights, conferencia de faturamento, relatorios, controle de caminhoes,
- *                     relatorio por cliente e cadastros — cadastra tudo e muda preco sem
- *                     senha; sem configuracoes;
+ *   - `comercial`     aba Comercial (a tela do portal), insights, conferencia de faturamento,
+ *                     relatorios, controle de caminhoes, relatorio por cliente e cadastros —
+ *                     cadastra tudo e muda preco sem senha; sem configuracoes;
  *   - `gestor`        tudo, menos a Nova entrada, com configuracoes;
  *   - `operacao`      tudo, com configuracoes; mudar preco sempre pede a senha da pedreira;
  *   - `administrador` tudo, sem senha, mais os logs de suporte, com configuracoes.
@@ -46,6 +46,7 @@ export const SCREENS = [
   "operacoes",
   "carteira",
   "cadastros",
+  "comercial",
   "insights",
   "controle-caminhoes",
   "relatorio-cliente",
@@ -67,6 +68,7 @@ const DESK_SCREENS: readonly Screen[] = [
   "operacoes",
   "carteira",
   "cadastros",
+  "comercial",
   "insights",
   "controle-caminhoes",
   "relatorio-cliente",
@@ -82,6 +84,7 @@ export const SCREENS_BY_ROLE: Record<Role, readonly Screen[]> = {
   loader: ["carregamento"],
   monitoramento: ["monitoramento"],
   comercial: [
+    "comercial",
     "cadastros",
     "insights",
     "controle-caminhoes",
@@ -100,13 +103,13 @@ export function canSee(role: Role, screen: Screen): boolean {
 
 /**
  * Onde cada perfil comeca: o carregador na fila, o monitoramento no painel de vendas, o
- * comercial no relatorio de vendas (a tela dele no antigo portal) e o resto na tela Operacoes —
- * a mesma que o desktop abre para quem opera a balanca.
+ * comercial na aba Comercial (a tela dele no KyberRock Portal) e o resto na tela Operacoes — a
+ * mesma que o desktop abre para quem opera a balanca.
  */
 export function homeFor(role: Role): string {
   if (role === "loader") return "/carregamento";
   if (role === "monitoramento") return "/monitoramento";
-  if (role === "comercial") return "/relatorios?aba=vendas";
+  if (role === "comercial") return "/comercial";
   return "/operacoes";
 }
 

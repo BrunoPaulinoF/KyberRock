@@ -1,0 +1,204 @@
+/* Aba Comercial: a mesma disposicao do "Relatorio de vendas" do KyberRock Portal
+   (`apps/loader-web/src/loader-ui.css`, secao "Relatorio de vendas"), com as cores do site. */
+
+.comercial-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.comercial-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.comercial-subtitle {
+  margin: 4px 0 0;
+  color: var(--kr-muted);
+  font-size: 13px;
+}
+
+.comercial-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.comercial-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+.comercial-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 170px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--kr-muted);
+}
+
+.comercial-tabs {
+  display: inline-flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--kr-surface-soft);
+  flex-wrap: wrap;
+}
+
+.comercial-tab {
+  border: none;
+  background: transparent;
+  padding: 8px 14px;
+  border-radius: 9px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--kr-text);
+  cursor: pointer;
+}
+
+.comercial-tab.is-active {
+  background: var(--kr-primary-strong);
+  color: var(--kr-primary-text);
+}
+
+.comercial-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--kr-danger-border);
+  border-radius: 10px;
+  background: var(--kr-danger-soft);
+  color: var(--kr-danger-strong);
+}
+
+.comercial-table-wrap {
+  overflow-x: auto;
+}
+
+.comercial-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.comercial-table th,
+.comercial-table td {
+  padding: 10px 12px;
+  text-align: right;
+  border-bottom: 1px solid var(--kr-border);
+  white-space: nowrap;
+}
+
+.comercial-table .is-text {
+  text-align: left;
+  white-space: normal;
+}
+
+.comercial-table thead th {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--kr-muted);
+}
+
+.comercial-table tfoot td {
+  border-top: 2px solid var(--kr-text-strong);
+  border-bottom: none;
+}
+
+.comercial-empty {
+  margin: 8px 0 0;
+  color: var(--kr-muted);
+}
+
+.comercial-warning {
+  margin: 0;
+  color: var(--kr-warning);
+  font-weight: 600;
+}
+
+/* Impressao: igual a do portal — so titulo, periodo e tabela, em A4 paisagem (a tabela tem ate
+   8 colunas). A pagina nomeada deixa o paisagem so nesta tela. */
+@page comercial {
+  size: A4 landscape;
+  margin: 10mm;
+}
+
+@media print {
+  .comercial-page {
+    page: comercial;
+  }
+
+  .sidebar,
+  .comercial-no-print {
+    display: none !important;
+  }
+
+  html,
+  body,
+  .shell,
+  .main {
+    margin: 0;
+    padding: 0;
+    background: #fff;
+    color: #0f172a;
+    display: block;
+    overflow: visible;
+    height: auto;
+    min-height: 0;
+  }
+
+  .comercial-page .desk-panel,
+  .comercial-page > * {
+    border: none;
+    box-shadow: none;
+    padding: 0;
+    background: none;
+    overflow: visible;
+  }
+
+  .comercial-panel {
+    gap: 8px;
+  }
+
+  .comercial-table-wrap {
+    overflow: visible;
+  }
+
+  .comercial-table {
+    font-size: 9pt;
+  }
+
+  .comercial-table th,
+  .comercial-table td {
+    padding: 5px 6px;
+    color: #0f172a;
+    border-color: rgba(15, 23, 42, 0.2);
+  }
+
+  .comercial-table .is-text {
+    overflow-wrap: anywhere;
+  }
+
+  .comercial-table thead {
+    display: table-header-group;
+  }
+
+  .comercial-table tfoot {
+    display: table-footer-group;
+  }
+
+  .comercial-table tr {
+    break-inside: avoid;
+  }
+}

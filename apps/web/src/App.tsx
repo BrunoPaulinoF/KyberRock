@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from "./lib/auth";
 import { canSee, homeFor, usesSidebar, type Screen } from "./lib/permissions";
 import { ThemeProvider } from "./lib/theme";
 import { BillingConference } from "./pages/BillingConference";
+import { Comercial } from "./pages/Comercial";
 import { CustomerReport } from "./pages/CustomerReport";
 import { Dashboard } from "./pages/Dashboard";
 import { Documentation } from "./pages/Documentation";
@@ -88,6 +89,7 @@ export function App() {
                 <Route path="/cadastros" element={only("cadastros", <Registrations />)} />
                 <Route path="/cadastros/:tab" element={only("cadastros", <Registrations />)} />
                 <Route path="/cadastros/:tab/:sub" element={only("cadastros", <Registrations />)} />
+                <Route path="/comercial" element={only("comercial", <Comercial />)} />
                 <Route path="/insights" element={only("insights", <Insights />)} />
                 <Route
                   path="/controle-caminhoes"
