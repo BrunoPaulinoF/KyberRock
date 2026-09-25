@@ -6,6 +6,7 @@ import {
   isVirtualWebDevice,
   matchesCadastroSearch,
   parseUserRole,
+  pricePasswordRule,
   SITE_ROLE_OPTIONS,
   toDeviceUpdateChannel
 } from "./AdminDashboard";
@@ -163,8 +164,15 @@ describe("toDeviceUpdateChannel", () => {
 });
 
 describe("perfis de acesso", () => {
-  it("le os cinco perfis e trata o desconhecido como carregador", () => {
-    for (const role of ["loader", "monitoramento", "operacao", "comercial", "gestor"]) {
+  it("le os seis perfis e trata o desconhecido como carregador", () => {
+    for (const role of [
+      "loader",
+      "monitoramento",
+      "comercial",
+      "gestor",
+      "operacao",
+      "administrador"
+    ]) {
       expect(parseUserRole(role)).toBe(role);
     }
     expect(parseUserRole("admin")).toBe("loader");
@@ -175,10 +183,17 @@ describe("perfis de acesso", () => {
   it("o seletor do site oferece so os perfis do site, do menor ao maior", () => {
     expect(SITE_ROLE_OPTIONS.map((option) => option.value)).toEqual([
       "monitoramento",
-      "operacao",
       "comercial",
-      "gestor"
+      "gestor",
+      "operacao",
+      "administrador"
     ]);
+  });
+
+  it("senha de preco: operacao sempre, administrador nunca, o resto pela marca", () => {
+    expect(pricePasswordRule("operacao")).toBe("always");
+    expect(pricePasswordRule("administrador")).toBe("never");
+    expect(pricePasswordRule("gestor")).toBe("flag");
   });
 
   it("o dispositivo virtual do site nao ganha login", () => {

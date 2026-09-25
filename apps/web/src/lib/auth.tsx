@@ -1,6 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 
-import { capabilitiesFor, isRole, type Capabilities, type Role } from "./permissions";
+import {
+  capabilitiesFor,
+  isRole,
+  requiresPricePasswordFor,
+  type Capabilities,
+  type Role
+} from "./permissions";
 import { supabase, type Tables } from "./supabase";
 
 export type { Role } from "./permissions";
@@ -12,6 +18,8 @@ export interface SessionUser extends Capabilities {
   role: Role;
   companyId: string;
   unitId: string;
+  /** Digita a senha de preco da pedreira para mudar preco (a `web-api` confere). */
+  requiresPricePassword: boolean;
 }
 
 interface AuthState {
@@ -34,6 +42,10 @@ function toUser(profile: Tables<"user_profiles">): SessionUser | null {
     role: profile.role,
     companyId: profile.company_id,
     unitId: profile.unit_id,
+    requiresPricePassword: requiresPricePasswordFor(
+      profile.role,
+      profile.requires_price_password === true
+    ),
     ...capabilitiesFor(profile.role)
   };
 }

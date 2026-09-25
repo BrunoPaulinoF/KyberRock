@@ -45,7 +45,7 @@ interface LoaderProfileRow {
   id: string;
   email: string;
   name: string;
-  role: "loader" | "monitoramento" | "operacao" | "comercial" | "gestor";
+  role: "loader" | "monitoramento" | "comercial" | "gestor" | "operacao" | "administrador";
   company_id: string;
   unit_id: string;
   is_active: boolean;

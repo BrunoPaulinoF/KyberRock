@@ -8,31 +8,91 @@ import {
   LayoutDashboard,
   ListChecks,
   LogOut,
+  MonitorPlay,
   Moon,
   PlusCircle,
   Printer,
   ReceiptText,
   Scale,
+  ScrollText,
   Settings,
   Sun,
   Truck,
   UserSearch,
   Wallet
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import type { LucideIcon } from "lucide-react";
 
 import { useAuth, useUser } from "../lib/auth";
-import { ROLE_LABELS } from "../lib/permissions";
+import { canSee, ROLE_LABELS, type Screen } from "../lib/permissions";
 import { useTheme } from "../lib/theme";
 
 /**
  * A casca do site: o mesmo menu lateral do KyberRock Desktop — mesmas secoes (Operacional e
  * Analise), mesmos nomes, mesma ordem e mesmos icones (`lucide-react`) —, com o rodape de
  * usuario, tema e a engrenagem de configuracoes. Fica de fora so o que nao existe no site
- * (Logs, Exportar e Restaurar mexem no banco local da balanca); o que o perfil nao pode usar
- * nem aparece.
+ * (Exportar e Restaurar mexem no banco local da balanca); o que o perfil nao ve nem aparece
+ * (`lib/permissions.ts`). Monitoramento abre em tela cheia; Logs e o suporte do administrador.
  */
+
+interface NavItem {
+  screen: Screen;
+  to: string;
+  label: string;
+  icon: LucideIcon;
+}
+
+const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
+  {
+    title: "Operacional",
+    items: [
+      { screen: "painel", to: "/painel", label: "Painel", icon: LayoutDashboard },
+      { screen: "nova-entrada", to: "/nova-entrada", label: "Nova entrada", icon: PlusCircle },
+      { screen: "operacoes", to: "/operacoes", label: "Operacoes", icon: ListChecks },
+      { screen: "carteira", to: "/carteira", label: "Carteira", icon: Wallet },
+      { screen: "cadastros", to: "/cadastros", label: "Cadastros", icon: Database }
+    ]
+  },
+  {
+    title: "Analise",
+    items: [
+      { screen: "insights", to: "/insights", label: "Insights", icon: BarChart3 },
+      {
+        screen: "controle-caminhoes",
+        to: "/controle-caminhoes",
+        label: "Controle de caminhoes",
+        icon: Truck
+      },
+      {
+        screen: "relatorio-cliente",
+        to: "/relatorio-cliente",
+        label: "Relatorio por cliente",
+        icon: UserSearch
+      },
+      {
+        screen: "conferencia-faturamento",
+        to: "/conferencia-faturamento",
+        label: "Conferencia de faturamento",
+        icon: ClipboardCheck
+      },
+      {
+        screen: "fechamento",
+        to: "/fechamento",
+        label: "Fechamento de faturas",
+        icon: ReceiptText
+      },
+      { screen: "relatorios", to: "/relatorios", label: "Relatorios", icon: FileText },
+      { screen: "monitoramento", to: "/monitoramento", label: "Monitoramento", icon: MonitorPlay },
+      { screen: "documentacao", to: "/documentacao", label: "Documentacao", icon: BookOpen }
+    ]
+  },
+  {
+    title: "Suporte",
+    items: [{ screen: "suporte", to: "/suporte", label: "Logs", icon: ScrollText }]
+  }
+];
 export function Layout() {
   const user = useUser();
   const { logout } = useAuth();
@@ -75,62 +135,21 @@ export function Layout() {
           <span className="sidebar-meta">Web</span>
         </div>
         <nav className="sidebar-nav" aria-label="Navegacao principal">
-          <div className="nav-section">Operacional</div>
-          <NavLink to="/painel" className="nav-link">
-            <LayoutDashboard size={16} strokeWidth={2.2} />
-            Painel
-          </NavLink>
-          {user.canOperate && (
-            <NavLink to="/nova-entrada" className="nav-link">
-              <PlusCircle size={16} strokeWidth={2.2} />
-              Nova entrada
-            </NavLink>
-          )}
-          <NavLink to="/operacoes" className="nav-link">
-            <ListChecks size={16} strokeWidth={2.2} />
-            Operacoes
-          </NavLink>
-          {user.canManagePrices && (
-            <NavLink to="/carteira" className="nav-link">
-              <Wallet size={16} strokeWidth={2.2} />
-              Carteira
-            </NavLink>
-          )}
-          <NavLink to="/cadastros" className="nav-link">
-            <Database size={16} strokeWidth={2.2} />
-            Cadastros
-          </NavLink>
-          <div className="nav-section">Analise</div>
-          <NavLink to="/insights" className="nav-link">
-            <BarChart3 size={16} strokeWidth={2.2} />
-            Insights
-          </NavLink>
-          <NavLink to="/controle-caminhoes" className="nav-link">
-            <Truck size={16} strokeWidth={2.2} />
-            Controle de caminhoes
-          </NavLink>
-          <NavLink to="/relatorio-cliente" className="nav-link">
-            <UserSearch size={16} strokeWidth={2.2} />
-            Relatorio por cliente
-          </NavLink>
-          <NavLink to="/conferencia-faturamento" className="nav-link">
-            <ClipboardCheck size={16} strokeWidth={2.2} />
-            Conferencia de faturamento
-          </NavLink>
-          {user.canManagePrices && (
-            <NavLink to="/fechamento" className="nav-link">
-              <ReceiptText size={16} strokeWidth={2.2} />
-              Fechamento de faturas
-            </NavLink>
-          )}
-          <NavLink to="/relatorios" className="nav-link">
-            <FileText size={16} strokeWidth={2.2} />
-            Relatorios
-          </NavLink>
-          <NavLink to="/documentacao" className="nav-link">
-            <BookOpen size={16} strokeWidth={2.2} />
-            Documentacao
-          </NavLink>
+          {NAV_SECTIONS.map((section) => {
+            const items = section.items.filter((item) => canSee(user.role, item.screen));
+            if (items.length === 0) return null;
+            return (
+              <Fragment key={section.title}>
+                <div className="nav-section">{section.title}</div>
+                {items.map(({ screen, to, label, icon: Icon }) => (
+                  <NavLink key={screen} to={to} className="nav-link">
+                    <Icon size={16} strokeWidth={2.2} />
+                    {label}
+                  </NavLink>
+                ))}
+              </Fragment>
+            );
+          })}
         </nav>
         <div className="sidebar-footer">
           <div className="sidebar-user">
@@ -147,47 +166,60 @@ export function Layout() {
             >
               {theme === "light" ? <Moon size={17} /> : <Sun size={17} />}
             </button>
-            <div className="settings-menu" ref={settingsRef}>
+            {!user.hasSettings && (
               <button
                 type="button"
-                className={`icon-btn square${showSettings ? " active" : ""}`}
-                onClick={() => setShowSettings((open) => !open)}
-                aria-label="Configuracoes"
-                aria-expanded={showSettings}
-                title="Configuracoes"
+                className="icon-btn square"
+                onClick={() => void logout()}
+                aria-label="Sair"
+                title="Sair"
               >
-                <Settings size={17} />
+                <LogOut size={17} />
               </button>
-              {showSettings && (
-                <div className="settings-dropdown" role="menu">
-                  <button type="button" role="menuitem" onClick={() => openSettings("balanca")}>
-                    <Scale size={14} />
-                    Balanca
-                  </button>
-                  <button type="button" role="menuitem" onClick={() => openSettings("impressao")}>
-                    <Printer size={14} />
-                    Impressao
-                  </button>
-                  <button type="button" role="menuitem" onClick={() => openSettings("cloud")}>
-                    <Cloud size={14} />
-                    Cloud
-                  </button>
-                  <div className="settings-divider" />
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="danger"
-                    onClick={() => {
-                      setShowSettings(false);
-                      void logout();
-                    }}
-                  >
-                    <LogOut size={14} />
-                    Sair
-                  </button>
-                </div>
-              )}
-            </div>
+            )}
+            {user.hasSettings && (
+              <div className="settings-menu" ref={settingsRef}>
+                <button
+                  type="button"
+                  className={`icon-btn square${showSettings ? " active" : ""}`}
+                  onClick={() => setShowSettings((open) => !open)}
+                  aria-label="Configuracoes"
+                  aria-expanded={showSettings}
+                  title="Configuracoes"
+                >
+                  <Settings size={17} />
+                </button>
+                {showSettings && (
+                  <div className="settings-dropdown" role="menu">
+                    <button type="button" role="menuitem" onClick={() => openSettings("balanca")}>
+                      <Scale size={14} />
+                      Balanca
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => openSettings("impressao")}>
+                      <Printer size={14} />
+                      Impressao
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => openSettings("cloud")}>
+                      <Cloud size={14} />
+                      Cloud
+                    </button>
+                    <div className="settings-divider" />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="danger"
+                      onClick={() => {
+                        setShowSettings(false);
+                        void logout();
+                      }}
+                    >
+                      <LogOut size={14} />
+                      Sair
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </aside>

@@ -87,43 +87,67 @@ interface Unit {
 }
 
 /**
- * Perfil de acesso (`user_profiles.role`, migracao `202609240001`). O carregador ve so a fila
- * da unidade; os outros quatro sao perfis do KyberRock Web, do que menos pode ao que mais pode.
- * O que cada um edita la vive em `supabase/functions/_shared/web-session.ts`.
+ * Perfil de acesso (`user_profiles.role`, migracoes `202609240001` e `202609260001`). O
+ * carregador ve so a fila da unidade; os outros cinco sao perfis do KyberRock Web. As telas de
+ * cada um estao em `apps/web/src/lib/permissions.ts`; o que cada um grava, em
+ * `supabase/functions/_shared/web-session.ts`.
  */
-export type UserRole = "loader" | "monitoramento" | "operacao" | "comercial" | "gestor";
+export type UserRole =
+  | "loader"
+  | "monitoramento"
+  | "comercial"
+  | "gestor"
+  | "operacao"
+  | "administrador";
 
 /** Perfis do site, na ordem do seletor, com o que cada um pode. */
 export const SITE_ROLE_OPTIONS: ReadonlyArray<{ value: UserRole; label: string; hint: string }> = [
   {
     value: "monitoramento",
     label: "Monitoramento",
-    hint: "So consulta: cadastros e relatorios, sem editar nada."
-  },
-  {
-    value: "operacao",
-    label: "Operacao",
-    hint: "Consulta tudo e cadastra veiculo, motorista e transportadora."
+    hint: "So a tela de vendas em tempo real. Sem configuracoes."
   },
   {
     value: "comercial",
     label: "Comercial",
-    hint: "Cadastro de clientes e da frota, e relatorios."
+    hint: "Insights, conferencia de faturamento, relatorios, controle de caminhoes e relatorio por cliente. So consulta, sem configuracoes."
   },
   {
     value: "gestor",
     label: "Gestor",
-    hint: "Tudo do comercial, mais precos, bloco comercial, carteira e fechamento."
+    hint: "Tudo, menos a Nova entrada. Com configuracoes."
+  },
+  {
+    value: "operacao",
+    label: "Operacao",
+    hint: "Tudo. Mudar preco sempre pede a senha de preco da pedreira. Com configuracoes."
+  },
+  {
+    value: "administrador",
+    label: "Administrador",
+    hint: "Tudo, sem pedir senha, mais os logs de suporte. Com configuracoes."
   }
 ];
 
 export const USER_ROLE_LABELS: Record<UserRole, string> = {
   loader: "Carregador",
   monitoramento: "Monitoramento",
-  operacao: "Operacao",
   comercial: "Comercial",
-  gestor: "Gestor"
+  gestor: "Gestor",
+  operacao: "Operacao",
+  administrador: "Administrador"
 };
+
+/**
+ * A senha de preco depende do perfil antes da marca do login: a operacao sempre pede e o
+ * administrador nunca (`requiresPricePasswordFor` em `_shared/web-session.ts`). So nos outros
+ * perfis a marca do painel decide.
+ */
+export function pricePasswordRule(role: UserRole): "always" | "never" | "flag" {
+  if (role === "operacao") return "always";
+  if (role === "administrador") return "never";
+  return "flag";
+}
 
 export function parseUserRole(value: unknown): UserRole {
   return typeof value === "string" && Object.hasOwn(USER_ROLE_LABELS, value)
@@ -2111,7 +2135,8 @@ function RoleField({ defaultValue }: { defaultValue: UserRole }) {
 
 /**
  * "Pede senha para mudar preco": quem estiver marcado digita a senha de alteracao de preco da
- * pedreira (a mesma da balanca) para mudar o preco de uma pesagem pelo site.
+ * pedreira (a mesma da balanca) para mudar preco pelo site — da pesagem e do cadastro. Na
+ * operacao e no administrador quem decide e o perfil, e a caixa so mostra a regra.
  */
 function PricePasswordToggle({
   user,
@@ -2120,14 +2145,29 @@ function PricePasswordToggle({
   user: LoaderUser;
   onChange: (requires: boolean) => void;
 }) {
+  const rule = pricePasswordRule(user.role);
   return (
-    <label className="adm-check" title="A senha e a de alteracao de preco da pedreira.">
+    <label
+      className="adm-check"
+      title={
+        rule === "always"
+          ? "O perfil Operacao sempre pede a senha de preco."
+          : rule === "never"
+            ? "O perfil Administrador nunca pede senha."
+            : "A senha e a de alteracao de preco da pedreira."
+      }
+    >
       <input
         type="checkbox"
-        checked={user.requiresPricePassword}
+        checked={rule === "flag" ? user.requiresPricePassword : rule === "always"}
+        disabled={rule !== "flag"}
         onChange={(event) => onChange(event.target.checked)}
       />
-      Pede senha de preco
+      {rule === "always"
+        ? "Sempre pede senha"
+        : rule === "never"
+          ? "Sem senha"
+          : "Pede senha de preco"}
     </label>
   );
 }

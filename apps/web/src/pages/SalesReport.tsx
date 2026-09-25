@@ -54,7 +54,7 @@ const TABS: Array<{ id: ReportTab; label: string; icon: typeof CalendarDays }> =
   { id: "monthly", label: "Relatorio mensal", icon: CalendarClock }
 ];
 
-/** Quem recebe o fechamento diario: so o gestor ve e edita (a tela Relatorios do desktop). */
+/** Quem recebe o fechamento diario: so quem grava (gestor, operacao, administrador) ve e edita. */
 const RECIPIENTS_TAB = { id: "recipients" as const, label: "Destinatarios", icon: Users };
 
 const TAB_DESCRIPTION: Record<ReportTab, string> = {

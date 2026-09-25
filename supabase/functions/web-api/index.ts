@@ -41,12 +41,24 @@ function supabaseStore(client: Client): WebApiStore {
       let query = client.from(table).select(columns);
       if (!options?.anyCompany) query = query.eq("company_id", companyId);
       for (const filter of filters) {
-        query =
-          filter.value === null
-            ? query.is(filter.column, null)
-            : query.eq(filter.column, filter.value);
+        if (filter.op === "in") {
+          query = query.in(filter.column, filter.value as unknown[]);
+        } else if (filter.op === "gte") {
+          query = query.gte(filter.column, filter.value);
+        } else if (filter.op === "lte") {
+          query = query.lte(filter.column, filter.value);
+        } else {
+          query =
+            filter.value === null
+              ? query.is(filter.column, null)
+              : query.eq(filter.column, filter.value);
+        }
       }
       if (options?.live) query = query.is("deleted_at", null);
+      if (options?.orderBy) {
+        query = query.order(options.orderBy.column, { ascending: options.orderBy.ascending });
+      }
+      if (options?.limit) query = query.limit(options.limit);
       const { data, error } = await query;
       throwIf(table, error);
       return (data as Row[] | null) ?? [];

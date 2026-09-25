@@ -12,13 +12,15 @@ import { useAsync } from "../lib/use-async";
 
 /**
  * Aba Produtos da tela Cadastros (a `ProductsView` do desktop): o preco padrao de cada produto
- * e, logo abaixo, o preco especial por cliente. Todos veem; publicar preco e do comercial e do
- * gestor.
+ * e, logo abaixo, o preco especial por cliente. Publicar preco e de quem grava (gestor, operacao
+ * e administrador); quem tem `requiresPricePassword` (a operacao sempre) digita a senha de preco
+ * da pedreira, como no desktop — e a `web-api` que confere.
  */
 export function ProductsSection() {
   const user = useUser();
   const toast = useToast();
   const canEdit = user.canEditPrices;
+  const askPassword = user.requiresPricePassword;
   const { data, loading, error, reload } = useAsync(
     () =>
       Promise.all([
@@ -36,6 +38,7 @@ export function ProductsSection() {
     current: number | null;
   } | null>(null);
   const [customerId, setCustomerId] = useState("");
+  const [removing, setRemoving] = useState<Product | null>(null);
 
   const defaultByProduct = useMemo(
     () => new Map(defaults.map((p) => [p.product_id, p.unit_price_cents])),
@@ -65,20 +68,22 @@ export function ProductsSection() {
     [customers]
   );
 
-  async function save(cents: number) {
+  async function save(cents: number, pricePassword?: string) {
     if (!editing) return;
     try {
       if (editing.customerId) {
         await callWebApi("set_customer_special_price", {
           customerId: editing.customerId,
           productId: editing.product.id,
-          unitPriceCents: cents
+          unitPriceCents: cents,
+          pricePassword
         });
         await special.reload();
       } else {
         await callWebApi("set_product_default_price", {
           productId: editing.product.id,
-          unitPriceCents: cents
+          unitPriceCents: cents,
+          pricePassword
         });
         await reload();
       }
@@ -89,14 +94,20 @@ export function ProductsSection() {
     }
   }
 
-  async function removeSpecial(product: Product) {
-    if (!customerId) return;
+  async function removeSpecial(product: Product, pricePassword?: string): Promise<boolean> {
+    if (!customerId) return false;
     try {
-      await callWebApi("remove_customer_special_price", { customerId, productId: product.id });
+      await callWebApi("remove_customer_special_price", {
+        customerId,
+        productId: product.id,
+        pricePassword
+      });
       toast.push("Preco especial removido; volta a valer o padrao.");
       await special.reload();
+      return true;
     } catch (caught) {
       toast.push(errorMessage(caught), "error");
+      return false;
     }
   }
 
@@ -221,7 +232,7 @@ export function ProductsSection() {
                         icon="trash"
                         label="Remover preco especial"
                         tone="danger"
-                        onClick={() => void removeSpecial(p)}
+                        onClick={() => (askPassword ? setRemoving(p) : void removeSpecial(p))}
                       />
                     )}
                   </span>
@@ -236,8 +247,18 @@ export function ProductsSection() {
           product={editing.product}
           current={editing.current}
           special={Boolean(editing.customerId)}
+          askPassword={askPassword}
           onClose={() => setEditing(null)}
           onSave={save}
+        />
+      )}
+      {removing && (
+        <RemovePriceModal
+          product={removing}
+          onClose={() => setRemoving(null)}
+          onConfirm={async (password) => {
+            if (await removeSpecial(removing, password)) setRemoving(null);
+          }}
         />
       )}
     </>
@@ -248,18 +269,21 @@ function PriceModal({
   product,
   current,
   special,
+  askPassword,
   onClose,
   onSave
 }: {
   product: Product;
   current: number | null;
   special: boolean;
+  askPassword: boolean;
   onClose: () => void;
-  onSave: (cents: number) => Promise<void>;
+  onSave: (cents: number, pricePassword?: string) => Promise<void>;
 }) {
   const [value, setValue] = useState(
     current != null ? (current / 100).toFixed(2).replace(".", ",") : ""
   );
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   return (
@@ -281,8 +305,12 @@ function PriceModal({
                 setError("Informe um valor valido, ex.: 65,00");
                 return;
               }
+              if (askPassword && !password) {
+                setError("Digite a senha de alteracao de preco.");
+                return;
+              }
               setBusy(true);
-              await onSave(cents);
+              await onSave(cents, askPassword ? password : undefined);
               setBusy(false);
             }}
           >
@@ -301,6 +329,75 @@ function PriceModal({
           placeholder="65,00"
         />
       </Field>
+      {askPassword && <PricePasswordField value={password} onChange={setPassword} />}
+    </Modal>
+  );
+}
+
+function PricePasswordField({
+  value,
+  onChange
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Field label="Senha de alteracao de preco">
+      <input
+        className="input"
+        type="password"
+        autoComplete="off"
+        inputMode="numeric"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </Field>
+  );
+}
+
+/** Tirar o preco especial tambem e mudar preco: pede a senha, como o desktop. */
+function RemovePriceModal({
+  product,
+  onClose,
+  onConfirm
+}: {
+  product: Product;
+  onClose: () => void;
+  onConfirm: (pricePassword: string) => Promise<void>;
+}) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal
+      title={`Remover preco especial — ${product.description}`}
+      description="O cliente volta a pagar o preco padrao deste produto."
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={onClose}>
+            Cancelar
+          </button>
+          <button
+            className="btn danger"
+            disabled={busy}
+            onClick={async () => {
+              if (!password) {
+                setError("Digite a senha de alteracao de preco.");
+                return;
+              }
+              setBusy(true);
+              await onConfirm(password);
+              setBusy(false);
+            }}
+          >
+            {busy ? "Removendo..." : "Remover"}
+          </button>
+        </>
+      }
+    >
+      {error && <Alert kind="error">{error}</Alert>}
+      <PricePasswordField value={password} onChange={setPassword} />
     </Modal>
   );
 }

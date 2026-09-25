@@ -15,7 +15,9 @@
  * - `company_id` vem da SESSAO, nunca do payload. Linha de outra empresa e "nao encontrada".
  * - Toda escrita carimba `updated_at` com a hora da nuvem: e ela que decide o desempate
  *   quando uma balanca principal editou a mesma linha (`cloudRowWins`, `newest`).
- * - Preco e bloco comercial sao so do `gestor`. O `comercial` recebe 403 e nada e gravado.
+ * - Quem grava e so gestor, operacao e administrador (`_shared/web-session.ts`); monitoramento
+ *   e comercial recebem 403 e nada e gravado. Mudar preco pede a senha da pedreira a quem tem
+ *   `requiresPricePassword` (a operacao sempre).
  * - Falha no OMIE nao desfaz o cadastro: a linha fica gravada e a resposta traz `warnings`.
  *   A proxima edicao tenta de novo. O que nao pode e o site "salvar" sem gravar.
  */
@@ -36,11 +38,14 @@ import {
   parseVehicleInput
 } from "../_shared/web-cadastro.ts";
 import {
+  canCreateEntry,
   canEditCustomers,
   canEditFleet,
   canEditPrices,
   canManagePrices,
   canOperate,
+  canSeeSupport,
+  canWrite,
   WEB_ROLE_LABELS,
   type WebRole,
   type WebSession,
@@ -64,10 +69,14 @@ import { recipientColumns, validateReportRecipient } from "../_shared/report-rec
 
 export type Row = Record<string, unknown>;
 
-/** Filtro de igualdade; `value: null` vira `is null`. */
+/**
+ * Filtro de uma coluna. Sem `op` e igualdade (`value: null` vira `is null`); `in` recebe uma
+ * lista; `gte`/`lte` comparam (datas ISO comparam como texto).
+ */
 export interface RowFilter {
   column: string;
   value: unknown;
+  op?: "eq" | "in" | "gte" | "lte";
 }
 
 export interface ListRowsOptions {
@@ -79,6 +88,10 @@ export interface ListRowsOptions {
    * existe e a insercao estouraria o indice unico do par.
    */
   anyCompany?: boolean;
+  /** Ordem da lista (o padrao e a do banco). */
+  orderBy?: { column: string; ascending: boolean };
+  /** Teto de linhas — leitura de log nao pode trazer a tabela inteira. */
+  limit?: number;
 }
 
 /** As quatro operacoes que a `web-api` faz no banco. `index.ts` implementa sobre o Supabase. */
@@ -145,12 +158,16 @@ export const WEB_API_ACTIONS = [
   "list_report_recipients",
   "save_report_recipient",
   "delete_report_recipient",
-  "unit_devices"
+  "unit_devices",
+  "support_overview"
 ] as const;
 
 export type WebApiAction = (typeof WEB_API_ACTIONS)[number];
 
-/** Acoes que so o gestor executa (bloco comercial/credito, carteira, fechamento). */
+/**
+ * Bloco comercial/credito, carteira, fechamento e destinatarios. O nome ficou da epoca em que
+ * era so do gestor; hoje e de todo perfil que grava (`canManagePrices`).
+ */
 export const GESTOR_ONLY_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "set_customer_commercial",
   "settle_wallet",
@@ -161,7 +178,7 @@ export const GESTOR_ONLY_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiActi
   "delete_report_recipient"
 ]);
 
-/** Preco padrao, especial por cliente e tabelas de preco: comercial e gestor. */
+/** Preco padrao, especial por cliente e tabelas de preco. Pedem a senha de preco (ver acima). */
 export const PRICE_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "set_product_default_price",
   "set_customer_special_price",
@@ -180,12 +197,15 @@ export const READ_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "unit_devices"
 ]);
 
-/** Pesagem pelo site: operacao e gestor (quem executa e a balanca da unidade). */
+/**
+ * Pesagem pelo site (quem executa e a balanca da unidade). A Nova entrada ainda passa por
+ * `canCreateEntry` dentro da acao, porque o tipo do pedido vem no payload.
+ */
 export const OPERATION_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "request_operation"
 ]);
 
-/** Cadastro de cliente e os vinculos que partem dele: comercial e gestor. */
+/** Cadastro de cliente e os vinculos que partem dele. */
 export const CUSTOMER_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "upsert_customer",
   "set_customer_active",
@@ -193,7 +213,7 @@ export const CUSTOMER_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>
   "set_customer_carrier"
 ]);
 
-/** Veiculo, motorista, transportadora e os vinculos entre eles: tambem a operacao. */
+/** Veiculo, motorista, transportadora e os vinculos entre eles. */
 export const FLEET_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "upsert_carrier",
   "set_carrier_active",
@@ -205,38 +225,37 @@ export const FLEET_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "set_vehicle_carrier"
 ]);
 
+/** Logs de suporte: so o administrador. */
+export const SUPPORT_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
+  "support_overview"
+]);
+
 /**
- * O que o perfil pode executar, ou a mensagem do 403. Toda acao cai em exatamente um grupo:
- * `me` (todos), cliente, frota ou gestor — o teste confere que nenhuma ficou de fora, para uma
- * acao nova nao nascer liberada para o monitoramento por esquecimento.
+ * O que o perfil pode executar, ou a mensagem do 403. Toda acao cai em exatamente um grupo —
+ * o teste confere que nenhuma ficou de fora, para uma acao nova nao nascer liberada para quem
+ * so consulta por esquecimento.
  */
 export function actionDenial(role: WebRole, action: WebApiAction): string | null {
   if (READ_ACTIONS.has(action)) return null;
   const profile = WEB_ROLE_LABELS[role];
-  if (OPERATION_ACTIONS.has(action)) {
-    return canOperate(role)
-      ? null
-      : `O perfil ${profile} nao faz pesagem pelo site. Pesagem e da operacao e do gestor.`;
+  if (SUPPORT_ACTIONS.has(action)) {
+    return canSeeSupport(role) ? null : "So o perfil Administrador ve os logs de suporte.";
   }
-  if (PRICE_ACTIONS.has(action)) {
-    return canEditPrices(role)
-      ? null
-      : `O perfil ${profile} so consulta precos. Preco e do comercial e do gestor.`;
-  }
-  if (GESTOR_ONLY_ACTIONS.has(action)) {
-    return canManagePrices(role)
-      ? null
-      : "So o gestor altera o bloco comercial do cliente, a carteira, o fechamento e os destinatarios dos relatorios.";
-  }
-  if (CUSTOMER_ACTIONS.has(action)) {
-    return canEditCustomers(role)
-      ? null
-      : `O perfil ${profile} so consulta clientes. Cadastro de cliente e do comercial.`;
-  }
-  if (FLEET_ACTIONS.has(action)) {
-    return canEditFleet(role) ? null : `O perfil ${profile} so consulta, nao edita cadastro.`;
-  }
-  return `Acao nao liberada para o perfil ${profile}.`;
+  const allowed = OPERATION_ACTIONS.has(action)
+    ? canOperate(role)
+    : PRICE_ACTIONS.has(action)
+      ? canEditPrices(role)
+      : GESTOR_ONLY_ACTIONS.has(action)
+        ? canManagePrices(role)
+        : CUSTOMER_ACTIONS.has(action)
+          ? canEditCustomers(role)
+          : FLEET_ACTIONS.has(action)
+            ? canEditFleet(role)
+            : false;
+  if (allowed) return null;
+  return canWrite(role)
+    ? `Acao nao liberada para o perfil ${profile}.`
+    : `O perfil ${profile} so consulta: nada e alterado pelo site.`;
 }
 
 export class WebApiError extends Error {
@@ -1183,40 +1202,287 @@ const DEVICE_ONLINE_WINDOW_MS = 15 * 60 * 1000;
  * anel de atualizacao, se executa os pedidos do site, se e a principal de precos e a saude da
  * fila (o mesmo resumo da coluna Saude do painel). Nunca o token nem a instalacao.
  */
+const DEVICE_COLUMNS =
+  "id, name, unit_id, is_active, device_number, app_version, update_channel, last_seen_at, is_price_master, executes_web_operations, web_executor_seen_at, health_queue_pending, health_queue_blocked, health_oldest_pending_at, health_last_error, health_collected_at";
+
+/** Linha de `device_registrations` no formato das telas (Configuracoes e Logs). */
+function deviceView(row: Row, now: number): Row {
+  const seen = typeof row.last_seen_at === "string" ? Date.parse(row.last_seen_at) : NaN;
+  return {
+    id: row.id,
+    name: row.name,
+    unitId: row.unit_id ?? null,
+    isActive: row.is_active === true,
+    deviceNumber: row.device_number ?? null,
+    appVersion: row.app_version ?? null,
+    updateChannel: row.update_channel === "beta" ? "teste" : "producao",
+    lastSeenAt: row.last_seen_at ?? null,
+    online: Number.isFinite(seen) && now - seen <= DEVICE_ONLINE_WINDOW_MS,
+    isPriceMaster: row.is_price_master === true,
+    executesWebOperations: row.executes_web_operations === true,
+    webExecutorSeenAt: row.web_executor_seen_at ?? null,
+    health: {
+      queuePending: row.health_queue_pending ?? null,
+      queueBlocked: row.health_queue_blocked ?? null,
+      oldestPendingAt: row.health_oldest_pending_at ?? null,
+      lastError: row.health_last_error ?? null,
+      collectedAt: row.health_collected_at ?? null
+    }
+  };
+}
+
+/** O dispositivo virtual do site (`web-<company_id>`) nao e computador: fica fora das listas. */
+function isRealDevice(row: Row): boolean {
+  return !String(row.id ?? "").startsWith("web-");
+}
+
+function byName(a: Row, b: Row): number {
+  return String(a.name ?? "").localeCompare(String(b.name ?? ""), "pt-BR");
+}
+
 async function unitDevices(ctx: ActionContext): Promise<Row> {
   const rows = await ctx.store.listRows(
     "device_registrations",
     ctx.session.companyId,
-    "id, name, unit_id, is_active, device_number, app_version, update_channel, last_seen_at, is_price_master, executes_web_operations, web_executor_seen_at, health_queue_pending, health_queue_blocked, health_oldest_pending_at, health_last_error, health_collected_at",
+    DEVICE_COLUMNS,
     [{ column: "unit_id", value: ctx.session.unitId }]
   );
   const now = Date.parse(ctx.nowIso);
   const devices = rows
-    .filter((row) => row.is_active === true && !String(row.id ?? "").startsWith("web-"))
-    .map((row) => {
-      const seen = typeof row.last_seen_at === "string" ? Date.parse(row.last_seen_at) : NaN;
-      return {
-        id: row.id,
-        name: row.name,
-        deviceNumber: row.device_number ?? null,
-        appVersion: row.app_version ?? null,
-        updateChannel: row.update_channel === "beta" ? "teste" : "producao",
-        lastSeenAt: row.last_seen_at ?? null,
-        online: Number.isFinite(seen) && now - seen <= DEVICE_ONLINE_WINDOW_MS,
-        isPriceMaster: row.is_price_master === true,
-        executesWebOperations: row.executes_web_operations === true,
-        webExecutorSeenAt: row.web_executor_seen_at ?? null,
-        health: {
-          queuePending: row.health_queue_pending ?? null,
-          queueBlocked: row.health_queue_blocked ?? null,
-          oldestPendingAt: row.health_oldest_pending_at ?? null,
-          lastError: row.health_last_error ?? null,
-          collectedAt: row.health_collected_at ?? null
-        }
-      };
-    })
-    .sort((a, b) => String(a.name).localeCompare(String(b.name), "pt-BR"));
+    .filter((row) => row.is_active === true && isRealDevice(row))
+    .map((row) => deviceView(row, now))
+    .sort(byName);
   return { devices };
+}
+
+// ---------------------------------------------------------------------------
+// Logs de suporte (so o administrador)
+// ---------------------------------------------------------------------------
+
+/** Estados de faturamento no OMIE que pararam por falha (os mesmos que a balanca rearma). */
+const OMIE_BILLING_FAILURES = [
+  "failed",
+  "cadastro_incompleto",
+  "service_order_failed",
+  "missing_in_omie"
+] as const;
+
+/** Fechada e ainda sem subir: passou disso, algo travou no caminho ate a nuvem ou o OMIE. */
+const STUCK_UPLOAD_STATUSES = ["closed_local", "pending_cloud", "pending_omie"] as const;
+const STUCK_UPLOAD_AFTER_MS = 2 * 60 * 60 * 1000;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function isoBefore(nowIso: string, ms: number): string {
+  return new Date(Date.parse(nowIso) - ms).toISOString();
+}
+
+/** Maior versao (x.y.z) da lista, para marcar as balancas desatualizadas. */
+function highestVersion(versions: unknown[]): string | null {
+  let best: string | null = null;
+  for (const version of versions) {
+    if (typeof version !== "string" || !/^v?\d+(\.\d+)*$/.test(version.trim())) continue;
+    if (best === null || !isVersionAtLeast(best, version.trim())) best = version.trim();
+  }
+  return best;
+}
+
+const OPERATION_PROBLEM_COLUMNS =
+  "id, unit_id, plate, customer_name, product_description, status, created_at, closed_at, total_cents, omie_billing_status, omie_billing_message, omie_sales_order_id";
+
+/**
+ * Tudo o que ajuda o suporte a achar a falha sem ir ate a pedreira: saude de cada balanca, os
+ * pedidos do site que falharam ou empacaram, as pesagens com problema no OMIE, os fechamentos,
+ * os relatorios automaticos, as senhas de preco erradas e quem tem login. So LEITURA, com
+ * janela e teto em cada lista — e tela de diagnostico, nao exportacao.
+ */
+async function supportOverview(ctx: ActionContext): Promise<Row> {
+  const { companyId } = ctx.session;
+  const now = Date.parse(ctx.nowIso);
+  const since7 = isoBefore(ctx.nowIso, 7 * DAY_MS);
+  const since30 = isoBefore(ctx.nowIso, 30 * DAY_MS);
+  const newestFirst = (column: string) => ({ orderBy: { column, ascending: false } });
+
+  const [
+    units,
+    deviceRows,
+    requestRows,
+    billingRows,
+    syncErrorRows,
+    billingFailureRows,
+    stuckRows,
+    dailyRows,
+    financialRows,
+    failureRows,
+    userRows
+  ] = await Promise.all([
+    ctx.store.listRows("units", companyId, "id, name", []),
+    ctx.store.listRows("device_registrations", companyId, DEVICE_COLUMNS, []),
+    ctx.store.listRows(
+      "operation_requests",
+      companyId,
+      "id, kind, status, operation_id, unit_id, requested_at, requested_by_name, claimed_by_device_id, claimed_at, processed_at, result_message, print_status, print_message",
+      [{ column: "requested_at", value: since7, op: "gte" }],
+      { ...newestFirst("requested_at"), limit: 300 }
+    ),
+    ctx.store.listRows(
+      "billing_requests",
+      companyId,
+      "id, operation_id, unit_id, status, requested_at, processed_at, result_message",
+      [{ column: "requested_at", value: since30, op: "gte" }],
+      { ...newestFirst("requested_at"), limit: 200 }
+    ),
+    ctx.store.listRows(
+      "weighing_operations",
+      companyId,
+      OPERATION_PROBLEM_COLUMNS,
+      [
+        { column: "status", value: "sync_error" },
+        { column: "created_at", value: since30, op: "gte" }
+      ],
+      { ...newestFirst("created_at"), limit: 300 }
+    ),
+    ctx.store.listRows(
+      "weighing_operations",
+      companyId,
+      OPERATION_PROBLEM_COLUMNS,
+      [
+        { column: "omie_billing_status", value: [...OMIE_BILLING_FAILURES], op: "in" },
+        { column: "created_at", value: since30, op: "gte" }
+      ],
+      { ...newestFirst("created_at"), limit: 300 }
+    ),
+    ctx.store.listRows(
+      "weighing_operations",
+      companyId,
+      OPERATION_PROBLEM_COLUMNS,
+      [
+        { column: "status", value: [...STUCK_UPLOAD_STATUSES], op: "in" },
+        { column: "created_at", value: since30, op: "gte" },
+        { column: "closed_at", value: isoBefore(ctx.nowIso, STUCK_UPLOAD_AFTER_MS), op: "lte" }
+      ],
+      { ...newestFirst("created_at"), limit: 300 }
+    ),
+    ctx.store.listRows(
+      "daily_report_dispatches",
+      companyId,
+      "id, report_date, status, last_error, recipients_count, dispatched_at",
+      [{ column: "dispatched_at", value: since30, op: "gte" }],
+      { ...newestFirst("dispatched_at"), limit: 100 }
+    ),
+    ctx.store.listRows(
+      "financial_report_dispatches",
+      companyId,
+      "id, report_date, status, last_error, recipients_count, dispatched_at",
+      [{ column: "dispatched_at", value: since30, op: "gte" }],
+      { ...newestFirst("dispatched_at"), limit: 100 }
+    ),
+    ctx.store.listRows(
+      "price_password_failures",
+      companyId,
+      "user_id, attempted_at",
+      [{ column: "attempted_at", value: since7, op: "gte" }],
+      { ...newestFirst("attempted_at"), limit: 200 }
+    ),
+    ctx.store.listRows(
+      "user_profiles",
+      companyId,
+      "id, name, email, role, is_active, requires_price_password, device_id, unit_id",
+      []
+    )
+  ]);
+
+  const devices = deviceRows.filter(isRealDevice).map((row) => deviceView(row, now));
+  devices.sort(byName);
+  const userName = new Map(userRows.map((row) => [row.id, row.name ?? null]));
+
+  // A mesma pesagem pode cair em mais de uma lista (erro de envio E faturamento falho).
+  const problems = new Map<unknown, Row>();
+  for (const row of [...syncErrorRows, ...billingFailureRows, ...stuckRows]) {
+    problems.set(row.id, row);
+  }
+  const omieProblems = [...problems.values()]
+    .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")))
+    .slice(0, 300)
+    .map((row) => ({
+      id: row.id,
+      unitId: row.unit_id ?? null,
+      plate: row.plate ?? null,
+      customerName: row.customer_name ?? null,
+      productDescription: row.product_description ?? null,
+      status: row.status,
+      createdAt: row.created_at,
+      closedAt: row.closed_at ?? null,
+      totalCents: row.total_cents ?? null,
+      omieBillingStatus: row.omie_billing_status ?? null,
+      omieBillingMessage: row.omie_billing_message ?? null,
+      omieSalesOrderId: row.omie_sales_order_id ?? null
+    }));
+
+  const dispatch = (kind: "diario" | "financeiro") => (row: Row) => ({
+    id: row.id,
+    kind,
+    reportDate: row.report_date,
+    status: row.status,
+    lastError: row.last_error ?? null,
+    recipientsCount: row.recipients_count ?? 0,
+    dispatchedAt: row.dispatched_at
+  });
+
+  return {
+    generatedAt: ctx.nowIso,
+    units: units.map((row) => ({ id: row.id, name: row.name })),
+    devices,
+    latestAppVersion: highestVersion(
+      devices.filter((device) => device.isActive === true).map((device) => device.appVersion)
+    ),
+    operationRequests: requestRows.map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      status: row.status,
+      operationId: row.operation_id,
+      unitId: row.unit_id,
+      requestedAt: row.requested_at,
+      requestedByName: row.requested_by_name ?? null,
+      claimedByDeviceId: row.claimed_by_device_id ?? null,
+      claimedAt: row.claimed_at ?? null,
+      processedAt: row.processed_at ?? null,
+      resultMessage: row.result_message ?? null,
+      printStatus: row.print_status ?? null,
+      printMessage: row.print_message ?? null
+    })),
+    billingRequests: billingRows.map((row) => ({
+      id: row.id,
+      operationId: row.operation_id,
+      unitId: row.unit_id,
+      status: row.status,
+      requestedAt: row.requested_at,
+      processedAt: row.processed_at ?? null,
+      resultMessage: row.result_message ?? null
+    })),
+    omieProblems,
+    reportDispatches: [
+      ...dailyRows.map(dispatch("diario")),
+      ...financialRows.map(dispatch("financeiro"))
+    ].sort((a, b) => String(b.dispatchedAt ?? "").localeCompare(String(a.dispatchedAt ?? ""))),
+    pricePasswordFailures: failureRows.map((row) => ({
+      userId: row.user_id,
+      userName: userName.get(row.user_id) ?? null,
+      attemptedAt: row.attempted_at
+    })),
+    webUsers: userRows
+      .map((row) => ({
+        id: row.id,
+        name: row.name ?? "",
+        email: row.email ?? "",
+        role: row.role,
+        isActive: row.is_active === true,
+        requiresPricePassword: row.requires_price_password === true,
+        deviceId: row.device_id ?? null,
+        unitId: row.unit_id ?? null
+      }))
+      .sort(byName)
+  };
 }
 
 async function requireLive(ctx: ActionContext, table: string, id: string, label: string) {
@@ -1250,19 +1516,6 @@ async function checkPricePassword(ctx: ActionContext): Promise<void> {
   if (!ctx.session.requiresPricePassword) return;
   const typed = optionalText(ctx.payload, "pricePassword");
   if (!typed) throw new WebApiError(403, "Digite a senha de alteracao de preco.");
-  // A senha tem 4 digitos e e a mesma da balanca: sem limite, bastaria tentar todas.
-  const since = Date.parse(ctx.nowIso) - PRICE_PASSWORD_WINDOW_MS;
-  const failures = (
-    await ctx.store.listRows("price_password_failures", ctx.session.companyId, "attempted_at", [
-      { column: "user_id", value: ctx.session.userId }
-    ])
-  ).filter((row) => Date.parse(String(row.attempted_at ?? "")) >= since);
-  if (failures.length >= PRICE_PASSWORD_MAX_FAILURES) {
-    throw new WebApiError(
-      429,
-      "Muitas tentativas erradas da senha de preco. Espere 15 minutos e tente de novo."
-    );
-  }
   const [company] = await ctx.store.listRows(
     "companies",
     ctx.session.companyId,
@@ -1271,7 +1524,28 @@ async function checkPricePassword(ctx: ActionContext): Promise<void> {
     { anyCompany: true }
   );
   const expected = String(company?.price_change_password ?? "");
-  if (!expected || !safeEqual(typed, expected)) {
+  // Sem senha definida nao ha o que acertar: contar como erro travaria o login a toa.
+  if (!expected) {
+    throw new WebApiError(
+      403,
+      "A pedreira ainda nao tem senha de alteracao de preco. Peca ao suporte para definir no painel."
+    );
+  }
+  // A senha tem 4 digitos e e a mesma da balanca: sem limite, bastaria tentar todas.
+  const since = Date.parse(ctx.nowIso) - PRICE_PASSWORD_WINDOW_MS;
+  const failures = (
+    await ctx.store.listRows("price_password_failures", ctx.session.companyId, "attempted_at", [
+      { column: "user_id", value: ctx.session.userId },
+      { column: "attempted_at", value: new Date(since).toISOString(), op: "gte" }
+    ])
+  ).filter((row) => Date.parse(String(row.attempted_at ?? "")) >= since);
+  if (failures.length >= PRICE_PASSWORD_MAX_FAILURES) {
+    throw new WebApiError(
+      429,
+      "Muitas tentativas erradas da senha de preco. Espere 15 minutos e tente de novo."
+    );
+  }
+  if (!safeEqual(typed, expected)) {
     await ctx.store.insertRow("price_password_failures", {
       id: ctx.newId(),
       company_id: ctx.session.companyId,
@@ -1298,6 +1572,12 @@ async function requestOperation(ctx: ActionContext): Promise<Row> {
   let operationId: string;
   let unitId = ctx.session.unitId;
   if (kind === "entry") {
+    if (!canCreateEntry(ctx.session.role)) {
+      throw new WebApiError(
+        403,
+        `O perfil ${WEB_ROLE_LABELS[ctx.session.role]} nao faz Nova entrada pelo site.`
+      );
+    }
     operationId = ctx.newId();
     await checkReferences(ctx, data as EntryRequestPayload as unknown as Row);
   } else {
@@ -1447,6 +1727,8 @@ async function me(ctx: ActionContext): Promise<Row> {
       canEditCustomers: canEditCustomers(ctx.session.role),
       canEditFleet: canEditFleet(ctx.session.role),
       canOperate: canOperate(ctx.session.role),
+      canCreateEntry: canCreateEntry(ctx.session.role),
+      canSeeSupport: canSeeSupport(ctx.session.role),
       requiresPricePassword: ctx.session.requiresPricePassword
     },
     companyId: ctx.session.companyId,
@@ -1515,6 +1797,8 @@ async function runAction(action: WebApiAction, ctx: ActionContext): Promise<Row>
       return deleteReportRecipient(ctx);
     case "unit_devices":
       return unitDevices(ctx);
+    case "support_overview":
+      return supportOverview(ctx);
   }
 }
 
@@ -1556,6 +1840,9 @@ export async function handleWebApiRequest(
   };
 
   try {
+    // Preco do cadastro pede a senha como o desktop pede (`verifyPriceChangePassword`); o de
+    // uma pesagem e conferido dentro do `request_operation`, que sabe se o preco mudou.
+    if (PRICE_ACTIONS.has(body.action)) await checkPricePassword(ctx);
     const result = await runAction(body.action, ctx);
     return jsonResponse({ ok: true, ...result, warnings: ctx.warnings });
   } catch (error) {

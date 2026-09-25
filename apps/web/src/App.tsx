@@ -3,6 +3,7 @@ import { BrowserRouter, HashRouter, Navigate, Route, Routes } from "react-router
 import { Layout } from "./components/Layout";
 import { ToastProvider } from "./components/ui";
 import { AuthProvider, useAuth } from "./lib/auth";
+import { canSee, homeFor, usesSidebar, type Screen } from "./lib/permissions";
 import { ThemeProvider } from "./lib/theme";
 import { BillingConference } from "./pages/BillingConference";
 import { CustomerReport } from "./pages/CustomerReport";
@@ -12,49 +13,47 @@ import { Insights } from "./pages/Insights";
 import { InvoiceClosing } from "./pages/InvoiceClosing";
 import { Loading } from "./pages/Loading";
 import { Login } from "./pages/Login";
+import { Monitor } from "./pages/Monitor";
 import { NewEntry } from "./pages/NewEntry";
 import { Operations } from "./pages/Operation";
 import { Registrations } from "./pages/Registrations";
 import { SalesReport } from "./pages/SalesReport";
 import { Settings } from "./pages/Settings";
+import { SupportLogs } from "./pages/SupportLogs";
 import { TruckControl } from "./pages/TruckControl";
 import { Wallet } from "./pages/Wallet";
 
 /**
- * Onde cada perfil comeca: o carregador na fila, o comercial no relatorio de vendas (a tela
- * dele no antigo portal) e o resto na tela Operacoes — a mesma que o desktop abre para quem
- * opera a balanca.
- */
-function homeFor(user: { isLoader: boolean; role: string }): string {
-  if (user.isLoader) return "/carregamento";
-  return user.role === "comercial" ? "/relatorios?aba=vendas" : "/operacoes";
-}
-
-/**
- * Guarda de rota. O carregador so tem a fila (`loaderOnly`); qualquer outra tela o manda de
- * volta para ela — e a fila manda quem nao e carregador para o cadastro.
+ * Guarda de rota. Cada perfil tem um conjunto fechado de telas (`lib/permissions.ts`): o
+ * endereco de uma tela que nao e dele volta para a tela inicial dele. `sidebar` e a casca com o
+ * menu lateral, que o carregador e o monitoramento (tela cheia so deles) nao usam.
  */
 function Private({
-  gestorOnly,
-  loaderOnly,
+  screen,
+  sidebar,
   children
 }: {
-  gestorOnly?: boolean;
-  loaderOnly?: boolean;
+  screen?: Screen;
+  sidebar?: boolean;
   children: React.ReactElement;
 }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="empty">Carregando...</div>;
   if (!user) return <Navigate to="/login" replace />;
-  if (Boolean(loaderOnly) !== user.isLoader) return <Navigate to={homeFor(user)} replace />;
-  if (gestorOnly && !user.canManagePrices) return <Navigate to={homeFor(user)} replace />;
+  if (screen && !canSee(user.role, screen)) return <Navigate to={homeFor(user.role)} replace />;
+  if (sidebar && !usesSidebar(user.role)) return <Navigate to={homeFor(user.role)} replace />;
   return children;
 }
 
 function Home() {
   const { user, loading } = useAuth();
   if (loading) return <div className="empty">Carregando...</div>;
-  return <Navigate to={user ? homeFor(user) : "/login"} replace />;
+  return <Navigate to={user ? homeFor(user.role) : "/login"} replace />;
+}
+
+/** Atalho: a tela so monta para quem a ve. */
+function only(screen: Screen, element: React.ReactElement) {
+  return <Private screen={screen}>{element}</Private>;
 }
 
 /**
@@ -72,39 +71,45 @@ export function App() {
           <Router>
             <Routes>
               <Route path="/login" element={<Login />} />
-              <Route
-                path="/carregamento"
-                element={
-                  <Private loaderOnly>
-                    <Loading />
-                  </Private>
-                }
-              />
+              <Route path="/carregamento" element={only("carregamento", <Loading />)} />
+              <Route path="/monitoramento" element={only("monitoramento", <Monitor />)} />
               <Route
                 element={
-                  <Private>
+                  <Private sidebar>
                     <Layout />
                   </Private>
                 }
               >
                 <Route index element={<Home />} />
-                <Route path="/painel" element={<Dashboard />} />
-                <Route path="/nova-entrada" element={<NewEntry />} />
-                <Route path="/operacoes" element={<Operations />} />
-                <Route path="/cadastros" element={<Registrations />} />
-                <Route path="/cadastros/:tab" element={<Registrations />} />
-                <Route path="/cadastros/:tab/:sub" element={<Registrations />} />
-                <Route path="/insights" element={<Insights />} />
-                <Route path="/controle-caminhoes" element={<TruckControl />} />
-                <Route path="/relatorio-cliente" element={<CustomerReport />} />
-                <Route path="/conferencia-faturamento" element={<BillingConference />} />
-                <Route path="/relatorios" element={<SalesReport />} />
-                <Route path="/documentacao" element={<Documentation />} />
+                <Route path="/painel" element={only("painel", <Dashboard />)} />
+                <Route path="/nova-entrada" element={only("nova-entrada", <NewEntry />)} />
+                <Route path="/operacoes" element={only("operacoes", <Operations />)} />
+                <Route path="/carteira" element={only("carteira", <Wallet />)} />
+                <Route path="/cadastros" element={only("cadastros", <Registrations />)} />
+                <Route path="/cadastros/:tab" element={only("cadastros", <Registrations />)} />
+                <Route path="/cadastros/:tab/:sub" element={only("cadastros", <Registrations />)} />
+                <Route path="/insights" element={only("insights", <Insights />)} />
+                <Route
+                  path="/controle-caminhoes"
+                  element={only("controle-caminhoes", <TruckControl />)}
+                />
+                <Route
+                  path="/relatorio-cliente"
+                  element={only("relatorio-cliente", <CustomerReport />)}
+                />
+                <Route
+                  path="/conferencia-faturamento"
+                  element={only("conferencia-faturamento", <BillingConference />)}
+                />
+                <Route path="/fechamento" element={only("fechamento", <InvoiceClosing />)} />
+                <Route path="/relatorios" element={only("relatorios", <SalesReport />)} />
+                <Route path="/documentacao" element={only("documentacao", <Documentation />)} />
+                <Route path="/suporte" element={only("suporte", <SupportLogs />)} />
                 <Route
                   path="/configuracoes"
-                  element={<Navigate to="/configuracoes/balanca" replace />}
+                  element={only("configuracoes", <Navigate to="/configuracoes/balanca" replace />)}
                 />
-                <Route path="/configuracoes/:tab" element={<Settings />} />
+                <Route path="/configuracoes/:tab" element={only("configuracoes", <Settings />)} />
                 {/* Enderecos antigos (favoritos, links mandados por mensagem). */}
                 <Route path="/operacao" element={<Navigate to="/operacoes" replace />} />
                 <Route
@@ -122,22 +127,6 @@ export function App() {
                 />
                 <Route path="/precos" element={<Navigate to="/cadastros/produtos" replace />} />
                 <Route path="/vendas" element={<Navigate to="/relatorios" replace />} />
-                <Route
-                  path="/carteira"
-                  element={
-                    <Private gestorOnly>
-                      <Wallet />
-                    </Private>
-                  }
-                />
-                <Route
-                  path="/fechamento"
-                  element={
-                    <Private gestorOnly>
-                      <InvoiceClosing />
-                    </Private>
-                  }
-                />
               </Route>
               <Route path="*" element={<Home />} />
             </Routes>

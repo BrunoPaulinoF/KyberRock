@@ -126,8 +126,15 @@ describe("isEmailAlreadyRegisteredError", () => {
 });
 
 describe("parseAccessRole", () => {
-  it("aceita os cinco perfis, sem diferenciar caixa", () => {
-    for (const role of ["loader", "monitoramento", "operacao", "comercial", "gestor"]) {
+  it("aceita os seis perfis, sem diferenciar caixa", () => {
+    for (const role of [
+      "loader",
+      "monitoramento",
+      "comercial",
+      "gestor",
+      "operacao",
+      "administrador"
+    ]) {
       expect(parseAccessRole(role)).toBe(role);
     }
     expect(parseAccessRole(" Gestor ")).toBe("gestor");

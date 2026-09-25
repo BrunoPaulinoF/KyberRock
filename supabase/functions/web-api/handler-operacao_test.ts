@@ -6,6 +6,15 @@ import { handleWebApiRequest, type Row, type RowFilter, type WebApiStore } from 
 const COMPANY = "company-1";
 const NOW = "2026-09-25T15:00:00.000Z";
 
+/** Mesma leitura de filtro do `index.ts`: igualdade, `in`, `gte` e `lte`. */
+function matchesFilter(row: Row, filter: RowFilter): boolean {
+  const value = row[filter.column];
+  if (filter.op === "in") return (filter.value as unknown[]).includes(value);
+  if (filter.op === "gte") return value != null && String(value) >= String(filter.value);
+  if (filter.op === "lte") return value != null && String(value) <= String(filter.value);
+  return filter.value === null ? value == null : value === filter.value;
+}
+
 class MemoryStore implements WebApiStore {
   readonly tables = new Map<string, Row[]>();
   seed(table: string, rows: Row[]): void {
@@ -28,7 +37,7 @@ class MemoryStore implements WebApiStore {
       (row) =>
         (options?.anyCompany || row.company_id === companyId) &&
         (!options?.live || !row.deleted_at) &&
-        filters.every((f) => (f.value === null ? row[f.column] == null : row[f.column] === f.value))
+        filters.every((f) => matchesFilter(row, f))
     );
   }
   async insertRow(table: string, row: Row): Promise<void> {
@@ -152,14 +161,20 @@ describe("web-api: pesagem pelo site", () => {
     ]);
   });
 
-  it("so operacao e gestor pedem pesagem", async () => {
-    for (const role of ["monitoramento", "comercial"] as const) {
+  it("Nova entrada: so operacao e administrador; o gestor fecha, altera e reimprime", async () => {
+    for (const role of ["monitoramento", "comercial", "gestor"] as const) {
       const result = await harness(role).call("request_operation", { kind: "entry", data: ENTRY });
       expect(result.status, role).toBe(403);
     }
     expect(
-      (await harness("gestor").call("request_operation", { kind: "entry", data: ENTRY })).status
+      (await harness("administrador").call("request_operation", { kind: "entry", data: ENTRY }))
+        .status
     ).toBe(200);
+    const gestor = harness("gestor");
+    expect(
+      (await gestor.call("request_operation", { kind: "reprint", operationId: "op-done" })).status
+    ).toBe(200);
+    expect(gestor.store.rows("operation_requests")).toHaveLength(1);
   });
 
   it("recusa cadastro inativo ou de fora da empresa antes de chegar na balanca", async () => {

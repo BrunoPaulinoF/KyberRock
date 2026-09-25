@@ -10,7 +10,9 @@ import {
   OPERATION_ACTIONS,
   PRICE_ACTIONS,
   READ_ACTIONS,
+  SUPPORT_ACTIONS,
   WEB_API_ACTIONS,
+  type ListRowsOptions,
   type OmieBridge,
   type Row,
   type RowFilter,
@@ -42,15 +44,27 @@ class MemoryStore implements WebApiStore {
     companyId: string,
     _columns: string,
     filters: RowFilter[],
-    options?: { live?: boolean; anyCompany?: boolean }
+    options?: ListRowsOptions
   ): Promise<Row[]> {
-    return this.rows(table).filter((row) => {
+    const rows = this.rows(table).filter((row) => {
       if (!options?.anyCompany && row.company_id !== companyId) return false;
       if (options?.live && row.deleted_at) return false;
-      return filters.every((filter) =>
-        filter.value === null ? row[filter.column] == null : row[filter.column] === filter.value
-      );
+      return filters.every((filter) => {
+        const value = row[filter.column];
+        if (filter.op === "in") return (filter.value as unknown[]).includes(value);
+        if (filter.op === "gte") return value != null && String(value) >= String(filter.value);
+        if (filter.op === "lte") return value != null && String(value) <= String(filter.value);
+        return filter.value === null ? value == null : value === filter.value;
+      });
     });
+    const order = options?.orderBy;
+    const sorted = order
+      ? [...rows].sort((a, b) => {
+          const diff = String(a[order.column] ?? "").localeCompare(String(b[order.column] ?? ""));
+          return order.ascending ? diff : -diff;
+        })
+      : rows;
+    return options?.limit ? sorted.slice(0, options.limit) : sorted;
   }
 
   async insertRow(table: string, row: Row): Promise<void> {
@@ -67,7 +81,7 @@ class MemoryStore implements WebApiStore {
   }
 }
 
-function session(role: WebSession["role"]): WebSession {
+function session(role: WebSession["role"], requiresPricePassword = false): WebSession {
   return {
     userId: "user-1",
     email: "rafaela@pedreira.com",
@@ -75,7 +89,7 @@ function session(role: WebSession["role"]): WebSession {
     role,
     companyId: COMPANY,
     unitId: "unit-1",
-    requiresPricePassword: false
+    requiresPricePassword
   };
 }
 
@@ -88,6 +102,7 @@ interface Harness {
 function harness(
   input: {
     role?: WebSession["role"];
+    requiresPricePassword?: boolean;
     sessionResult?: WebSessionResult;
     omie?: Partial<OmieBridge>;
   } = {}
@@ -103,7 +118,10 @@ function harness(
     ...input.omie
   };
   const resolveSession = async (): Promise<WebSessionResult> =>
-    input.sessionResult ?? { ok: true, session: session(input.role ?? "comercial") };
+    input.sessionResult ?? {
+      ok: true,
+      session: session(input.role ?? "gestor", input.requiresPricePassword)
+    };
 
   return {
     store,
@@ -155,49 +173,47 @@ describe("web-api: sessao e permissoes", () => {
     expect(result.body.actions).toContain("upsert_customer");
   });
 
-  it("comercial mexe em preco, mas nao no bloco comercial, carteira nem fechamento", async () => {
-    const h = harness({ role: "comercial" });
-    for (const action of PRICE_ACTIONS) {
-      expect(actionDenial("comercial", action), action).toBeNull();
-      expect(actionDenial("operacao", action), action).not.toBeNull();
+  it("monitoramento e comercial so consultam: nenhuma escrita passa", async () => {
+    for (const role of ["monitoramento", "comercial"] as const) {
+      const h = harness({ role });
+      for (const action of [
+        "upsert_customer",
+        "upsert_vehicle",
+        "upsert_driver",
+        "upsert_carrier",
+        "set_product_default_price",
+        "set_customer_commercial",
+        "settle_wallet",
+        "request_invoice_closing",
+        "save_report_recipient"
+      ]) {
+        const result = await h.call(action, { name: "X", plate: "ABC1D23", id: "x" });
+        expect(result.status, `${role} ${action}`).toBe(403);
+        expect(result.body.error, `${role} ${action}`).toContain("so consulta");
+      }
+      expect(h.store.rows("customers")).toHaveLength(0);
+      expect(h.store.rows("vehicles")).toHaveLength(0);
+      expect((await h.call("me")).status).toBe(200);
     }
-    for (const action of [
-      "set_customer_commercial",
-      "settle_wallet",
-      "request_invoice_closing",
-      "save_report_recipient"
-    ]) {
-      const result = await h.call(action, { id: "x" });
-      expect(result.status, action).toBe(403);
-    }
-    expect(h.store.rows("customers")).toHaveLength(0);
   });
 
-  it("monitoramento so consulta: nenhuma escrita passa", async () => {
-    const h = harness({ role: "monitoramento" });
-    for (const action of ["upsert_customer", "upsert_vehicle", "upsert_driver", "upsert_carrier"]) {
-      const result = await h.call(action, { name: "X", plate: "ABC1D23" });
-      expect(result.status, action).toBe(403);
+  it("operacao e administrador cadastram cliente e frota", async () => {
+    for (const role of ["operacao", "administrador"] as const) {
+      const h = harness({ role });
+      expect((await h.call("upsert_vehicle", { plate: "ABC1D23" })).status, role).toBe(200);
+      const customer = await h.call("upsert_customer", {
+        legalName: "X",
+        document: "52998224725"
+      });
+      expect(customer.status, role).toBe(200);
     }
-    expect(h.store.rows("customers")).toHaveLength(0);
-    expect(h.store.rows("vehicles")).toHaveLength(0);
-    expect((await h.call("me")).status).toBe(200);
-  });
-
-  it("operacao cadastra veiculo, mas nao cliente", async () => {
-    const h = harness({ role: "operacao" });
-    const vehicle = await h.call("upsert_vehicle", { plate: "ABC1D23" });
-    expect(vehicle.status).toBe(200);
-    const customer = await h.call("upsert_customer", { legalName: "X", document: "52998224725" });
-    expect(customer.status).toBe(403);
-    expect(customer.body.error).toContain("Operacao");
-    expect(h.store.rows("customers")).toHaveLength(0);
   });
 
   it("toda acao tem dono: nenhuma nasce liberada para quem so consulta", () => {
     for (const action of WEB_API_ACTIONS) {
       const groups = [
         READ_ACTIONS.has(action),
+        SUPPORT_ACTIONS.has(action),
         OPERATION_ACTIONS.has(action),
         GESTOR_ONLY_ACTIONS.has(action),
         PRICE_ACTIONS.has(action),
@@ -205,9 +221,14 @@ describe("web-api: sessao e permissoes", () => {
         FLEET_ACTIONS.has(action)
       ].filter(Boolean);
       expect(groups, action).toHaveLength(1);
-      expect(actionDenial("gestor", action), action).toBeNull();
+      expect(actionDenial("administrador", action), action).toBeNull();
+      if (!SUPPORT_ACTIONS.has(action)) {
+        expect(actionDenial("gestor", action), action).toBeNull();
+        expect(actionDenial("operacao", action), action).toBeNull();
+      }
       if (!READ_ACTIONS.has(action)) {
         expect(actionDenial("monitoramento", action), action).not.toBeNull();
+        expect(actionDenial("comercial", action), action).not.toBeNull();
       }
     }
   });
@@ -231,7 +252,10 @@ describe("web-api: sessao e permissoes", () => {
       canManagePrices: true,
       canEditPrices: true,
       canEditCustomers: true,
-      canEditFleet: true
+      canEditFleet: true,
+      canOperate: true,
+      canCreateEntry: false,
+      canSeeSupport: false
     });
     expect((result.body.units as Row[]).map((unit) => unit.id)).toEqual(["unit-1"]);
   });
@@ -678,5 +702,184 @@ describe("web-api: preco (gestor)", () => {
 
     const badDate = await h.call("upsert_price_table", { id: "id-1", validTo: "31/12/2026" });
     expect(badDate.status).toBe(400);
+  });
+});
+
+describe("web-api: senha de preco no cadastro", () => {
+  function priced(requiresPricePassword: boolean, password: string | null = "4321") {
+    const h = harness({ role: "operacao", requiresPricePassword });
+    h.store.seed("companies", [{ id: COMPANY, price_change_password: password }]);
+    h.store.seed("products", [{ id: "p-1", company_id: COMPANY }]);
+    return h;
+  }
+
+  it("quem precisa da senha so publica preco com a senha certa", async () => {
+    const h = priced(true);
+    const change = { productId: "p-1", unitPriceCents: 6500 };
+    expect((await h.call("set_product_default_price", change)).status).toBe(403);
+    expect(
+      (await h.call("set_product_default_price", { ...change, pricePassword: "0000" })).status
+    ).toBe(403);
+    expect(h.store.rows("product_default_prices")).toHaveLength(0);
+    const ok = await h.call("set_product_default_price", { ...change, pricePassword: "4321" });
+    expect(ok.status).toBe(200);
+    expect(JSON.stringify(h.store.rows("product_default_prices"))).not.toContain("4321");
+    expect(h.store.rows("price_password_failures")).toHaveLength(1);
+  });
+
+  it("tirar preco especial tambem pede a senha", async () => {
+    const h = priced(true);
+    const result = await h.call("remove_customer_special_price", {
+      customerId: "c-1",
+      productId: "p-1"
+    });
+    expect(result.status).toBe(403);
+    expect(result.body.error).toContain("senha");
+  });
+
+  it("sem a marca (administrador) publica direto", async () => {
+    const h = priced(false);
+    expect(
+      (await h.call("set_product_default_price", { productId: "p-1", unitPriceCents: 6500 })).status
+    ).toBe(200);
+  });
+
+  it("pedreira sem senha definida: avisa e nao conta tentativa errada", async () => {
+    const h = priced(true, null);
+    const result = await h.call("set_product_default_price", {
+      productId: "p-1",
+      unitPriceCents: 6500,
+      pricePassword: "1234"
+    });
+    expect(result.status).toBe(403);
+    expect(result.body.error).toContain("nao tem senha");
+    expect(h.store.rows("price_password_failures")).toHaveLength(0);
+  });
+});
+
+describe("web-api: logs de suporte", () => {
+  function seeded(role: WebSession["role"] = "administrador") {
+    const h = harness({ role });
+    h.store.seed("units", [{ id: "unit-1", company_id: COMPANY, name: "Matriz" }]);
+    h.store.seed("device_registrations", [
+      {
+        id: "d-1",
+        company_id: COMPANY,
+        unit_id: "unit-1",
+        name: "PC PRINCIPAL",
+        is_active: true,
+        app_version: "0.8.254",
+        last_seen_at: "2026-09-22T14:58:00.000Z",
+        health_queue_blocked: 2
+      },
+      {
+        id: "d-2",
+        company_id: COMPANY,
+        unit_id: "unit-1",
+        name: "fernanda",
+        is_active: true,
+        app_version: "0.8.244",
+        last_seen_at: "2026-09-21T10:00:00.000Z"
+      },
+      {
+        id: `web-${COMPANY}`,
+        company_id: COMPANY,
+        unit_id: "unit-1",
+        name: "Site",
+        is_active: true
+      },
+      { id: "d-9", company_id: OTHER_COMPANY, unit_id: "unit-9", name: "Outra", is_active: true }
+    ]);
+    h.store.seed("operation_requests", [
+      {
+        id: "r-new",
+        company_id: COMPANY,
+        kind: "exit",
+        status: "failed",
+        requested_at: "2026-09-22T14:00:00.000Z",
+        result_message: "Balanca sem peso"
+      },
+      {
+        id: "r-old",
+        company_id: COMPANY,
+        kind: "entry",
+        status: "done",
+        requested_at: "2026-09-01T14:00:00.000Z"
+      }
+    ]);
+    h.store.seed("weighing_operations", [
+      // Erro de envio E faturamento falho: aparece uma vez so.
+      {
+        id: "op-1",
+        company_id: COMPANY,
+        status: "sync_error",
+        omie_billing_status: "failed",
+        created_at: "2026-09-20T10:00:00.000Z"
+      },
+      {
+        id: "op-stuck",
+        company_id: COMPANY,
+        status: "pending_omie",
+        created_at: "2026-09-22T08:00:00.000Z",
+        closed_at: "2026-09-22T09:00:00.000Z"
+      },
+      // Fechou ha pouco: ainda nao e "parada".
+      {
+        id: "op-fresh",
+        company_id: COMPANY,
+        status: "pending_omie",
+        created_at: "2026-09-22T14:30:00.000Z",
+        closed_at: "2026-09-22T14:40:00.000Z"
+      },
+      { id: "op-ok", company_id: COMPANY, status: "synced", created_at: "2026-09-22T10:00:00.000Z" }
+    ]);
+    h.store.seed("user_profiles", [
+      {
+        id: "user-1",
+        company_id: COMPANY,
+        name: "Rafaela",
+        email: "r@x.com",
+        role: "operacao",
+        is_active: true
+      }
+    ]);
+    h.store.seed("price_password_failures", [
+      {
+        id: "f-1",
+        company_id: COMPANY,
+        user_id: "user-1",
+        attempted_at: "2026-09-22T12:00:00.000Z"
+      }
+    ]);
+    return h;
+  }
+
+  it("so o administrador ve", async () => {
+    for (const role of ["gestor", "operacao", "comercial", "monitoramento"] as const) {
+      expect((await seeded(role).call("support_overview")).status, role).toBe(403);
+    }
+  });
+
+  it("junta saude das balancas, pedidos, envios parados e senhas erradas da empresa", async () => {
+    const result = await seeded().call("support_overview");
+    expect(result.status).toBe(200);
+    const body = result.body;
+    expect((body.devices as Row[]).map((device) => device.id)).toEqual(["d-2", "d-1"]);
+    expect(body.latestAppVersion).toBe("0.8.254");
+    expect((body.devices as Row[]).find((device) => device.id === "d-1")).toMatchObject({
+      online: true,
+      health: { queueBlocked: 2 }
+    });
+    expect((body.operationRequests as Row[]).map((request) => request.id)).toEqual(["r-new"]);
+    expect((body.omieProblems as Row[]).map((operation) => operation.id)).toEqual([
+      "op-stuck",
+      "op-1"
+    ]);
+    expect(body.pricePasswordFailures).toEqual([
+      { userId: "user-1", userName: "Rafaela", attemptedAt: "2026-09-22T12:00:00.000Z" }
+    ]);
+    expect(body.webUsers).toEqual([
+      expect.objectContaining({ id: "user-1", role: "operacao", isActive: true })
+    ]);
   });
 });

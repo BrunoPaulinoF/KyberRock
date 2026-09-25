@@ -30,37 +30,50 @@ npx vitest run apps/web                       # só os testes do site
 ```
 
 Acessos de homologação (Pedreira Teste): `gestor.teste@kyberrock.app` e
-`comercial.teste@kyberrock.app` (senhas com a Kybernan).
+`comercial.teste@kyberrock.app` (senhas com a Kybernan). Para ver as telas de outro perfil,
+troque o perfil do login no painel `/admin`.
 
 ## Telas
 
-Perfis (`src/lib/permissions.ts`, espelho de `_shared/web-session.ts`): `monitoramento` só
-consulta; `operacao` edita veículos, motoristas e transportadoras e faz pesagem; `comercial`
-também clientes e preços, e começa no relatório de vendas (`/relatorios?aba=vendas`, o antigo
-relatório do portal); `gestor` tudo. O `loader` (carregador) só tem `/carregamento`, feita para
-celular e tablet e instalável como app (`public/manifest.webmanifest` + `public/sw.js`). A pesagem pelo
-site é um PEDIDO que a balança executora da unidade registra (`docs/web-api.md` 4.9).
+Perfis (`src/lib/permissions.ts`; o que cada um grava espelha `_shared/web-session.ts`). Cada
+perfil ve um conjunto FECHADO de telas (`SCREENS_BY_ROLE`) — o resto nem aparece no menu, e o
+endereco digitado a mao volta para a tela inicial dele:
+
+| Perfil          | Telas                                                                                          | Configuracoes |
+| --------------- | ---------------------------------------------------------------------------------------------- | ------------- |
+| `monitoramento` | So `/monitoramento` (vendas em tempo real, tela cheia)                                         | Nao           |
+| `comercial`     | Insights, conferencia de faturamento, relatorios, controle de caminhoes, relatorio por cliente | Nao           |
+| `gestor`        | Todas, menos a Nova entrada                                                                    | Sim           |
+| `operacao`      | Todas; mudar preco sempre pede a senha da pedreira                                             | Sim           |
+| `administrador` | Todas + `/suporte` (Logs), sem pedir senha                                                     | Sim           |
+| `loader`        | So `/carregamento` (celular e tablet, instalavel como app)                                     | —             |
+
+Monitoramento e comercial so consultam. Quem nao tem configuracoes ve so o botao Sair no rodape.
+A pesagem pelo site e um PEDIDO que a balanca executora da unidade registra
+(`docs/web-api.md` 4.9). O app instalavel e `public/manifest.webmanifest` + `public/sw.js`.
 
 As telas seguem a disposicao do KyberRock Desktop (mesmo menu, mesmos nomes, abas por icone,
 botoes quadrados de acao): quem opera a balanca nao deve estranhar o site. As pecas comuns
 estao em `src/components/desk.tsx`.
 
-| Rota                       | Quem                             | O que faz                                                                                |
-| -------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------- |
-| `/carregamento`            | carregador                       | Fila de carregamento da unidade: concluir e devolver carga                               |
-| `/painel`                  | todos                            | Painel: resumo do dia, balanca executora, pendencias do OMIE, ultimas pesagens           |
-| `/nova-entrada`            | operacao e gestor                | Nova entrada (peso digitado, frete, condicao digitada) — vira pedido a balanca           |
-| `/operacoes`               | todos (acoes: operacao e gestor) | Operacoes: abertas, canceladas (`?aba=canceladas`), concluidas (`?aba=concluidas`)       |
-| `/carteira`                | gestor                           | Carteira: fechamento e reabertura                                                        |
-| `/cadastros/<aba>`         | todos (edicao conforme o perfil) | Clientes, Produtos (precos), Pagamento, Transporte (motoristas, transportadoras, placas) |
-| `/insights`                | todos                            | Insights: KPIs, graficos e tabela dinamica                                               |
-| `/controle-caminhoes`      | todos                            | Tempo de patio por caminhao                                                              |
-| `/relatorio-cliente`       | todos                            | Relatorio por cliente (simplificado/completo), CSV e impressao                           |
-| `/conferencia-faturamento` | todos                            | Conferencia de faturamento pesagem a pesagem                                             |
-| `/fechamento`              | gestor                           | Fechamento de faturas (pedido de faturamento; a balanca executa)                         |
-| `/relatorios`              | todos (destinatarios: gestor)    | Fechamento diario, periodo, tabela dinamica, mensal e destinatarios                      |
-| `/documentacao`            | todos                            | Central de ajuda (copia da do desktop, guardada por teste)                               |
-| `/configuracoes/<aba>`     | todos (engrenagem do rodape)     | Balanca, Impressao e Cloud: estado das balancas da unidade, cupons do site, fila OMIE    |
+| Rota                       | Quem                                    | O que faz                                                                                |
+| -------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `/carregamento`            | carregador                              | Fila de carregamento da unidade: concluir e devolver carga                               |
+| `/monitoramento`           | monitoramento, gestor, operacao, admin. | Vendas em tempo real (tela cheia, estilo KDS): numeros, graficos, ultimas vendas, patio  |
+| `/painel`                  | gestor, operacao, administrador         | Painel: resumo do dia, balanca executora, pendencias do OMIE, ultimas pesagens           |
+| `/nova-entrada`            | operacao e administrador                | Nova entrada (peso digitado, frete, condicao digitada) — vira pedido a balanca           |
+| `/operacoes`               | gestor, operacao, administrador         | Operacoes: abertas, canceladas (`?aba=canceladas`), concluidas (`?aba=concluidas`)       |
+| `/carteira`                | gestor, operacao, administrador         | Carteira: fechamento e reabertura                                                        |
+| `/cadastros/<aba>`         | gestor, operacao, administrador         | Clientes, Produtos (precos), Pagamento, Transporte (motoristas, transportadoras, placas) |
+| `/insights`                | + comercial                             | Insights: KPIs, graficos e tabela dinamica                                               |
+| `/controle-caminhoes`      | + comercial                             | Tempo de patio por caminhao                                                              |
+| `/relatorio-cliente`       | + comercial                             | Relatorio por cliente (simplificado/completo), CSV e impressao                           |
+| `/conferencia-faturamento` | + comercial                             | Conferencia de faturamento pesagem a pesagem                                             |
+| `/fechamento`              | gestor, operacao, administrador         | Fechamento de faturas (pedido de faturamento; a balanca executa)                         |
+| `/relatorios`              | + comercial (destinatarios: nao)        | Fechamento diario, periodo, tabela dinamica, mensal e destinatarios                      |
+| `/documentacao`            | gestor, operacao, administrador         | Central de ajuda (copia da do desktop, guardada por teste)                               |
+| `/suporte`                 | administrador                           | Logs: saude das balancas, pedidos que falharam, envios OMIE, relatorios, navegador       |
+| `/configuracoes/<aba>`     | gestor, operacao, administrador         | Balanca, Impressao e Cloud: estado das balancas da unidade, cupons do site, fila OMIE    |
 
 Os enderecos antigos (`/operacao`, `/clientes`, `/veiculos`, `/transportadoras`, `/precos`,
 `/vendas`) redirecionam para os novos.

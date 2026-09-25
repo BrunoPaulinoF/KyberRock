@@ -70,16 +70,17 @@ export function isEmailAlreadyRegisteredError(error: unknown): boolean {
 }
 
 /**
- * Perfis de acesso que o painel cria (`user_profiles.role`, migracao `202609240001`). Do
- * carregador, que so ve a fila, ao gestor, que mexe em preco: o que cada um edita no site esta
- * em `_shared/web-session.ts`.
+ * Perfis de acesso que o painel cria (`user_profiles.role`, migracoes `202609240001` e
+ * `202609260001`). As telas de cada um estao em `apps/web/src/lib/permissions.ts`; o que cada
+ * um grava, em `_shared/web-session.ts`.
  */
 export const USER_ACCESS_ROLES = [
   "loader",
   "monitoramento",
-  "operacao",
   "comercial",
-  "gestor"
+  "gestor",
+  "operacao",
+  "administrador"
 ] as const;
 export type UserAccessRole = (typeof USER_ACCESS_ROLES)[number];
 
