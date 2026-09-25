@@ -31,6 +31,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -47,7 +48,9 @@ import { tickIndexes } from "../lib/insights";
 import {
   MONITOR_COLUMNS,
   MONITOR_FILTERS_STORAGE_KEY,
+  MONITOR_FIT_QUERY,
   MONITOR_PERIODS,
+  MONITOR_PHONE_ITEMS,
   MONITOR_WIDGETS,
   MONITOR_WIDGET_LABELS,
   NO_PAYMENT_LABEL,
@@ -63,6 +66,8 @@ import {
   defaultMonitorFilters,
   deltaTone,
   detectNewIds,
+  fitCapacity,
+  fitCount,
   formatAgo,
   formatAxisValue,
   formatClock,
@@ -82,6 +87,7 @@ import {
   productLabelOf,
   productOptions,
   rankBy,
+  rankLimitFor,
   removeFilterChip,
   resolvePeriodWindow,
   resolveUnitId,
@@ -90,6 +96,7 @@ import {
   salesSeries,
   serializeMonitorFilters,
   sliceSales,
+  splitVisible,
   toggleValue,
   yardThresholds,
   zonedDayKey,
@@ -101,7 +108,6 @@ import {
   type MonitorUnit,
   type PaymentSegment,
   type PeriodWindow,
-  type RankRow,
   type SalesSeries,
   type YardLevel,
   type YardThresholds,
@@ -135,9 +141,12 @@ const FRESH_HIGHLIGHT_MS = 8_000;
 const WAKE_MIN_GAP_MS = 5_000;
 const PAGE_SIZE = 1000;
 const MAX_PAGES = 20;
-const FEED_PAGE = 12;
-const FEED_PAGE_PHONE = 6;
-const RANK_LIMIT = 8;
+/** Itens da primeira pintura do painel de parede, antes de medir quantos cabem. */
+const FIT_FALLBACK_ITEMS = 5;
+/** Altura do rodape "+N" das listas (`.mon-fit-more`: 20 px + 5 px de margem). */
+const FIT_FOOTER_PX = 25;
+/** Etiquetas de filtro que aparecem no topo; o resto vira "+N" (abre a gaveta). */
+const TOP_CHIPS = 3;
 
 type RealtimeState = "connecting" | "live" | "down";
 
@@ -591,6 +600,9 @@ export function MonitorView(props: MonitorViewProps) {
     defaultUnitId
   } = props;
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Painel de parede (notebook, TV, tablet deitado): tudo cabe no `100dvh` e cada lista mostra o
+  // que cabe no proprio painel. Fora dele (celular), a pagina rola uma vez e as listas sao curtas.
+  const fit = useMediaQuery(MONITOR_FIT_QUERY);
 
   const periodWindow = useMemo(
     () => resolvePeriodWindow(filters.period, now, timeZone),
@@ -613,14 +625,6 @@ export function MonitorView(props: MonitorViewProps) {
     () => salesSeries(slices, periodWindow, now, timeZone),
     [slices, periodWindow, now, timeZone]
   );
-  const products = useMemo(
-    () => rankBy(slices.current, productKeyOf, productLabelOf, filters.metric, RANK_LIMIT),
-    [slices.current, filters.metric]
-  );
-  const customers = useMemo(
-    () => rankBy(slices.current, customerKeyOf, customerLabelOf, filters.metric, RANK_LIMIT),
-    [slices.current, filters.metric]
-  );
   const payments = useMemo(
     () => paymentBreakdown(slices.current, paymentMethods, filters.metric),
     [slices.current, paymentMethods, filters.metric]
@@ -634,20 +638,25 @@ export function MonitorView(props: MonitorViewProps) {
     unitName: (id) => units.find((unit) => unit.id === id)?.name ?? null,
     paymentName: (key) => paymentNames.get(key) ?? null
   });
+  const topChips = splitVisible(chips, TOP_CHIPS);
   const filterCount = countActiveFilters(filters, defaultUnitId);
   const widgets = filters.widgets;
-  const showCharts = widgets.hourly || widgets.products || widgets.customers || widgets.payments;
+  const showRanks = widgets.products || widgets.customers;
+  const showCharts = widgets.hourly || showRanks || widgets.payments;
   const clearFilters = () => onFiltersChange(clearDimensionFilters(filters));
   const setMetric = (metric: MonitorMetric) => onFiltersChange({ ...filters, metric });
 
   // Tres zonas na tela larga (vendas | graficos | patio); as que estao desligadas saem da grade.
   const zones = [
-    widgets.feed ? "minmax(300px, 1fr)" : null,
+    widgets.feed ? "minmax(0, 1fr)" : null,
     showCharts ? "minmax(0, 2fr)" : null,
-    widgets.yard ? "minmax(280px, 1fr)" : null
+    widgets.yard ? "minmax(0, 1fr)" : null
   ].filter(Boolean);
   const boardClass = [
     "mon-board",
+    widgets.feed ? "" : "no-feed",
+    widgets.yard ? "" : "no-yard",
+    showCharts ? "" : "no-charts",
     widgets.feed !== widgets.yard ? "is-single-ticket" : "",
     widgets.products !== widgets.customers ? "is-single-rank" : ""
   ]
@@ -655,14 +664,71 @@ export function MonitorView(props: MonitorViewProps) {
     .join(" ");
 
   return (
-    <div className="mon">
+    <div className={`mon${fit ? " is-fit" : ""}`}>
       <header className="mon-top">
         <img src="./logo.png" alt="" className="mon-logo" />
         <div className="mon-title">
           <h1>Monitoramento</h1>
-          <span>
-            {props.unitName || "Unidade"} · {periodWindow.label}
-          </span>
+          <span>{props.unitName || "Unidade"}</span>
+        </div>
+        {/* Periodo, variacao e filtros ligados moram no topo: nenhuma linha a mais no corpo. */}
+        <div className="mon-filterbar">
+          <button
+            type="button"
+            className="mon-chip mon-chip-period"
+            onClick={() => setDrawerOpen(true)}
+            title="Trocar o periodo"
+          >
+            <CalendarDays size={14} aria-hidden="true" />
+            {periodWindow.label}
+          </button>
+          {widgets.kpis && (
+            <span className="mon-top-caption" title={`Variacao ${periodWindow.deltaLabel}`}>
+              Variacao {periodWindow.deltaLabel}
+            </span>
+          )}
+          {topChips.visible.map((chip) => (
+            <span key={chip.id} className="mon-chip" title={chip.label}>
+              <span className="mon-chip-text">{chip.label}</span>
+              <button
+                type="button"
+                className="mon-chip-remove"
+                onClick={() => onFiltersChange(removeFilterChip(filters, chip))}
+                aria-label={`Remover filtro ${chip.label}`}
+              >
+                <X size={13} aria-hidden="true" />
+              </button>
+            </span>
+          ))}
+          {topChips.hidden > 0 && (
+            <button
+              type="button"
+              className="mon-chip mon-chip-more"
+              onClick={() => setDrawerOpen(true)}
+              title={chips
+                .slice(TOP_CHIPS)
+                .map((chip) => chip.label)
+                .join(", ")}
+              aria-label={`Mais ${topChips.hidden} filtros: abrir filtros`}
+            >
+              +{topChips.hidden}
+            </button>
+          )}
+          {chips.length > 1 && (
+            <button type="button" className="mon-chip-clear" onClick={clearFilters}>
+              Limpar
+            </button>
+          )}
+          <Segmented
+            className="mon-filterbar-metric"
+            label="Medida dos graficos"
+            value={filters.metric}
+            options={[
+              { value: "tons", label: "Toneladas" },
+              { value: "revenue", label: "Faturamento" }
+            ]}
+            onChange={setMetric}
+          />
         </div>
         <LiveIndicator status={status} now={now} />
         <div className="mon-top-actions">
@@ -707,55 +773,20 @@ export function MonitorView(props: MonitorViewProps) {
               <span className="mon-top-label">Sair</span>
             </button>
           ) : (
-            <Link to="/" className="mon-top-btn" title="Voltar ao sistema">
+            <Link
+              to="/"
+              className="mon-top-btn"
+              title="Voltar ao sistema"
+              aria-label="Voltar ao sistema"
+            >
               <ArrowLeft size={18} aria-hidden="true" />
-              <span className="mon-top-label">Voltar ao sistema</span>
+              <span className="mon-top-label mon-top-label-long">Voltar ao sistema</span>
             </Link>
           )}
         </div>
       </header>
 
       <main className="mon-main">
-        <div className="mon-filterbar">
-          <button
-            type="button"
-            className="mon-chip mon-chip-period"
-            onClick={() => setDrawerOpen(true)}
-            title="Trocar o periodo"
-          >
-            <CalendarDays size={14} aria-hidden="true" />
-            {periodWindow.label}
-          </button>
-          {chips.map((chip) => (
-            <span key={chip.id} className="mon-chip">
-              <span className="mon-chip-text">{chip.label}</span>
-              <button
-                type="button"
-                className="mon-chip-remove"
-                onClick={() => onFiltersChange(removeFilterChip(filters, chip))}
-                aria-label={`Remover filtro ${chip.label}`}
-              >
-                <X size={13} aria-hidden="true" />
-              </button>
-            </span>
-          ))}
-          {chips.length > 1 && (
-            <button type="button" className="mon-chip-clear" onClick={clearFilters}>
-              Limpar filtros
-            </button>
-          )}
-          <Segmented
-            className="mon-filterbar-metric"
-            label="Medida dos graficos"
-            value={filters.metric}
-            options={[
-              { value: "tons", label: "Toneladas" },
-              { value: "revenue", label: "Faturamento" }
-            ]}
-            onChange={setMetric}
-          />
-        </div>
-
         {status.error && (
           <div className="mon-alert" role="alert">
             <TriangleAlert size={18} aria-hidden="true" />
@@ -787,6 +818,7 @@ export function MonitorView(props: MonitorViewProps) {
               >
                 {widgets.feed && (
                   <FeedPanel
+                    fit={fit}
                     sales={slices.current}
                     period={periodWindow}
                     timeZone={timeZone}
@@ -799,24 +831,35 @@ export function MonitorView(props: MonitorViewProps) {
                 {showCharts && (
                   <div className="mon-col-charts">
                     {widgets.hourly && (
-                      <SalesChart series={series} metric={filters.metric} period={periodWindow} />
+                      <SalesChart
+                        fit={fit}
+                        series={series}
+                        metric={filters.metric}
+                        period={periodWindow}
+                      />
                     )}
-                    {(widgets.products || widgets.customers) && (
+                    {showRanks && (
                       <div className="mon-rank-pair">
                         {widgets.products && (
                           <RankPanel
+                            fit={fit}
                             className="mon-w-products"
                             title="Por produto"
-                            rows={products}
+                            operations={slices.current}
+                            keyOf={productKeyOf}
+                            labelOf={productLabelOf}
                             metric={filters.metric}
                             emptyText="Nenhum produto vendido no periodo."
                           />
                         )}
                         {widgets.customers && (
                           <RankPanel
+                            fit={fit}
                             className="mon-w-customers"
                             title="Top clientes"
-                            rows={customers}
+                            operations={slices.current}
+                            keyOf={customerKeyOf}
+                            labelOf={customerLabelOf}
                             metric={filters.metric}
                             numbered
                             emptyText="Nenhum cliente comprou no periodo."
@@ -831,6 +874,7 @@ export function MonitorView(props: MonitorViewProps) {
                 )}
                 {widgets.yard && (
                   <YardPanel
+                    fit={fit}
                     tickets={yardTickets}
                     thresholds={thresholds}
                     timeZone={timeZone}
@@ -873,6 +917,112 @@ export function MonitorView(props: MonitorViewProps) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Medidas (painel que nao cresce)
+// ---------------------------------------------------------------------------
+
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(
+    () => typeof window !== "undefined" && window.matchMedia?.(query).matches === true
+  );
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const list = window.matchMedia(query);
+    const onChange = () => setMatches(list.matches);
+    onChange();
+    list.addEventListener("change", onChange);
+    return () => list.removeEventListener("change", onChange);
+  }, [query]);
+  return matches;
+}
+
+/**
+ * Largura e altura do elemento, acompanhando o redimensionamento. Ref de callback: o grafico sai
+ * e volta (tabela <-> grafico) e o observador precisa seguir o elemento NOVO.
+ */
+function useElementSize<T extends HTMLElement>() {
+  const [element, setElement] = useState<T | null>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    if (!element) return;
+    const measure = () => {
+      const width = Math.floor(element.clientWidth);
+      const height = Math.floor(element.clientHeight);
+      setSize((prev) =>
+        prev.width === width && prev.height === height ? prev : { width, height }
+      );
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [element]);
+  return { ref: setElement, ...size };
+}
+
+interface FitBox {
+  /** Altura livre da area da lista (a caixa `.mon-fit`, que nao cresce com o conteudo). */
+  available: number;
+  /** Altura de um item (o primeiro da lista: os cartoes tem altura fixa, uma linha por campo). */
+  item: number;
+  /** Espaco entre os itens (`row-gap` da lista). */
+  gap: number;
+}
+
+/**
+ * Mede a area de uma lista do painel de parede: a caixa (`ref`) tem altura dada pela grade, a
+ * lista e o primeiro filho dela e o item medido e o primeiro da lista. So devolve medida no modo
+ * `fit`; fora dele a lista e curta e a pagina rola.
+ */
+function useFitBox(fit: boolean) {
+  const [box, setBox] = useState<HTMLElement | null>(null);
+  const [metrics, setMetrics] = useState<FitBox>({ available: 0, item: 0, gap: 0 });
+  const measure = useCallback(() => {
+    if (!box) return;
+    const list = box.firstElementChild as HTMLElement | null;
+    const first = list?.firstElementChild as HTMLElement | null | undefined;
+    const available = box.clientHeight;
+    const item = first ? first.getBoundingClientRect().height : 0;
+    const gap = list ? Number.parseFloat(getComputedStyle(list).rowGap) || 0 : 0;
+    setMetrics((prev) =>
+      Math.abs(prev.available - available) < 0.5 &&
+      Math.abs(prev.item - item) < 0.5 &&
+      Math.abs(prev.gap - gap) < 0.5
+        ? prev
+        : { available, item, gap }
+    );
+  }, [box]);
+  useEffect(() => {
+    if (!box || !fit || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    if (box.firstElementChild) observer.observe(box.firstElementChild);
+    return () => observer.disconnect();
+  }, [box, fit, measure]);
+  // O primeiro item pode aparecer (ou mudar de altura) sem a caixa mudar de tamanho.
+  useLayoutEffect(() => {
+    if (fit) measure();
+  });
+  return { ref: setBox, metrics: fit ? metrics : null };
+}
+
+/** Quantos itens a lista mostra: o que cabe no painel (parede) ou os primeiros (celular). */
+function useFitList(fit: boolean, total: number) {
+  const { ref, metrics } = useFitBox(fit);
+  const count = metrics
+    ? fitCount({
+        available: metrics.available,
+        itemSize: metrics.item,
+        gap: metrics.gap,
+        total,
+        footer: FIT_FOOTER_PX,
+        fallback: FIT_FALLBACK_ITEMS
+      })
+    : Math.min(total, MONITOR_PHONE_ITEMS);
+  return { ref, count };
+}
+
 function formatClockMs(ms: number, timeZone: string): string {
   if (!Number.isFinite(ms)) return "--:--";
   return formatClock(new Date(ms).toISOString(), timeZone);
@@ -909,7 +1059,7 @@ function LiveIndicator({ status, now }: { status: MonitorViewStatus; now: number
       : "Aviso em tempo real indisponivel: a tela confere a cada 30 s";
   const Icon = state === "offline" ? WifiOff : state === "stale" ? TriangleAlert : null;
   return (
-    <div className={`mon-live is-${state}`} title={title}>
+    <div className={`mon-live is-${state}`} title={`${text}, ${detail}. ${title}`}>
       {Icon ? (
         <Icon size={14} aria-hidden="true" />
       ) : (
@@ -1026,8 +1176,7 @@ function KpiRow({ kpis, period }: { kpis: MonitorKpis; period: PeriodWindow }) {
   const ticket = current.loads > 0 ? Math.round(current.totalCents / current.loads) : 0;
   const yardTone = kpis.yardLate > 0 ? "danger" : kpis.yardAttention > 0 ? "warning" : undefined;
   return (
-    <section className="mon-kpis" aria-label="Indicadores do periodo">
-      <p className="mon-kpis-caption">Variacao {context}</p>
+    <section className="mon-kpis" aria-label={`Indicadores do periodo (variacao ${context})`}>
       <div className="mon-kpi-grid">
         <KpiTile
           hero
@@ -1143,7 +1292,18 @@ function EmptyState({ title, text, action }: { title: string; text: string; acti
   );
 }
 
+/** Rodape "+N" de uma lista que mostra so o que cabe (texto, nao botao: nada a rolar). */
+function MoreFooter({ hidden, text }: { hidden: number; text: string }) {
+  if (hidden <= 0) return null;
+  return (
+    <p className="mon-fit-more">
+      <b>+{hidden.toLocaleString("pt-BR")}</b> {text}
+    </p>
+  );
+}
+
 function FeedPanel({
+  fit,
   sales,
   period,
   timeZone,
@@ -1152,6 +1312,7 @@ function FeedPanel({
   hasFilters,
   onClearFilters
 }: {
+  fit: boolean;
   sales: MonitorOperation[];
   period: PeriodWindow;
   timeZone: string;
@@ -1161,13 +1322,8 @@ function FeedPanel({
   onClearFilters: () => void;
 }) {
   const headingId = useId();
-  // No celular a lista comeca curta: os graficos vem logo abaixo.
-  const [limit, setLimit] = useState(() =>
-    typeof window !== "undefined" && window.matchMedia?.("(max-width: 759px)").matches
-      ? FEED_PAGE_PHONE
-      : FEED_PAGE
-  );
-  const visible = sales.slice(0, limit);
+  const { ref, count } = useFitList(fit, sales.length);
+  const { visible, hidden } = splitVisible(sales, count);
   const multiDay = period.granularity === "day";
   return (
     <section className="mon-card mon-w-feed" aria-labelledby={headingId}>
@@ -1194,7 +1350,7 @@ function FeedPanel({
           }
         />
       ) : (
-        <>
+        <div ref={ref} className="mon-fit">
           <ol className="mon-list">
             {visible.map((op) => {
               const at = saleAt(op) ?? Number.NaN;
@@ -1210,12 +1366,15 @@ function FeedPanel({
                       <span className="mon-ticket-date">{formatDayMs(at, timeZone)}</span>
                     )}
                     <span className="mon-plate">{formatPlate(op.plate) || "SEM PLACA"}</span>
-                    {fresh && <span className="mon-new">Nova</span>}
                     <span className="mon-ticket-money">{formatMoney(op.total_cents)}</span>
                   </div>
-                  <strong className="mon-ticket-customer" title={customerLabelOf(op)}>
-                    {customerLabelOf(op)}
-                  </strong>
+                  {/* "Nova" na linha do cliente: na de cima ela disputaria lugar com o valor. */}
+                  <div className="mon-ticket-mid">
+                    <strong className="mon-ticket-customer" title={customerLabelOf(op)}>
+                      {customerLabelOf(op)}
+                    </strong>
+                    {fresh && <span className="mon-new">Nova</span>}
+                  </div>
                   <div className="mon-ticket-bottom">
                     <span className="mon-ticket-tons">{formatTonnes(op.net_weight_kg)}</span>
                     <span className="mon-ticket-product" title={productLabelOf(op)}>
@@ -1229,17 +1388,11 @@ function FeedPanel({
               );
             })}
           </ol>
-          {sales.length > limit && (
-            <button
-              type="button"
-              className="mon-more"
-              onClick={() => setLimit((value) => value + FEED_PAGE)}
-            >
-              Mostrar mais {Math.min(FEED_PAGE, sales.length - limit)} ({sales.length - limit}{" "}
-              restantes)
-            </button>
-          )}
-        </>
+          <MoreFooter
+            hidden={hidden}
+            text={hidden === 1 ? "venda mais antiga" : "vendas mais antigas"}
+          />
+        </div>
       )}
     </section>
   );
@@ -1252,17 +1405,22 @@ const LEVEL_ICON: Record<YardLevel, LucideIcon> = {
 };
 
 function YardPanel({
+  fit,
   tickets,
   thresholds,
   timeZone,
   freshIds
 }: {
+  fit: boolean;
   tickets: YardTicket[];
   thresholds: YardThresholds;
   timeZone: string;
   freshIds: ReadonlySet<string>;
 }) {
   const headingId = useId();
+  const { ref, count } = useFitList(fit, tickets.length);
+  // O mais antigo vem primeiro: quem fica de fora e quem chegou por ultimo (o atrasado aparece).
+  const { visible, hidden } = splitVisible(tickets, count);
   return (
     <section className="mon-card mon-w-yard" aria-labelledby={headingId}>
       <PanelHead
@@ -1294,51 +1452,57 @@ function YardPanel({
       {tickets.length === 0 ? (
         <EmptyState title="Patio vazio" text="Nenhum caminhao aguardando carga agora." />
       ) : (
-        <ol className="mon-list">
-          {tickets.map((ticket) => {
-            const op = ticket.operation;
-            const LevelIcon = LEVEL_ICON[ticket.level];
-            return (
-              <li
-                key={op.id}
-                className={`mon-ticket mon-yard is-${ticket.level}${freshIds.has(op.id) ? " is-fresh" : ""}`}
-              >
-                <div className="mon-ticket-top">
-                  <span className="mon-plate">{formatPlate(op.plate) || "SEM PLACA"}</span>
-                  <span className={`mon-level is-${ticket.level}`}>
-                    <LevelIcon size={13} aria-hidden="true" />
-                    {LEVEL_TEXT[ticket.level]}
-                  </span>
-                  <span className="mon-yard-elapsed" title="Tempo desde a entrada">
-                    {formatDuration(ticket.minutes)}
-                  </span>
-                </div>
-                <div
-                  className="mon-meter"
-                  role="meter"
-                  aria-label="Tempo no patio em relacao ao limite de atraso"
-                  aria-valuemin={0}
-                  aria-valuemax={thresholds.late}
-                  aria-valuenow={Math.round(Math.min(ticket.minutes, thresholds.late))}
+        <div ref={ref} className="mon-fit">
+          <ol className="mon-list">
+            {visible.map((ticket) => {
+              const op = ticket.operation;
+              const LevelIcon = LEVEL_ICON[ticket.level];
+              return (
+                <li
+                  key={op.id}
+                  className={`mon-ticket mon-yard is-${ticket.level}${freshIds.has(op.id) ? " is-fresh" : ""}`}
                 >
-                  <span style={{ width: `${Math.max(3, ticket.progress * 100)}%` }} />
-                </div>
-                <strong className="mon-ticket-customer" title={customerLabelOf(op)}>
-                  {customerLabelOf(op)}
-                </strong>
-                <div className="mon-ticket-bottom">
-                  <span className="mon-ticket-product" title={productLabelOf(op)}>
-                    {productLabelOf(op)}
-                    {op.driver_name ? ` · ${op.driver_name}` : ""}
-                  </span>
-                  <span className="mon-yard-entry">
-                    entrou {formatClock(op.created_at, timeZone)}
-                  </span>
-                </div>
-              </li>
-            );
-          })}
-        </ol>
+                  <div className="mon-ticket-top">
+                    <span className="mon-plate">{formatPlate(op.plate) || "SEM PLACA"}</span>
+                    <span className={`mon-level is-${ticket.level}`}>
+                      <LevelIcon size={13} aria-hidden="true" />
+                      {LEVEL_TEXT[ticket.level]}
+                    </span>
+                    <span className="mon-yard-elapsed" title="Tempo desde a entrada">
+                      {formatDuration(ticket.minutes)}
+                    </span>
+                  </div>
+                  <div
+                    className="mon-meter"
+                    role="meter"
+                    aria-label="Tempo no patio em relacao ao limite de atraso"
+                    aria-valuemin={0}
+                    aria-valuemax={thresholds.late}
+                    aria-valuenow={Math.round(Math.min(ticket.minutes, thresholds.late))}
+                  >
+                    <span style={{ width: `${Math.max(3, ticket.progress * 100)}%` }} />
+                  </div>
+                  <strong className="mon-ticket-customer" title={customerLabelOf(op)}>
+                    {customerLabelOf(op)}
+                  </strong>
+                  <div className="mon-ticket-bottom">
+                    <span className="mon-ticket-product" title={productLabelOf(op)}>
+                      {productLabelOf(op)}
+                      {op.driver_name ? ` · ${op.driver_name}` : ""}
+                    </span>
+                    <span className="mon-yard-entry">
+                      entrou {formatClock(op.created_at, timeZone)}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+          <MoreFooter
+            hidden={hidden}
+            text={hidden === 1 ? "caminhao que chegou depois" : "caminhoes que chegaram depois"}
+          />
+        </div>
       )}
     </section>
   );
@@ -1347,26 +1511,6 @@ function YardPanel({
 // ---------------------------------------------------------------------------
 // Graficos
 // ---------------------------------------------------------------------------
-
-/**
- * Largura do elemento, acompanhando o redimensionamento. Ref de callback: o grafico sai e volta
- * (tabela <-> grafico) e o observador precisa seguir o elemento NOVO.
- */
-function useElementWidth<T extends HTMLElement>() {
-  const [element, setElement] = useState<T | null>(null);
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    if (!element) return;
-    setWidth(element.clientWidth);
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver((entries) => {
-      setWidth(Math.floor(entries[0]?.contentRect.width ?? element.clientWidth));
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [element]);
-  return { ref: setElement, width };
-}
 
 /**
  * Linha reta ponto a ponto: hora a hora o movimento e aos saltos, e uma curva suave inventaria
@@ -1388,16 +1532,18 @@ function columnPath(x: number, y: number, w: number, h: number, r: number): stri
 }
 
 function SalesChart({
+  fit,
   series,
   metric,
   period
 }: {
+  fit: boolean;
   series: SalesSeries;
   metric: MonitorMetric;
   period: PeriodWindow;
 }) {
   const headingId = useId();
-  const { ref, width } = useElementWidth<HTMLDivElement>();
+  const { ref, width, height: boxHeight } = useElementSize<HTMLDivElement>();
   const [active, setActive] = useState<number | null>(null);
   const [showTable, setShowTable] = useState(false);
   const buckets = series.buckets;
@@ -1424,7 +1570,11 @@ function SalesChart({
   });
   const total = currentValues.reduce<number>((sum, value) => sum + (value ?? 0), 0);
 
-  const height = Math.round(Math.min(320, Math.max(200, width * 0.36)));
+  // Parede: o grafico ocupa a altura que a grade da ao painel. Celular: altura propria, curta.
+  const height = fit
+    ? Math.max(90, boxHeight)
+    : Math.round(Math.min(230, Math.max(160, width * 0.42)));
+  const drawable = width > 0 && (!fit || boxHeight > 0);
   const ticks = chartTicks(max, 4);
   const top = ticks[ticks.length - 1] || 1;
   const tickLabels = ticks.map((tick) => formatAxisValue(tick, top, metric));
@@ -1536,14 +1686,14 @@ function SalesChart({
         <div
           ref={ref}
           className="mon-chart"
-          style={{ height }}
+          style={fit ? undefined : { height }}
           tabIndex={0}
           role="group"
           aria-label={`${summary} Use as setas para ver cada ${hourly ? "hora" : "dia"}.`}
           onKeyDown={onKeyDown}
           onBlur={() => setActive(null)}
         >
-          {width > 0 && (
+          {drawable && (
             <svg
               width={width}
               height={height}
@@ -1660,10 +1810,10 @@ function SalesChart({
               </g>
             </svg>
           )}
-          {!hasData && width > 0 && (
+          {!hasData && drawable && (
             <div className="mon-chart-empty">Sem vendas para mostrar no periodo.</div>
           )}
-          {activeBucket && width > 0 && (
+          {activeBucket && drawable && (
             <div
               className="mon-tip"
               aria-live="polite"
@@ -1707,21 +1857,39 @@ function SalesChart({
 }
 
 function RankPanel({
+  fit,
   className,
   title,
-  rows,
+  operations,
+  keyOf,
+  labelOf,
   metric,
   numbered,
   emptyText
 }: {
+  fit: boolean;
   className: string;
   title: string;
-  rows: RankRow[];
+  operations: MonitorOperation[];
+  keyOf: (op: MonitorOperation) => string;
+  labelOf: (op: MonitorOperation) => string;
   metric: MonitorMetric;
   numbered?: boolean;
   emptyText: string;
 }) {
   const headingId = useId();
+  const { ref, metrics } = useFitBox(fit);
+  // Tantas linhas quantas couberem, contando o "Outros" (a cauda somada) como uma delas.
+  const capacity = metrics
+    ? metrics.item > 0
+      ? Math.max(1, fitCapacity(metrics.available, metrics.item, metrics.gap))
+      : FIT_FALLBACK_ITEMS
+    : MONITOR_PHONE_ITEMS;
+  const limit = rankLimitFor(capacity);
+  const rows = useMemo(
+    () => rankBy(operations, keyOf, labelOf, metric, limit),
+    [operations, keyOf, labelOf, metric, limit]
+  );
   const max = Math.max(0, ...rows.map((row) => metricValue(row, metric)));
   const other: MonitorMetric = metric === "tons" ? "revenue" : "tons";
   return (
@@ -1730,35 +1898,39 @@ function RankPanel({
       {rows.length === 0 ? (
         <EmptyState title="Sem vendas" text={emptyText} />
       ) : (
-        <ol className="mon-bars">
-          {rows.map((row, index) => {
-            const value = metricValue(row, metric);
-            const width = max > 0 ? (value / max) * 100 : 0;
-            return (
-              <li key={row.key} className={row.other ? "is-other" : undefined}>
-                <div className="mon-bar-line">
-                  {numbered && (
-                    <span className="mon-bar-rank" aria-hidden="true">
-                      {row.other ? "+" : index + 1}
+        <div ref={ref} className="mon-fit">
+          <ol className="mon-bars">
+            {rows.map((row, index) => {
+              const value = metricValue(row, metric);
+              const width = max > 0 ? (value / max) * 100 : 0;
+              return (
+                <li key={row.key} className={row.other ? "is-other" : undefined}>
+                  <div className="mon-bar-line">
+                    {numbered && (
+                      <span className="mon-bar-rank" aria-hidden="true">
+                        {row.other ? "+" : index + 1}
+                      </span>
+                    )}
+                    <span className="mon-bar-label" title={row.label}>
+                      {row.label}
                     </span>
-                  )}
-                  <span className="mon-bar-label" title={row.label}>
-                    {row.label}
-                  </span>
-                  <span className="mon-bar-value">{formatMetric(value, metric)}</span>
-                  <span className="mon-bar-share">{formatShare(row.share)}</span>
-                </div>
-                <div className="mon-bar-track" aria-hidden="true">
-                  <span style={{ width: `${width > 0 ? Math.max(1.5, width) : 0}%` }} />
-                </div>
-                <div className="mon-bar-meta">
-                  {formatMetric(metricValue(row, other), other)} · {row.loads} carga
-                  {row.loads === 1 ? "" : "s"}
-                </div>
-              </li>
-            );
-          })}
-        </ol>
+                    <span className="mon-bar-value">{formatMetric(value, metric)}</span>
+                    <span className="mon-bar-share">{formatShare(row.share)}</span>
+                  </div>
+                  <div className="mon-bar-sub">
+                    <div className="mon-bar-track" aria-hidden="true">
+                      <span style={{ width: `${width > 0 ? Math.max(1.5, width) : 0}%` }} />
+                    </div>
+                    <span className="mon-bar-meta">
+                      {formatMetric(metricValue(row, other), other)} · {row.loads} carga
+                      {row.loads === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
       )}
     </section>
   );
@@ -1782,7 +1954,7 @@ function PaymentsPanel({
         sub={`por ${METRIC_TEXT[metric].toLowerCase()}`}
       />
       {segments.length === 0 ? (
-        <EmptyState title="Sem vendas" text="Nenhuma venda no periodo." />
+        <p className="mon-pay-empty">Nenhuma venda no periodo.</p>
       ) : (
         <>
           <div className="mon-stack" aria-hidden="true" onPointerLeave={() => setActive(null)}>
@@ -1814,8 +1986,7 @@ function PaymentsPanel({
                 </span>
                 <span className="mon-pay-share">{formatShare(segment.share)}</span>
                 <span className="mon-pay-meta">
-                  <b>{formatMetric(metricValue(segment, metric), metric)}</b> · {segment.loads}{" "}
-                  carga
+                  {formatMetric(metricValue(segment, metric), metric)} · {segment.loads} carga
                   {segment.loads === 1 ? "" : "s"}
                 </span>
               </li>
@@ -2078,8 +2249,11 @@ function MonitorSkeleton() {
           </div>
         ))}
       </div>
-      <div className="mon-board" style={{ "--mon-zones": "1fr 2fr 1fr" } as CSSProperties}>
-        {["mon-w-feed", "mon-w-hourly", "mon-w-yard"].map((name) => (
+      <div
+        className="mon-board"
+        style={{ "--mon-zones": "minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr)" } as CSSProperties}
+      >
+        {["mon-w-feed", "mon-w-hourly mon-sk-charts", "mon-w-yard"].map((name) => (
           <div key={name} className={`mon-card mon-skeleton ${name}`}>
             <span className="mon-sk-line is-short" />
             {Array.from({ length: 4 }, (_, index) => (

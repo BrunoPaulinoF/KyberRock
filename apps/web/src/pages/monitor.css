@@ -1,7 +1,14 @@
 /*
  * Monitoramento de vendas (`/monitoramento`) — tela cheia, fora do `Layout`, no molde da tela do
- * carregador (`.loading-*` do styles.css): barra do topo fixa, cartoes grandes, celular primeiro.
- * Cresce ate a TV da expedicao (numeros grandes a partir de 1600px).
+ * carregador (`.loading-*` do styles.css).
+ *
+ * Dois jeitos de desenhar, escolhidos pelo `MONITOR_FIT_QUERY` (lib/monitor.ts) e aplicados pela
+ * classe `.is-fit` que o componente poe na raiz — assim o CSS e a conta de "quantos cabem" nunca
+ * discordam:
+ * - painel de parede (`.mon.is-fit`: notebook, monitor, TV, tablet deitado): a tela cabe inteira
+ *   no `100dvh` e NADA rola. Topo + faixa de indicadores + grade de paineis que dividem a altura
+ *   que sobra; cada lista mostra so o que cabe no painel e fecha com "+N".
+ * - celular / tablet em pe: a pagina rola uma vez so, com listas curtas e graficos baixos.
  *
  * As cores dos graficos sao desta tela e saem de um conjunto validado (claro e escuro): a serie
  * principal e o ambar da marca; as formas de pagamento usam 6 cores numa ordem que passou na
@@ -69,10 +76,10 @@
   border: 0;
 }
 
-/* ---------- topo ---------- */
+/* ---------- topo ----------
+ * Uma barra so: marca, periodo + variacao + filtros ligados + medida, "Ao vivo" e botoes. No
+ * celular ela quebra em linhas (a ordem abaixo); no painel de parede fica numa linha. */
 .mon-top {
-  position: sticky;
-  top: 0;
   z-index: 20;
   display: flex;
   align-items: center;
@@ -81,9 +88,6 @@
   padding: 10px 16px;
   padding-top: max(10px, env(safe-area-inset-top));
   background: var(--kr-surface);
-  background: color-mix(in srgb, var(--kr-surface) 92%, transparent);
-  backdrop-filter: saturate(1.4) blur(10px);
-  -webkit-backdrop-filter: saturate(1.4) blur(10px);
   border-bottom: 1px solid var(--kr-border);
 }
 .mon-logo {
@@ -94,6 +98,7 @@
   border-radius: 9px;
 }
 .mon-title {
+  order: 1;
   flex: 1;
   min-width: 0;
   display: flex;
@@ -105,6 +110,7 @@
   font-weight: 800;
   letter-spacing: -0.01em;
   color: var(--kr-text-strong);
+  white-space: nowrap;
 }
 .mon-title span {
   color: var(--kr-muted);
@@ -115,9 +121,11 @@
   white-space: nowrap;
 }
 .mon-top-actions {
+  order: 2;
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 .mon-top-btn {
   position: relative;
@@ -158,10 +166,11 @@
 
 /* indicador "Ao vivo" */
 .mon-live {
+  order: 3;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  min-height: 34px;
+  min-height: 32px;
   padding: 0 12px;
   border-radius: 999px;
   border: 1px solid var(--kr-border);
@@ -224,32 +233,33 @@
   }
 }
 
-/* ---------- corpo ---------- */
-.mon-main {
-  width: 100%;
-  max-width: 2200px;
-  margin: 0 auto;
-  padding: 12px 16px;
-  padding-bottom: max(28px, env(safe-area-inset-bottom));
-  display: flex;
-  flex-direction: column;
-  gap: var(--mon-gap);
-  min-width: 0;
-}
-
-/* faixa de filtros ligados */
+/* periodo, variacao, filtros ligados e medida */
 .mon-filterbar {
+  order: 4;
+  flex-basis: 100%;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   min-width: 0;
 }
+.mon-top-caption {
+  order: 99;
+  flex-basis: 100%;
+  min-width: 0;
+  color: var(--kr-muted);
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .mon-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   max-width: 100%;
+  min-width: 0;
   min-height: 32px;
   padding: 0 4px 0 12px;
   border-radius: 999px;
@@ -259,16 +269,22 @@
   font: inherit;
   font-size: 12px;
   font-weight: 700;
+  white-space: nowrap;
 }
 .mon-chip-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mon-chip-period {
+.mon-chip-period,
+.mon-chip-more {
+  flex-shrink: 0;
   padding: 0 12px;
   gap: 6px;
   cursor: pointer;
+}
+.mon-chip-period {
   border-color: var(--kr-accent-border);
   background: var(--kr-accent-soft);
   color: var(--kr-info-text);
@@ -291,8 +307,9 @@
   color: var(--kr-text-strong);
 }
 .mon-chip-clear {
+  flex-shrink: 0;
   min-height: 32px;
-  padding: 0 8px;
+  padding: 0 6px;
   border: none;
   background: transparent;
   color: var(--kr-muted);
@@ -303,6 +320,7 @@
   cursor: pointer;
 }
 .mon-filterbar-metric {
+  flex-shrink: 0;
   margin-left: auto;
 }
 
@@ -325,6 +343,7 @@
   font: inherit;
   font-size: 12px;
   font-weight: 700;
+  white-space: nowrap;
   cursor: pointer;
 }
 .mon-segmented button[aria-pressed="true"] {
@@ -337,12 +356,25 @@
   box-shadow: none;
 }
 
+/* ---------- corpo ---------- */
+.mon-main {
+  width: 100%;
+  max-width: 2400px;
+  margin: 0 auto;
+  padding: 12px 16px;
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: var(--mon-gap);
+  min-width: 0;
+}
+
 .mon-alert {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px 10px;
-  padding: 10px 12px;
+  gap: 6px 10px;
+  padding: 8px 12px;
   border-radius: 12px;
   border: 1px solid var(--kr-danger-border);
   background: var(--kr-danger-soft);
@@ -358,7 +390,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 34px;
+  min-height: 32px;
   padding: 0 12px;
   border-radius: 9px;
   border: 1px solid var(--kr-danger-border);
@@ -383,16 +415,7 @@
 
 /* ---------- indicadores ---------- */
 .mon-kpis {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
   min-width: 0;
-}
-.mon-kpis-caption {
-  margin: 0;
-  color: var(--kr-muted);
-  font-size: 12px;
-  font-weight: 600;
 }
 .mon-kpi-grid {
   display: grid;
@@ -404,16 +427,13 @@
   container-type: inline-size;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-radius: var(--mon-radius);
   border: 1px solid var(--kr-card-border);
   background: var(--kr-card-bg);
   box-shadow: var(--kr-shadow);
-}
-.mon-kpi.is-hero {
-  grid-column: span 2;
 }
 .mon-kpi.is-warning {
   border-color: var(--kr-warning-border);
@@ -430,6 +450,9 @@
   font-weight: 700;
   min-width: 0;
 }
+.mon-kpi-label svg {
+  flex-shrink: 0;
+}
 .mon-kpi-label span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -437,9 +460,9 @@
 }
 .mon-kpi-value {
   color: var(--kr-text-strong);
-  font-size: 22px;
-  font-size: clamp(20px, 12cqi, 30px);
-  line-height: 1.1;
+  font-size: 20px;
+  font-size: clamp(18px, 12cqi, 28px);
+  line-height: 1.15;
   font-weight: 800;
   letter-spacing: -0.02em;
   font-variant-numeric: proportional-nums;
@@ -448,14 +471,14 @@
   white-space: nowrap;
 }
 .mon-kpi.is-hero .mon-kpi-value {
-  font-size: 28px;
-  font-size: clamp(22px, 14cqi, 36px);
+  font-size: 22px;
+  font-size: clamp(20px, 13cqi, 32px);
 }
 .mon-kpi-foot {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 6px;
   min-width: 0;
   max-width: 100%;
   font-size: 12px;
@@ -483,6 +506,7 @@
 }
 .mon-delta {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 2px;
   padding: 1px 7px 1px 4px;
@@ -510,8 +534,8 @@
 }
 
 /* ---------- grade dos paineis ----------
- * Celular: uma coluna, na ordem vendas -> patio -> graficos. Tablet: duas colunas. Tela larga:
- * tres zonas (vendas | graficos | patio), com as desligadas saindo da grade (`--mon-zones`). */
+ * Celular: uma coluna, na ordem vendas -> patio -> graficos. Tablet em pe: duas colunas. Painel
+ * de parede: ver `.mon.is-fit` no fim do arquivo. */
 .mon-board {
   display: flex;
   flex-direction: column;
@@ -546,7 +570,7 @@
   flex-direction: column;
   gap: 10px;
   min-width: 0;
-  padding: 14px;
+  padding: 12px;
   border-radius: var(--mon-radius);
   border: 1px solid var(--kr-card-border);
   background: var(--kr-card-bg);
@@ -567,13 +591,14 @@
 }
 .mon-card-title h2 {
   font-size: 15px;
+  line-height: 1.3;
   font-weight: 800;
   color: var(--kr-text-strong);
   white-space: nowrap;
 }
 .mon-card-count {
   min-width: 26px;
-  padding: 1px 8px;
+  padding: 0 8px;
   border-radius: 999px;
   text-align: center;
   font-size: 12px;
@@ -618,8 +643,9 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 28px 12px;
+  padding: 24px 12px;
   text-align: center;
   color: var(--kr-muted);
   border: 1px dashed var(--kr-border);
@@ -657,8 +683,8 @@
   color: var(--kr-primary-text);
 }
 .mon-icon-btn {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -674,6 +700,33 @@
   border-color: var(--kr-accent-border);
 }
 
+/* ---------- listas que mostram so o que cabe ----------
+ * `.mon-fit` e a caixa da lista: no painel de parede ela tem a altura que a grade da (nao cresce
+ * com o conteudo) e o componente mede quantos cartoes cabem nela; o resto vira o "+N". */
+.mon-fit {
+  min-width: 0;
+}
+.mon-fit-more {
+  height: 20px;
+  margin: 5px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 8px;
+  border: 1px dashed var(--kr-border);
+  color: var(--kr-muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.mon-fit-more b {
+  color: var(--kr-text-strong);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- cartoes KDS ---------- */
 .mon-list {
   list-style: none;
@@ -681,16 +734,16 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 .mon-ticket {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
-  padding: 10px 12px 10px 14px;
-  border-radius: 12px;
+  padding: 8px 10px 8px 12px;
+  border-radius: 11px;
   border: 1px solid var(--kr-card-border);
   border-left: 4px solid var(--mon-series);
   background: var(--kr-surface-soft);
@@ -704,7 +757,8 @@
   min-width: 0;
 }
 .mon-ticket-time {
-  font-size: 17px;
+  font-size: 16px;
+  line-height: 1.25;
   font-weight: 800;
   color: var(--kr-text-strong);
   font-variant-numeric: tabular-nums;
@@ -719,24 +773,29 @@
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-weight: 800;
   font-size: 12px;
+  line-height: 1.4;
   letter-spacing: 0.06em;
-  padding: 1px 6px;
+  padding: 0 6px;
   border-radius: 5px;
   background: var(--kr-plate-bg);
   border: 1px solid var(--kr-plate-border);
   color: var(--kr-plate-text);
 }
 .mon-new {
-  padding: 1px 7px;
+  flex-shrink: 0;
+  padding: 0 7px;
   border-radius: 999px;
   background: var(--kr-accent);
   color: #1c1206;
   font-size: 10px;
+  line-height: 1.6;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 .mon-ticket-money {
+  flex-shrink: 0;
   margin-left: auto;
   padding-left: 6px;
   font-size: 14px;
@@ -745,9 +804,20 @@
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+.mon-ticket-mid {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.mon-ticket-mid .mon-ticket-customer {
+  flex: 1 1 auto;
+}
 .mon-ticket-customer {
+  min-width: 0;
   color: var(--kr-text-strong);
   font-size: 14px;
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -758,6 +828,7 @@
   gap: 8px;
   min-width: 0;
   font-size: 13px;
+  line-height: 1.35;
 }
 .mon-ticket-tons {
   flex-shrink: 0;
@@ -777,7 +848,7 @@
 .mon-ticket-pay {
   flex-shrink: 1;
   max-width: 45%;
-  padding: 1px 8px;
+  padding: 0 8px;
   border-radius: 999px;
   border: 1px solid var(--kr-border);
   background: var(--kr-surface);
@@ -788,17 +859,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mon-more {
-  min-height: 40px;
-  border-radius: 10px;
-  border: 1px dashed var(--kr-border);
-  background: transparent;
-  color: var(--kr-text);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-}
 
 /* venda que acabou de chegar: pisca e assenta */
 .mon-ticket.is-fresh {
@@ -807,19 +867,15 @@
 @keyframes mon-flash {
   0% {
     background: var(--kr-accent-soft);
-    box-shadow: 0 0 0 2px var(--kr-accent);
-    transform: translateY(-3px);
-  }
-  12% {
-    transform: none;
+    box-shadow: inset 0 0 0 2px var(--kr-accent);
   }
   55% {
     background: var(--kr-accent-soft);
-    box-shadow: 0 0 0 2px var(--kr-accent-border);
+    box-shadow: inset 0 0 0 2px var(--kr-accent-border);
   }
   100% {
     background: var(--kr-surface-soft);
-    box-shadow: 0 0 0 0 transparent;
+    box-shadow: inset 0 0 0 0 transparent;
   }
 }
 
@@ -832,7 +888,6 @@
   background: var(--kr-warning-soft);
 }
 .mon-yard.is-late {
-  border-left-color: var(--kr-danger);
   background: var(--kr-danger-soft);
   border-color: var(--kr-danger-border);
   border-left-color: var(--kr-danger);
@@ -841,11 +896,16 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
   font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   white-space: nowrap;
+  overflow: hidden;
+}
+.mon-level svg {
+  flex-shrink: 0;
 }
 .mon-level.is-normal {
   color: var(--kr-success);
@@ -857,9 +917,10 @@
   color: var(--kr-danger);
 }
 .mon-yard-elapsed {
+  flex-shrink: 0;
   margin-left: auto;
-  font-size: 22px;
-  line-height: 1;
+  font-size: 20px;
+  line-height: 1.1;
   font-weight: 800;
   color: var(--kr-text-strong);
   font-variant-numeric: tabular-nums;
@@ -876,8 +937,8 @@
   white-space: nowrap;
 }
 .mon-meter {
-  height: 5px;
-  margin: 3px 0 2px;
+  height: 4px;
+  margin: 2px 0 1px;
   border-radius: 999px;
   background: var(--mon-track);
   overflow: hidden;
@@ -908,7 +969,7 @@
   padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 12px;
+  gap: 2px 12px;
   color: var(--kr-muted);
   font-size: 12px;
   font-weight: 600;
@@ -917,6 +978,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
 }
 .mon-key-rect {
   width: 10px;
@@ -1052,7 +1114,7 @@
 }
 
 .mon-table-wrap {
-  max-height: 320px;
+  max-height: 260px;
   overflow: auto;
   border: 1px solid var(--kr-border);
   border-radius: 10px;
@@ -1065,7 +1127,7 @@
 }
 .mon-table th,
 .mon-table td {
-  padding: 6px 10px;
+  padding: 5px 10px;
   text-align: right;
   border-bottom: 1px solid var(--kr-border);
   white-space: nowrap;
@@ -1081,20 +1143,20 @@
   font-size: 12px;
 }
 
-/* barras horizontais (produto, cliente) */
+/* barras horizontais (produto, cliente): nome, valor e % numa linha; barra e o detalhe na outra */
 .mon-bars {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 7px;
   min-width: 0;
 }
 .mon-bars li {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
 }
 .mon-bar-line {
@@ -1103,9 +1165,10 @@
   gap: 8px;
   min-width: 0;
   font-size: 13px;
+  line-height: 1.3;
 }
 .mon-bar-rank {
-  width: 18px;
+  width: 16px;
   flex-shrink: 0;
   color: var(--kr-muted);
   font-weight: 800;
@@ -1127,9 +1190,10 @@
   color: var(--kr-text-strong);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .mon-bar-share {
-  width: 38px;
+  width: 36px;
   flex-shrink: 0;
   color: var(--kr-muted);
   font-size: 12px;
@@ -1137,8 +1201,16 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+.mon-bar-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
 .mon-bar-track {
-  height: 8px;
+  flex: 1;
+  min-width: 24px;
+  height: 7px;
   border-radius: 0 4px 4px 0;
   background: var(--mon-track);
 }
@@ -1156,21 +1228,26 @@
   color: var(--kr-muted);
 }
 .mon-bar-meta {
+  flex-shrink: 0;
+  max-width: 55%;
   color: var(--kr-muted);
   font-size: 11px;
+  line-height: 1.3;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.mon-w-customers .mon-bar-track,
-.mon-w-customers .mon-bar-meta {
-  margin-left: 26px;
+.mon-w-customers .mon-bar-sub {
+  margin-left: 24px;
 }
 
-/* formas de pagamento: uma barra empilhada + legenda com os numeros */
+/* formas de pagamento: uma barra empilhada + legenda de uma linha por forma */
 .mon-stack {
   display: flex;
   gap: 2px;
-  height: 16px;
+  height: 12px;
   border-radius: 4px;
   overflow: hidden;
 }
@@ -1189,33 +1266,30 @@
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 2px 14px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0 14px;
 }
 .mon-pay-legend li {
-  display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) auto;
-  grid-template-areas:
-    "swatch name share"
-    ". meta meta";
+  display: flex;
   align-items: center;
-  column-gap: 8px;
-  row-gap: 1px;
-  padding: 6px;
-  border-radius: 8px;
+  gap: 7px;
+  min-width: 0;
+  padding: 2px 6px;
+  border-radius: 7px;
   font-size: 13px;
+  line-height: 1.35;
 }
 .mon-pay-legend li.is-active {
   background: var(--mon-hover);
 }
 .mon-swatch {
-  grid-area: swatch;
   width: 10px;
   height: 10px;
+  flex-shrink: 0;
   border-radius: 2px;
 }
 .mon-pay-name {
-  grid-area: name;
+  flex: 0 1 auto;
   min-width: 0;
   color: var(--kr-text-strong);
   font-weight: 700;
@@ -1224,26 +1298,27 @@
   white-space: nowrap;
 }
 .mon-pay-share {
-  grid-area: share;
+  flex-shrink: 0;
   color: var(--kr-text-strong);
   font-weight: 800;
-  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 .mon-pay-meta {
-  grid-area: meta;
+  flex: 1 1 auto;
   min-width: 0;
   color: var(--kr-muted);
   font-size: 12px;
   font-weight: 600;
+  text-align: right;
   font-variant-numeric: tabular-nums;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mon-pay-meta b {
-  color: var(--kr-text);
-  font-weight: 800;
+.mon-pay-empty {
+  margin: 0;
+  color: var(--kr-muted);
+  font-size: 13px;
 }
 
 /* ---------- gaveta de filtros (folha de baixo no celular) ---------- */
@@ -1512,7 +1587,6 @@ label.mon-fieldset .mon-legend-text {
   }
   /* o "Ao vivo" desce para uma linha so dele, embaixo do titulo */
   .mon-live {
-    order: 10;
     flex-basis: 100%;
     justify-content: flex-start;
     min-height: 30px;
@@ -1520,21 +1594,6 @@ label.mon-fieldset .mon-legend-text {
   .mon-main {
     padding-left: 12px;
     padding-right: 12px;
-  }
-  .mon-filterbar-metric {
-    margin-left: 0;
-  }
-  .mon-kpi {
-    padding: 10px 12px;
-  }
-  .mon-kpi.is-hero .mon-kpi-foot {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px 8px;
-  }
-  .mon-card {
-    padding: 12px;
   }
   .mon-drawer-backdrop {
     align-items: flex-end;
@@ -1564,13 +1623,10 @@ label.mon-fieldset .mon-legend-text {
   }
 }
 
-/* ---------- tablet: duas colunas ---------- */
+/* ---------- tablet em pe (ainda rola): tres indicadores por linha, paineis em duas colunas ---------- */
 @media (min-width: 760px) {
   .mon-kpi-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .mon-kpi.is-hero {
-    grid-column: span 1;
   }
   .mon-board {
     display: grid;
@@ -1585,128 +1641,427 @@ label.mon-fieldset .mon-legend-text {
   .mon-board.is-single-rank .mon-w-customers {
     grid-column: 1 / -1;
   }
-  .mon-w-feed .mon-list,
-  .mon-w-yard .mon-list {
-    max-height: 640px;
-    overflow-y: auto;
-    padding-right: 2px;
-    scrollbar-width: thin;
+}
+
+/* ======================================================================================
+ * Painel de parede (`.mon.is-fit`): a tela inteira no `100dvh`, sem rolagem. A altura desce
+ * em cascata — raiz (topo + corpo) -> corpo (aviso + indicadores + grade) -> grade (paineis)
+ * -> painel (cabecalho + lista/grafico) — sempre com `min-height: 0`, para o conteudo nunca
+ * empurrar a pagina: quem nao cabe e cortado pelo painel e contado no "+N".
+ * ==================================================================================== */
+.mon.is-fit {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* topo numa linha so */
+.mon.is-fit .mon-top {
+  flex-wrap: nowrap;
+  gap: 10px;
+  padding: 8px 16px;
+}
+.mon.is-fit .mon-logo {
+  width: 32px;
+  height: 32px;
+}
+.mon.is-fit .mon-title {
+  order: 0;
+  flex: 0 1 auto;
+  max-width: 220px;
+}
+.mon.is-fit .mon-filterbar {
+  order: 0;
+  flex: 1 1 auto;
+  flex-basis: auto;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  padding: 2px 0;
+}
+.mon.is-fit .mon-top-caption {
+  order: 0;
+  flex: 0 1 auto;
+  flex-basis: auto;
+  margin-left: 2px;
+}
+.mon.is-fit .mon-chip {
+  flex: 0 1 auto;
+  min-width: 64px;
+}
+.mon.is-fit .mon-chip-period,
+.mon.is-fit .mon-chip-more {
+  min-width: 0;
+  flex-shrink: 0;
+}
+.mon.is-fit .mon-live {
+  order: 0;
+  flex-shrink: 0;
+}
+.mon.is-fit .mon-top-actions {
+  order: 0;
+}
+.mon.is-fit .mon-top-btn {
+  min-width: 38px;
+  height: 38px;
+}
+
+/* corpo */
+.mon.is-fit .mon-main {
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 10px 16px 12px;
+  gap: 10px;
+}
+.mon.is-fit .mon-content {
+  flex: 1 1 0;
+  min-height: 0;
+  gap: 10px;
+}
+.mon.is-fit .mon-alert {
+  flex-wrap: nowrap;
+}
+.mon.is-fit .mon-alert > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* indicadores: uma faixa de seis */
+.mon.is-fit .mon-kpis {
+  flex-shrink: 0;
+}
+.mon.is-fit .mon-kpi-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+.mon.is-fit .mon-kpi {
+  gap: 2px;
+  padding: 8px 12px;
+}
+.mon.is-fit .mon-kpi-foot {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+/* grade */
+.mon.is-fit .mon-board {
+  flex: 1 1 0;
+  min-height: 0;
+  display: grid;
+  gap: 10px;
+  align-items: stretch;
+}
+.mon.is-fit .mon-card {
+  min-height: 0;
+  overflow: hidden;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.mon.is-fit .mon-card-head {
+  flex-shrink: 0;
+}
+.mon.is-fit .mon-empty:not(.mon-card) {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px;
+}
+.mon.is-fit .mon-fit {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+/* cartao de altura fixa: nada quebra linha (a conta de quantos cabem mede o primeiro) */
+.mon.is-fit .mon-ticket-top {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+/* cartoes mais baixos: cabe um a mais em cada lista */
+.mon.is-fit .mon-list {
+  gap: 5px;
+}
+.mon.is-fit .mon-ticket {
+  gap: 1px;
+  padding: 6px 10px 6px 12px;
+}
+.mon.is-fit .mon-ticket-time,
+.mon.is-fit .mon-ticket-customer,
+.mon.is-fit .mon-ticket-bottom {
+  line-height: 1.22;
+}
+.mon.is-fit .mon-yard-elapsed {
+  font-size: 19px;
+}
+/* legendas de uma linha so, na altura do titulo quando cabem */
+.mon.is-fit .mon-levels {
+  flex-wrap: nowrap;
+  gap: 0 9px;
+  font-size: 11px;
+  overflow: hidden;
+}
+.mon.is-fit .mon-w-hourly .mon-card-sub {
+  flex: 0 1 auto;
+}
+.mon.is-fit .mon-w-hourly .mon-card-below {
+  flex: 1 1 auto;
+  flex-basis: auto;
+  order: 1;
+}
+.mon.is-fit .mon-w-hourly .mon-card-actions {
+  order: 2;
+}
+.mon.is-fit .mon-icon-btn {
+  width: 28px;
+  height: 28px;
+}
+/* a ordem do celular (vendas -> patio -> graficos) nao vale aqui: cada zona tem o seu lugar */
+.mon.is-fit .mon-board > *,
+.mon.is-fit .mon-col-charts > * {
+  order: 0;
+}
+.mon.is-fit .mon-col-charts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+.mon.is-fit .mon-w-hourly {
+  flex: 1 1 0;
+}
+.mon.is-fit .mon-rank-pair {
+  flex: 1 1 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+  gap: 10px;
+}
+.mon.is-fit .mon-board.is-single-rank .mon-rank-pair {
+  grid-template-columns: minmax(0, 1fr);
+}
+.mon.is-fit .mon-w-payments {
+  flex: 0 0 auto;
+  gap: 6px;
+}
+.mon.is-fit .mon-chart {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.mon.is-fit .mon-table-wrap {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: none;
+}
+.mon.is-fit .mon-skeleton .mon-sk-block {
+  flex-shrink: 1;
+  min-height: 12px;
+}
+
+/* notebook pequeno e tablet deitado: graficos a esquerda, vendas e patio empilhados a direita */
+@media (max-width: 1439.98px) {
+  /* o "atualizado ha" vai para a dica do "Ao vivo"; "No tempo" ja esta escrito em cada cartao */
+  .mon.is-fit .mon-live-detail,
+  .mon.is-fit .mon-levels li.is-normal {
+    display: none;
+  }
+}
+@media (max-width: 1279.98px) {
+  .mon.is-fit .mon-top-label-long {
+    display: none;
+  }
+  .mon.is-fit .mon-board {
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
+  .mon.is-fit .mon-col-charts,
+  .mon.is-fit .mon-sk-charts {
+    grid-column: 1;
+    grid-row: 1 / -1;
+  }
+  .mon.is-fit .mon-w-feed {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .mon.is-fit .mon-w-yard {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .mon.is-fit .mon-board.no-feed .mon-w-yard,
+  .mon.is-fit .mon-board.no-yard .mon-w-feed {
+    grid-row: 1 / -1;
+  }
+  .mon.is-fit .mon-board.no-feed.no-yard {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mon.is-fit .mon-board.no-charts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mon.is-fit .mon-board.no-charts .mon-w-feed {
+    grid-column: 1;
+    grid-row: 1 / -1;
+  }
+  .mon.is-fit .mon-board.no-charts .mon-w-yard {
+    grid-column: 2;
+    grid-row: 1 / -1;
+  }
+  .mon.is-fit .mon-board.no-charts.is-single-ticket {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mon.is-fit .mon-board.no-charts.is-single-ticket > * {
+    grid-column: 1;
+  }
+  .mon.is-fit .mon-kpi-label,
+  .mon.is-fit .mon-kpi-foot {
+    font-size: 11px;
+  }
+  /* cartao estreito: a variacao em cima e a nota embaixo, inteira, em vez de "Ontem: ..." */
+  .mon.is-fit .mon-kpi-foot {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+  }
+}
+@media (max-width: 1099.98px) {
+  .mon.is-fit .mon-title {
+    max-width: 150px;
+  }
+  .mon.is-fit .mon-top-actions .mon-top-label {
+    display: none;
+  }
+  .mon.is-fit .mon-top-btn {
+    padding: 0;
+  }
+  .mon.is-fit .mon-top-btn .mon-count {
+    position: absolute;
+    top: -6px;
+    right: -6px;
   }
 }
 
-/* ---------- tela larga: vendas | graficos | patio ---------- */
-@media (min-width: 1100px) {
-  .mon-top {
+/* tela larga: vendas | graficos | patio, as desligadas saindo da grade (`--mon-zones`) */
+@media (min-width: 1280px) {
+  .mon.is-fit .mon-top {
     padding-left: 20px;
     padding-right: 20px;
   }
-  .mon-main {
-    padding: 14px 20px 28px;
+  .mon.is-fit .mon-main {
+    padding: 12px 20px 14px;
   }
-  .mon-board {
-    grid-template-columns: var(--mon-zones, 1fr);
-  }
-  .mon-col-charts {
-    display: flex;
-    flex-direction: column;
-    gap: var(--mon-gap);
-    min-width: 0;
-  }
-  .mon-rank-pair {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--mon-gap);
-    align-items: start;
-  }
-  .mon-board.is-single-rank .mon-rank-pair {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .mon-board .mon-w-feed,
-  .mon-board .mon-w-yard,
-  .mon-board .mon-w-hourly,
-  .mon-board .mon-w-payments,
-  .mon-board .mon-w-products,
-  .mon-board .mon-w-customers {
-    grid-column: auto;
-    order: 0;
-  }
-  .mon-w-feed .mon-list,
-  .mon-w-yard .mon-list {
-    max-height: calc(100dvh - 300px);
-    min-height: 320px;
-  }
-  .mon-w-feed,
-  .mon-w-yard {
-    position: sticky;
-    top: 76px;
+  .mon.is-fit .mon-board {
+    grid-template-columns: var(--mon-zones, minmax(0, 1fr));
+    grid-template-rows: minmax(0, 1fr);
   }
 }
 
-/* os seis indicadores numa linha so quando cabem sem cortar o rotulo */
-@media (min-width: 1280px) {
-  .mon-kpi-grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 10px;
+/* ---------- TV da expedicao: numeros grandes para ler de longe ---------- */
+@media (min-width: 1600px) and (min-height: 820px) {
+  .mon.is-fit {
+    --mon-gap: 14px;
   }
-}
-
-/* ---------- TV da expedicao ---------- */
-@media (min-width: 1600px) {
-  .mon {
-    --mon-gap: 16px;
+  .mon.is-fit .mon-main,
+  .mon.is-fit .mon-content {
+    gap: 14px;
   }
-  .mon-title h1 {
+  .mon.is-fit .mon-board,
+  .mon.is-fit .mon-col-charts,
+  .mon.is-fit .mon-rank-pair {
+    gap: 14px;
+  }
+  .mon.is-fit .mon-logo {
+    width: 38px;
+    height: 38px;
+  }
+  .mon.is-fit .mon-title h1 {
     font-size: 20px;
   }
-  .mon-title span,
-  .mon-live {
+  .mon.is-fit .mon-title span,
+  .mon.is-fit .mon-live,
+  .mon.is-fit .mon-top-caption {
     font-size: 14px;
   }
-  .mon-kpi {
-    padding: 16px 18px;
+  .mon.is-fit .mon-top-btn {
+    height: 42px;
+    min-width: 42px;
   }
-  .mon-kpi-label {
+  .mon.is-fit .mon-kpi {
+    padding: 12px 16px;
+  }
+  .mon.is-fit .mon-kpi-label {
     font-size: 14px;
   }
-  .mon-kpi-value {
+  .mon.is-fit .mon-kpi-value {
     font-size: clamp(24px, 12cqi, 44px);
   }
-  .mon-kpi.is-hero .mon-kpi-value {
-    font-size: clamp(28px, 14cqi, 56px);
+  .mon.is-fit .mon-kpi.is-hero .mon-kpi-value {
+    font-size: clamp(28px, 14cqi, 52px);
   }
-  .mon-kpi-foot {
+  .mon.is-fit .mon-kpi-foot {
     font-size: 13px;
   }
-  .mon-card-title h2 {
+  .mon.is-fit .mon-card {
+    padding: 14px 16px;
+    gap: 10px;
+  }
+  .mon.is-fit .mon-card-title h2 {
     font-size: 18px;
   }
-  .mon-ticket-time {
-    font-size: 21px;
+  .mon.is-fit .mon-card-sub,
+  .mon.is-fit .mon-legend {
+    font-size: 13px;
   }
-  .mon-ticket-customer {
+  .mon.is-fit .mon-list {
+    gap: 8px;
+  }
+  .mon.is-fit .mon-ticket {
+    padding: 9px 12px 9px 14px;
+  }
+  .mon.is-fit .mon-ticket-time {
+    font-size: 20px;
+  }
+  .mon.is-fit .mon-plate {
+    font-size: 13px;
+  }
+  .mon.is-fit .mon-ticket-customer {
     font-size: 16px;
   }
-  .mon-ticket-bottom,
-  .mon-ticket-money {
+  .mon.is-fit .mon-ticket-bottom,
+  .mon.is-fit .mon-ticket-money {
     font-size: 15px;
   }
-  .mon-yard-elapsed {
-    font-size: 28px;
+  .mon.is-fit .mon-yard-elapsed {
+    font-size: 26px;
   }
-  .mon-bar-line,
-  .mon-pay-legend li,
-  .mon-legend {
-    font-size: 14px;
+  .mon.is-fit .mon-axis-text text,
+  .mon.is-fit .mon-peak {
+    font-size: 13px;
   }
-  .mon-bar-track {
-    height: 10px;
+  .mon.is-fit .mon-bars {
+    gap: 10px;
+  }
+  .mon.is-fit .mon-bar-line,
+  .mon.is-fit .mon-pay-legend li {
+    font-size: 15px;
+  }
+  .mon.is-fit .mon-bar-meta,
+  .mon.is-fit .mon-pay-meta,
+  .mon.is-fit .mon-fit-more {
+    font-size: 13px;
+  }
+  .mon.is-fit .mon-bar-track {
+    height: 9px;
+  }
+  .mon.is-fit .mon-stack {
+    height: 14px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .mon-ticket.is-fresh {
     animation: none;
-    box-shadow: 0 0 0 2px var(--kr-accent-border);
+    box-shadow: inset 0 0 0 2px var(--kr-accent-border);
   }
   .mon-live.is-live .mon-live-dot,
   .mon-spin,

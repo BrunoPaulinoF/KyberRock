@@ -5,6 +5,7 @@ import { Fragment, useMemo, useState } from "react";
 
 import { useUser } from "../lib/auth";
 import { todayIso } from "../lib/format";
+import { downloadSpreadsheet, printReportHtml } from "../lib/report-output";
 import {
   filterTruckControlReport,
   formatClock,
@@ -12,8 +13,7 @@ import {
   formatTripDay,
   isoDaysBefore,
   loadTruckControl,
-  truckControlCsv,
-  truckControlFileBaseName
+  truckControlDocument
 } from "../lib/truck-control";
 import { useAsync } from "../lib/use-async";
 
@@ -22,9 +22,10 @@ const HELP =
 
 /**
  * Controle de caminhoes — a tela `TruckControlView` do desktop, lendo a nuvem. O periodo e
- * pela ENTRADA do caminhao (patio), nao pelo fechamento. O "Gerar PDF" imprime a tela (o
- * navegador salva em PDF) e o "Baixar Excel" baixa um CSV com as mesmas tabelas da planilha
- * do desktop.
+ * pela ENTRADA do caminhao (patio), nao pelo fechamento. O "Gerar PDF" e o "Baixar Excel" saem
+ * IGUAIS aos do desktop (`truckControlDocument`, copia fiel do renderizador): o PDF abre a
+ * impressao do navegador com o A4 do desktop ("Salvar como PDF") e o Excel baixa o `.xls` com
+ * o mesmo nome de arquivo. Os dois partem do recorte da tela (periodo + busca).
  */
 export function TruckControl() {
   const user = useUser();
@@ -34,6 +35,9 @@ export function TruckControl() {
   const [search, setSearch] = useState("");
   // Uma placa aberta por vez, como no desktop.
   const [openPlate, setOpenPlate] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const {
     data: report,
@@ -57,15 +61,30 @@ export function TruckControl() {
   const periodAverageMinutes = report?.averageMinutes ?? 0;
   const averageMinutes = visible?.averageMinutes ?? 0;
 
-  function handleExcel() {
+  // O arquivo parte do MESMO recorte da lista (periodo + busca), como o
+  // `desktop:export-truck-control` do desktop.
+  async function handleExport(format: "pdf" | "excel"): Promise<void> {
     if (!visible) return;
-    const blob = new Blob([truckControlCsv(visible)], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${truckControlFileBaseName(visible)}.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    setExporting(format);
+    setNotice(null);
+    setExportError(null);
+    try {
+      const file = truckControlDocument(format, visible);
+      if (format === "pdf") {
+        await printReportHtml(file.html);
+      } else {
+        downloadSpreadsheet(file);
+        setNotice(`Excel salvo em: ${file.filename}`);
+      }
+    } catch (err) {
+      setExportError(
+        err instanceof Error
+          ? err.message
+          : `Falha ao gerar o ${format === "pdf" ? "PDF" : "Excel"}.`
+      );
+    } finally {
+      setExporting(null);
+    }
   }
 
   return (
@@ -82,9 +101,15 @@ export function TruckControl() {
             type="button"
             className="icon-action primary"
             aria-label="Gerar PDF"
-            title={filtered ? "Gerar PDF so com os caminhoes da busca" : "Gerar PDF"}
-            disabled={loading}
-            onClick={() => window.print()}
+            title={
+              exporting === "pdf"
+                ? "Gerando PDF..."
+                : filtered
+                  ? "Gerar PDF so com os caminhoes da busca"
+                  : "Gerar PDF"
+            }
+            disabled={exporting !== null || loading || !visible}
+            onClick={() => void handleExport("pdf")}
           >
             <FileText size={16} />
           </button>
@@ -92,9 +117,15 @@ export function TruckControl() {
             type="button"
             className="icon-action primary"
             aria-label="Baixar Excel"
-            title={filtered ? "Baixar Excel so com os caminhoes da busca" : "Baixar Excel"}
-            disabled={loading || !visible}
-            onClick={handleExcel}
+            title={
+              exporting === "excel"
+                ? "Gerando Excel..."
+                : filtered
+                  ? "Baixar Excel so com os caminhoes da busca"
+                  : "Baixar Excel"
+            }
+            disabled={exporting !== null || loading || !visible}
+            onClick={() => void handleExport("excel")}
           >
             <Table size={16} />
           </button>
@@ -144,6 +175,8 @@ export function TruckControl() {
       </div>
 
       {error ? <p className="truck-control-error">{error}</p> : null}
+      {exportError ? <p className="truck-control-error">{exportError}</p> : null}
+      {notice ? <p className="truck-control-muted">{notice}</p> : null}
       {filtered ? (
         <p className="truck-control-muted">
           Busca &quot;{visible?.search}&quot;: {filteredTrucks.length} de{" "}
@@ -189,7 +222,7 @@ export function TruckControl() {
               <th className="num">Peso (kg)</th>
               <th>Clientes atendidos</th>
               <th>Peso por produto</th>
-              <th className="truck-control-no-print">Cargas</th>
+              <th>Cargas</th>
             </tr>
           </thead>
           <tbody>
@@ -243,7 +276,7 @@ export function TruckControl() {
                               </div>
                             ))}
                       </td>
-                      <td className="truck-control-no-print">
+                      <td>
                         <button
                           type="button"
                           className="truck-control-link"

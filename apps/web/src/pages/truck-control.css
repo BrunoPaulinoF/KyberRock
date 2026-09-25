@@ -214,26 +214,3 @@
 .truck-control-trip-table .num {
   text-align: right;
 }
-
-/* "Gerar PDF": a impressao do navegador so com a tela, sem o menu e sem os botoes. */
-@media print {
-  body:has(.truck-control) .sidebar,
-  .truck-control-actions,
-  .truck-control-filters .icon-action,
-  .truck-control-no-print {
-    display: none !important;
-  }
-  body:has(.truck-control) .shell {
-    padding: 0;
-  }
-  .truck-control {
-    min-height: 0;
-  }
-  .truck-control-table-scroll {
-    overflow: visible;
-    box-shadow: none;
-  }
-  .truck-control-table > thead > tr > th {
-    position: static;
-  }
-}
