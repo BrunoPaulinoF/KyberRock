@@ -1861,23 +1861,21 @@ label.mon-fieldset .mon-legend-text {
   min-height: 12px;
 }
 
-/* notebook pequeno e tablet deitado: graficos a esquerda, vendas e patio empilhados a direita */
 /* "No tempo" ja esta escrito em cada cartao: sem espaco, a legenda fica so com os limites */
 @media (max-width: 1599.98px) {
   .mon.is-fit .mon-levels li.is-normal {
     display: none;
   }
 }
-/* o "atualizado ha" vai para a dica do "Ao vivo" */
+/* o "atualizado ha" vai para a dica do "Ao vivo" e o "Voltar" fica so com a seta */
 @media (max-width: 1439.98px) {
-  .mon.is-fit .mon-live-detail {
-    display: none;
-  }
-}
-@media (max-width: 1279.98px) {
+  .mon.is-fit .mon-live-detail,
   .mon.is-fit .mon-top-label-long {
     display: none;
   }
+}
+/* notebook pequeno e tablet deitado: graficos a esquerda, vendas e patio empilhados a direita */
+@media (max-width: 1279.98px) {
   .mon.is-fit .mon-board {
     grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
     /* o cartao de venda e mais baixo que o do patio: um pouco mais de altura para as vendas */
@@ -2062,6 +2060,9 @@ label.mon-fieldset .mon-legend-text {
   }
   .mon.is-fit .mon-stack {
     height: 14px;
+  }
+  .mon.is-fit .mon-pay-legend {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   }
 }
 

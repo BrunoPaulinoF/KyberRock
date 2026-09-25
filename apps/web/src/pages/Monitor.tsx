@@ -123,6 +123,11 @@ import { useTheme } from "../lib/theme";
  * expedicao. `Monitor` le a nuvem e cuida do tempo real; `MonitorView` so desenha a partir de
  * dados simples (da para montar com dados de exemplo).
  *
+ * Tela de parede, nao pagina: do notebook para cima (e no tablet deitado, `MONITOR_FIT_QUERY`) ela
+ * cabe inteira no `100dvh` e nada rola. Cada painel tem a altura que a grade da; as listas medem
+ * quantos cartoes cabem (`fitCount`) e fecham com "+N", os rankings viram "Outros" na ultima linha
+ * que cabe e o grafico desenha na altura do painel. No celular a pagina rola, com listas curtas.
+ *
  * Carga no banco (o projeto ja estourou cota): a leitura e so a janela do periodo (+ o anterior,
  * para a comparacao) com as colunas que a tela usa. Quem avisa que mudou algo e o Realtime de
  * `operation_change_pings` (uma linha por empresa, carimbada por gatilho a cada escrita em
@@ -146,7 +151,7 @@ const FIT_FALLBACK_ITEMS = 5;
 /** Altura do rodape "+N" das listas (`.mon-fit-more`: 20 px + 5 px de margem). */
 const FIT_FOOTER_PX = 25;
 /** Etiquetas de filtro que aparecem no topo; o resto vira "+N" (abre a gaveta). */
-const TOP_CHIPS = 3;
+const TOP_CHIPS = 2;
 
 type RealtimeState = "connecting" | "live" | "down";
 

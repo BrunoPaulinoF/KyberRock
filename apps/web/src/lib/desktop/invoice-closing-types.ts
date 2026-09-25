@@ -282,4 +282,3 @@ export interface InvoiceClosingReport {
    */
   availablePlates: string[];
 }
-
