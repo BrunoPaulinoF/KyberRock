@@ -75,9 +75,10 @@ export function isPriceMasteredCadastroKey(key: string): boolean {
  * `newest`): quem editou o cliente por ultimo manda. Sem isso, duas principais voltariam a
  * ficar cada uma com a configuracao que ela mesma digitou — o empate original.
  *
- * `default_payment_term_id` fica de fora: a condicao de pagamento padrao ja viaja pelo
- * OMIE (sobe no `push_customer`, volta no cadastro de referencia), entao ela ja e a mesma
- * em todas as maquinas e nao precisa de dono aqui. `observations` idem, pelo mesmo caminho.
+ * `default_payment_term_id` fica de fora: a condicao de pagamento padrao nao tem dono. Ela
+ * NAO viaja pelo OMIE (a listagem de clientes de la nao traz o campo); vai para a nuvem no
+ * push do cadastro e volta para as outras balancas no pull, onde nulo nunca apaga o valor
+ * local. `observations` viaja pelo OMIE (sobe no `push_customer`, volta no cadastro).
  */
 export const MASTERED_CUSTOMER_COLUMNS = [
   "default_payment_method_id",

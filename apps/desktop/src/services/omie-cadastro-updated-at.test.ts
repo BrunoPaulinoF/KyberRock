@@ -156,6 +156,27 @@ describe("upsert do cadastro OMIE: quando o updated_at anda", () => {
     database.close();
   });
 
+  it("a passada do OMIE nao apaga a condicao de pagamento padrao do cadastro", () => {
+    // O OMIE nao traz a condicao padrao do cliente (chega sempre nula). Antes o localFirst
+    // gravava esse nulo por cima e a Nova entrada, que preenche a condicao pelo cadastro,
+    // ficava sem nada.
+    const database = createDatabase();
+    applyPass(database);
+    database
+      .prepare(
+        "UPDATE customers SET default_payment_term_id = 'term-30' WHERE omie_customer_id = 4001"
+      )
+      .run();
+    const marker = backdate(database);
+
+    applyPass(database);
+
+    const row = readRow(database);
+    expect(row.default_payment_term_id).toBe("term-30");
+    expect(row.updated_at).toBe(marker);
+    database.close();
+  });
+
   it("grava a linha normalmente na primeira vez que o cliente chega", () => {
     const database = createDatabase();
     applyPass(database);

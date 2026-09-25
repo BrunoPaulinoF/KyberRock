@@ -2238,7 +2238,7 @@ interface LocalCommercialRow {
   credit_closing_weekday: number | null;
 }
 
-function upsertCloudCustomers(
+export function upsertCloudCustomers(
   database: DesktopDatabase,
   companyId: string,
   rows: Array<Record<string, unknown>>,
@@ -2259,13 +2259,13 @@ function upsertCloudCustomers(
   const upsert = database.prepare(`
     INSERT INTO customers (
       id, company_id, omie_customer_id, source, legal_name, trade_name, document, phone, email,
-      credit_limit_cents, open_receivables_cents, default_freight_modality,
+      credit_limit_cents, open_receivables_cents, default_freight_modality, default_payment_term_id,
       default_payment_method_id, default_carrier_id, nf_required, credit_mode,
       credit_account_enabled, credit_periodicity, credit_closing_day, credit_second_closing_day,
       credit_boleto_days, credit_second_boleto_days, credit_closing_weekday,
       sync_status, is_active,
       created_at, updated_at, deleted_at, last_synced_at, needs_push
-    ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, ?, ?, 0)
+    ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, ?, ?, 0)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       -- Nunca apagar o codigo do OMIE que ja temos: sem ele o proximo push tenta um
@@ -2288,6 +2288,10 @@ function upsertCloudCustomers(
       -- Tipo de frete padrao da aba Transporte. Segue a mesma guarda dos demais campos do
       -- cadastro: edicao local ainda nao enviada ao OMIE nunca e sobrescrita pela nuvem.
       default_freight_modality = CASE WHEN customers.needs_push = 0 THEN excluded.default_freight_modality ELSE customers.default_freight_modality END,
+      -- Condicao de pagamento padrao: e ela que a Nova entrada usa, entao precisa ser a
+      -- mesma em todas as balancas (antes a nuvem recebia e nenhuma outra maquina lia).
+      -- Nulo da nuvem nao apaga: cliente que ainda nao tem condicao la nao derruba a daqui.
+      default_payment_term_id = CASE WHEN customers.needs_push = 0 THEN COALESCE(excluded.default_payment_term_id, customers.default_payment_term_id) ELSE customers.default_payment_term_id END,
       -- Bloco comercial/credito: sem CASE aqui de proposito. Quem decide entre a nuvem e a
       -- copia local e shouldApplyCloudCommercialBlock, la em cima, porque a regra tem tres
       -- desfechos (principal nunca aceita, secundaria sempre aceita, sem principal segue o
@@ -2357,6 +2361,7 @@ function upsertCloudCustomers(
       integerValue(row.credit_limit_cents),
       integerValue(row.open_receivables_cents) ?? 0,
       nullableStringValue(row.default_freight_modality),
+      nullableStringValue(row.default_payment_term_id),
       commercial.defaultPaymentMethodId,
       commercial.defaultCarrierId,
       commercial.nfRequired,
@@ -6676,7 +6681,14 @@ const OMIE_CUSTOMER_DATA_COLUMNS: readonly OmieUpsertColumn[] = [
   localFirst("observations"),
   omieOwned("tags_json"),
   omieOwned("salesperson_id"),
-  localFirst("default_payment_term_id"),
+  // A condicao padrao do cliente e do KyberRock: a listagem de clientes do OMIE nao traz
+  // esse campo (chega sempre nulo), e o `localFirst` o apagava a cada passada — a Nova
+  // entrada, que preenche a condicao pelo cadastro, ficava sem nada. Nulo do OMIE nunca
+  // apaga o que esta aqui.
+  {
+    column: "default_payment_term_id",
+    expr: "COALESCE(excluded.default_payment_term_id, customers.default_payment_term_id)"
+  },
   omieOwned("is_active"),
   // `deleted_at` nao viaja no INSERT: o valor novo e o literal NULL, e a comparacao abaixo
   // e o que faz um cliente que estava apagado localmente e voltou no OMIE contar como
