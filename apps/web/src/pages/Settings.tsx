@@ -2,15 +2,15 @@ import { RefreshCw } from "lucide-react";
 import { useMemo } from "react";
 import { useParams } from "react-router-dom";
 
-import { DeskPanel, EmptyState, Pill } from "../components/desk";
-import { Alert, DataTable } from "../components/ui";
+import { DeskPanel, EmptyState, IconAction, Pill } from "../components/desk";
+import { Alert, DataTable, useToast } from "../components/ui";
 import { callWebApi } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { formatDateTime, formatMoney, formatPlate } from "../lib/format";
 import { fiscalStatus, formatElapsedSince, REQUEST_KIND_LABELS } from "../lib/operation";
 import { q } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
-import { useExecutorStatus } from "./Operation";
+import { sendRequest, useExecutorStatus } from "./Operation";
 
 /**
  * O menu da engrenagem do desktop (Balanca, Impressao, Cloud), na versao do site. No desktop
@@ -198,6 +198,13 @@ function PrintingSettings() {
   );
   const printed = (requests.data ?? []).filter((request) => request.print_status);
   const executor = useExecutorStatus();
+  const toast = useToast();
+
+  // "Reimprimir segunda via" da lista de cupons, como no desktop (Impressao → Cupons emitidos):
+  // vira um pedido de reimpressao, e a balanca executora imprime a proxima via.
+  async function reprint(operationId: string) {
+    if (await sendRequest(toast, "reprint", { operationId })) void requests.reload();
+  }
 
   return (
     <div className="settings-grid">
@@ -276,6 +283,22 @@ function PrintingSettings() {
                 key: "by",
                 header: "Pedido por",
                 render: (row) => row.requested_by_name ?? "—"
+              },
+              {
+                key: "actions",
+                header: "Acoes",
+                numeric: true,
+                render: (row) =>
+                  user.canOperate &&
+                  row.kind !== "cancel" && (
+                    <span className="row-actions">
+                      <IconAction
+                        icon="printer"
+                        label="Reimprimir segunda via"
+                        onClick={() => void reprint(row.operation_id)}
+                      />
+                    </span>
+                  )
               }
             ]}
           />
