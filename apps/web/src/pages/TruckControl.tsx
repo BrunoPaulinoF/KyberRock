@@ -71,7 +71,7 @@ export function TruckControl() {
     try {
       const file = truckControlDocument(format, visible);
       if (format === "pdf") {
-        await printReportHtml(file.html);
+        await printReportHtml(file.html, file.filename);
       } else {
         downloadSpreadsheet(file);
         setNotice(`Excel salvo em: ${file.filename}`);

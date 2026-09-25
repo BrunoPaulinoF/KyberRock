@@ -124,7 +124,10 @@ export function Insights() {
     try {
       if (kind === "pdf") {
         const codes = await loadProductCodes(user.companyId).catch(() => new Map());
-        await printReportHtml(insightsReportHtml(rows, range, codes));
+        await printReportHtml(
+          insightsReportHtml(rows, range, codes),
+          `insights-${range.start}-a-${range.end}.pdf`
+        );
       } else {
         // O mesmo arquivo que o desktop grava: nome, HTML de planilha e UTF-8 sem BOM.
         downloadSpreadsheet({

@@ -6,7 +6,7 @@
  * gravado com extensao `.xls` (o Excel abre com as celulas tipadas). O site entrega o MESMO HTML:
  *
  * - PDF: abre a janela de impressao do navegador com o documento — la se imprime ou escolhe
- *   "Salvar como PDF". O nome sugerido e o `<title>` do documento.
+ *   "Salvar como PDF", ja com o nome de arquivo do desktop.
  * - Excel: baixa o HTML como `.xls`, com o mesmo nome de arquivo do desktop.
  */
 
@@ -21,7 +21,7 @@ export interface ReportFile {
  * (ou depois de um tempo, no navegador sem `afterprint`), para dois documentos seguidos nao
  * disputarem a mesma janela.
  */
-export function printReportHtml(html: string): Promise<void> {
+export function printReportHtml(html: string, filename?: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const frame = document.createElement("iframe");
     frame.setAttribute("aria-hidden", "true");
@@ -44,6 +44,9 @@ export function printReportHtml(html: string): Promise<void> {
     doc.open();
     doc.write(html);
     doc.close();
+    // O "Salvar como PDF" sugere o titulo do documento como nome: trocando so o titulo da
+    // pagina aberta (o HTML fica igual ao do desktop), o arquivo sugerido e o mesmo do desktop.
+    if (filename) doc.title = filename.replace(/\.pdf$/i, "");
     let done = false;
     const finish = () => {
       if (done) return;
@@ -89,5 +92,5 @@ export async function deliverReports(files: {
   xls: ReportFile[];
 }): Promise<void> {
   for (const file of files.xls) downloadSpreadsheet(file);
-  for (const file of files.pdf) await printReportHtml(file.html);
+  for (const file of files.pdf) await printReportHtml(file.html, file.filename);
 }

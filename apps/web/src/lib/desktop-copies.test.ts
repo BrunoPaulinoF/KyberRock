@@ -75,6 +75,14 @@ describe("regras copiadas do desktop", () => {
     });
   }
 
+  // A busca de caminhao vem do `@kyberrock/shared` no desktop (arquivo sem import nenhum).
+  it("search-ranking.ts e igual ao do @kyberrock/shared", () => {
+    const shared = path.resolve(here, "../../../../packages/shared/src/search-ranking.ts");
+    expect(readFileSync(path.join(here, "desktop", "search-ranking.ts"), "utf8")).toBe(
+      readFileSync(shared, "utf8")
+    );
+  });
+
   for (const file of EXACT_COPIES) {
     it(`${file} e igual ao do desktop`, () => {
       const copy = readFileSync(path.join(here, "desktop", file), "utf8");
