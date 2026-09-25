@@ -1269,3 +1269,74 @@ export function formatAxisValue(value: number, top: number, metric: MonitorMetri
   }
   return `R$ ${reais.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`;
 }
+
+// ---------------------------------------------------------------------------
+// Painel de parede: a tela cabe inteira, sem rolar
+// ---------------------------------------------------------------------------
+
+/**
+ * Quando a tela vira painel de parede (cabe inteira no `100dvh`, nada rola): notebook, monitor,
+ * TV e tablet deitado. Abaixo disso (celular, tablet em pe, janela muito baixa) a pagina rola uma
+ * vez so, com as listas curtas. O MESMO recorte esta no `monitor.css` — mudou um, muda o outro.
+ */
+export const MONITOR_FIT_QUERY = "(min-width: 900px) and (min-height: 560px)";
+
+/** Quantos itens cada lista mostra no celular (vendas, patio, rankings com o "Outros"). */
+export const MONITOR_PHONE_ITEMS = 5;
+
+/**
+ * Quantos itens de altura `itemSize` (com `gap` entre eles) cabem em `available` pixels. Meio
+ * pixel de folga: a altura medida vem quebrada e 3 x 99,9 nao pode virar "cabem 2".
+ */
+export function fitCapacity(available: number, itemSize: number, gap = 0): number {
+  if (!(available > 0) || !(itemSize > 0)) return 0;
+  const space = Math.max(0, gap);
+  return Math.max(0, Math.floor((available + space + 0.5) / (itemSize + space)));
+}
+
+/**
+ * Quantos itens de uma lista mostrar num painel que nao cresce. Cabendo todos, todos; senao,
+ * reserva `footer` pixels para o rodape "+N" e mostra o que couber (pelo menos `min`, e o painel
+ * corta o resto). Sem medida ainda (primeira pintura, navegador sem `ResizeObserver`), usa o
+ * `fallback`.
+ */
+export function fitCount(input: {
+  available: number;
+  itemSize: number;
+  gap?: number;
+  total: number;
+  footer?: number;
+  fallback: number;
+  min?: number;
+}): number {
+  const total = Math.max(0, Math.floor(input.total));
+  if (total === 0) return 0;
+  if (!(input.available > 0) || !(input.itemSize > 0)) {
+    return Math.min(total, Math.max(0, Math.floor(input.fallback)));
+  }
+  const gap = input.gap ?? 0;
+  if (fitCapacity(input.available, input.itemSize, gap) >= total) return total;
+  const withFooter = fitCapacity(
+    input.available - Math.max(0, input.footer ?? 0),
+    input.itemSize,
+    gap
+  );
+  return Math.min(total, Math.max(input.min ?? 1, withFooter));
+}
+
+/** Os primeiros `count` itens e quantos ficaram de fora (o "+N" do rodape). */
+export function splitVisible<T>(
+  items: readonly T[],
+  count: number
+): { visible: T[]; hidden: number } {
+  const shown = Math.max(0, Math.min(items.length, Math.floor(count)));
+  return { visible: items.slice(0, shown), hidden: items.length - shown };
+}
+
+/**
+ * `limit` do `rankBy` para caberem `capacity` linhas no painel: a cauda vira UMA linha "Outros",
+ * entao sobra `capacity - 1` para nomes (e nunca menos que um).
+ */
+export function rankLimitFor(capacity: number): number {
+  return Math.max(1, Math.floor(capacity) - 1);
+}

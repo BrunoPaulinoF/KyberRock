@@ -10,8 +10,8 @@ import {
   BILLING_SITUATIONS,
   BILLING_SITUATION_LABEL,
   BILLING_SITUATION_TONE,
-  billingConferenceCsv,
   buildBillingReport,
+  buildBillingReportFiles,
   formatBRL,
   formatCount,
   formatDayLabel,
@@ -23,11 +23,13 @@ import {
   omieReference,
   resolveRange,
   unitPriceLabel,
+  type BillingExportFormat,
   type BillingPeriod,
   type BillingRow,
   type BillingSituation
 } from "../lib/billing-conference";
 import { formatDateTime, formatDocument, todayIso } from "../lib/format";
+import { deliverReports } from "../lib/report-output";
 import { useAsync } from "../lib/use-async";
 
 const HELP =
@@ -35,8 +37,10 @@ const HELP =
 
 /**
  * Conferencia de faturamento — a tela `WeighingBillingReportView` do desktop, lendo a nuvem.
- * Periodo pela data de FECHAMENTO da pesagem. No site o "Excel" baixa um CSV com as mesmas
- * linhas da tela e o "PDF" abre a impressao do navegador.
+ * Periodo pela data de FECHAMENTO da pesagem. Os arquivos sao os do desktop, gerados pelo
+ * mesmo renderizador (`lib/desktop/weighing-billing-report-render.ts`): o "Excel" baixa a
+ * planilha `.xls` com o nome que o desktop grava, e o "PDF" abre a impressao do navegador com
+ * o documento A4 paisagem (la se escolhe "Salvar como PDF").
  */
 export function BillingConference() {
   const user = useUser();
@@ -46,6 +50,7 @@ export function BillingConference() {
   const [customEnd, setCustomEnd] = useState(() => todayIso());
   const [situations, setSituations] = useState<BillingSituation[]>([]);
   const [search, setSearch] = useState("");
+  const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [formats, setFormats] = useState<{ pdf: boolean; excel: boolean }>({
     pdf: false,
@@ -56,7 +61,10 @@ export function BillingConference() {
     () => resolveRange(period, customStart, customEnd),
     [period, customStart, customEnd]
   );
-  const selectedFormats = (["pdf", "excel"] as const).filter((format) => formats[format]);
+  const selectedFormats = useMemo(
+    () => (["pdf", "excel"] as const).filter((format) => formats[format]) as BillingExportFormat[],
+    [formats]
+  );
 
   const customers = useAsync(() => loadCustomerOptions(user.companyId), [user.companyId]);
   const customerOptions = useMemo(
@@ -74,9 +82,19 @@ export function BillingConference() {
     [user.companyId, user.unitId, range.start, range.end, customerId]
   );
 
+  // O mesmo relatorio alimenta a tela e o arquivo: o PDF/planilha sai com as MESMAS linhas
+  // que estao na tela, e o envelope (periodo, cliente, situacoes, busca) diz o que ele mostra.
   const report = useMemo(
-    () => (data ? buildBillingReport(data, situations, search) : null),
-    [data, situations, search]
+    () =>
+      data
+        ? buildBillingReport(data, {
+            range,
+            customerId: customerId || null,
+            situations,
+            search
+          })
+        : null,
+    [data, range, customerId, situations, search]
   );
 
   function toggleSituation(situation: BillingSituation) {
@@ -87,27 +105,28 @@ export function BillingConference() {
     );
   }
 
-  function handleExport() {
+  async function handleExport(): Promise<void> {
     if (!report) return;
     if (selectedFormats.length === 0) {
       setExportMessage("Selecione ao menos um formato: PDF ou Excel.");
       return;
     }
+    setExporting(true);
     setExportMessage(null);
-    if (formats.excel) {
-      const fileName = `conferencia-faturamento-${range.start}-a-${range.end}.csv`;
-      const blob = new Blob([billingConferenceCsv(report, range)], {
-        type: "text/csv;charset=utf-8"
-      });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = fileName;
-      anchor.click();
-      URL.revokeObjectURL(url);
-      setExportMessage(`Arquivo baixado: ${fileName}`);
+    try {
+      const files = buildBillingReportFiles(report, selectedFormats);
+      const names = [...files.pdf, ...files.xls].map((file) => file.filename);
+      await deliverReports(files);
+      setExportMessage(
+        names.length === 1
+          ? `Arquivo gerado: ${names[0]}`
+          : `${names.length} arquivos gerados:\n${names.join("\n")}`
+      );
+    } catch (err) {
+      setExportMessage(err instanceof Error ? err.message : "Falha ao gerar o relatorio.");
+    } finally {
+      setExporting(false);
     }
-    if (formats.pdf) window.print();
   }
 
   const totals = report?.totals ?? null;
@@ -123,21 +142,20 @@ export function BillingConference() {
           <span className="billing-conference-help" role="img" aria-label="Dica" title={HELP}>
             <Lightbulb size={14} />
           </span>
-          <span className="billing-conference-print-only">
-            {range.label}: {formatDayLabel(range.start)} a {formatDayLabel(range.end)}
-          </span>
         </div>
         <button
           type="button"
-          className="icon-action primary billing-conference-no-print"
+          className="icon-action primary"
           aria-label={
-            selectedFormats.length > 1
-              ? `Gerar ${selectedFormats.length} arquivos`
-              : "Gerar relatorio"
+            exporting
+              ? "Gerando..."
+              : selectedFormats.length > 1
+                ? `Gerar ${selectedFormats.length} arquivos`
+                : "Gerar relatorio"
           }
-          title="Gera os arquivos escolhidos com as pesagens filtradas: o Excel sai como planilha CSV e o PDF pela impressao do navegador."
-          disabled={loading || !report}
-          onClick={handleExport}
+          title="Gera os arquivos escolhidos com as pesagens filtradas: a planilha Excel baixa na hora e o PDF abre a impressao do navegador (escolha Salvar como PDF)."
+          disabled={exporting || loading || !report}
+          onClick={() => void handleExport()}
         >
           <Download size={16} />
         </button>

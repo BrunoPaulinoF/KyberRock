@@ -41,7 +41,8 @@ export type WebApiAction =
   | "save_report_recipient"
   | "delete_report_recipient"
   | "unit_devices"
-  | "support_overview";
+  | "support_overview"
+  | "lookup_cnpj";
 
 export class WebApiError extends Error {
   constructor(

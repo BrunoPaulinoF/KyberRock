@@ -67,13 +67,22 @@ estao em `src/components/desk.tsx`.
 | `/cadastros/<aba>`         | + comercial                             | Clientes, Produtos (precos), Pagamento, Transporte (motoristas, transportadoras, placas) |
 | `/insights`                | + comercial                             | Insights: KPIs, graficos e tabela dinamica                                               |
 | `/controle-caminhoes`      | + comercial                             | Tempo de patio por caminhao                                                              |
-| `/relatorio-cliente`       | + comercial                             | Relatorio por cliente (simplificado/completo), CSV e impressao                           |
+| `/relatorio-cliente`       | + comercial                             | Relatorio por cliente (simplificado/completo), PDF e Excel iguais aos do desktop         |
 | `/conferencia-faturamento` | + comercial                             | Conferencia de faturamento pesagem a pesagem                                             |
 | `/fechamento`              | gestor, operacao, administrador         | Fechamento de faturas (pedido de faturamento; a balanca executa)                         |
 | `/relatorios`              | + comercial (destinatarios: nao)        | Fechamento diario, periodo, tabela dinamica, mensal e destinatarios                      |
 | `/documentacao`            | gestor, operacao, administrador         | Central de ajuda (copia da do desktop, guardada por teste)                               |
 | `/suporte`                 | administrador                           | Logs: saude das balancas, pedidos que falharam, envios OMIE, relatorios, navegador       |
 | `/configuracoes/<aba>`     | gestor, operacao, administrador         | Balanca, Impressao e Cloud: estado das balancas da unidade, cupons do site, fila OMIE    |
+
+**Relatorios iguais aos do desktop.** Insights, Controle de caminhoes, Relatorio por cliente,
+Conferencia de faturamento e Fechamento de faturas geram o MESMO documento que o KyberRock Desktop:
+os montadores de HTML sao copias dos do desktop em `src/lib/desktop/` (so os imports mudam), e
+`src/lib/desktop-copies.test.ts` falha se uma copia ficar para tras — corrigiu la, copie aqui. O
+"PDF" abre a impressao do navegador com esse documento (ja com o nome de arquivo do desktop no
+"Salvar como PDF"); o "Excel" baixa o mesmo `.xls` (`src/lib/report-output.ts`). Comparando o PDF
+do desktop (Electron `printToPDF`) com a impressao do site do mesmo HTML, as paginas, a orientacao
+e a posicao de cada palavra saem iguais.
 
 Os enderecos antigos (`/operacao`, `/clientes`, `/veiculos`, `/transportadoras`, `/precos`,
 `/vendas`) redirecionam para os novos.

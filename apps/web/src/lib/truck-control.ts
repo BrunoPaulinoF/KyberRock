@@ -8,10 +8,28 @@
  * caminhao chegou (a mesma base do resumo de caminhoes do `daily-report-email`). Na nuvem a
  * entrada e a saida da balanca sao `created_at` e `closed_at` (o `desktop-sync` grava a saida
  * da balanca em `closed_at`).
+ *
+ * Os arquivos ("Gerar PDF" e "Baixar Excel") sao os do desktop: `truckControlDocument` monta o
+ * mesmo HTML com a copia fiel do renderizador (`desktop/truck-control-report.ts`).
  */
 
+import {
+  renderTruckControlHtml,
+  renderTruckControlSpreadsheet,
+  truckControlFileBaseName
+} from "./desktop/truck-control-report";
 import { periodToIso } from "./format";
+import type { ReportFile } from "./report-output";
 import { supabase } from "./supabase";
+
+// A busca por placa/motorista e o recorte sao os do desktop, copiados em
+// `desktop/truck-control-report.ts`: a lista da tela, o PDF e o Excel partem do mesmo recorte.
+export {
+  filterTruckControlReport,
+  normalizeTruckSearch,
+  truckControlFileBaseName,
+  truckMatchesSearch
+} from "./desktop/truck-control-report";
 
 export interface TruckProductWeight {
   productDescription: string;
@@ -218,62 +236,6 @@ export function buildTruckControlReport(
   };
 }
 
-// ---------- busca por placa ou motorista (o `filterTruckControlReport` do desktop) ----------
-
-/** Sem acento, minusculo, pontuacao vira espaco (o `normalizeSearchText` do desktop). */
-function normalizeSearchText(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-/** Busca normalizada (maiuscula, sem espaco nas pontas). Vazio = sem filtro. */
-export function normalizeTruckSearch(search: string | null | undefined): string {
-  return (search ?? "").trim().toUpperCase();
-}
-
-/**
- * A linha entra no recorte quando a placa OU o motorista casa com o que foi digitado: por
- * termo, sem acento e sem pontuacao ("ABC-1D23" acha "ABC1D23", "joao" acha "João").
- */
-export function truckMatchesSearch(truck: TruckControlRow, term: string): boolean {
-  const terms = normalizeSearchText(term).split(" ").filter(Boolean);
-  if (terms.length === 0) return true;
-  const haystack = normalizeSearchText(
-    [truck.plate, truck.driverName ?? ""].filter(Boolean).join(" ")
-  );
-  const compact = haystack.replace(/\s+/g, "");
-  return terms.every((token) => haystack.includes(token) || compact.includes(token));
-}
-
-/**
- * Recorte do relatorio pela busca, com os totais refeitos para os caminhoes que sobraram. A
- * media do recorte e ponderada por operacao, igual a do periodo.
- */
-export function filterTruckControlReport(
-  report: TruckControlReport,
-  search: string | null | undefined
-): TruckControlReport {
-  const term = normalizeTruckSearch(search);
-  if (!term) return report.search === null ? report : { ...report, search: null };
-
-  const trucks = report.trucks.filter((truck) => truckMatchesSearch(truck, term));
-  const totalOperations = trucks.reduce((sum, truck) => sum + truck.operations, 0);
-  const totalMinutes = trucks.reduce((sum, truck) => sum + truck.totalMinutes, 0);
-
-  return {
-    ...report,
-    search: term,
-    trucks,
-    totalOperations,
-    totalNetWeightKg: trucks.reduce((sum, truck) => sum + truck.totalNetWeightKg, 0),
-    averageMinutes: totalOperations > 0 ? Math.round(totalMinutes / totalOperations) : 0
-  };
-}
-
 // ---------- datas ----------
 
 /** AAAA-MM-DD `days` dias antes de `iso` (datas de calendario, sem fuso). */
@@ -304,148 +266,26 @@ export function formatClock(value: string | null): string {
       });
 }
 
-// ---------- planilha (CSV no lugar do Excel do desktop) ----------
-
-function csvCell(value: string | number): string {
-  const text = String(value);
-  return /[";\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
-}
-
-function kgNumber(kg: number): string {
-  return Math.round(kg).toLocaleString("pt-BR");
-}
-
-function tonsNumber(kg: number): string {
-  return (kg / 1000).toLocaleString("pt-BR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  });
-}
-
-function dayLabel(iso: string): string {
-  const [year, month, day] = iso.split("-");
-  return year && month && day ? `${day}/${month}/${year}` : iso;
-}
+// ---------- documentos (o `buildTruckControlDocument` do desktop) ----------
 
 /**
- * O recorte em CSV (separador ";", pt-BR, com BOM para o Excel abrir os acentos), com as
- * mesmas quatro tabelas da planilha do desktop: caminhoes, clientes atendidos, peso por
- * produto e carga a carga.
+ * O documento do controle de caminhoes no formato pedido, com o nome de arquivo do desktop:
+ * o PDF e o A4 de `renderTruckControlHtml` e o Excel e o HTML de planilha de
+ * `renderTruckControlSpreadsheet`, gravado como `.xls`. Recebe o relatorio JA recortado pela
+ * busca (`filterTruckControlReport`), como o desktop — o arquivo traz o que esta na lista.
  */
-export function truckControlCsv(report: TruckControlReport): string {
-  const line = (cells: Array<string | number>) => cells.map(csvCell).join(";");
-  const totalMinutes = report.trucks.reduce((sum, truck) => sum + truck.totalMinutes, 0);
-  const hasRows = report.trucks.length > 0;
-  const lines: string[] = [
-    line(["Controle de caminhoes"]),
-    line(["Periodo", `${dayLabel(report.startDate)} a ${dayLabel(report.endDate)}`]),
-    line(["Filtro (placa ou motorista)", report.search ?? "-"]),
-    "",
-    line(["Caminhoes no periodo"]),
-    line([
-      "Placa",
-      "Motorista",
-      "Operacoes",
-      "Tempo medio",
-      "Tempo total",
-      "Peso (kg)",
-      "Tonelagem (t)"
-    ]),
-    ...report.trucks.map((truck) =>
-      line([
-        truck.plate,
-        truck.driverName ?? "-",
-        truck.operations,
-        formatMinutes(truck.avgMinutes),
-        formatMinutes(truck.totalMinutes),
-        kgNumber(truck.totalNetWeightKg),
-        tonsNumber(truck.totalNetWeightKg)
-      ])
-    ),
-    ...(hasRows
-      ? [
-          line([
-            "TOTAL",
-            "",
-            report.totalOperations,
-            formatMinutes(report.averageMinutes),
-            formatMinutes(totalMinutes),
-            kgNumber(report.totalNetWeightKg),
-            tonsNumber(report.totalNetWeightKg)
-          ])
-        ]
-      : []),
-    "",
-    line(["Clientes atendidos"]),
-    line(["Placa", "Motorista", "Cliente", "Operacoes", "Peso (kg)"]),
-    ...report.trucks.flatMap((truck) =>
-      truck.customers.map((customer) =>
-        line([
-          truck.plate,
-          truck.driverName ?? "-",
-          customer.customerName,
-          customer.operations,
-          kgNumber(customer.totalNetWeightKg)
-        ])
-      )
-    ),
-    "",
-    line(["Peso por produto"]),
-    line(["Placa", "Motorista", "Produto", "Operacoes", "Peso (kg)"]),
-    ...report.trucks.flatMap((truck) =>
-      truck.products.map((product) =>
-        line([
-          truck.plate,
-          truck.driverName ?? "-",
-          product.productDescription,
-          product.operations,
-          kgNumber(product.totalNetWeightKg)
-        ])
-      )
-    ),
-    "",
-    line(["Cargas do periodo"]),
-    line([
-      "Data",
-      "Placa",
-      "Motorista",
-      "Cliente",
-      "Produto",
-      "Peso (kg)",
-      "Entrada",
-      "Saida",
-      "Tempo"
-    ]),
-    ...report.trucks
-      .flatMap((truck) => truck.trips.map((trip) => ({ truck, trip })))
-      .sort((a, b) =>
-        (a.trip.entryAt ?? a.trip.exitAt ?? "").localeCompare(b.trip.entryAt ?? b.trip.exitAt ?? "")
-      )
-      .map(({ truck, trip }) =>
-        line([
-          formatTripDay(trip.entryAt),
-          truck.plate,
-          truck.driverName ?? "-",
-          trip.customerName,
-          trip.productDescription,
-          kgNumber(trip.netWeightKg),
-          formatClock(trip.entryAt),
-          formatClock(trip.exitAt),
-          formatMinutes(trip.minutes)
-        ])
-      )
-  ];
-  return `\uFEFF${lines.join("\r\n")}`;
-}
-
-export function truckControlFileBaseName(report: TruckControlReport): string {
-  const scope = report.search
-    ? report.search
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "") || "filtro"
-    : "geral";
-  return `controle-caminhoes-${scope}-${report.startDate}-a-${report.endDate}`;
+export function truckControlDocument(
+  format: "pdf" | "excel",
+  report: TruckControlReport,
+  generatedAt: Date = new Date()
+): ReportFile {
+  return {
+    filename: `${truckControlFileBaseName(report)}.${format === "pdf" ? "pdf" : "xls"}`,
+    html:
+      format === "pdf"
+        ? renderTruckControlHtml(report, generatedAt)
+        : renderTruckControlSpreadsheet(report, generatedAt)
+  };
 }
 
 // ---------- consulta ----------

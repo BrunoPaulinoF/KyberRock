@@ -35,6 +35,7 @@ import {
 } from "../lib/insights";
 import { q } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
+import { downloadSpreadsheet, printReportHtml } from "../lib/report-output";
 
 const CHART_PALETTE = [
   "var(--kr-chart-1)",
@@ -123,17 +124,16 @@ export function Insights() {
     try {
       if (kind === "pdf") {
         const codes = await loadProductCodes(user.companyId).catch(() => new Map());
-        printHtml(insightsReportHtml(rows, range, codes));
+        await printReportHtml(
+          insightsReportHtml(rows, range, codes),
+          `insights-${range.start}-a-${range.end}.pdf`
+        );
       } else {
-        const blob = new Blob(["﻿" + rangeSpreadsheetHtml(rows, range)], {
-          type: "application/vnd.ms-excel;charset=utf-8"
+        // O mesmo arquivo que o desktop grava: nome, HTML de planilha e UTF-8 sem BOM.
+        downloadSpreadsheet({
+          filename: `relatorio-${range.start}-a-${range.end}.xls`,
+          html: rangeSpreadsheetHtml(rows, range)
         });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `relatorio-${range.start}-a-${range.end}.xls`;
-        link.click();
-        URL.revokeObjectURL(url);
       }
     } catch (caught) {
       setExportMessage(errorMessage(caught, "Falha ao exportar relatorio."));
@@ -403,36 +403,6 @@ export function Insights() {
       </div>
     </section>
   );
-}
-
-/** Abre a janela de impressao do navegador com o documento (la se escolhe "Salvar como PDF"). */
-function printHtml(html: string) {
-  const frame = document.createElement("iframe");
-  frame.setAttribute("aria-hidden", "true");
-  frame.style.position = "fixed";
-  frame.style.width = "0";
-  frame.style.height = "0";
-  frame.style.border = "0";
-  frame.style.right = "0";
-  frame.style.bottom = "0";
-  document.body.appendChild(frame);
-  const doc = frame.contentDocument;
-  const win = frame.contentWindow;
-  if (!doc || !win) {
-    frame.remove();
-    throw new Error("O navegador bloqueou a impressao.");
-  }
-  doc.open();
-  doc.write(html);
-  doc.close();
-  const cleanup = () => setTimeout(() => frame.remove(), 1000);
-  win.addEventListener("afterprint", cleanup, { once: true });
-  setTimeout(() => {
-    win.focus();
-    win.print();
-    // Navegador sem `afterprint`: tira o quadro depois de um minuto.
-    setTimeout(() => frame.remove(), 60_000);
-  }, 250);
 }
 
 function Tip({ text }: { text: string }) {

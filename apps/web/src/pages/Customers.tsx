@@ -1,10 +1,19 @@
+import { SearchCheck } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
 
+import { ConditionLegend } from "../components/ConditionLegend";
 import { IconAction, NewButton, Pill, SearchBar, SectionHead } from "../components/desk";
 import { Alert, Badge, DataTable, Field, Modal, Warnings, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
-import { formatDocument, formatMoney, isValidDocument, normalizeDocument } from "../lib/format";
+import { conditionTextOf, describePaymentCondition } from "../lib/entry-freight";
+import {
+  documentKind,
+  formatDocument,
+  formatMoney,
+  isValidDocument,
+  normalizeDocument
+} from "../lib/format";
 import {
   q,
   type Carrier,
@@ -213,9 +222,16 @@ function CustomerForm({
     city: customer?.city ?? "",
     state: customer?.state ?? "",
     stateRegistration: customer?.state_registration ?? "",
-    defaultPaymentTermId: customer?.default_payment_term_id ?? "",
     observations: customer?.observations ?? ""
   });
+  // Condicao padrao como TEXTO, igual ao desktop ("30", "7 14 21", "3 parcelas"): a web-api
+  // reusa a condicao com a mesma regra ou cria uma na hora.
+  const initialCondition = useMemo(() => {
+    const term = terms.find((t) => t.id === customer?.default_payment_term_id);
+    return term ? conditionTextOf(term.rules_json, term.name) : "";
+  }, [terms, customer?.default_payment_term_id]);
+  const [conditionText, setConditionText] = useState(initialCondition);
+  const [cnpjBusy, setCnpjBusy] = useState(false);
   const set = (key: keyof typeof form) => (e: { target: { value: string } }) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -225,12 +241,20 @@ function CustomerForm({
       setError("CNPJ/CPF invalido. Confira os digitos.");
       return;
     }
+    if (describePaymentCondition(conditionText).status === "invalid") {
+      setError('Condicao de pagamento padrao invalida. Veja os formatos em "Como escrever".');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       // Campo vazio vai como null (limpa); a web-api nao mexe no que nao for enviado.
       const payload: Record<string, unknown> = { ...(customer ? { id: customer.id } : {}) };
       for (const [key, value] of Object.entries(form)) payload[key] = value.trim() || null;
+      // So manda a condicao quando ela mudou: reabrir e salvar nao recria nem troca a condicao.
+      if (conditionText.trim() !== initialCondition.trim()) {
+        payload.defaultPaymentCondition = conditionText.trim() || null;
+      }
       const result = await callWebApi("upsert_customer", payload);
       setWarnings(result.warnings);
       toast.push(customer ? "Cliente salvo." : "Cliente cadastrado.");
@@ -239,6 +263,51 @@ function CustomerForm({
       setError(errorMessage(caught));
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Busca os dados pelo CNPJ (Receita) e preenche o formulario, como o botao do desktop. Nao
+  // apaga o que ja esta preenchido quando a Receita nao tem o campo.
+  async function lookupCnpj() {
+    if (documentKind(normalizeDocument(form.document)) !== "cnpj") {
+      setError("Informe um CNPJ com 14 posicoes para buscar.");
+      return;
+    }
+    setCnpjBusy(true);
+    setError(null);
+    try {
+      const data = (await callWebApi("lookup_cnpj", { cnpj: form.document })) as unknown as {
+        found: boolean;
+        [key: string]: unknown;
+      };
+      if (!data.found) {
+        toast.push("CNPJ nao encontrado na base da Receita.", "error");
+        return;
+      }
+      const text = (key: string) => (typeof data[key] === "string" ? (data[key] as string) : "");
+      setForm((prev) => ({
+        ...prev,
+        legalName: text("legalName") || prev.legalName,
+        tradeName: text("tradeName") || prev.tradeName,
+        phone: text("phone") || prev.phone,
+        email: text("email") || prev.email,
+        zipcode: text("zipcode") || prev.zipcode,
+        addressStreet: text("addressStreet") || prev.addressStreet,
+        addressNumber: text("addressNumber") || prev.addressNumber,
+        addressComplement: text("addressComplement") || prev.addressComplement,
+        neighborhood: text("neighborhood") || prev.neighborhood,
+        city: text("city") || prev.city,
+        state: (text("state") || prev.state).toUpperCase().slice(0, 2)
+      }));
+      toast.push(
+        text("email")
+          ? "Dados do CNPJ preenchidos. Revise e salve."
+          : "Dados do CNPJ preenchidos. E-mail nao consta na Receita — informe manualmente."
+      );
+    } catch (caught) {
+      toast.push(errorMessage(caught), "error");
+    } finally {
+      setCnpjBusy(false);
     }
   }
 
@@ -285,7 +354,19 @@ function CustomerForm({
             <input className="input" value={form.tradeName} onChange={set("tradeName")} />
           </Field>
           <Field label="CNPJ/CPF" hint="CNPJ novo pode ter letras; digite como esta no documento.">
-            <input className="input" value={form.document} onChange={set("document")} />
+            <div className="input-with-action">
+              <input className="input" value={form.document} onChange={set("document")} />
+              <button
+                type="button"
+                className="btn"
+                onClick={() => void lookupCnpj()}
+                disabled={cnpjBusy}
+                title="Buscar dados pelo CNPJ (Receita) e preencher o cadastro"
+              >
+                <SearchCheck size={15} />
+                {cnpjBusy ? "Buscando..." : "Buscar CNPJ"}
+              </button>
+            </div>
           </Field>
           <Field label="Inscricao estadual">
             <input
@@ -308,21 +389,19 @@ function CustomerForm({
           <Field label="Contato">
             <input className="input" value={form.contactName} onChange={set("contactName")} />
           </Field>
-          <Field label="Condicao de pagamento padrao">
-            <select
-              className="select"
-              value={form.defaultPaymentTermId}
-              onChange={set("defaultPaymentTermId")}
-            >
-              <option value="">—</option>
-              {terms.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </Field>
         </div>
+        <Field
+          label="Condicao de pagamento padrao"
+          hint="Vazio = sem padrao. Se nao existir no OMIE, e criada automaticamente no envio."
+        >
+          <input
+            className="input"
+            value={conditionText}
+            onChange={(e) => setConditionText(e.target.value)}
+            placeholder='Ex.: "30", "7 14 21", "3 parcelas" ou "s+20"'
+          />
+        </Field>
+        <ConditionLegend value={conditionText} />
         <div className="grid-3">
           <Field label="CEP">
             <input className="input" value={form.zipcode} onChange={set("zipcode")} />

@@ -214,38 +214,3 @@
   margin: 0;
   white-space: pre-line;
 }
-
-/*
- * O PDF do site e a impressao da previa: some o menu, os filtros e os avisos, e as tabelas
- * saem inteiras (sem a rolagem de 420 px).
- */
-@media print {
-  body:has(.cr-page) .sidebar,
-  .cr-filters,
-  .cr-header-actions,
-  .cr-help,
-  .cr-message {
-    display: none !important;
-  }
-  body:has(.cr-page) .shell {
-    display: block;
-    padding: 0;
-  }
-  .cr-card {
-    box-shadow: none;
-    break-inside: avoid-page;
-  }
-  .cr-data-card {
-    break-inside: auto;
-  }
-  .cr-table-scroll {
-    max-height: none;
-    overflow: visible;
-  }
-  .cr-table th {
-    position: static;
-  }
-  .cr-table td {
-    white-space: normal;
-  }
-}

@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("./supabase", () => ({ supabase: {} }));
 
 import {
-  billingConferenceCsv,
   buildBillingReport,
+  buildBillingReportFiles,
   dedupeCustomers,
   formatTons,
   invoiceNumberLabel,
@@ -16,6 +16,7 @@ import {
   resolveSituationDetail,
   sortBillingRows,
   unitPriceLabel,
+  type BillingReportOptions,
   type BillingSourceOperation
 } from "./billing-conference";
 
@@ -47,10 +48,10 @@ function op(overrides: Partial<BillingSourceOperation>): BillingSourceOperation 
 }
 
 const base = {
-  operation_type: "invoice",
-  omie_sales_order_id: null,
-  omie_service_order_id: null,
-  omie_billing_status: null
+  operation_type: "invoice" as "invoice" | "internal",
+  omie_sales_order_id: null as number | null,
+  omie_service_order_id: null as number | null,
+  omie_billing_status: null as string | null
 };
 
 describe("resolveSituation", () => {
@@ -62,7 +63,7 @@ describe("resolveSituation", () => {
     );
     expect(resolveSituation({ ...base, omie_billing_status: "failed" })).toBe("failed");
     expect(resolveSituation(base)).toBe("pending");
-    const internal = { ...base, operation_type: "internal" };
+    const internal = { ...base, operation_type: "internal" as const };
     expect(resolveSituation({ ...internal, omie_service_order_id: 9 })).toBe("sent");
     expect(resolveSituation({ ...internal, omie_billing_status: "service_order_failed" })).toBe(
       "failed"
@@ -94,6 +95,9 @@ describe("formatos", () => {
     expect(omieReference({ omieSalesOrderId: 7, omieServiceOrderId: null })).toBe("Pedido 7");
     expect(omieReference({ omieSalesOrderId: null, omieServiceOrderId: 8 })).toBe("OS 8");
     expect(omieReference({ omieSalesOrderId: null, omieServiceOrderId: null })).toBe("-");
+    expect(
+      omieReference({ omieSalesOrderId: 7, omieServiceOrderId: null, omieOrderNumber: "123" })
+    ).toBe("Pedido 7 (nº 123)");
     expect(invoiceNumberLabel(" 4521 ", "invoice")).toEqual({
       state: "number",
       text: "4521",
@@ -191,9 +195,15 @@ describe("buildBillingReport", () => {
       undefined
     )
   ];
+  const options: BillingReportOptions = {
+    range: { start: "2026-09-01", end: "2026-09-30", label: "Mes atual" },
+    customerId: null,
+    situations: [],
+    search: ""
+  };
 
   it("soma o periodo, separa o que nao foi faturado e ordena o resumo pelo problema", () => {
-    const report = buildBillingReport(rows, [], "");
+    const report = buildBillingReport(rows, options);
     expect(report.totals.operations).toBe(3);
     expect(report.totals.totalCents).toBe(101000);
     expect(report.unbilled.operations).toBe(2);
@@ -202,23 +212,122 @@ describe("buildBillingReport", () => {
   });
 
   it("filtra por situacao e por busca livre", () => {
-    expect(buildBillingReport(rows, ["sent"], "").rows.map((row) => row.operationId)).toEqual([
-      "b"
-    ]);
-    expect(buildBillingReport(rows, [], "xyz9").rows.map((row) => row.operationId)).toEqual(["c"]);
-    expect(buildBillingReport(rows, [], "55").rows.map((row) => row.operationId)).toEqual(["b"]);
+    const ids = (overrides: Partial<BillingReportOptions>) =>
+      buildBillingReport(rows, { ...options, ...overrides }).rows.map((row) => row.operationId);
+    expect(ids({ situations: ["sent"] })).toEqual(["b"]);
+    expect(ids({ search: "xyz9" })).toEqual(["c"]);
+    expect(ids({ search: "55" })).toEqual(["b"]);
   });
 
-  it("gera o CSV com resumo, linhas e total", () => {
-    const csv = billingConferenceCsv(buildBillingReport(rows, [], ""), {
-      start: "2026-09-01",
-      end: "2026-09-30",
-      label: "Mes atual"
+  it("monta o envelope do desktop: periodo, rotulo e filtros aplicados", () => {
+    const report = buildBillingReport(rows, {
+      ...options,
+      customerId: "c1",
+      situations: ["failed", "sent"],
+      search: "  xyz  "
     });
-    expect(csv.startsWith("\uFEFF")).toBe(true);
-    expect(csv).toContain("Mes atual - 01/09/2026 a 30/09/2026");
-    expect(csv).toContain("Recusada pelo OMIE;1;10000;10,00");
-    expect(csv).toContain("TOTAL;;;;;;25000;;");
+    expect(report).toMatchObject({
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      periodLabel: "Mes atual",
+      filters: { customerId: "c1", situations: ["failed", "sent"], search: "xyz" }
+    });
+    expect(buildBillingReport(rows, { ...options, customerId: "" }).filters).toEqual({
+      customerId: null,
+      situations: [],
+      search: null
+    });
+  });
+
+  it("cada linha traz os campos que o renderizador do desktop le", () => {
+    const [row] = buildBillingReport(rows, options).rows;
+    expect(row).toMatchObject({
+      productCode: null,
+      omieOrderNumber: null,
+      omieBilledAt: null,
+      operationType: "invoice",
+      situationLabel: "Faturada"
+    });
+  });
+});
+
+describe("buildBillingReportFiles", () => {
+  const generatedAt = new Date("2026-09-25T15:00:00.000Z");
+  const rows = [
+    mapBillingRow(
+      op({ id: "a", omie_billing_status: "billed", omie_invoice_number: "4521" }),
+      { trade_name: "Pedreira Cliente", legal_name: null, document: "12345678000190" },
+      { code: "BR1", description: "Brita 1" }
+    ),
+    mapBillingRow(
+      op({
+        id: "b",
+        operation_code: 11,
+        operation_type: "internal",
+        omie_service_order_id: 99,
+        total_cents: 30000
+      }),
+      { trade_name: "Pedreira Cliente", legal_name: null, document: "12345678000190" },
+      { code: null, description: "Areia" }
+    )
+  ];
+  const report = buildBillingReport(rows, {
+    range: { start: "2026-09-01", end: "2026-09-30", label: "Mes atual" },
+    customerId: "c1",
+    situations: [],
+    search: ""
+  });
+
+  it("gera so os formatos escolhidos, com o nome de arquivo do desktop", () => {
+    const files = buildBillingReportFiles(report, ["pdf", "excel"], generatedAt);
+    expect(files.pdf.map((file) => file.filename)).toEqual([
+      "conferencia-faturamento-pedreira-cliente-2026-09-01-a-2026-09-30.pdf"
+    ]);
+    expect(files.xls.map((file) => file.filename)).toEqual([
+      "conferencia-faturamento-pedreira-cliente-2026-09-01-a-2026-09-30.xls"
+    ]);
+    expect(buildBillingReportFiles(report, ["excel"], generatedAt).pdf).toEqual([]);
+    const general = buildBillingReport(rows, {
+      range: { start: "2026-09-01", end: "2026-09-30", label: "Mes atual" },
+      customerId: null,
+      situations: [],
+      search: ""
+    });
+    expect(buildBillingReportFiles(general, ["pdf"], generatedAt).pdf[0].filename).toBe(
+      "conferencia-faturamento-geral-2026-09-01-a-2026-09-30.pdf"
+    );
+  });
+
+  it("o PDF e o documento A4 paisagem do desktop, com secoes, colunas e totais", () => {
+    const [{ html }] = buildBillingReportFiles(report, ["pdf"], generatedAt).pdf;
+    expect(html).toContain("@page{size:A4 landscape;margin:12mm}");
+    expect(html).toContain("<h1>Conferencia de faturamento</h1>");
+    expect(html).toContain('<p class="customer">Pedreira Cliente</p>');
+    expect(html).toContain("Mes atual - 01/09/2026 a 30/09/2026");
+    for (const text of [
+      "Situacao do faturamento",
+      "Pesagem a pesagem",
+      "Pedido/OS OMIE",
+      "Nota fiscal",
+      "Pesagens sem faturar",
+      "Total fechado",
+      "BR1 - Brita 1",
+      "Interna (sem NF-e)",
+      "OS 99",
+      "4521",
+      "TOTAL"
+    ]) {
+      expect(html).toContain(text);
+    }
+  });
+
+  it("a planilha e o .xls de tabelas tipadas do desktop", () => {
+    const [{ html }] = buildBillingReportFiles(report, ["excel"], generatedAt).xls;
+    expect(html).toContain("xmlns:x=");
+    expect(html).toContain("Pedreira Cliente - Mes atual - 01/09/2026 a 30/09/2026 - gerado em");
+    expect(html).toContain("x:num");
+    expect(html).toContain("TOTAL");
+    expect(html).toContain("a nota fiscal e emitida no proprio OMIE");
   });
 });
 

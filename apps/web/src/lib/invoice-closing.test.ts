@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest";
 
+import { INVOICE_CLOSING_NOTE } from "./desktop/invoice-closing-render";
+import { escapeHtml } from "./desktop/report-document";
 import {
+  buildInvoiceClosingFiles,
   buildInvoiceClosingReport,
   computeCreditInvoiceSchedule,
   creditClosingConfigFromCustomer,
   defaultInvoiceClosingPeriod,
   groupDuplicateWeighings,
-  invoiceClosingCsv,
   invoiceNumberLabel,
   isBillable,
   lineSituation,
+  omieReference,
   periodSchedule,
   resolveInvoiceClosingPeriod,
   resolveSituation,
@@ -359,11 +362,153 @@ describe("relatorio do fechamento", () => {
     expect(searched.rows.map((line) => line.operationId)).toEqual(["o2"]);
   });
 
-  it("planilha com uma linha por carga das faturas", () => {
-    const report = buildInvoiceClosingReport({ operations: [op("o1")], customers }, options());
-    const csv = invoiceClosingCsv(report, "2a quinzena").split("\n");
-    expect(csv).toHaveLength(2);
-    expect(csv[1]).toContain('"CLIENTE C1"');
-    expect(csv[1]).toContain('"1690,00"');
+  it("traz o envelope e os campos que o documento do desktop le", () => {
+    const operations = [
+      op("o1", { created_at: "2026-09-17T10:00:00Z", omie_sales_order_id: 555 }),
+      op("o2", { created_at: "2026-09-18T10:00:00Z", customer_id: "c1b" })
+    ];
+    const report = buildInvoiceClosingReport(
+      { operations, customers, duplicateRows: operations },
+      options({
+        plates: [" xyz9k88", "abc1d23", "ABC1D23"],
+        search: "  ",
+        periodLabel: "2a quinzena de setembro de 2026"
+      })
+    );
+    expect(report).toMatchObject({
+      startDate: "2026-09-16",
+      endDate: "2026-09-30",
+      periodLabel: "2a quinzena de setembro de 2026",
+      filters: {
+        basis: "period",
+        periodCycle: "biweekly",
+        cycles: [],
+        customerId: null,
+        // Normalizadas e em ordem, como o desktop: e a lista que vai no nome do arquivo.
+        plates: ["ABC1D23", "XYZ9K88"],
+        search: null
+      }
+    });
+    const line = report.rows.find((row) => row.operationId === "o1");
+    // O documento como esta no cadastro (o desktop nao remascara) e sem numero visivel do
+    // pedido, que a nuvem nao projeta.
+    expect(line).toMatchObject({ customerDocument: "12.345.678/0001-90", omieOrderNumber: null });
+    expect(report.duplicates[0].kept[0]).toMatchObject({
+      operationId: "o2",
+      operationTypeLabel: "Com nota",
+      inPeriod: true
+    });
+    expect(report.duplicates[0].repeats[0]).toMatchObject({ operationId: "o1", inPeriod: true });
+
+    const joined = buildInvoiceClosingReport({ operations, customers }, options());
+    expect(joined.invoices[0].customerIds).toEqual(["c1", "c1b"]);
+
+    const pending = buildInvoiceClosingReport(
+      { operations: [op("o1", { customer_id: "c2" })], customers },
+      options({ basis: "customer" })
+    );
+    expect(pending.pendingSetup[0].customerId).toBe("c2");
+  });
+
+  it("omie: pedido ou OS, com o numero visivel quando ha", () => {
+    expect(
+      omieReference({ omieOrderNumber: "1234", omieSalesOrderId: 9, omieServiceOrderId: null })
+    ).toBe("Pedido 9 (nº 1234)");
+    expect(
+      omieReference({ omieOrderNumber: null, omieSalesOrderId: null, omieServiceOrderId: 8 })
+    ).toBe("OS 8");
+    expect(
+      omieReference({ omieOrderNumber: null, omieSalesOrderId: null, omieServiceOrderId: null })
+    ).toBe("-");
+  });
+});
+
+describe("arquivos do fechamento (os do desktop)", () => {
+  const customers = [customer("c1", { document: "12.345.678/0001-90" }), customer("c2")];
+  const generatedAt = new Date(2026, 9, 1, 8, 30);
+
+  it("nome do arquivo com o ciclo e as placas, igual ao desktop", () => {
+    const period = buildInvoiceClosingReport(
+      { operations: [op("o1")], customers },
+      options({ periodLabel: "2a quinzena de setembro de 2026" })
+    );
+    const files = buildInvoiceClosingFiles(period, ["pdf", "excel"], generatedAt);
+    expect(files.pdf.map((file) => file.filename)).toEqual([
+      "fechamento-faturas-quinzenal-2026-09-16-a-2026-09-30.pdf"
+    ]);
+    expect(files.xls.map((file) => file.filename)).toEqual([
+      "fechamento-faturas-quinzenal-2026-09-16-a-2026-09-30.xls"
+    ]);
+
+    const custom = buildInvoiceClosingReport(
+      { operations: [op("o1")], customers },
+      options({ periodCycle: null, plates: ["xyz9k88", "ABC1D23"] })
+    );
+    expect(buildInvoiceClosingFiles(custom, ["excel"]).xls[0].filename).toBe(
+      "fechamento-faturas-periodo-abc1d23-xyz9k88-2026-09-16-a-2026-09-30.xls"
+    );
+    expect(buildInvoiceClosingFiles(custom, ["excel"]).pdf).toEqual([]);
+
+    const byCycle = buildInvoiceClosingReport(
+      { operations: [op("o1")], customers },
+      options({
+        basis: "customer",
+        cycles: ["monthly", "weekly"],
+        plates: ["A1", "B2", "C3", "D4"]
+      })
+    );
+    expect(buildInvoiceClosingFiles(byCycle, ["pdf"]).pdf[0].filename).toBe(
+      "fechamento-faturas-mensal-semanal-4-placas-2026-09-16-a-2026-09-30.pdf"
+    );
+  });
+
+  it("PDF e planilha com as secoes, colunas e totais do desktop", () => {
+    const operations = [
+      op("o1", { created_at: "2026-09-17T10:00:00Z", freight_total_cents: 26000 }),
+      op("o2", { created_at: "2026-09-18T10:00:00Z" }),
+      op("o3", {
+        customer_id: "c2",
+        plate: "XYZ9K88",
+        net_weight_kg: 10000,
+        total_cents: 65000,
+        product_total_cents: 65000,
+        omie_invoice_number: "4321"
+      })
+    ];
+    const report = buildInvoiceClosingReport(
+      { operations, customers, duplicateRows: operations },
+      options({ periodLabel: "2a quinzena de setembro de 2026" })
+    );
+    const { pdf, xls } = buildInvoiceClosingFiles(report, ["pdf", "excel"], generatedAt);
+    const html = pdf[0].html;
+    for (const text of [
+      "<title>Fechamento de faturas</title>",
+      "@page",
+      "Quinzenal",
+      "2a quinzena de setembro de 2026 - 16/09/2026 a 30/09/2026",
+      "Carga a carga",
+      "Faturas do periodo",
+      "Pesagem a pesagem (3) - 1 fora do fechamento",
+      "Transportadores e placas",
+      "Pesagens repetidas (1)",
+      "Total a faturar",
+      "Cargas sem nota",
+      "TOTAL DO PERIODO",
+      "Produto (R$/t)",
+      "Pedido/OS OMIE",
+      "CLIENTE C1 — Quinzenal — fecha 30/09/2026 — vence 30/09/2026",
+      "12.345.678/0001-90",
+      "4321"
+    ]) {
+      expect(html).toContain(text);
+    }
+    expect(html).toContain(escapeHtml(INVOICE_CLOSING_NOTE));
+
+    const sheet = xls[0].html;
+    expect(sheet).toContain("xmlns:x=");
+    expect(sheet).toContain("<h1>Fechamento de faturas</h1>");
+    expect(sheet).toContain("Faturas do periodo");
+    expect(sheet).toContain("TOTAL DO PERIODO");
+    expect(sheet).toContain("x:num");
   });
 });

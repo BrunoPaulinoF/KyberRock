@@ -137,16 +137,32 @@ Convenções de payload: campos em **camelCase**; campo **ausente** não mexe na
 
 ### 4.2 Cliente (comercial, gestor, operação e administrador)
 
-| Ação                  | Payload                                                                                                                                                                                                                                                                                                                  | Devolve                        |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------ |
-| `upsert_customer`     | `id?` (sem id cria), `legalName` (obrigatório ao criar), `tradeName?`, `document?`, `email?`, `phone?`, `phoneSecondary?`, `contactName?`, `zipcode?`, `addressStreet?`, `addressNumber?`, `addressComplement?`, `neighborhood?`, `city?`, `state?` (UF), `stateRegistration?`, `observations?`, `defaultPaymentTermId?` | `id`, `omieCustomerId \| null` |
-| `set_customer_active` | `id`, `isActive: boolean`                                                                                                                                                                                                                                                                                                | `id`, `isActive`               |
+| Ação                  | Payload                                                                                                                                                                                                                                                                                                                                                      | Devolve                        |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------ |
+| `upsert_customer`     | `id?` (sem id cria), `legalName` (obrigatório ao criar), `tradeName?`, `document?`, `email?`, `phone?`, `phoneSecondary?`, `contactName?`, `zipcode?`, `addressStreet?`, `addressNumber?`, `addressComplement?`, `neighborhood?`, `city?`, `state?` (UF), `stateRegistration?`, `observations?`, `defaultPaymentTermId?`, `defaultPaymentCondition?` (texto) | `id`, `omieCustomerId \| null` |
+| `set_customer_active` | `id`, `isActive: boolean`                                                                                                                                                                                                                                                                                                                                    | `id`, `isActive`               |
 
 O que acontece por baixo no `upsert_customer`: valida o documento (CPF/CNPJ, inclusive
 alfanumérico), recusa documento repetido na empresa (409, citando quem já tem — e se está
 inativo), grava, e **manda para o OMIE** pelo mesmo caminho da balança (`push_customer`, com o
 cliente virando "alteração" quando já tem código OMIE). Cliente sem documento é gravado mas não
 vai ao OMIE (o OMIE exige) — vem um `warning`.
+
+**Condição padrão digitada.** `defaultPaymentCondition` é o texto do campo, igual ao do desktop:
+`"30"` (dias), `"7 14 21"`, `"7/14/21"`, `"3 parcelas"` ou período (`"s+20"`, `"d+20"`, `"q+20"`,
+`"m+20"`). A `web-api` interpreta com a MESMA regra da balança (cópias em
+`_shared/payment-condition-*.ts`, guardadas por teste), reusa a condição viva com o mesmo texto e
+os mesmos prazos ou cria uma nova (sem código OMIE — o envio do pedido cria a parcela lá), e grava
+o id em `default_payment_term_id`. Vazio/`null` tira o padrão; texto que não é condição é 400. Ele
+manda sobre `defaultPaymentTermId`.
+
+| Ação          | Payload | Devolve                                                                                                                                                          |
+| ------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lookup_cnpj` | `cnpj`  | `found`, `legalName`, `tradeName`, `email`, `phone`, `zipcode`, `addressStreet`, `addressNumber`, `addressComplement`, `neighborhood`, `city`, `state`, `status` |
+
+O botão **Buscar CNPJ** do cadastro: consulta a Receita (BrasilAPI) pela mesma regra da balança
+(`_shared/cnpj-lookup.ts`, também usada pela `cnpj-lookup`). CNPJ que não está na base volta com
+`found: false`; documento que não é CNPJ é 400; Receita fora do ar é 502.
 
 **Não existe excluir cliente pela `web-api`.** Cliente com histórico só inativa; cadastro
 repetido se unifica na balança ("Cadastros repetidos"). É a regra D7 do plano.

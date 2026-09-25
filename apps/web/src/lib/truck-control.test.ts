@@ -8,7 +8,7 @@ import {
   formatMinutes,
   isoDaysBefore,
   minutesBetween,
-  truckControlCsv,
+  truckControlDocument,
   truckControlFileBaseName,
   type TruckControlSourceRow
 } from "./truck-control";
@@ -117,20 +117,88 @@ describe("buildTruckControlReport", () => {
     expect(filterTruckControlReport(report, "zzz").trucks).toHaveLength(0);
   });
 
-  it("gera o CSV com as quatro tabelas e o nome do arquivo com o recorte", () => {
-    const csv = truckControlCsv(filterTruckControlReport(report, "maria"));
-    expect(csv.startsWith("\uFEFF")).toBe(true);
-    expect(csv).toContain("Caminhoes no periodo");
-    expect(csv).toContain("Clientes atendidos");
-    expect(csv).toContain("Peso por produto");
-    expect(csv).toContain("Cargas do periodo");
-    expect(csv).toContain("XYZ9K88;Maria;1;30min;30min;5.000;5,00");
+  it("da o nome de arquivo do desktop, com o recorte da busca", () => {
     expect(truckControlFileBaseName(filterTruckControlReport(report, "maria"))).toBe(
       "controle-caminhoes-maria-2026-09-01-a-2026-09-30"
     );
     expect(truckControlFileBaseName(report)).toBe(
       "controle-caminhoes-geral-2026-09-01-a-2026-09-30"
     );
+  });
+});
+
+describe("truckControlDocument", () => {
+  const report = buildTruckControlReport(
+    [
+      row({ operationId: "1" }),
+      row({
+        operationId: "2",
+        entryAt: "2026-09-11T10:00:00.000Z",
+        exitAt: "2026-09-11T11:30:00.000Z",
+        customerName: "Cliente B",
+        netWeightKg: 20000
+      }),
+      row({
+        operationId: "3",
+        plate: "XYZ9K88",
+        driverName: "Maria",
+        productDescription: "Pedrisco",
+        netWeightKg: 5000
+      })
+    ],
+    "2026-09-01",
+    "2026-09-30"
+  );
+  const generatedAt = new Date("2026-09-25T12:00:00.000Z");
+
+  it("PDF: o A4 do desktop, com secoes, colunas, TOTAL e barra de totais", () => {
+    const file = truckControlDocument("pdf", report, generatedAt);
+    expect(file.filename).toBe("controle-caminhoes-geral-2026-09-01-a-2026-09-30.pdf");
+    const html = file.html;
+    expect(html).toContain("<title>Controle de caminhoes</title>");
+    expect(html).toContain("Todos os caminhoes");
+    expect(html).toContain("Periodo: 01/09/2026 a 30/09/2026");
+    for (const title of [
+      "Caminhoes no periodo",
+      "Clientes atendidos",
+      "Peso por produto",
+      "Cargas do periodo",
+      "Tempo medio na pedreira"
+    ]) {
+      expect(html).toContain(title);
+    }
+    for (const header of [
+      "Placa",
+      "Motorista",
+      "Tempo total",
+      "Tonelagem (t)",
+      "Entrada",
+      "Saida"
+    ]) {
+      expect(html).toContain(`>${header}</th>`);
+    }
+    expect(html).toContain(">TOTAL<");
+    expect(html).toContain("3 carga(s)");
+    expect(html).toContain("ABC1D23");
+    expect(html).toContain("XYZ9K88");
+  });
+
+  it("Excel: a planilha tipada do desktop, gravada como .xls, com o recorte da busca", () => {
+    const filtered = filterTruckControlReport(report, "maria");
+    const file = truckControlDocument("excel", filtered, generatedAt);
+    expect(file.filename).toBe("controle-caminhoes-maria-2026-09-01-a-2026-09-30.xls");
+    expect(file.html).toContain("xmlns:x=");
+    expect(file.html).toContain("<h1>Controle de caminhoes</h1>");
+    expect(file.html).toContain("Filtro &quot;MARIA&quot;");
+    expect(file.html).toContain("Filtro (placa ou motorista)");
+    expect(file.html).toContain("XYZ9K88");
+    expect(file.html).not.toContain("ABC1D23");
+    expect(file.html).toContain("x:num");
+  });
+
+  it("recorte vazio diz que foi a busca", () => {
+    const file = truckControlDocument("pdf", filterTruckControlReport(report, "zzz"), generatedAt);
+    expect(file.html).toContain("Nenhum caminhao encontrado para &quot;ZZZ&quot; no periodo.");
   });
 });
 

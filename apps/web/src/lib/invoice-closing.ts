@@ -16,10 +16,37 @@
  *    interno do pedido/OS.
  */
 
-import { formatDocument, localDay, normalizeDocument } from "./format";
+import {
+  invoiceClosingFileBaseName,
+  renderInvoiceClosingHtml,
+  renderInvoiceClosingSpreadsheet
+} from "./desktop/invoice-closing-render";
+import { localDay, normalizeDocument } from "./format";
 import { matchesSearch } from "./operation";
+import type {
+  InvoiceClosingBasis,
+  InvoiceClosingCarrierRow,
+  InvoiceClosingDuplicateEntry,
+  InvoiceClosingDuplicateGroup,
+  InvoiceClosingFilters,
+  InvoiceClosingInvoice as DesktopInvoiceClosingInvoice,
+  InvoiceClosingLine as DesktopInvoiceClosingLine,
+  InvoiceClosingPendingCustomer as DesktopInvoiceClosingPendingCustomer,
+  InvoiceClosingReport as DesktopInvoiceClosingReport,
+  InvoiceClosingTotals
+} from "./desktop/invoice-closing-types";
 import type { BillingRequest, Carrier, Customer, Operation, Product, Vehicle } from "./queries";
+import type { ReportFile } from "./report-output";
 import { supabase } from "./supabase";
+
+export type {
+  InvoiceClosingBasis,
+  InvoiceClosingCarrierRow,
+  InvoiceClosingDuplicateEntry,
+  InvoiceClosingDuplicateGroup,
+  InvoiceClosingFilters,
+  InvoiceClosingTotals
+};
 
 // ---------------------------------------------------------------------------
 // Periodo do fechamento (espelho de `invoice-closing-period.ts`)
@@ -449,13 +476,18 @@ export function unitPriceLabel(line: {
   return `${formatBRL(line.unitPriceCents)}/${line.priceUnit === "kg" ? "kg" : "t"}`;
 }
 
-/** Como a pesagem e procurada no OMIE (a nuvem nao traz o numero visivel do pedido). */
+/**
+ * Como a pesagem e procurada no OMIE — a regra do desktop. O numero visivel do pedido nao e
+ * projetado na nuvem, entao aqui ele chega vazio e sai so o codigo interno.
+ */
 export function omieReference(line: {
+  omieOrderNumber: string | null;
   omieSalesOrderId: number | null;
   omieServiceOrderId: number | null;
 }): string {
-  if (line.omieSalesOrderId) return `Pedido ${line.omieSalesOrderId}`;
-  if (line.omieServiceOrderId) return `OS ${line.omieServiceOrderId}`;
+  const visible = line.omieOrderNumber ? ` (nº ${line.omieOrderNumber})` : "";
+  if (line.omieSalesOrderId) return `Pedido ${line.omieSalesOrderId}${visible}`;
+  if (line.omieServiceOrderId) return `OS ${line.omieServiceOrderId}${visible}`;
   return "-";
 }
 
@@ -591,8 +623,6 @@ export type DuplicateSourceRow = Pick<
 // O relatorio (espelho de `InvoiceClosingService.getReport`)
 // ---------------------------------------------------------------------------
 
-export type InvoiceClosingBasis = "period" | "customer";
-
 /** O ultimo pedido de faturamento feito pelo site para a pesagem. */
 export interface LineRequest {
   status: string;
@@ -600,120 +630,29 @@ export interface LineRequest {
   at: string;
 }
 
-export interface InvoiceClosingLine {
-  operationId: string;
-  customerId: string;
-  customerName: string;
-  customerDocument: string | null;
-  couponNumber: number | null;
-  /** Dia da pesagem (saida da balanca; sem ela, a criacao), no fuso da pedreira. */
-  date: string;
-  closedAt: string | null;
-  closingDate: string | null;
-  dueDate: string | null;
-  invoiceNumber: string | null;
-  omieSalesOrderId: number | null;
-  omieServiceOrderId: number | null;
-  plate: string;
-  carrierName: string;
-  driverName: string;
-  productCode: string | null;
-  productDescription: string;
-  netWeightKg: number;
-  unitPriceCents: number | null;
-  priceUnit: string | null;
-  productTotalCents: number;
-  freightTotalCents: number;
-  totalCents: number;
-  operationType: "invoice" | "internal";
-  operationTypeLabel: string;
-  situation: WeighingBillingSituation;
-  situationLabel: string;
-  situationDetail: string | null;
-  isDuplicate: boolean;
-  duplicateOfCouponNumber: number | null;
+/**
+ * Os tipos sao os do desktop (`desktop/invoice-closing-types.ts`), porque e sobre eles que o
+ * PDF e a planilha do desktop sao montados (`desktop/invoice-closing-render.ts`). O site so
+ * acrescenta o que e dele: o pedido de faturamento de cada pesagem e as chaves da tela.
+ */
+export interface InvoiceClosingLine extends DesktopInvoiceClosingLine {
   /** Pedido de faturamento do site (null quando nunca houve). */
   request: LineRequest | null;
 }
 
-export interface InvoiceClosingTotals {
-  operations: number;
-  netWeightKg: number;
-  productCents: number;
-  freightCents: number;
-  totalCents: number;
-}
-
-export interface InvoiceClosingInvoice {
+export interface InvoiceClosingInvoice extends DesktopInvoiceClosingInvoice {
   key: string;
-  customerId: string;
-  customerName: string;
-  customerDocument: string | null;
-  plate: string | null;
-  cycle: InvoiceClosingCycle | null;
-  cycleLabel: string;
-  closingDate: string;
-  dueDate: string;
   lines: InvoiceClosingLine[];
-  totals: InvoiceClosingTotals;
-  operationsWithoutInvoice: number;
 }
 
-export interface InvoiceClosingCarrierRow {
-  carrierName: string;
-  trips: number;
-  netWeightKg: number;
-  freightCents: number;
-  totalCents: number;
-  plates: Array<{
-    plate: string;
-    trips: number;
-    netWeightKg: number;
-    freightCents: number;
-    totalCents: number;
-  }>;
-}
-
-export interface InvoiceClosingPendingCustomer {
+export interface InvoiceClosingPendingCustomer extends DesktopInvoiceClosingPendingCustomer {
   key: string;
-  customerName: string;
-  operations: number;
-  totalCents: number;
 }
 
-export interface InvoiceClosingDuplicateEntry {
-  operationId: string;
-  couponNumber: number | null;
-  date: string;
-  totalCents: number;
-  invoiceNumber: string | null;
-}
-
-export interface InvoiceClosingDuplicateGroup {
-  key: string;
-  customerName: string;
-  plate: string;
-  productDescription: string;
-  entryWeightKg: number;
-  exitWeightKg: number;
-  kept: InvoiceClosingDuplicateEntry[];
-  repeats: InvoiceClosingDuplicateEntry[];
-  removedTotalCents: number;
-  billedMoreThanOnce: boolean;
-}
-
-export interface InvoiceClosingReport {
+export interface InvoiceClosingReport extends DesktopInvoiceClosingReport {
   invoices: InvoiceClosingInvoice[];
   rows: InvoiceClosingLine[];
-  rowTotals: InvoiceClosingTotals;
-  totals: InvoiceClosingTotals;
-  duplicates: InvoiceClosingDuplicateGroup[];
-  duplicateTotals: InvoiceClosingTotals;
-  customers: number;
-  withoutInvoice: InvoiceClosingTotals;
-  byCarrier: InvoiceClosingCarrierRow[];
   pendingSetup: InvoiceClosingPendingCustomer[];
-  availablePlates: string[];
 }
 
 export interface InvoiceClosingSource {
@@ -736,11 +675,27 @@ export interface InvoiceClosingOptions {
   customerId: string | null;
   plates: string[];
   search: string;
+  /** O nome do periodo na tela ("2a quinzena de setembro de 2026"); vai para o documento. */
+  periodLabel?: string | null;
 }
 
 /** A placa como o filtro compara: sem espacos nas pontas e em maiuscula. */
 export function normalizePlate(plate: string): string {
   return plate.trim().toUpperCase();
+}
+
+/**
+ * As placas escolhidas, normalizadas, sem vazias, sem repetidas e em ordem — a mesma lista
+ * do desktop (`normalizePlateList`), que e a que sai no nome do arquivo e no cabecalho.
+ */
+export function normalizePlateList(plates: readonly string[]): string[] {
+  const seen = new Set<string>();
+  for (const plate of plates) {
+    if (typeof plate !== "string") continue;
+    const normalized = normalizePlate(plate);
+    if (normalized) seen.add(normalized);
+  }
+  return [...seen].sort((a, b) => a.localeCompare(b, "pt-BR"));
 }
 
 function emptyTotals(): InvoiceClosingTotals {
@@ -886,7 +841,7 @@ export function buildInvoiceClosingReport(
   );
   const requests = latestRequests(source.billingRequests ?? []);
   const search = options.search.trim();
-  const plates = [...new Set(options.plates.map(normalizePlate).filter(Boolean))];
+  const plates = normalizePlateList(options.plates);
   const selectedPlates = new Set(plates);
   const splitByPlate = plates.length > 0;
   const cycles = options.cycles.filter(isInvoiceClosingCycle);
@@ -937,13 +892,17 @@ export function buildInvoiceClosingReport(
       operationId: op.id,
       customerId: op.customer_id ?? "",
       customerName: customerLabel(customer, op.customer_name),
-      customerDocument: customer?.document ? formatDocument(customer.document) : null,
+      // O documento como esta no cadastro, igual ao desktop (`cust.document`): e o mesmo
+      // texto nas duas pontas, e e o que sai no PDF e na planilha.
+      customerDocument: customer?.document ?? null,
       couponNumber: op.operation_code,
       date: localDay(op.closed_at ?? op.created_at),
       closedAt: op.closed_at,
       closingDate: null,
       dueDate: null,
       invoiceNumber: (op.omie_invoice_number ?? "").trim() || null,
+      // O numero visivel do pedido no OMIE nao e projetado na nuvem.
+      omieOrderNumber: null,
       omieSalesOrderId: op.omie_sales_order_id,
       omieServiceOrderId: op.omie_service_order_id,
       plate: rawPlate || "SEM PLACA",
@@ -997,6 +956,7 @@ export function buildInvoiceClosingReport(
     if (options.basis === "customer" && !config) {
       const entry = pending.get(identity) ?? {
         key: identity,
+        customerId: line.customerId,
         customerName: line.customerName,
         operations: 0,
         totalCents: 0
@@ -1020,9 +980,10 @@ export function buildInvoiceClosingReport(
     const key = splitByPlate
       ? `${identity}|${schedule.closingDate}|${plate}`
       : `${identity}|${schedule.closingDate}`;
-    const invoice = invoices.get(key) ?? {
+    const invoice: InvoiceClosingInvoice = invoices.get(key) ?? {
       key,
       customerId: line.customerId,
+      customerIds: [],
       customerName: line.customerName,
       customerDocument: line.customerDocument,
       plate: splitByPlate ? plate : null,
@@ -1035,6 +996,9 @@ export function buildInvoiceClosingReport(
       operationsWithoutInvoice: 0
     };
     invoice.lines.push(line);
+    if (line.customerId && !invoice.customerIds.includes(line.customerId)) {
+      invoice.customerIds.push(line.customerId);
+    }
     if (!invoice.customerDocument && line.customerDocument) {
       invoice.customerDocument = line.customerDocument;
     }
@@ -1052,7 +1016,28 @@ export function buildInvoiceClosingReport(
         (a.plate ?? "").localeCompare(b.plate ?? "", "pt-BR")
     );
 
+  const entry = (candidate: DuplicateCandidate): InvoiceClosingDuplicateEntry => ({
+    operationId: candidate.operationId,
+    couponNumber: candidate.couponNumber,
+    date: candidate.date,
+    totalCents: candidate.totalCents,
+    operationTypeLabel: candidate.operationType === "internal" ? "Interna" : "Com nota",
+    invoiceNumber: candidate.invoiceNumber,
+    inPeriod: visibleIds.has(candidate.operationId)
+  });
+
   return {
+    startDate: options.startDate,
+    endDate: options.endDate,
+    periodLabel: options.periodLabel ?? null,
+    filters: {
+      basis: options.basis,
+      periodCycle: options.periodCycle,
+      cycles,
+      customerId: options.customerId,
+      plates,
+      search: search || null
+    },
     invoices: orderedInvoices,
     rows,
     rowTotals: buildTotals(rows),
@@ -1068,8 +1053,8 @@ export function buildInvoiceClosingReport(
         productDescription: group.productDescription,
         entryWeightKg: group.entryWeightKg,
         exitWeightKg: group.exitWeightKg,
-        kept: group.keepers.map(duplicateEntry),
-        repeats: group.duplicates.map(duplicateEntry),
+        kept: group.keepers.map(entry),
+        repeats: group.duplicates.map(entry),
         removedTotalCents: group.duplicates
           .filter((c) => visibleIds.has(c.operationId))
           .reduce((total, c) => total + c.totalCents, 0),
@@ -1083,16 +1068,6 @@ export function buildInvoiceClosingReport(
     byCarrier: groupByCarrier(lines),
     pendingSetup: [...pending.values()].sort((a, b) => b.totalCents - a.totalCents),
     availablePlates: [...availablePlates].sort((a, b) => a.localeCompare(b, "pt-BR"))
-  };
-}
-
-function duplicateEntry(candidate: DuplicateCandidate): InvoiceClosingDuplicateEntry {
-  return {
-    operationId: candidate.operationId,
-    couponNumber: candidate.couponNumber,
-    date: candidate.date,
-    totalCents: candidate.totalCents,
-    invoiceNumber: candidate.invoiceNumber
   };
 }
 
@@ -1147,67 +1122,35 @@ function groupByCarrier(lines: readonly InvoiceClosingLine[]): InvoiceClosingCar
 }
 
 // ---------------------------------------------------------------------------
-// Planilha (o "Gerar arquivo" do desktop, em CSV que o Excel abre)
+// Arquivos (o "Gerar arquivo" do desktop)
 // ---------------------------------------------------------------------------
 
-function csvCell(value: string | number): string {
-  return `"${String(value).replace(/"/g, '""')}"`;
-}
+export type InvoiceClosingFileFormat = "pdf" | "excel";
 
-/** As faturas da tela, carga a carga — o mesmo conteudo do Excel da balanca. */
-export function invoiceClosingCsv(report: InvoiceClosingReport, periodLabel: string): string {
-  const head = [
-    "Periodo",
-    "Cliente",
-    "CNPJ/CPF",
-    "Placa da fatura",
-    "Ciclo",
-    "Fechamento",
-    "Vencimento",
-    "Data",
-    "Vale",
-    "Nota fiscal",
-    "Pedido/OS OMIE",
-    "Placa",
-    "Transportador",
-    "Motorista",
-    "Produto",
-    "Peso (kg)",
-    "Preco unit.",
-    "Produto (R$)",
-    "Frete (R$)",
-    "Total (R$)",
-    "Situacao"
-  ];
-  const money = (cents: number) => (cents / 100).toFixed(2).replace(".", ",");
-  const body = report.invoices.flatMap((invoice) =>
-    invoice.lines.map((line) => [
-      periodLabel,
-      invoice.customerName,
-      invoice.customerDocument ?? "",
-      invoice.plate ?? "",
-      invoice.cycleLabel,
-      formatDayLabel(invoice.closingDate),
-      formatDayLabel(invoice.dueDate),
-      formatDayLabel(line.date),
-      formatCouponNumber(line.couponNumber),
-      line.invoiceNumber ?? (line.operationType === "internal" ? "Interna (sem NF-e)" : "Sem nota"),
-      omieReference(line),
-      line.plate,
-      line.carrierName,
-      line.driverName,
-      line.productCode
-        ? `${line.productCode} - ${line.productDescription}`
-        : line.productDescription,
-      line.netWeightKg,
-      unitPriceLabel(line),
-      money(line.productTotalCents),
-      money(line.freightTotalCents),
-      money(line.totalCents),
-      line.situationLabel
-    ])
-  );
-  return [head, ...body].map((row) => row.map(csvCell).join(";")).join("\n");
+/**
+ * Os documentos do fechamento, os MESMOS do desktop (`buildInvoiceClosingDocuments` do
+ * runtime): o A4 paisagem que vira PDF e a planilha `.xls`, montados pelo renderizador copiado
+ * do desktop e com o mesmo nome de arquivo — ciclo e placas inclusos.
+ */
+export function buildInvoiceClosingFiles(
+  report: InvoiceClosingReport,
+  formats: readonly InvoiceClosingFileFormat[],
+  generatedAt: Date = new Date()
+): { pdf: ReportFile[]; xls: ReportFile[] } {
+  const baseName = invoiceClosingFileBaseName(report);
+  return {
+    pdf: formats.includes("pdf")
+      ? [{ filename: `${baseName}.pdf`, html: renderInvoiceClosingHtml(report, generatedAt) }]
+      : [],
+    xls: formats.includes("excel")
+      ? [
+          {
+            filename: `${baseName}.xls`,
+            html: renderInvoiceClosingSpreadsheet(report, generatedAt)
+          }
+        ]
+      : []
+  };
 }
 
 // ---------------------------------------------------------------------------

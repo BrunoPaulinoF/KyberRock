@@ -52,6 +52,9 @@ import {
   type WebSessionResult
 } from "../_shared/web-session.ts";
 import { selectOperationsForBillingRequest } from "../_shared/billing-requests.ts";
+import { CnpjLookupError, lookupCnpj, type CnpjLookupResult } from "../_shared/cnpj-lookup.ts";
+import { conditionTermMatches } from "../_shared/payment-condition-match.ts";
+import { tryParsePaymentCondition } from "../_shared/payment-condition-parser.ts";
 import {
   ENTRY_FREIGHT_MIN_EXECUTOR_VERSION,
   changesPrice,
@@ -123,6 +126,8 @@ export interface WebApiHandlerDependencies {
   store: WebApiStore;
   resolveSession: (authorization: string | null) => Promise<WebSessionResult>;
   omie: OmieBridge;
+  /** Consulta de CNPJ na Receita (`_shared/cnpj-lookup.ts`); os testes trocam por um falso. */
+  cnpjLookup?: (cnpj: string) => Promise<CnpjLookupResult>;
   now?: () => Date;
   newId?: () => string;
 }
@@ -159,7 +164,8 @@ export const WEB_API_ACTIONS = [
   "save_report_recipient",
   "delete_report_recipient",
   "unit_devices",
-  "support_overview"
+  "support_overview",
+  "lookup_cnpj"
 ] as const;
 
 export type WebApiAction = (typeof WEB_API_ACTIONS)[number];
@@ -204,9 +210,13 @@ export const OPERATION_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction
   "request_operation"
 ]);
 
-/** Cadastro de cliente, o bloco comercial/credito dele e os vinculos que partem dele. */
+/**
+ * Cadastro de cliente, o bloco comercial/credito dele e os vinculos que partem dele. A busca de
+ * CNPJ na Receita mora aqui porque so serve para preencher esse cadastro.
+ */
 export const CUSTOMER_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "upsert_customer",
+  "lookup_cnpj",
   "set_customer_active",
   "set_customer_commercial",
   "set_customer_vehicle",
@@ -271,6 +281,7 @@ interface ActionContext {
   store: WebApiStore;
   session: WebSession;
   omie: OmieBridge;
+  cnpjLookup: (cnpj: string) => Promise<CnpjLookupResult>;
   payload: Row;
   nowIso: string;
   newId: () => string;
@@ -372,12 +383,24 @@ async function pushCustomerToOmie(ctx: ActionContext, customerId: string): Promi
 
 async function upsertCustomer(ctx: ActionContext): Promise<Row> {
   const id = optionalText(ctx.payload, "id") ?? null;
-  const parsed = parseCustomerInput(ctx.payload, id ? "update" : "create");
+  // A condicao digitada ("30", "7 14 21") manda sobre o id escolhido, como no desktop. Ela conta
+  // como campo informado: mudar so a condicao e uma edicao valida.
+  const conditionGiven = Object.hasOwn(ctx.payload, "defaultPaymentCondition");
+  const parsed = parseCustomerInput(
+    conditionGiven ? { ...ctx.payload, defaultPaymentTermId: null } : ctx.payload,
+    id ? "update" : "create"
+  );
   if (!parsed.ok) throw new WebApiError(400, parsed.error);
   const columns = parsed.value;
 
   if (typeof columns.document === "string") {
     await assertCustomerDocumentIsFree(ctx, columns.document, id);
+  }
+  if (conditionGiven) {
+    columns.default_payment_term_id = await resolveConditionTerm(
+      ctx,
+      optionalText(ctx.payload, "defaultPaymentCondition")
+    );
   }
 
   let customerId = id;
@@ -406,6 +429,74 @@ async function upsertCustomer(ctx: ActionContext): Promise<Row> {
 
   const omieCustomerId = await pushCustomerToOmie(ctx, customerId);
   return { id: customerId, omieCustomerId };
+}
+
+const CONDITION_FORMAT_HINT =
+  'Use "30" (dias), "7 14 21", "7/14/21", "3 parcelas" ou periodo ("s+20" semana, "d+20" dezena, "q+20" quinzena, "m+20" mes).';
+
+/**
+ * A condicao de pagamento digitada vira (ou reusa) uma condicao do cadastro — o
+ * `resolveConditionTermId` do desktop, do lado da nuvem. Reusa a condicao viva com a mesma
+ * regra (`conditionTermMatches`: texto E prazos iguais); sem ela, cria uma, sem codigo OMIE, e
+ * as balancas a recebem pelo pull (que deriva os prazos do `rules_json`). Vazio = sem padrao.
+ */
+async function resolveConditionTerm(
+  ctx: ActionContext,
+  text: string | null | undefined
+): Promise<string | null> {
+  const value = (text ?? "").trim();
+  if (!value) return null;
+  const parsed = tryParsePaymentCondition(value);
+  if (!parsed) {
+    throw new WebApiError(400, `Condicao de pagamento padrao invalida. ${CONDITION_FORMAT_HINT}`);
+  }
+  const terms = await ctx.store.listRows(
+    "payment_terms",
+    ctx.session.companyId,
+    "id, rules_json",
+    [],
+    { live: true }
+  );
+  const existing = terms.find((term) =>
+    conditionTermMatches(
+      typeof term.rules_json === "string" ? term.rules_json : JSON.stringify(term.rules_json ?? {}),
+      parsed
+    )
+  );
+  if (existing) return String(existing.id);
+
+  const id = ctx.newId();
+  await ctx.store.insertRow("payment_terms", {
+    id,
+    company_id: ctx.session.companyId,
+    omie_code: null,
+    name: parsed.summary,
+    // O mesmo formato do `buildRules` do desktop (`services/payment-terms.ts`).
+    rules_json: {
+      raw: parsed.raw,
+      kind: parsed.kind,
+      installmentCount: parsed.installmentCount,
+      installments: parsed.installments,
+      intervalDays: parsed.intervalDays,
+      summary: parsed.summary
+    },
+    is_active: true,
+    created_at: ctx.nowIso,
+    updated_at: ctx.nowIso
+  });
+  return id;
+}
+
+/** Botao "Buscar CNPJ" do cadastro: os dados da Receita para preencher o formulario. */
+async function lookupCustomerCnpj(ctx: ActionContext): Promise<Row> {
+  const cnpj = optionalText(ctx.payload, "cnpj");
+  if (!cnpj) throw new WebApiError(400, "Informe o CNPJ.");
+  try {
+    return { ...(await ctx.cnpjLookup(cnpj)) };
+  } catch (error) {
+    if (error instanceof CnpjLookupError) throw new WebApiError(error.status, error.message);
+    throw error;
+  }
 }
 
 async function setCustomerCommercial(ctx: ActionContext): Promise<Row> {
@@ -1799,6 +1890,8 @@ async function runAction(action: WebApiAction, ctx: ActionContext): Promise<Row>
       return unitDevices(ctx);
     case "support_overview":
       return supportOverview(ctx);
+    case "lookup_cnpj":
+      return lookupCustomerCnpj(ctx);
   }
 }
 
@@ -1833,6 +1926,7 @@ export async function handleWebApiRequest(
     store: deps.store,
     session,
     omie: deps.omie,
+    cnpjLookup: deps.cnpjLookup ?? ((cnpj) => lookupCnpj(cnpj)),
     payload,
     nowIso: (deps.now ?? (() => new Date()))().toISOString(),
     newId: deps.newId ?? (() => crypto.randomUUID()),

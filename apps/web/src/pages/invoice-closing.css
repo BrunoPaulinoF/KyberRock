@@ -36,9 +36,6 @@
 .closing-help:hover {
   opacity: 0.9;
 }
-.closing-print-only {
-  display: none;
-}
 .closing-actions {
   display: flex;
   gap: 8px;
@@ -364,32 +361,4 @@
 }
 .closing-invoice-number.not_applicable {
   color: var(--kr-muted);
-}
-
-@media print {
-  body:has(.closing) .sidebar,
-  .closing-actions,
-  .closing-filters,
-  .closing-no-print,
-  .closing-help {
-    display: none !important;
-  }
-  body:has(.closing) .shell {
-    padding: 0;
-  }
-  .closing-print-only {
-    display: inline;
-    margin-left: 12px;
-    color: var(--kr-muted);
-    font-size: 13px;
-  }
-  .closing-scroll,
-  .closing-scroll.tall {
-    max-height: none;
-    overflow: visible;
-  }
-  .closing-table th,
-  .closing-table td.total {
-    position: static;
-  }
 }

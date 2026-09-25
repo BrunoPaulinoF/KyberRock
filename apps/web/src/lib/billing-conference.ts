@@ -1,8 +1,10 @@
 /**
  * Conferencia de faturamento: a lista PESAGEM A PESAGEM do periodo com a situacao de cada
  * uma no OMIE — a mesma conta de `WeighingBillingReportService` do desktop
- * (`apps/desktop/src/services/weighing-billing-report.ts`, `weighing-billing-situation.ts`,
- * `invoice-number-label.ts` e `renderer/weighing-line-format.ts`), lendo a nuvem.
+ * (`apps/desktop/src/services/weighing-billing-report.ts`), lendo a nuvem. A situacao e o
+ * rotulo da nota sao as copias fieis do desktop (`lib/desktop/weighing-billing-situation.ts`
+ * e `invoice-number-label.ts`), e o relatorio sai no formato `WeighingBillingReport` para o
+ * renderizador copiado do desktop gerar o MESMO PDF e a MESMA planilha.
  *
  * Relatorio de DINHEIRO: o periodo e recortado pela data em que a pesagem FECHOU
  * (`closed_at`, com `created_at` para a pesagem antiga sem saida gravada), a mesma que sobe
@@ -10,37 +12,40 @@
  * da unidade (`closed_local` ate `sync_error`), sem as canceladas.
  */
 
+import {
+  WEIGHING_BILLING_SITUATION_LABEL,
+  WEIGHING_BILLING_SITUATION_ORDER,
+  resolveSituation,
+  resolveSituationDetail
+} from "./desktop/weighing-billing-situation.js";
+import type { WeighingBillingSituation } from "./desktop/weighing-billing-situation.js";
+import type {
+  WeighingBillingReport,
+  WeighingBillingRow,
+  WeighingBillingSituationRow,
+  WeighingBillingTotals
+} from "./desktop/weighing-billing-report-types.js";
+import {
+  renderWeighingBillingReportHtml,
+  renderWeighingBillingReportSpreadsheet,
+  weighingBillingReportFileBaseName
+} from "./desktop/weighing-billing-report-render.js";
 import { localDay, periodToIso, todayIso } from "./format";
+import type { ReportFile } from "./report-output";
 import { supabase } from "./supabase";
 
-// ---------- situacao no OMIE ----------
+// ---------- situacao no OMIE (as regras sao as do desktop) ----------
 
-export type BillingSituation = "billed" | "sent" | "pending" | "cadastro_incompleto" | "failed";
+export {
+  WEIGHING_BILLING_SITUATIONS as BILLING_SITUATIONS,
+  WEIGHING_BILLING_SITUATION_LABEL as BILLING_SITUATION_LABEL,
+  WEIGHING_BILLING_SITUATION_ORDER as BILLING_SITUATION_ORDER,
+  resolveSituation,
+  resolveSituationDetail
+} from "./desktop/weighing-billing-situation.js";
+export { invoiceNumberLabel, invoiceNumberText } from "./desktop/invoice-number-label.js";
 
-export const BILLING_SITUATIONS: readonly BillingSituation[] = [
-  "billed",
-  "sent",
-  "pending",
-  "cadastro_incompleto",
-  "failed"
-];
-
-export const BILLING_SITUATION_LABEL: Record<BillingSituation, string> = {
-  billed: "Faturada",
-  sent: "No OMIE, falta faturar",
-  pending: "Nao enviada ao OMIE",
-  cadastro_incompleto: "Cadastro incompleto",
-  failed: "Recusada pelo OMIE"
-};
-
-/** Ordem do resumo: primeiro o que trava dinheiro, por ultimo o que ja fechou. */
-export const BILLING_SITUATION_ORDER: Record<BillingSituation, number> = {
-  failed: 0,
-  cadastro_incompleto: 1,
-  pending: 2,
-  sent: 3,
-  billed: 4
-};
+export type BillingSituation = WeighingBillingSituation;
 
 /** Cor da etiqueta (o `SituationPill` do desktop). */
 export const BILLING_SITUATION_TONE: Record<
@@ -53,84 +58,6 @@ export const BILLING_SITUATION_TONE: Record<
   cadastro_incompleto: "warning",
   failed: "danger"
 };
-
-export interface SituationInput {
-  operation_type: string;
-  omie_sales_order_id: number | null;
-  omie_service_order_id: number | null;
-  omie_billing_status: string | null;
-}
-
-/**
- * A mesma leitura de `resolveSituation` do desktop. A venda INTERNA vira ordem de servico,
- * entao e o `omie_service_order_id` que diz se ela chegou ao OMIE; o faturamento vem antes do
- * tipo porque a reconciliacao marca `billed` nos dois.
- */
-export function resolveSituation(row: SituationInput): BillingSituation {
-  if (row.omie_billing_status === "billed") return "billed";
-
-  if (row.operation_type !== "invoice") {
-    if (row.omie_service_order_id) return "sent";
-    if (row.omie_billing_status === "cadastro_incompleto") return "cadastro_incompleto";
-    if (row.omie_billing_status === "service_order_failed") return "failed";
-    return "pending";
-  }
-
-  if (row.omie_sales_order_id) return "sent";
-  if (row.omie_billing_status === "cadastro_incompleto") return "cadastro_incompleto";
-  if (row.omie_billing_status === "failed") return "failed";
-  return "pending";
-}
-
-/** O texto que explica a linha: a recusa do OMIE vale mais que qualquer frase pronta. */
-export function resolveSituationDetail(
-  row: SituationInput & { omie_billing_message: string | null },
-  situation: BillingSituation
-): string | null {
-  const message = row.omie_billing_message?.trim();
-  if (message) return message;
-  if (situation === "billed" || situation === "sent") {
-    if (row.omie_sales_order_id) return `Pedido OMIE ${row.omie_sales_order_id}`;
-    if (row.omie_service_order_id) return `Ordem de servico OMIE ${row.omie_service_order_id}`;
-  }
-  return null;
-}
-
-// ---------- coluna "Nota fiscal" ----------
-
-export interface InvoiceNumberLabel {
-  state: "number" | "pending" | "not_applicable";
-  text: string;
-  title: string | null;
-}
-
-const NOT_APPLICABLE_TITLE =
-  "Venda interna: vira ordem de servico no OMIE e nao emite NF-e. Se a pedreira emitir nota de servico a partir da OS, o numero aparece aqui.";
-
-const PENDING_TITLE =
-  "Venda com nota ainda sem numero: ou a NF-e nao foi emitida no OMIE, ou a conferencia ainda nao chegou nesta carga.";
-
-/** Numero da nota; venda com nota sem numero e pendencia; venda interna nao emite NF-e. */
-export function invoiceNumberLabel(
-  invoiceNumber: string | null,
-  operationType: "invoice" | "internal"
-): InvoiceNumberLabel {
-  const number = (invoiceNumber ?? "").trim();
-  if (number) return { state: "number", text: number, title: null };
-  if (operationType === "internal") {
-    return { state: "not_applicable", text: "—", title: NOT_APPLICABLE_TITLE };
-  }
-  return { state: "pending", text: "Sem nota", title: PENDING_TITLE };
-}
-
-/** O mesmo rotulo em texto puro, para o arquivo (que nao tem tooltip nem cor). */
-export function invoiceNumberText(
-  invoiceNumber: string | null,
-  operationType: "invoice" | "internal"
-): string {
-  const label = invoiceNumberLabel(invoiceNumber, operationType);
-  return label.state === "not_applicable" ? "Interna (sem NF-e)" : label.text;
-}
 
 // ---------- formatos (o `weighing-line-format.ts` do desktop) ----------
 
@@ -171,16 +98,18 @@ export function unitPriceLabel(line: {
 }
 
 /**
- * Numero pelo qual a pesagem e procurada no OMIE. O desktop poe o numero VISIVEL do pedido
- * entre parenteses (`omie_order_number`); essa coluna nao sobe para a nuvem, entao aqui sai so
- * o codigo do pedido/OS.
+ * Numero pelo qual a pesagem e procurada no OMIE (o `omieReference` do desktop). O numero
+ * VISIVEL do pedido vem entre parenteses quando conhecido — hoje a coluna `omie_order_number`
+ * nao sobe para a nuvem, entao no site sai so o codigo do pedido/OS.
  */
 export function omieReference(line: {
   omieSalesOrderId: number | null;
   omieServiceOrderId: number | null;
+  omieOrderNumber?: string | null;
 }): string {
-  if (line.omieSalesOrderId) return `Pedido ${line.omieSalesOrderId}`;
-  if (line.omieServiceOrderId) return `OS ${line.omieServiceOrderId}`;
+  const visible = line.omieOrderNumber ? ` (nº ${line.omieOrderNumber})` : "";
+  if (line.omieSalesOrderId) return `Pedido ${line.omieSalesOrderId}${visible}`;
+  if (line.omieServiceOrderId) return `OS ${line.omieServiceOrderId}${visible}`;
   return "-";
 }
 
@@ -237,59 +166,12 @@ export function resolveRange(
   return { start: `${lastMonthEnd.slice(0, 7)}-01`, end: lastMonthEnd, label: "Mes anterior" };
 }
 
-// ---------- relatorio ----------
+// ---------- relatorio (o `WeighingBillingReport` do desktop) ----------
 
-export interface BillingRow {
-  operationId: string;
-  operationCode: number | null;
-  /** Dia (AAAA-MM-DD) em que a pesagem FECHOU, no fuso da pedreira. */
-  date: string;
-  closedAt: string | null;
-  customerId: string | null;
-  customerName: string;
-  customerDocument: string | null;
-  productCode: string | null;
-  productDescription: string;
-  plate: string;
-  netWeightKg: number;
-  unitPriceCents: number | null;
-  priceUnit: string | null;
-  productTotalCents: number;
-  freightTotalCents: number;
-  totalCents: number;
-  operationType: "invoice" | "internal";
-  operationTypeLabel: string;
-  omieSalesOrderId: number | null;
-  omieServiceOrderId: number | null;
-  omieInvoiceNumber: string | null;
-  situation: BillingSituation;
-  situationLabel: string;
-  situationDetail: string | null;
-}
-
-export interface BillingTotals {
-  operations: number;
-  netWeightKg: number;
-  productCents: number;
-  freightCents: number;
-  totalCents: number;
-}
-
-export interface BillingSituationRow {
-  situation: BillingSituation;
-  label: string;
-  operations: number;
-  netWeightKg: number;
-  totalCents: number;
-}
-
-export interface BillingReport {
-  rows: BillingRow[];
-  totals: BillingTotals;
-  bySituation: BillingSituationRow[];
-  /** Tudo que NAO esta faturado — o numero que interessa na conferencia. */
-  unbilled: BillingTotals;
-}
+export type BillingRow = WeighingBillingRow;
+export type BillingTotals = WeighingBillingTotals;
+export type BillingSituationRow = WeighingBillingSituationRow;
+export type BillingReport = WeighingBillingReport;
 
 /** A pesagem da nuvem, so com as colunas que a conferencia le. */
 export interface BillingSourceOperation {
@@ -327,13 +209,15 @@ export interface BillingProductInfo {
   description: string | null;
 }
 
+/** O `mapRow` do desktop, lendo a pesagem da nuvem e os cadastros dela. */
 export function mapBillingRow(
   op: BillingSourceOperation,
   customer: BillingCustomerInfo | undefined,
   product: BillingProductInfo | undefined
 ): BillingRow {
-  const situation = resolveSituation(op);
   const operationType = op.operation_type === "internal" ? "internal" : "invoice";
+  const source = { ...op, operation_type: operationType } as const;
+  const situation = resolveSituation(source);
   return {
     operationId: op.id,
     operationCode: op.operation_code,
@@ -360,10 +244,14 @@ export function mapBillingRow(
     operationTypeLabel: operationType === "internal" ? "Interna" : "Com nota",
     omieSalesOrderId: op.omie_sales_order_id,
     omieServiceOrderId: op.omie_service_order_id,
+    // O numero VISIVEL do pedido/OS e a data do faturamento ficam so no SQLite da balanca:
+    // `weighing_operations` da nuvem nao tem essas colunas.
+    omieOrderNumber: null,
     omieInvoiceNumber: (op.omie_invoice_number ?? "").trim() || null,
+    omieBilledAt: null,
     situation,
-    situationLabel: BILLING_SITUATION_LABEL[situation],
-    situationDetail: resolveSituationDetail(op, situation)
+    situationLabel: WEIGHING_BILLING_SITUATION_LABEL[situation],
+    situationDetail: resolveSituationDetail(source, situation)
   };
 }
 
@@ -380,6 +268,7 @@ export function matchesBillingSearch(row: BillingRow, search: string): boolean {
     row.operationCode === null ? "" : String(row.operationCode),
     row.omieSalesOrderId === null ? "" : String(row.omieSalesOrderId),
     row.omieServiceOrderId === null ? "" : String(row.omieServiceOrderId),
+    row.omieOrderNumber ?? "",
     row.omieInvoiceNumber ?? ""
   ].some((field) => field.toLowerCase().includes(term));
 }
@@ -410,109 +299,79 @@ function groupBySituation(rows: readonly BillingRow[]): BillingSituationRow[] {
     map.set(row.situation, entry);
   }
   return [...map.values()].sort(
-    (a, b) => BILLING_SITUATION_ORDER[a.situation] - BILLING_SITUATION_ORDER[b.situation]
+    (a, b) =>
+      WEIGHING_BILLING_SITUATION_ORDER[a.situation] - WEIGHING_BILLING_SITUATION_ORDER[b.situation]
   );
 }
 
+export interface BillingReportOptions {
+  /** O periodo da tela: datas e rotulo ("Mes atual"), que o documento imprime no topo. */
+  range: DateRange;
+  /** Cliente escolhido (a consulta ja veio filtrada por ele); vazio e "todos". */
+  customerId: string | null;
+  situations: readonly BillingSituation[];
+  search: string;
+}
+
 /**
- * Aplica situacao e busca (o cliente ja vem filtrado na consulta) e monta os totais. Situacao
- * vazia e "todas": um filtro que zera a lista pareceria um periodo sem movimento.
+ * O `getReport` do desktop sobre as pesagens ja lidas: aplica situacao e busca (o cliente ja
+ * vem filtrado na consulta), monta os totais e o envelope — periodo, rotulo e filtros — que o
+ * documento exportado imprime. Situacao vazia e "todas": um filtro que zera a lista pareceria
+ * um periodo sem movimento.
  */
 export function buildBillingReport(
   allRows: readonly BillingRow[],
-  situations: readonly BillingSituation[],
-  search: string
+  options: BillingReportOptions
 ): BillingReport {
+  const situations = [...options.situations];
+  const search = options.search.trim();
   const rows = allRows
     .filter((row) => situations.length === 0 || situations.includes(row.situation))
     .filter((row) => matchesBillingSearch(row, search));
   return {
+    startDate: options.range.start,
+    endDate: options.range.end,
+    periodLabel: options.range.label,
     rows,
     totals: buildTotals(rows),
     bySituation: groupBySituation(rows),
-    unbilled: buildTotals(rows.filter((row) => row.situation !== "billed"))
+    unbilled: buildTotals(rows.filter((row) => row.situation !== "billed")),
+    filters: { customerId: options.customerId || null, situations, search: search || null }
   };
 }
 
-// ---------- arquivo (CSV no lugar do Excel do desktop) ----------
+// ---------- arquivos (os mesmos do desktop) ----------
 
-function csvCell(value: string | number): string {
-  const text = String(value);
-  return /[";\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
-}
+export type BillingExportFormat = "pdf" | "excel";
 
-function money(cents: number): string {
-  return (cents / 100).toFixed(2).replace(".", ",");
-}
-
-/** A mesma lista da tela em CSV pt-BR (";" e virgula decimal, com BOM para o Excel). */
-export function billingConferenceCsv(report: BillingReport, range: DateRange): string {
-  const line = (cells: Array<string | number>) => cells.map(csvCell).join(";");
-  const lines = [
-    line(["Conferencia de faturamento"]),
-    line([
-      "Periodo",
-      `${range.label} - ${formatDayLabel(range.start)} a ${formatDayLabel(range.end)}`
-    ]),
-    "",
-    line(["Situacao", "Pesagens", "Peso (kg)", "Total (R$)"]),
-    ...report.bySituation.map((row) =>
-      line([row.label, row.operations, Math.round(row.netWeightKg), money(row.totalCents)])
-    ),
-    "",
-    line([
-      "Op.",
-      "Data",
-      "Cliente",
-      "CNPJ/CPF",
-      "Produto",
-      "Placa",
-      "Peso (kg)",
-      "Preco unit.",
-      "Produto (R$)",
-      "Frete (R$)",
-      "Total (R$)",
-      "Tipo",
-      "Situacao",
-      "Detalhe",
-      "Nota fiscal",
-      "Pedido/OS OMIE"
-    ]),
-    ...report.rows.map((row) =>
-      line([
-        row.operationCode === null ? "-" : row.operationCode,
-        formatDayLabel(row.date),
-        row.customerName,
-        row.customerDocument ?? "",
-        row.productDescription,
-        row.plate,
-        Math.round(row.netWeightKg),
-        unitPriceLabel(row),
-        money(row.productTotalCents),
-        money(row.freightTotalCents),
-        money(row.totalCents),
-        row.operationTypeLabel,
-        row.situationLabel,
-        row.situationDetail ?? "",
-        invoiceNumberText(row.omieInvoiceNumber, row.operationType),
-        omieReference(row)
-      ])
-    ),
-    line([
-      "TOTAL",
-      "",
-      "",
-      "",
-      "",
-      "",
-      Math.round(report.totals.netWeightKg),
-      "",
-      money(report.totals.productCents),
-      money(report.totals.freightCents),
-      money(report.totals.totalCents)
-    ])
-  ];
-  return `\uFEFF${lines.join("\r\n")}`;
+/**
+ * Os documentos que o desktop grava (`buildWeighingBillingReportDocuments`): o A4 paisagem que
+ * vira PDF e a planilha `.xls`, com o mesmo nome de arquivo, na ordem PDF e depois Excel.
+ */
+export function buildBillingReportFiles(
+  report: BillingReport,
+  formats: readonly BillingExportFormat[],
+  generatedAt: Date = new Date()
+): { pdf: ReportFile[]; xls: ReportFile[] } {
+  const baseName = weighingBillingReportFileBaseName(report);
+  return {
+    pdf: formats.includes("pdf")
+      ? [
+          {
+            filename: `${baseName}.pdf`,
+            html: renderWeighingBillingReportHtml(report, generatedAt)
+          }
+        ]
+      : [],
+    xls: formats.includes("excel")
+      ? [
+          {
+            filename: `${baseName}.xls`,
+            html: renderWeighingBillingReportSpreadsheet(report, generatedAt)
+          }
+        ]
+      : []
+  };
 }
 
 // ---------- consultas ----------

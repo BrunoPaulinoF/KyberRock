@@ -12,6 +12,7 @@
  * - o mix conta tambem as canceladas do periodo, as outras contas so as concluidas.
  */
 
+import { SPREADSHEET_HTML_ATTRS, SPREADSHEET_STYLE, sheetTable } from "./desktop/report-document";
 import { localDay, todayIso } from "./format";
 import { supabase, type Tables } from "./supabase";
 
@@ -759,49 +760,11 @@ ${renderTotalBar([
 </body></html>`;
 }
 
-const SPREADSHEET_STYLE = `
-body{font-family:Calibri,Arial,Helvetica,sans-serif;font-size:11pt;color:#0f172a;margin:14px}
-h1{font-size:16pt;margin:0;color:#1d4ed8}
-p.sub{margin:2px 0 0;font-size:10pt;color:#475569}
-h2{font-size:12pt;margin:20px 0 4px;color:#1d4ed8;border-bottom:2px solid #1d4ed8;padding-bottom:2px}
-table{border-collapse:collapse;margin:0 0 4px}
-th{background:#1d4ed8;color:#ffffff;font-weight:bold;border:1px solid #1e40af;padding:5px 8px;text-align:left}
-td{border:1px solid #cbd5e1;padding:4px 8px;vertical-align:top}
-tr.alt td{background:#f1f5f9}
-th.num,td.num{text-align:right}
-tr.total td{font-weight:bold;background:#dbeafe;border-top:2px solid #1d4ed8}
-`;
-
-function sheetTable(
-  title: string,
-  headers: string[],
-  rows: string[][],
-  footer: string[] | null = null,
-  numericFrom = 1
-): string {
-  const cls = (index: number) => (index >= numericFrom ? ' class="num"' : "");
-  const head = headers.map((h, i) => `<th${cls(i)}>${escapeHtml(h)}</th>`).join("");
-  const body = rows.length
-    ? rows
-        .map(
-          (cells, r) =>
-            `<tr${r % 2 === 1 ? ' class="alt"' : ""}>${cells
-              .map((cell, i) => `<td${cls(i)}>${escapeHtml(cell)}</td>`)
-              .join("")}</tr>`
-        )
-        .join("")
-    : `<tr><td colspan="${headers.length}">Sem dados no periodo.</td></tr>`;
-  const foot =
-    footer && rows.length
-      ? `<tr class="total">${footer.map((cell, i) => `<td${cls(i)}>${escapeHtml(cell)}</td>`).join("")}</tr>`
-      : "";
-  return `<h2>${escapeHtml(title)}</h2><table><thead><tr>${head}</tr></thead><tbody>${body}${foot}</tbody></table>`;
-}
-
 /**
  * A planilha do botao Exportar Excel (`exportRangeToSpreadsheet`): resumo do periodo e as
- * cargas uma a uma, em ordem de fechamento. HTML de tabelas com extensao `.xls`, o mesmo
- * truque do desktop.
+ * cargas uma a uma, em ordem de fechamento. HTML de tabelas com extensao `.xls`, montado com o
+ * MESMO `sheetTable` do desktop (`desktop/report-document.ts`): celulas tipadas, larguras de
+ * coluna e alinhamento iguais aos do arquivo que a balanca salva.
  */
 export function rangeSpreadsheetHtml(
   operations: InsightsOperation[],
@@ -845,9 +808,7 @@ export function rangeSpreadsheetHtml(
         ["Valor frete", formatBRL(totalFreight)],
         ["Total", formatBRL(total)],
         ["Gerado em", generatedAt.toLocaleString("pt-BR")]
-      ],
-      null,
-      2
+      ]
     ),
     sheetTable(
       "Carregamentos do periodo",
@@ -885,12 +846,11 @@ export function rangeSpreadsheetHtml(
             formatBRL(totalFreight),
             formatBRL(total)
           ]
-        : null,
-      3
+        : null
     )
   ];
 
-  return `<!doctype html><html lang="pt-BR" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8" /><title>${escapeHtml(
+  return `<!doctype html><html ${SPREADSHEET_HTML_ATTRS}><head><meta charset="utf-8" /><title>${escapeHtml(
     `Relatorio KyberRock - ${period}`
   )}</title><style>${SPREADSHEET_STYLE}</style></head><body>
 <h1>Relatorio KyberRock</h1>

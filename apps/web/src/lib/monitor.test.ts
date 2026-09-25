@@ -6,6 +6,7 @@ import {
   MONITOR_FILTERS_STORAGE_KEY,
   NO_PAYMENT_KEY,
   OTHER_KEY,
+  MONITOR_PHONE_ITEMS,
   PAYMENT_SLOTS,
   activeFilterChips,
   averageYardMinutes,
@@ -20,6 +21,8 @@ import {
   defaultMonitorFilters,
   deltaTone,
   detectNewIds,
+  fitCapacity,
+  fitCount,
   formatAgo,
   formatAxisValue,
   formatClock,
@@ -39,6 +42,7 @@ import {
   productLabelOf,
   productOptions,
   rankBy,
+  rankLimitFor,
   relativeDelta,
   removeFilterChip,
   resolvePeriodWindow,
@@ -48,6 +52,7 @@ import {
   salesSeries,
   serializeMonitorFilters,
   sliceSales,
+  splitVisible,
   toggleValue,
   yardLevel,
   yardThresholds,
@@ -715,5 +720,66 @@ describe("eixo dos graficos", () => {
     expect(plain(formatAxisValue(250_000, 500_000, "revenue"))).toBe("R$ 2.500");
     expect(formatAxisValue(2_500, 10_000, "tons")).toBe("2,5 t");
     expect(formatAxisValue(150_000, 200_000, "tons")).toBe("150 t");
+  });
+});
+
+describe("painel sem rolagem", () => {
+  it("conta quantos itens cabem, com o espaco entre eles e folga de meio pixel", () => {
+    expect(fitCapacity(300, 60, 0)).toBe(5);
+    // 4 itens de 70 + 3 espacos de 8 = 304: cabem 4 em 304, e 303,6 (medida quebrada) tambem.
+    expect(fitCapacity(304, 70, 8)).toBe(4);
+    expect(fitCapacity(303.6, 70, 8)).toBe(4);
+    expect(fitCapacity(303, 70, 8)).toBe(3);
+    expect(fitCapacity(50, 60, 8)).toBe(0);
+    expect(fitCapacity(0, 60)).toBe(0);
+    expect(fitCapacity(300, 0)).toBe(0);
+    expect(fitCapacity(Number.NaN, 60)).toBe(0);
+  });
+
+  it("mostra todos quando cabem e reserva o rodape +N quando nao cabem", () => {
+    // Cabem 5 de 60 em 300: com 5 no total, nao precisa de rodape.
+    expect(fitCount({ available: 300, itemSize: 60, total: 5, footer: 30, fallback: 3 })).toBe(5);
+    expect(fitCount({ available: 300, itemSize: 60, total: 2, footer: 30, fallback: 3 })).toBe(2);
+    // Com 40, o rodape come 30 px e sobram 4.
+    expect(fitCount({ available: 300, itemSize: 60, total: 40, footer: 30, fallback: 3 })).toBe(4);
+    expect(
+      fitCount({ available: 304, itemSize: 70, gap: 8, total: 12, footer: 28, fallback: 3 })
+    ).toBe(3);
+  });
+
+  it("sem medida usa o padrao; lista vazia e zero; nunca menos que o minimo", () => {
+    expect(fitCount({ available: 0, itemSize: 0, total: 40, fallback: 6 })).toBe(6);
+    expect(fitCount({ available: 500, itemSize: 0, total: 3, fallback: 6 })).toBe(3);
+    expect(fitCount({ available: 500, itemSize: 60, total: 0, fallback: 6 })).toBe(0);
+    expect(fitCount({ available: 40, itemSize: 60, total: 9, footer: 20, fallback: 6 })).toBe(1);
+    expect(
+      fitCount({ available: 40, itemSize: 60, total: 9, footer: 20, fallback: 6, min: 0 })
+    ).toBe(0);
+  });
+
+  it("separa os visiveis e conta quantos ficaram de fora", () => {
+    expect(splitVisible([1, 2, 3, 4, 5, 6, 7], MONITOR_PHONE_ITEMS)).toEqual({
+      visible: [1, 2, 3, 4, 5],
+      hidden: 2
+    });
+    expect(splitVisible([1, 2], 5)).toEqual({ visible: [1, 2], hidden: 0 });
+    expect(splitVisible([1, 2], -1)).toEqual({ visible: [], hidden: 2 });
+  });
+
+  it("o ranking cabe no painel com a linha Outros contando como uma", () => {
+    expect(rankLimitFor(5)).toBe(4);
+    expect(rankLimitFor(1)).toBe(1);
+    expect(rankLimitFor(0)).toBe(1);
+    const sales = ["A", "B", "C", "D", "E", "F", "G"].map((name, index) =>
+      op({ customer_id: `c-${name}`, customer_name: name, net_weight_kg: (10 - index) * 1000 })
+    );
+    const rows = rankBy(sales, customerKeyOf, customerLabelOf, "tons", rankLimitFor(5));
+    expect(rows).toHaveLength(5);
+    expect(rows[4]).toMatchObject({ other: true, label: "Outros (3)" });
+    // Cabendo todos, nenhum vira "Outros".
+    expect(rankBy(sales, customerKeyOf, customerLabelOf, "tons", rankLimitFor(7))).toHaveLength(7);
+    expect(
+      rankBy(sales, customerKeyOf, customerLabelOf, "tons", rankLimitFor(7)).some((r) => r.other)
+    ).toBe(false);
   });
 });

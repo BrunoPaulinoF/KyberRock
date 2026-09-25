@@ -14,6 +14,7 @@ import {
   INVOICE_CLOSING_PERIOD_KINDS,
   INVOICE_CLOSING_PERIOD_KIND_LABEL,
   addDays,
+  buildInvoiceClosingFiles,
   buildInvoiceClosingReport,
   customerIdentityKey,
   defaultInvoiceClosingPeriod,
@@ -23,7 +24,6 @@ import {
   formatDayLabel,
   formatKg,
   formatTonsShort,
-  invoiceClosingCsv,
   invoiceNumberLabel,
   isBillable,
   isLiveRequest,
@@ -43,6 +43,7 @@ import {
 } from "../lib/invoice-closing";
 import { matchesSearch } from "../lib/operation";
 import { q, type BillingRequest } from "../lib/queries";
+import { deliverReports } from "../lib/report-output";
 import { useAsync } from "../lib/use-async";
 
 const HELP =
@@ -86,6 +87,7 @@ export function InvoiceClosing() {
   const [running, setRunning] = useState(false);
   const [runResult, setRunResult] = useState<RunResult | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [formats, setFormats] = useState<{ pdf: boolean; excel: boolean }>({
     pdf: false,
@@ -149,7 +151,8 @@ export function InvoiceClosing() {
         cycles,
         customerId: customerId || null,
         plates,
-        search: debouncedSearch
+        search: debouncedSearch,
+        periodLabel: range.label
       }
     );
   }, [
@@ -284,29 +287,33 @@ export function InvoiceClosing() {
     }
   }
 
-  function handleExport(): void {
+  /**
+   * O "Gerar arquivo" do desktop: os mesmos documentos, com os mesmos filtros da tela. O Excel
+   * baixa a planilha `.xls` do desktop; o PDF abre a impressao do navegador com o documento A4
+   * do desktop (la se escolhe "Salvar como PDF").
+   */
+  async function handleExport(): Promise<void> {
     if (!report) return;
     if (selectedFormats.length === 0) {
       setExportMessage("Selecione ao menos um formato: Excel ou PDF.");
       return;
     }
-    const files: string[] = [];
-    if (formats.excel) {
-      const name = `fechamento-${range.start}-a-${range.end}.csv`;
-      const blob = new Blob(["﻿" + invoiceClosingCsv(report, range.label)], {
-        type: "text/csv;charset=utf-8"
-      });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = name;
-      anchor.click();
-      URL.revokeObjectURL(url);
-      files.push(name);
+    setExporting(true);
+    setExportMessage(null);
+    try {
+      const files = buildInvoiceClosingFiles(report, selectedFormats);
+      await deliverReports(files);
+      const names = [...files.pdf, ...files.xls].map((file) => file.filename);
+      setExportMessage(
+        names.length === 1
+          ? `Arquivo gerado: ${names[0]}`
+          : `${names.length} arquivos gerados:\n${names.join("\n")}`
+      );
+    } catch (err) {
+      setExportMessage(err instanceof Error ? err.message : "Falha ao gerar o fechamento.");
+    } finally {
+      setExporting(false);
     }
-    setExportMessage(files.length > 0 ? `Arquivo baixado: ${files.join(", ")}` : null);
-    // O PDF e a propria tela impressa, sem os filtros e sem o menu.
-    if (formats.pdf) window.setTimeout(() => window.print(), 50);
   }
 
   const customerLabel = customerId
@@ -321,20 +328,21 @@ export function InvoiceClosing() {
           <span className="closing-help" role="img" aria-label="Dica" title={HELP}>
             <Lightbulb size={14} />
           </span>
-          <span className="closing-print-only">{range.label}</span>
         </div>
         <div className="closing-actions">
           <button
             type="button"
             className="icon-action"
             aria-label={
-              selectedFormats.length > 1
-                ? `Gerar ${selectedFormats.length} arquivos`
-                : "Gerar arquivo"
+              exporting
+                ? "Gerando..."
+                : selectedFormats.length > 1
+                  ? `Gerar ${selectedFormats.length} arquivos`
+                  : "Gerar arquivo"
             }
-            title="Gera os arquivos escolhidos com as faturas filtradas: o Excel sai como planilha (.csv) e o PDF pela impressao do navegador."
-            disabled={loading || running || !report}
-            onClick={handleExport}
+            title="Gera os arquivos escolhidos com as faturas filtradas. O Excel e baixado como planilha e o PDF abre na impressao do navegador, onde se escolhe Salvar como PDF."
+            disabled={exporting || loading || running || !report}
+            onClick={() => void handleExport()}
           >
             <Download size={16} />
           </button>
@@ -695,7 +703,7 @@ export function InvoiceClosing() {
                       <th>Peso</th>
                       <th>Total</th>
                       <th>Sem nota</th>
-                      <th className="closing-no-print" />
+                      <th />
                     </tr>
                   </thead>
                   <tbody>
@@ -724,7 +732,7 @@ export function InvoiceClosing() {
                           ? "-"
                           : formatCount(report.withoutInvoice.operations)}
                       </td>
-                      <td className="total closing-no-print" />
+                      <td className="total" />
                     </tr>
                   </tfoot>
                 </table>
@@ -1088,7 +1096,7 @@ function InvoiceRows({
             ? "-"
             : formatCount(invoice.operationsWithoutInvoice)}
         </td>
-        <td className="closing-no-print">
+        <td>
           <button type="button" className="closing-link-button" onClick={onToggle}>
             {expanded ? "Fechar" : "Ver cargas"}
           </button>

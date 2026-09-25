@@ -3,8 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildCustomerOptions,
   buildCustomerReport,
+  buildCustomerReportFiles,
   buildCustomersOverview,
-  customerReportCsv,
+  buildCustomersOverviewFiles,
   customerReportTables,
   dueDaysFromRules,
   formatDatesSummary,
@@ -25,6 +26,9 @@ function customer(overrides: Partial<ReportCustomerRow> & { id: string }): Repor
     document: null,
     phone: null,
     email: null,
+    address_street: null,
+    address_number: null,
+    neighborhood: null,
     city: null,
     state: null,
     credit_limit_cents: null,
@@ -58,14 +62,22 @@ function operation(
     freight_type: "none",
     freight_json: null,
     freight_total_cents: 0,
+    entry_weight_kg: 15_000,
+    exit_weight_kg: 25_000,
     net_weight_kg: 10_000,
     unit_price_cents: 6_500,
+    base_unit_price_cents: 6_500,
+    applied_price_table_name: null,
+    price_savings_percent: null,
     product_total_cents: 65_000,
     total_cents: 65_000,
     payment_method_id: null,
     payment_term_id: null,
     omie_sales_order_id: null,
+    omie_service_order_id: null,
     omie_invoice_number: null,
+    omie_billing_status: null,
+    cloud_synced_at: "2026-09-01T12:00:00Z",
     ...overrides
   };
 }
@@ -76,7 +88,7 @@ const LOOKUPS: ReportLookups = {
     customer({ id: "c2", trade_name: "ALFA (OMIE)", document: "12345678000195" }),
     customer({ id: "c3", trade_name: "BETA" })
   ],
-  products: [{ id: "p1", code: "PED", description: "PEDRISCO" }],
+  products: [{ id: "p1", code: "PED", description: "PEDRISCO", unit: "t" }],
   carriers: [],
   paymentMethods: [{ id: "pm1", name: "BOLETO" }],
   paymentTerms: [
@@ -231,10 +243,221 @@ describe("buildCustomerReport", () => {
     expect(complete).toContain("Operacoes canceladas");
   });
 
-  it("a planilha leva o cabecalho e as tabelas", () => {
-    const csv = customerReportCsv(report, "simplified", "Mes atual");
-    expect(csv).toContain('"Produtos comprados"');
-    expect(csv).toContain('"Cliente";"ALFA"');
+  it("gera um arquivo por modelo x formato, com os nomes do desktop", () => {
+    const files = buildCustomerReportFiles(
+      report,
+      ["simplified", "complete"],
+      ["pdf", "excel"],
+      new Date("2026-09-24T12:00:00Z")
+    );
+    expect(files.pdf.map((file) => file.filename)).toEqual([
+      "relatorio-cliente-alfa-simplificado-2026-09-01-a-2026-09-30.pdf",
+      "relatorio-cliente-alfa-completo-2026-09-01-a-2026-09-30.pdf"
+    ]);
+    expect(files.xls.map((file) => file.filename)).toEqual([
+      "relatorio-cliente-alfa-simplificado-2026-09-01-a-2026-09-30.xls",
+      "relatorio-cliente-alfa-completo-2026-09-01-a-2026-09-30.xls"
+    ]);
+    expect(buildCustomerReportFiles(report, ["complete"], ["excel"]).pdf).toHaveLength(0);
+  });
+});
+
+describe("documentos do desktop", () => {
+  const rows: ReportOperationRow[] = [
+    operation({
+      id: "d1",
+      operation_code: 42,
+      created_at: "2026-09-02T11:00:00Z",
+      closed_at: "2026-09-02T11:45:00Z",
+      applied_price_table_name: "TABELA OBRA",
+      freight_type: "cif",
+      freight_json: JSON.stringify({ destination: "Obra Centro", rule: { name: "Por tonelada" } }),
+      freight_total_cents: 5_000,
+      total_cents: 70_000,
+      omie_sales_order_id: 998877,
+      omie_invoice_number: "4521",
+      payment_term_id: "t28",
+      payment_method_id: "pm1"
+    }),
+    operation({
+      id: "d2",
+      operation_type: "internal",
+      created_at: "2026-09-03T10:00:00Z",
+      closed_at: "2026-09-03T12:10:00Z",
+      entry_weight_kg: null
+    }),
+    operation({
+      id: "d3",
+      status: "cancelled",
+      cancel_reason: "Desistiu",
+      closed_at: null,
+      created_at: "2026-09-04T12:00:00Z"
+    })
+  ];
+  const lookups: ReportLookups = {
+    ...LOOKUPS,
+    customers: [
+      customer({
+        id: "c1",
+        trade_name: "ALFA",
+        document: "12.345.678/0001-95",
+        address_street: "Rua A",
+        address_number: "10",
+        neighborhood: "Centro",
+        default_payment_term_id: "t28"
+      })
+    ]
+  };
+  const report = buildCustomerReport({
+    customerId: "c1",
+    rows,
+    lookups,
+    startDate: "2026-09-01",
+    endDate: "2026-09-30",
+    periodLabel: "Mes atual",
+    referenceDate: "2026-09-24"
+  });
+  const generatedAt = new Date("2026-09-24T15:00:00Z");
+
+  it("monta os campos que o documento do desktop le", () => {
+    expect(report.periodLabel).toBe("Mes atual");
+    expect(report.customer.addressLine).toBe("Rua A, 10 - Centro");
+    expect(report.customer.defaultPaymentTermName).toBe("28 DIAS");
+    expect(report.byDay.map((row) => row.period)).toEqual(["2026-09-02", "2026-09-03"]);
+    const [first, second] = report.operations;
+    expect(first).toMatchObject({
+      operationTypeLabel: "Com nota",
+      entryWeightKg: 15_000,
+      exitWeightKg: 25_000,
+      priceTableName: "TABELA OBRA",
+      freightModality: "cif",
+      freightModalityLabel: "Valor so no sistema",
+      freightDestination: "Obra Centro",
+      freightRuleName: "Por tonelada",
+      minutesInside: 45,
+      productUnit: "t"
+    });
+    expect(second).toMatchObject({ operationTypeLabel: "Interna", entryWeightKg: null });
+    expect(report.totals).toMatchObject({
+      avgNetWeightKg: 10_000,
+      invoiceOperations: 1,
+      internalOperations: 1,
+      cancelledOperations: 1,
+      cancelledNetWeightKg: 10_000,
+      firstOperationDate: "2026-09-02",
+      lastOperationDate: "2026-09-03"
+    });
+    expect(report.byProduct[0]).toMatchObject({
+      firstDate: "2026-09-02",
+      lastDate: "2026-09-03"
+    });
+    expect(report.byPlate[0]).toMatchObject({
+      totalMinutes: 175,
+      avgMinutes: 88,
+      lastOperationAt: "2026-09-03T12:10:00Z"
+    });
+    expect(report.installments[0]).toMatchObject({ dueDate: "2026-09-03", daysUntilDue: -21 });
+  });
+
+  it("o PDF simplificado traz as secoes, as colunas e os totais do desktop", () => {
+    const html = buildCustomerReportFiles(report, ["simplified"], ["pdf"], generatedAt).pdf[0].html;
+    for (const text of [
+      "<h1>Relatorio do cliente</h1>",
+      "Mes atual &middot; 01/09/2026 a 30/09/2026",
+      "Simplificado",
+      "Cadastro do cliente",
+      "Vencimentos no periodo",
+      "Produtos comprados",
+      "Materiais por dia",
+      "Placas",
+      "Viagens por placa e motorista",
+      "Compras por mes",
+      "Preco medio/t",
+      "Nota fiscal",
+      "4521",
+      "Interna (sem NF-e)",
+      "000042",
+      "TOTAL",
+      "Total comprado",
+      "size:A4 portrait"
+    ]) {
+      expect(html).toContain(text);
+    }
+    expect(html).not.toContain("Operacoes (detalhado)");
+  });
+
+  it("o PDF completo acrescenta transporte, pagamentos, operacoes e canceladas", () => {
+    const html = buildCustomerReportFiles(report, ["complete"], ["pdf"], generatedAt).pdf[0].html;
+    for (const text of [
+      "Completo",
+      "Rua A, 10 - Centro",
+      "Parcelas a pagar (detalhado)",
+      "Transporte por transportadora",
+      "Tipos de frete",
+      "Pagamentos por forma",
+      "Pagamentos por condicao",
+      "Compras por dia",
+      "Operacoes (detalhado)",
+      "Entrada (kg)",
+      "Tabela",
+      "TABELA OBRA",
+      "Valor so no sistema - Obra Centro",
+      "998877",
+      "Operacoes canceladas",
+      "Desistiu",
+      "size:A4 landscape"
+    ]) {
+      expect(html).toContain(text);
+    }
+  });
+
+  it("a planilha e o HTML de tabelas tipadas do desktop", () => {
+    const xls = buildCustomerReportFiles(report, ["complete"], ["excel"], generatedAt).xls[0].html;
+    for (const text of [
+      "xmlns:x=",
+      "Resumo",
+      "Vencimentos por mes",
+      "Parcelas a pagar",
+      "Produtos",
+      "Viagens por placa",
+      "Operacoes",
+      "Canceladas",
+      "Observacao sobre vencimentos",
+      "x:num"
+    ]) {
+      expect(xls).toContain(text);
+    }
+  });
+
+  it("o resumo de todos os clientes sai com os documentos do desktop", () => {
+    const overview = buildCustomersOverview({
+      rows,
+      lookups,
+      startDate: "2026-09-01",
+      endDate: "2026-09-30",
+      periodLabel: "Mes atual",
+      referenceDate: "2026-09-24"
+    });
+    expect(overview.periodLabel).toBe("Mes atual");
+    const files = buildCustomersOverviewFiles(overview, ["pdf", "excel"], generatedAt);
+    expect(files.pdf.map((file) => file.filename)).toEqual([
+      "relatorio-clientes-2026-09-01-a-2026-09-30.pdf"
+    ]);
+    expect(files.xls.map((file) => file.filename)).toEqual([
+      "relatorio-clientes-2026-09-01-a-2026-09-30.xls"
+    ]);
+    for (const text of [
+      "<h1>Relatorio por cliente</h1>",
+      "Todos os clientes",
+      "Resumo do periodo",
+      "Clientes no periodo",
+      "Materiais por cliente",
+      "TOTAL",
+      "size:A4 landscape"
+    ]) {
+      expect(files.pdf[0].html).toContain(text);
+    }
+    expect(files.xls[0].html).toContain("Relatorio por cliente - todos os clientes");
   });
 });
 

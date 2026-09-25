@@ -10,9 +10,9 @@ import {
   PERIOD_OPTIONS,
   buildCustomerOptions,
   buildCustomerReport,
+  buildCustomerReportFiles,
   buildCustomersOverview,
-  customerReportCsv,
-  customerReportFileBaseName,
+  buildCustomersOverviewFiles,
   customerReportTables,
   formatBRL,
   formatDayLabel,
@@ -22,7 +22,6 @@ import {
   loadReportLookups,
   loadReportOperations,
   maxDueDays,
-  overviewCsv,
   overviewTables,
   resolveCustomerIdGroup,
   resolveRange,
@@ -33,6 +32,7 @@ import {
   type ReportTable
 } from "../lib/customer-report";
 import { formatDocument, todayIso } from "../lib/format";
+import { deliverReports } from "../lib/report-output";
 import { useAsync } from "../lib/use-async";
 
 /**
@@ -44,26 +44,19 @@ const ALL_CUSTOMERS = "__all__";
 const HELP =
   "Gera o relatorio de um cliente no periodo escolhido, com transporte, compras, pagamentos, quanto ele carregou de cada material e em que dias, tonelagem, as viagens de cada placa/motorista em sequencia e as parcelas a vencer. Use datas futuras para ver os dias em que o cliente ainda tem parcelas a pagar. Escolha os modelos (simplificado e/ou completo) e os formatos (PDF e/ou Excel). Em 'Todos os clientes', sai a lista comparativa do periodo: um cliente por linha, do que mais faturou para o que menos faturou, e os materiais que cada um carregou.";
 
-function downloadCsv(fileName: string, content: string): void {
-  const blob = new Blob([String.fromCharCode(0xfeff) + content], {
-    type: "text/csv;charset=utf-8"
-  });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
 /**
  * Relatorio por cliente: o usuario escolhe o cliente, o periodo (atalhos ou datas
  * personalizadas), quais modelos quer (simplificado e/ou completo) e em quais formatos
  * (PDF e/ou Excel). A tela mostra a previa dos mesmos dados que vao para o arquivo. Em
  * "Todos os clientes" sai a lista comparativa do periodo.
  *
- * Le a nuvem (pesagens da unidade do usuario, como a balanca le as dela). O PDF e a
- * impressao da propria previa ("Salvar como PDF"); o Excel e uma planilha CSV.
+ * Le a nuvem (pesagens da unidade do usuario, como a balanca le as dela). Os arquivos sao os
+ * do desktop, montados pelo mesmo `customer-report-render` (copia guardada por teste): o PDF
+ * abre a impressao do documento ("Salvar como PDF") e o Excel baixa a planilha `.xls`, com os
+ * nomes de arquivo do desktop.
+ *
+ * Fica de fora o "Conferir notas no OMIE" do desktop: ele pergunta ao OMIE, pela balanca, o
+ * numero da nota das cargas — o site nao tem esse caminho ate o OMIE.
  */
 export function CustomerReport() {
   const user = useUser();
@@ -71,6 +64,7 @@ export function CustomerReport() {
   const [period, setPeriod] = useState<PeriodPreset>("month");
   const [customStart, setCustomStart] = useState(() => todayIso());
   const [customEnd, setCustomEnd] = useState(() => todayIso());
+  const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [variants, setVariants] = useState<Record<CustomerReportVariant, boolean>>({
     simplified: true,
@@ -132,12 +126,13 @@ export function CustomerReport() {
       lookups: data,
       startDate: range.start,
       endDate: range.end,
+      periodLabel: range.label,
       referenceDate
     };
     return allCustomers
       ? { kind: "overview", overview: buildCustomersOverview(input) }
       : { kind: "report", report: buildCustomerReport({ ...input, customerId }) };
-  }, [lookups.data, customerId, range.start, range.end, user.companyId, user.unitId]);
+  }, [lookups.data, customerId, range.start, range.end, range.label, user.companyId, user.unitId]);
 
   const report = result.data?.kind === "report" ? result.data.report : null;
   const overview = result.data?.kind === "overview" ? result.data.overview : null;
@@ -148,9 +143,10 @@ export function CustomerReport() {
     ? selectedFormats.length
     : selectedVariants.length * selectedFormats.length;
 
-  function handleExport(): void {
+  async function handleExport(): Promise<void> {
     if (!customerId) return;
-    // O resumo de todos os clientes e uma lista unica: nao ha modelo a escolher.
+    // O resumo de todos os clientes e uma lista unica: nao ha modelo simplificado/completo
+    // a escolher, so o formato do arquivo.
     if (!allCustomers && selectedVariants.length === 0) {
       setExportMessage("Selecione ao menos um modelo: simplificado ou completo.");
       return;
@@ -159,39 +155,38 @@ export function CustomerReport() {
       setExportMessage("Selecione ao menos um formato: PDF ou Excel.");
       return;
     }
+    setExporting(true);
+    setExportMessage(null);
     try {
-      const files: string[] = [];
-      if (formats.excel) {
-        if (overview) {
-          const name = `relatorio-clientes-${overview.startDate}-a-${overview.endDate}.csv`;
-          downloadCsv(name, overviewCsv(overview, range.label));
-          files.push(name);
-        } else if (report) {
-          for (const variant of selectedVariants) {
-            const name = `${customerReportFileBaseName(report, variant)}.csv`;
-            downloadCsv(name, customerReportCsv(report, variant, range.label));
-            files.push(name);
-          }
-        }
-      }
-      const lines = [
-        files.length === 1
-          ? `Arquivo baixado: ${files[0]}`
-          : files.length > 1
-            ? `${files.length} arquivos baixados:\n${files.join("\n")}`
-            : null,
-        formats.pdf
-          ? 'PDF: na janela de impressao, escolha "Salvar como PDF". Sai a previa desta tela.'
-          : null
-      ].filter(Boolean);
-      setExportMessage(lines.join("\n"));
-      if (formats.pdf) window.setTimeout(() => window.print(), 50);
+      // Os mesmos documentos do desktop: modelo por modelo, PDF e Excel, com o nome de
+      // arquivo de la. As planilhas baixam na hora; cada PDF abre a impressao, um depois do
+      // outro.
+      const files = overview
+        ? buildCustomersOverviewFiles(overview, selectedFormats)
+        : report
+          ? buildCustomerReportFiles(report, selectedVariants, selectedFormats)
+          : null;
+      if (!files) return;
+      const names = [...files.pdf, ...files.xls].map((file) => file.filename);
+      setExportMessage(
+        [
+          names.length === 1
+            ? `Arquivo gerado: ${names[0]}`
+            : `${names.length} arquivos gerados:\n${names.join("\n")}`,
+          files.pdf.length > 0 ? 'PDF: na janela de impressao, escolha "Salvar como PDF".' : null
+        ]
+          .filter(Boolean)
+          .join("\n")
+      );
+      await deliverReports(files);
     } catch (caught) {
       setExportMessage(errorMessage(caught, "Falha ao gerar o relatorio."));
+    } finally {
+      setExporting(false);
     }
   }
 
-  // No PDF sai o modelo mais completo escolhido; na tela, o completo aparece quando marcado.
+  // Na previa, o completo aparece quando marcado; os arquivos saem um por modelo escolhido.
   const showComplete = variants.complete;
   const totals = report?.totals ?? null;
   const dues = report?.installmentTotals ?? null;
@@ -209,17 +204,23 @@ export function CustomerReport() {
           <button
             type="button"
             className="icon-action primary"
-            aria-label={fileCount > 1 ? `Gerar ${fileCount} arquivos` : "Gerar relatorio"}
-            title="Gera os arquivos escolhidos: o Excel e baixado como planilha e o PDF sai pela impressao da previa."
-            disabled={!customerId || loading || !result.data}
-            onClick={handleExport}
+            aria-label={
+              exporting
+                ? "Gerando..."
+                : fileCount > 1
+                  ? `Gerar ${fileCount} arquivos`
+                  : "Gerar relatorio"
+            }
+            title="Gera os arquivos escolhidos: o Excel e baixado como planilha (.xls) e cada PDF abre a janela de impressao, um depois do outro."
+            disabled={exporting || !customerId || loading || !result.data}
+            onClick={() => void handleExport()}
           >
             <Download size={16} strokeWidth={2} />
           </button>
         </div>
       </header>
 
-      <div className="cr-card cr-filters">
+      <div className="cr-card">
         <div className="cr-filter-grid">
           <div className="cr-filter-block">
             <span className="cr-filter-label">Cliente</span>
@@ -363,7 +364,7 @@ export function CustomerReport() {
       </div>
 
       {error ? <p className="cr-error">{error}</p> : null}
-      {exportMessage ? <p className="cr-info cr-message">{exportMessage}</p> : null}
+      {exportMessage ? <p className="cr-info">{exportMessage}</p> : null}
 
       {!customerId ? (
         <div className="cr-card">
