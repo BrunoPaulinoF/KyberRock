@@ -9390,13 +9390,11 @@ function PriceDetailsPanel({ details }: { details: PriceDetails | null }) {
   }
 
   const sourceLabel =
-    details.source === "last_used"
-      ? "Ultima operacao do cliente"
-      : details.source === "special"
-        ? "Preco especial do cliente"
-        : details.source === "default"
-          ? "Preco padrao da empresa"
-          : "Sem preco cadastrado";
+    details.source === "special"
+      ? "Preco especial do cliente"
+      : details.source === "default"
+        ? "Preco padrao da empresa"
+        : "Sem preco cadastrado";
   const savingsLabel = details.savingsPercent
     ? `${details.savingsPercent.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`
     : "Sem desconto";

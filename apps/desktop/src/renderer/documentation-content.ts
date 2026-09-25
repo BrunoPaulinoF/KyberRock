@@ -544,7 +544,7 @@ export const documentationSections: DocumentationSection[] = [
       "Campos controlados pelo OMIE ficam bloqueados para edicao local. Quando a correcao e urgente e o envio esta travado, o sistema permite sobrescrever e empurra a correcao ao OMIE na proxima sincronizacao.",
       "Cliente novo criado aqui sobe para o OMIE na sincronizacao. Ele nao e criado duas vezes: o sistema guarda o codigo do OMIE assim que ele responde.",
       "Aba Transporte do cliente: o TIPO DE FRETE escolhido ali preenche a nova entrada quando o cliente e selecionado — o operador continua podendo trocar, e o valor de frete que o cliente ja usou naquele produto continua tendo a ultima palavra. TRANSPORTE PROPRIO usa (e cria, se ainda nao existir) a transportadora com o nome e o CNPJ/CPF do proprio cliente. As PLACAS vinculadas ali aparecem primeiro no campo Placa da nova entrada; ao comecar a digitar, o campo volta a procurar em todas as placas da pedreira — placa de fora nunca e proibida.",
-      "A ordem de preco e: o preco que o cliente pagou na ULTIMA operacao com aquele produto; sem operacao anterior, o preco especial do cliente e, depois, o preco padrao do produto. Por isso mudar o preco no cadastro vale para o cliente que ainda nao comprou aquele produto — para quem ja comprou, corrija o preco na operacao (pede a senha) e a proxima entrada ja segue o novo valor.",
+      "A ordem de preco e: preco especial do cliente e, sem ele, o preco padrao do produto. Mudou o preco no cadastro, a proxima entrada ja sai com o valor novo.",
       "A condicao de pagamento da nova entrada vem do CADASTRO do cliente (condicao padrao), nao da ultima operacao. O operador pode trocar na entrada; para mudar de vez, altere a condicao padrao no cadastro.",
       "Alterar preco na operacao pede a senha de 4 digitos da empresa.",
       "Balancas principais de precos: quando a pedreira tem mais de um computador, o administrador escolhe no painel web quais deles definem os precos — pode ser um, pode ser mais de um. Nos demais, preco padrao, preco especial, tabela de preco e valor de frete do cadastro aparecem so para consulta, com um aviso dizendo em quais computadores alterar. Cadastre o preco numa balanca principal: em segundos ele chega aos outros computadores.",
@@ -1431,7 +1431,7 @@ export const documentationFaqs: DocumentationFaq[] = [
   {
     question: "Quem define o preco da tonelada?",
     answer:
-      "Primeiro vale o preco que o cliente pagou na ULTIMA operacao com aquele produto. Sem operacao anterior, vale o cadastro: preco especial do cliente e, depois, o preco padrao do produto. Sem nenhum deles, a entrada nao e registrada ate cadastrar um preco. Alterar o preco na operacao pede a senha de 4 digitos da empresa — e a proxima entrada do cliente ja segue o valor corrigido.",
+      "A ordem e: preco especial do cliente e, sem ele, o preco padrao do produto. Sem nenhum dos dois, a entrada nao e registrada ate cadastrar um preco. Alterar o preco na operacao pede a senha de 4 digitos da empresa.",
     category: "financeiro",
     sectionId: "registrations",
     keywords: [
@@ -1831,7 +1831,7 @@ export const troubleshootingFlows: TroubleshootingFlow[] = [
     icon: FileText,
     checks: [
       "Abra a ficha da operacao e confira o preco por tonelada aplicado e a origem dele.",
-      'Confira, nesta ordem: o preco da ultima operacao do cliente com aquele produto, o preco especial do cliente e o preco padrao do produto. A origem aparece no quadro de preco da entrada ("Ultima operacao do cliente", "Preco especial" ou "Preco padrao").',
+      "Confira, nesta ordem: preco especial do cliente e preco padrao do produto. A origem aparece no quadro de preco da entrada.",
       "Confira se o frete esta somando ao valor e se era para somar nesta operacao.",
       "Com a operacao ainda em andamento, use Editar operacao para corrigir — alterar preco pede a senha de 4 digitos.",
       "Se a operacao ja fechou, cancele com o motivo e refaca, ou corrija o pedido dentro do OMIE antes de faturar."

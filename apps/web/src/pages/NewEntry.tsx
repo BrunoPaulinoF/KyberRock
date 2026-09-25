@@ -83,24 +83,14 @@ export function NewEntry() {
     () => (customerId ? q.customerFreightRules(user.companyId, customerId) : Promise.resolve([])),
     [user.companyId, customerId]
   );
-  const lastPrice = useAsync(
-    () =>
-      customerId && productId
-        ? q.lastCustomerProductPrice(user.companyId, customerId, productId)
-        : Promise.resolve(null),
-    [user.companyId, customerId, productId]
-  );
-  // A mesma ordem da balanca (`PricingService`): o preco da ULTIMA operacao do cliente com
-  // este produto e, sem ela, o cadastro (especial do cliente, depois o padrao do produto).
   const price = useMemo(() => {
     if (!productId) return null;
-    if (lastPrice.data) return { cents: lastPrice.data, source: "Ultima operacao do cliente" };
     const own = (special.data ?? []).find((row) => row.product_id === productId);
     if (own) return { cents: own.unit_price_cents, source: "Preco especial do cliente" };
     const standard = (defaults.data ?? []).find((row) => row.product_id === productId);
     if (standard) return { cents: standard.unit_price_cents, source: "Preco padrao do produto" };
     return { cents: null, source: "Produto sem preco cadastrado" };
-  }, [productId, lastPrice.data, special.data, defaults.data]);
+  }, [productId, special.data, defaults.data]);
 
   // Esc volta para a fila, como o "Voltar" do rodape do desktop.
   useEffect(() => {

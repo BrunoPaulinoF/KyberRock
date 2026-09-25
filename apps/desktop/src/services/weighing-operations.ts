@@ -2759,8 +2759,7 @@ export function updateWeighingOperationProduct(
 
   const priceDetails = new PricingService(database).getPriceDetailsForCustomerProduct(
     customerId,
-    input.newProductId,
-    { excludeOperationId: input.operationId }
+    input.newProductId
   );
   if (!priceDetails || priceDetails.appliedUnitPriceCents === null) {
     throw new Error(
@@ -2896,8 +2895,7 @@ export function updateWeighingOperationCustomer(
 
   const priceDetails = new PricingService(database).getPriceDetailsForCustomerProduct(
     input.newCustomerId,
-    productId,
-    { excludeOperationId: input.operationId }
+    productId
   );
   if (!priceDetails || priceDetails.appliedUnitPriceCents === null) {
     throw new Error(
@@ -3266,8 +3264,7 @@ export function updateWeighingOperationDetails(
     }
     const priceDetails = new PricingService(database).getPriceDetailsForCustomerProduct(
       customerId,
-      productId,
-      { excludeOperationId: input.operationId }
+      productId
     );
     unitPriceCents = input.unitPriceCents;
     baseUnitPriceCents =
@@ -3277,8 +3274,7 @@ export function updateWeighingOperationDetails(
   } else if (catalogChanged) {
     const priceDetails = new PricingService(database).getPriceDetailsForCustomerProduct(
       customerId,
-      productId,
-      { excludeOperationId: input.operationId }
+      productId
     );
     if (!priceDetails || priceDetails.appliedUnitPriceCents === null) {
       throw new Error(
