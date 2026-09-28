@@ -45,7 +45,7 @@ import {
 } from "../lib/invoice-closing";
 import { matchesSearch } from "../lib/operation";
 import { q, type BillingRequest } from "../lib/queries";
-import { deliverReports } from "../lib/report-output";
+import { deliverReports, spreadsheetFileName } from "../lib/report-output";
 import { useAsync } from "../lib/use-async";
 
 const HELP =
@@ -309,7 +309,10 @@ export function InvoiceClosing() {
     try {
       const files = buildInvoiceClosingFiles(report, selectedFormats);
       await deliverReports(files);
-      const names = [...files.pdf, ...files.xls].map((file) => file.filename);
+      const names = [
+        ...files.pdf.map((file) => file.filename),
+        ...files.xls.map((file) => spreadsheetFileName(file.filename))
+      ];
       setExportMessage(
         names.length === 1
           ? `Arquivo gerado: ${names[0]}`

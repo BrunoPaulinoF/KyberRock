@@ -25,7 +25,9 @@ const EXACT_COPIES = [
   "report-unit-price.ts",
   "invoice-number-label.ts",
   "invoice-closing-cycle.ts",
-  "weighing-billing-situation.ts"
+  "weighing-billing-situation.ts",
+  // A planilha de verdade (.xlsx) montada do mesmo HTML.
+  "html-to-xlsx.ts"
 ];
 
 /**

@@ -180,6 +180,18 @@ Agora cada célula sai tipada, em `sheet-cell.ts` (puro) + `sheetTable` (`report
   identificador (`isTextSheetHeader`), dígito solto com mais de 3 casas e sem separador de
   milhar (um `num()` de verdade só passa de 999 com ponto) e número começando com zero.
 
+**O arquivo agora é `.xlsx` de verdade** (`html-to-xlsx.ts`, copiado byte a byte em
+`apps/web/src/lib/desktop/`). O HTML salvo como `.xls` abria no Excel em "Modo de Exibição
+Protegido", com o aviso de formato diferente da extensão, e quem salvava por cima ficava num
+arquivo que não aceitava fórmula direito — dava para ver, não para trabalhar. O mesmo HTML
+tipado acima continua sendo a fonte (é ele que vira PDF e o que o `sheetTable` monta); o conversor
+lê as tabelas, respeita o `x:num` e o `mso-number-format` (vira formato de número do Excel: data
+vira data de verdade, `R$ #,##0.00`, `#,##0 "kg"`) e escreve o pacote OOXML mínimo (ZIP sem
+compressão + CRC32, sem dependência nova). Célula com formato `@` só fica travada como texto
+quando parece número (`004321`, CNPJ, placa numérica); nome e célula vazia ficam "Geral", senão a
+fórmula digitada ali viraria texto. Desktop (`export-report-excel`, `saveReportDocuments`) e site
+(`downloadSpreadsheet`) trocaram o nome do arquivo para `.xlsx` (`xlsxFileName`).
+
 O `Exportar Excel` do painel tem renderizador **próprio** (`exportRangeToSpreadsheet`): o
 `exportRangeToHtml` continua sendo o A4 que vira PDF no e-mail do fechamento diário, e por isso
 não podia virar planilha. O CSV do relatório do dia é pt-BR (`;` + vírgula decimal + BOM), que é
@@ -443,9 +455,9 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   `apps/web/src/lib/permissions.ts`. Tela que nao e do perfil nao aparece no menu, e o endereco
   digitado a mao volta para a tela inicial dele (`homeFor`). Tela nova entra nessa lista e no
   `NAV_SECTIONS` do `Layout.tsx`; rota nova usa o `only("<tela>", ...)` do `App.tsx`.
-- `monitoramento` so ve `/monitoramento`; `comercial` as cinco telas de analise mais Cadastros e
-  `/senha-preco`; `gestor` e `operacao` tudo; `administrador` tudo mais
-  `/suporte` (Logs) e `/senha-preco`.
+- `monitoramento` so ve `/monitoramento`; `comercial` as cinco telas de analise mais Cadastros,
+  `/cupons` e `/senha-preco`; `gestor` e `operacao` tudo (com `/cupons`, que nao existe no
+  desktop); `administrador` tudo mais `/suporte` (Logs) e `/senha-preco`.
   So gestor, operacao e administrador tem a engrenagem de configuracoes; os outros tem so o botao
   Sair.
 - O que cada perfil **grava** mora na `web-api` (`_shared/web-session.ts`, `actionDenial` no
@@ -529,6 +541,23 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   hora do cancelamento (o mesmo recorte da aba Canceladas). Atualiza pelo aviso `operation_change_pings`, como o
   Monitoramento. A coluna `loading_requests.loader_started_at` (migracao `202609280002`) ficou
   sem uso: o botao "Iniciar" do carregador foi retirado quando a regra passou a ser a da balanca.
+- **Cupons** (`/cupons`, `pages/Receipts.tsx`, regra em `lib/receipt-lookup.ts`): acha o cupom
+  pelo numero que esta no papel — o `COD 003249` do topo (`operation_code`) ou o
+  `COPIA NRO 000004038-4` (via `print_receipts.receipt_number` + traco + `device_number`); numero
+  solto procura nos dois e, havendo mais de uma pesagem, a tela pede para escolher. Mostra a via
+  como saiu na impressora (`content_snapshot_json.lines`, com seletor de 1a/2a via e impressao em
+  80 mm) e, ao lado, a pesagem organizada. O site so LE as vias: a politica
+  `web users read print receipts of own company` (migracao `202609280003`) chega na empresa pela
+  UNIDADE, porque `print_receipts` nao tem `company_id` — e por isso o nome dela NAO comeca com
+  "web users can read ", prefixo que o laco das migracoes recria comparando `company_id`.
+- **Relatorios: clicar no cliente** (`components/CustomerPanels.tsx`, regra em
+  `lib/customer-weighings.ts`): o nome do cliente (fechamento diario, periodo e tabela dinamica)
+  abre todas as pesagens dele separadas por produto, com filtro De/Ate proprio (comeca no periodo
+  do relatorio) e o COD levando para `/cupons`. Na tabela dinamica agrupada por cliente, a coluna
+  "Preco medio" virou o botao **Info** (olho), que abre o cartao com o cadastro (documento,
+  contato, endereco, bloco comercial e credito) e o resumo do periodo — o preco medio mora ali;
+  agrupada por produto ou dia, a coluna continua. O CSV nao mudou. Venda sem cadastro (so o nome
+  na pesagem) abre pelas pesagens com `customer_id` nulo e aquele nome.
 
 ## Balanca principal de precos
 

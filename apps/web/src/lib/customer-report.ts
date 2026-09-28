@@ -352,6 +352,11 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: "Cancelada"
 };
 
+/** O status da pesagem em portugues ("Sincronizada", "Cancelada"...). */
+export function operationStatusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? status;
+}
+
 export function isClosedStatus(status: string): boolean {
   return (CLOSED_STATUSES as readonly string[]).includes(status);
 }

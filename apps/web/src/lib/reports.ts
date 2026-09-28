@@ -66,6 +66,8 @@ export function filterByUnit<T extends Pick<ReportOperation, "unit_id">>(
 export interface ReportLine {
   id: string;
   date: string;
+  /** O cadastro do cliente (abre as pesagens dele ao clicar no nome); `null` = so o nome. */
+  customerId: string | null;
   customerName: string;
   productDescription: string;
   netWeightKg: number;
@@ -89,6 +91,7 @@ export function reportLines(ops: ReportOperation[]): ReportLine[] {
     .map((op) => ({
       id: op.id,
       date: saleDay(op),
+      customerId: op.customer_id,
       customerName: op.customer_name || "N/A",
       productDescription: op.product_description || "N/A",
       netWeightKg: op.net_weight_kg ?? 0,
@@ -154,6 +157,8 @@ export interface SalesPivotFilters {
 
 export interface SalesPivotRow {
   key: string;
+  /** O cadastro do cliente, quando a linha e de um cliente com cadastro. */
+  customerId: string | null;
   customerName: string | null;
   productDescription: string | null;
   date: string | null;
@@ -236,8 +241,10 @@ export function salesPivot(
           : groupBy === "customer_product"
             ? `${customerKey}|${productKey}`
             : day;
+    const byCustomer = groupBy === "customer" || groupBy === "customer_product";
     const row = groups.get(key) ?? {
       key,
+      customerId: byCustomer ? op.customer_id : null,
       customerName:
         groupBy === "customer" || groupBy === "customer_product"
           ? customerKey

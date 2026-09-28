@@ -142,3 +142,13 @@
   background: var(--kr-primary-strong);
   color: var(--kr-primary-text);
 }
+
+/* Coluna Info (o olho) da tabela dinamica, no lugar do preco medio quando a linha e de cliente. */
+.reports-table .report-info-col {
+  width: 1%;
+  text-align: center;
+  white-space: nowrap;
+}
+.reports-muted {
+  color: var(--kr-muted);
+}

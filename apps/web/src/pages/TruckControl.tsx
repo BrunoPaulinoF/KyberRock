@@ -8,7 +8,7 @@ import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { todayIso } from "../lib/format";
-import { downloadSpreadsheet, printReportHtml } from "../lib/report-output";
+import { downloadSpreadsheet, printReportHtml, spreadsheetFileName } from "../lib/report-output";
 import {
   filterTruckControlReport,
   formatClock,
@@ -83,7 +83,7 @@ export function TruckControl() {
         await printReportHtml(file.html, file.filename);
       } else {
         downloadSpreadsheet(file);
-        setNotice(`Excel salvo em: ${file.filename}`);
+        setNotice(`Excel salvo em: ${spreadsheetFileName(file.filename)}`);
       }
     } catch (err) {
       setExportError(

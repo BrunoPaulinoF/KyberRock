@@ -23,6 +23,7 @@ describe("telas de cada perfil", () => {
       [
         "cadastros",
         "senha-preco",
+        "cupons",
         "comercial",
         "conferencia-faturamento",
         "controle-caminhoes",

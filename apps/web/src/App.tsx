@@ -17,6 +17,7 @@ import { Login } from "./pages/Login";
 import { Monitor } from "./pages/Monitor";
 import { Operations } from "./pages/Operation";
 import { PriceCodePage } from "./pages/PriceCode";
+import { Receipts } from "./pages/Receipts";
 import { Registrations } from "./pages/Registrations";
 import { SalesReport } from "./pages/SalesReport";
 import { Settings } from "./pages/Settings";
@@ -89,6 +90,7 @@ export function App() {
                 <Route path="/cadastros/:tab" element={only("cadastros", <Registrations />)} />
                 <Route path="/cadastros/:tab/:sub" element={only("cadastros", <Registrations />)} />
                 <Route path="/senha-preco" element={only("senha-preco", <PriceCodePage />)} />
+                <Route path="/cupons" element={only("cupons", <Receipts />)} />
                 <Route path="/comercial" element={only("comercial", <Comercial />)} />
                 <Route path="/insights" element={only("insights", <Insights />)} />
                 <Route
