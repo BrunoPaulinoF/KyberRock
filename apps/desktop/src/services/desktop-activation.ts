@@ -17,6 +17,7 @@ import {
   type DesktopUpdateNotice
 } from "./update-notice.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
+import { applyPriceCodeFromCloud } from "./price-code.js";
 import { writeUpdateChannel } from "./update-channel.js";
 import { applyPriceMasterFromCloud } from "./price-authority.js";
 import {
@@ -155,6 +156,11 @@ interface DesktopStatusResponse {
    * que esta gravado aqui nao e tocado (ver `applyUpdateNoticeFromCloud`).
    */
   updateNotice?: DesktopUpdateNotice | null;
+  /**
+   * Chave da senha rotativa de preco (`services/price-code.ts`). Ausente = nuvem sem a chave
+   * ainda, e a balanca mantem a que ja tinha.
+   */
+  priceCodeSecret?: string;
   checkedAt?: string;
 }
 
@@ -401,6 +407,16 @@ export async function validateDesktopAccess(
         // Ignora falha ao gravar o aviso.
       }
       applyPriceMasterFromCloud(database, readPriceMasters(data), credentials.deviceId, now);
+      // Best-effort: a senha rotativa nunca pode derrubar a validacao que libera a operacao.
+      try {
+        applyPriceCodeFromCloud(database, {
+          secret: data.priceCodeSecret,
+          serverTime: data.checkedAt,
+          receivedAtMs: Date.now()
+        });
+      } catch {
+        // Ignora: a chave e o relogio gravados continuam valendo.
+      }
       // Atualiza a legenda multi-desktop (nome + cor de cada computador da
       // unidade). Best-effort: nunca derruba a validacao de acesso.
       if (Array.isArray(data.unitDevices) && data.unitDevices.length > 0) {

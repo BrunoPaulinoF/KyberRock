@@ -44,6 +44,7 @@ import {
   canEditPrices,
   canManagePrices,
   canOperate,
+  canSeePriceCode,
   canSeeSupport,
   canWrite,
   WEB_ROLE_LABELS,
@@ -52,6 +53,12 @@ import {
   type WebSessionResult
 } from "../_shared/web-session.ts";
 import { selectOperationsForBillingRequest } from "../_shared/billing-requests.ts";
+import {
+  currentPriceCode,
+  isUsablePriceCodeSecret,
+  newPriceCodeSecret,
+  verifyPriceCode
+} from "../_shared/price-code.ts";
 import { CnpjLookupError, lookupCnpj, type CnpjLookupResult } from "../_shared/cnpj-lookup.ts";
 import { conditionTermMatches } from "../_shared/payment-condition-match.ts";
 import { tryParsePaymentCondition } from "../_shared/payment-condition-parser.ts";
@@ -165,7 +172,8 @@ export const WEB_API_ACTIONS = [
   "delete_report_recipient",
   "unit_devices",
   "support_overview",
-  "lookup_cnpj"
+  "lookup_cnpj",
+  "price_code"
 ] as const;
 
 export type WebApiAction = (typeof WEB_API_ACTIONS)[number];
@@ -240,6 +248,9 @@ export const SUPPORT_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>(
   "support_overview"
 ]);
 
+/** A senha rotativa de preco que o comercial le para a operacao (`canSeePriceCode`). */
+export const PRICE_CODE_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>(["price_code"]);
+
 /**
  * O que o perfil pode executar, ou a mensagem do 403. Toda acao cai em exatamente um grupo —
  * o teste confere que nenhuma ficou de fora, para uma acao nova nao nascer liberada para quem
@@ -250,6 +261,11 @@ export function actionDenial(role: WebRole, action: WebApiAction): string | null
   const profile = WEB_ROLE_LABELS[role];
   if (SUPPORT_ACTIONS.has(action)) {
     return canSeeSupport(role) ? null : "So o perfil Administrador ve os logs de suporte.";
+  }
+  if (PRICE_CODE_ACTIONS.has(action)) {
+    return canSeePriceCode(role)
+      ? null
+      : "So o comercial ve a senha de preco. Peca a ele a senha que esta na tela.";
   }
   const allowed = OPERATION_ACTIONS.has(action)
     ? canOperate(role)
@@ -1603,26 +1619,81 @@ async function checkReferences(ctx: ActionContext, payload: Row): Promise<void> 
 const PRICE_PASSWORD_MAX_FAILURES = 5;
 const PRICE_PASSWORD_WINDOW_MS = 15 * 60 * 1000;
 
+/**
+ * A chave da senha rotativa da pedreira (`company_price_codes`, so a chave de servico le), ou
+ * `null` quando ainda nao existe — migracao `202609280001` pendente, ou pedreira sem linha.
+ */
+async function readPriceCodeSecret(ctx: ActionContext): Promise<string | null> {
+  try {
+    const [row] = await ctx.store.listRows(
+      "company_price_codes",
+      ctx.session.companyId,
+      "company_id, secret",
+      []
+    );
+    const secret = row?.secret;
+    return isUsablePriceCodeSecret(secret) ? secret : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A senha rotativa que o comercial ve na tela "Senha de preco" (`_shared/price-code.ts`). Vai
+ * tambem a hora da nuvem: a tela conta os segundos pelo relogio DELA, e o do computador do
+ * comercial pode estar adiantado ou atrasado.
+ */
+async function priceCode(ctx: ActionContext): Promise<Row> {
+  let secret = await readPriceCodeSecret(ctx);
+  if (!secret) {
+    // Pedreira sem chave (criada por fora do gatilho): cria agora. Se outra chamada criar ao
+    // mesmo tempo, o indice da chave primaria recusa esta e a releitura pega a que ficou.
+    try {
+      await ctx.store.insertRow("company_price_codes", {
+        company_id: ctx.session.companyId,
+        secret: newPriceCodeSecret()
+      });
+    } catch {
+      // Ver a releitura abaixo.
+    }
+    secret = await readPriceCodeSecret(ctx);
+  }
+  if (!secret) {
+    throw new WebApiError(
+      503,
+      "A senha rotativa ainda nao esta disponivel para esta pedreira. Fale com o suporte."
+    );
+  }
+  const nowMs = Date.parse(ctx.nowIso);
+  return { ...(await currentPriceCode(secret, nowMs)), serverTime: ctx.nowIso };
+}
+
 async function checkPricePassword(ctx: ActionContext): Promise<void> {
   if (!ctx.session.requiresPricePassword) return;
   const typed = optionalText(ctx.payload, "pricePassword");
-  if (!typed) throw new WebApiError(403, "Digite a senha de alteracao de preco.");
-  const [company] = await ctx.store.listRows(
-    "companies",
-    ctx.session.companyId,
-    "id, price_change_password",
-    [{ column: "id", value: ctx.session.companyId }],
-    { anyCompany: true }
-  );
-  const expected = String(company?.price_change_password ?? "");
-  // Sem senha definida nao ha o que acertar: contar como erro travaria o login a toa.
-  if (!expected) {
-    throw new WebApiError(
-      403,
-      "A pedreira ainda nao tem senha de alteracao de preco. Peca ao suporte para definir no painel."
+  if (!typed) throw new WebApiError(403, "Digite a senha de preco que o comercial passou.");
+  // A senha e o codigo rotativo de 45 s. Sem chave (migracao pendente) vale a senha fixa
+  // antiga, para a operacao nao ficar sem mudar preco no meio da troca.
+  const secret = await readPriceCodeSecret(ctx);
+  let expected = "";
+  if (!secret) {
+    const [company] = await ctx.store.listRows(
+      "companies",
+      ctx.session.companyId,
+      "id, price_change_password",
+      [{ column: "id", value: ctx.session.companyId }],
+      { anyCompany: true }
     );
+    expected = String(company?.price_change_password ?? "");
+    // Sem senha definida nao ha o que acertar: contar como erro travaria o login a toa.
+    if (!expected) {
+      throw new WebApiError(
+        403,
+        "A pedreira ainda nao tem senha de alteracao de preco. Peca ao suporte para definir no painel."
+      );
+    }
   }
-  // A senha tem 4 digitos e e a mesma da balanca: sem limite, bastaria tentar todas.
+  // O codigo tem 6 digitos: sem limite, bastaria tentar muitos dentro dos 45 s.
   const since = Date.parse(ctx.nowIso) - PRICE_PASSWORD_WINDOW_MS;
   const failures = (
     await ctx.store.listRows("price_password_failures", ctx.session.companyId, "attempted_at", [
@@ -1636,14 +1707,22 @@ async function checkPricePassword(ctx: ActionContext): Promise<void> {
       "Muitas tentativas erradas da senha de preco. Espere 15 minutos e tente de novo."
     );
   }
-  if (!safeEqual(typed, expected)) {
+  const valid = secret
+    ? await verifyPriceCode(secret, typed, Date.parse(ctx.nowIso))
+    : safeEqual(typed, expected);
+  if (!valid) {
     await ctx.store.insertRow("price_password_failures", {
       id: ctx.newId(),
       company_id: ctx.session.companyId,
       user_id: ctx.session.userId,
       attempted_at: ctx.nowIso
     });
-    throw new WebApiError(403, "Senha de alteracao de preco incorreta.");
+    throw new WebApiError(
+      403,
+      secret
+        ? "Senha de preco incorreta ou vencida. Peca ao comercial a senha que esta na tela agora."
+        : "Senha de alteracao de preco incorreta."
+    );
   }
 }
 
@@ -1820,6 +1899,7 @@ async function me(ctx: ActionContext): Promise<Row> {
       canOperate: canOperate(ctx.session.role),
       canCreateEntry: canCreateEntry(ctx.session.role),
       canSeeSupport: canSeeSupport(ctx.session.role),
+      canSeePriceCode: canSeePriceCode(ctx.session.role),
       requiresPricePassword: ctx.session.requiresPricePassword
     },
     companyId: ctx.session.companyId,
@@ -1892,6 +1972,8 @@ async function runAction(action: WebApiAction, ctx: ActionContext): Promise<Row>
       return supportOverview(ctx);
     case "lookup_cnpj":
       return lookupCustomerCnpj(ctx);
+    case "price_code":
+      return priceCode(ctx);
   }
 }
 

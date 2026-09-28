@@ -111,6 +111,7 @@ const WEB_OPERATION_POLL_INTERVAL_MS = 30_000;
 /** Balanca que nao e a executora so volta a perguntar se virou executora a cada 5 min. */
 const WEB_OPERATION_NON_EXECUTOR_RECHECK_MS = 5 * 60_000;
 import { readUpdateChannel, type DesktopUpdateChannel } from "./update-channel.js";
+import { verifyStoredPriceCode } from "./price-code.js";
 import {
   checkCustomerOmieReadiness,
   type OmieCustomerReadiness,
@@ -2905,7 +2906,14 @@ export class DesktopRuntime {
     }
   }
 
+  /**
+   * A senha das acoes protegidas (preco, limpar historico, relatorio financeiro) e o codigo
+   * rotativo de 45 s que o comercial ve no site (`services/price-code.ts`). A senha fixa antiga
+   * so vale enquanto esta balanca ainda nao recebeu a chave da nuvem.
+   */
   verifyPriceChangePassword(password: string): boolean {
+    const byCode = verifyStoredPriceCode(this.database, password);
+    if (byCode !== null) return byCode;
     const identity = this.ensureIdentity();
     const row = this.database
       .prepare("SELECT price_change_password FROM companies WHERE id = ?")

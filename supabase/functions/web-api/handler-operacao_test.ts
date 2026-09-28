@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { priceCodeForStep, priceCodeStep } from "../_shared/price-code";
 import type { WebSession, WebSessionResult } from "../_shared/web-session";
 import { handleWebApiRequest, type Row, type RowFilter, type WebApiStore } from "./handler";
 
@@ -289,6 +290,24 @@ describe("web-api: pesagem pelo site", () => {
     // Sem a marca, nao pede senha.
     const free = harness("gestor");
     expect((await free.call("request_operation", change)).status).toBe(200);
+  });
+
+  it("com a senha rotativa, vale so o codigo de agora que o comercial ve", async () => {
+    const h = harness("operacao", { requiresPricePassword: true });
+    const secret = "12345678901234567890";
+    h.store.seed("company_price_codes", [{ company_id: COMPANY, secret }]);
+    const step = priceCodeStep(Date.parse(NOW));
+    const change = { kind: "update", operationId: "op-open", data: { unitPriceCents: 6500 } };
+    for (const wrong of ["4321", await priceCodeForStep(secret, step - 1)]) {
+      expect((await h.call("request_operation", { ...change, pricePassword: wrong })).status).toBe(
+        403
+      );
+    }
+    expect(h.store.rows("operation_requests")).toHaveLength(0);
+    const code = await priceCodeForStep(secret, step);
+    const ok = await h.call("request_operation", { ...change, pricePassword: code });
+    expect(ok.status).toBe(200);
+    expect(JSON.stringify(h.store.rows("operation_requests"))).not.toContain(code);
   });
 
   it("5 senhas erradas travam o login por 15 min, mesmo acertando depois", async () => {

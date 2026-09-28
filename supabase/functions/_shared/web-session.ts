@@ -15,7 +15,8 @@
  *   - `comercial`     todo o CADASTRO (cliente, bloco comercial, frota e preco), sem senha de
  *                     preco; nao pesa, nao mexe em carteira, fechamento nem destinatarios;
  *   - `gestor`        tudo, menos a Nova entrada (fecha, altera, cancela e reimprime);
- *   - `operacao`      tudo, e mudanca de preco SEMPRE pede a senha da pedreira;
+ *   - `operacao`      tudo, e mudanca de preco SEMPRE pede a senha da pedreira (o codigo
+ *                     rotativo de 45 s que so o comercial ve, `_shared/price-code.ts`);
  *   - `administrador` tudo, sem senha nenhuma, mais os logs de suporte.
  *
  * O carregador (`loader`) tem login valido mas nao tem o que fazer aqui — a tela dele le a fila
@@ -142,9 +143,18 @@ export function canSeeSupport(role: WebRole): boolean {
 }
 
 /**
+ * Quem VE a senha rotativa de preco (`_shared/price-code.ts`, tela "Senha de preco" do site): o
+ * comercial, que e quem libera a mudanca de preco para a operacao, e o administrador, que ve tudo.
+ * Quem precisa digitar a senha nunca a ve — senao ela nao protegeria nada.
+ */
+export function canSeePriceCode(role: WebRole): boolean {
+  return role === "comercial" || role === "administrador";
+}
+
+/**
  * Quem digita a senha de alteracao de preco da pedreira: a `operacao` sempre, o `administrador`
  * e o `comercial` nunca (negociar preco e o trabalho do comercial), e o gestor conforme a marca do
- * login no painel (`requires_price_password`).
+ * login no painel (`requires_price_password`). A senha e o codigo rotativo que o comercial ve.
  */
 export function requiresPricePasswordFor(role: WebRole, flagged: boolean): boolean {
   if (role === "administrador" || role === "comercial") return false;

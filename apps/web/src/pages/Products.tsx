@@ -7,6 +7,7 @@ import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { formatDocument, formatMoney, parseMoneyToCents } from "../lib/format";
 import { matchesSearch } from "../lib/operation";
+import { PRICE_CODE_HINT } from "../lib/price-code";
 import { q, type Product } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
 
@@ -14,7 +15,7 @@ import { useAsync } from "../lib/use-async";
  * Aba Produtos da tela Cadastros (a `ProductsView` do desktop): o preco padrao de cada produto
  * e, logo abaixo, o preco especial por cliente. Publicar preco e de quem grava (gestor, operacao
  * e administrador); quem tem `requiresPricePassword` (a operacao sempre) digita a senha de preco
- * da pedreira, como no desktop — e a `web-api` que confere.
+ * — o codigo rotativo que o comercial ve —, como no desktop; e a `web-api` que confere.
  */
 export function ProductsSection() {
   const user = useUser();
@@ -342,12 +343,13 @@ function PricePasswordField({
   onChange: (value: string) => void;
 }) {
   return (
-    <Field label="Senha de alteracao de preco">
+    <Field label="Senha de preco (do comercial)" hint={PRICE_CODE_HINT}>
       <input
         className="input"
         type="password"
         autoComplete="off"
         inputMode="numeric"
+        maxLength={7}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />

@@ -54,6 +54,7 @@ import {
   type OperationRequest,
   type RequestKind
 } from "../lib/operation";
+import { PRICE_CODE_HINT } from "../lib/price-code";
 import { q, type Operation } from "../lib/queries";
 import { supabase } from "../lib/supabase";
 import { useAsync } from "../lib/use-async";
@@ -1040,7 +1041,7 @@ function EditModal({
       return;
     }
     if (priceChanged && requiresPricePassword && !password) {
-      setError("Digite a senha de alteracao de preco.");
+      setError("Digite a senha de preco que o comercial passou.");
       return;
     }
     setBusy(true);
@@ -1190,11 +1191,13 @@ function EditModal({
                   />
                 </Field>
                 {priceChanged && requiresPricePassword && (
-                  <Field label="Senha de alteracao de preco">
+                  <Field label="Senha de preco (do comercial)" hint={PRICE_CODE_HINT}>
                     <input
                       className="input"
                       type="password"
                       autoComplete="off"
+                      inputMode="numeric"
+                      maxLength={7}
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}
                     />

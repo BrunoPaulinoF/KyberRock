@@ -18,10 +18,11 @@ describe("telas de cada perfil", () => {
     expect(usesSidebar("monitoramento")).toBe(false);
   });
 
-  it("comercial ve a aba Comercial, as cinco telas de analise e os cadastros", () => {
+  it("comercial ve a aba Comercial, as cinco telas de analise, os cadastros e a senha de preco", () => {
     expect([...SCREENS_BY_ROLE.comercial].sort()).toEqual(
       [
         "cadastros",
+        "senha-preco",
         "comercial",
         "conferencia-faturamento",
         "controle-caminhoes",
@@ -36,12 +37,13 @@ describe("telas de cada perfil", () => {
 
   it("gestor ve tudo menos a Nova entrada (e os logs)", () => {
     const hidden = SCREENS.filter((screen) => !canSee("gestor", screen));
-    expect(hidden.sort()).toEqual(["carregamento", "nova-entrada", "suporte"]);
+    expect(hidden.sort()).toEqual(["carregamento", "nova-entrada", "senha-preco", "suporte"]);
   });
 
   it("operacao ve tudo menos os logs; administrador ve tambem os logs", () => {
     expect(SCREENS.filter((screen) => !canSee("operacao", screen)).sort()).toEqual([
       "carregamento",
+      "senha-preco",
       "suporte"
     ]);
     expect(SCREENS.filter((screen) => !canSee("administrador", screen))).toEqual(["carregamento"]);
@@ -115,6 +117,18 @@ describe("o que cada perfil faz", () => {
     expect(requiresPricePasswordFor("comercial", true)).toBe(false);
     expect(requiresPricePasswordFor("gestor", true)).toBe(true);
     expect(requiresPricePasswordFor("gestor", false)).toBe(false);
+  });
+
+  it("so o comercial e o administrador veem a senha de preco (quem digita nunca ve)", () => {
+    expect(ROLES.filter((role) => capabilitiesFor(role).canSeePriceCode)).toEqual([
+      "comercial",
+      "administrador"
+    ]);
+    for (const role of ROLES) {
+      if (requiresPricePasswordFor(role, true)) {
+        expect(capabilitiesFor(role).canSeePriceCode, role).toBe(false);
+      }
+    }
   });
 
   it("reconhece so os seis perfis", () => {

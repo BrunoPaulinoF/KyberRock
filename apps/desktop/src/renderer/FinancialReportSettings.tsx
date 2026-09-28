@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
 import { IconActionButton } from "./IconActionButton";
-import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
+import { PRICE_CODE_REJECTED, PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 import { HelpTooltip } from "./Tooltip";
 import {
   FINANCIAL_HOURS,
@@ -298,7 +298,7 @@ export function FinancialReportSettings({
     try {
       const valid = await desktopApi.verifyPriceChangePassword(password);
       if (!valid) {
-        setPasswordError("Senha incorreta.");
+        setPasswordError(PRICE_CODE_REJECTED);
         return;
       }
       const target = recipients.find((row) => row.id === pendingEnableId);
@@ -505,7 +505,7 @@ export function FinancialReportSettings({
       {pendingEnableId ? (
         <PriceChangePasswordDialog
           title="Liberar relatorio financeiro (OMIE)"
-          description="Digite a senha padrao da unidade (a mesma usada para alterar precos) para liberar o resumo executivo de financas do OMIE."
+          description="Digite a senha de preco (a mesma usada para alterar precos) para liberar o resumo executivo de financas do OMIE."
           error={passwordError}
           submitting={verifyingPassword}
           onCancel={() => {

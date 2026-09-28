@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { priceCodeForStep, priceCodeStep } from "../_shared/price-code";
 import type { WebSession, WebSessionResult } from "../_shared/web-session";
 import {
   actionDenial,
@@ -9,6 +10,7 @@ import {
   handleWebApiRequest,
   OPERATION_ACTIONS,
   PRICE_ACTIONS,
+  PRICE_CODE_ACTIONS,
   READ_ACTIONS,
   SUPPORT_ACTIONS,
   WEB_API_ACTIONS,
@@ -234,6 +236,7 @@ describe("web-api: sessao e permissoes", () => {
       const groups = [
         READ_ACTIONS.has(action),
         SUPPORT_ACTIONS.has(action),
+        PRICE_CODE_ACTIONS.has(action),
         OPERATION_ACTIONS.has(action),
         GESTOR_ONLY_ACTIONS.has(action),
         PRICE_ACTIONS.has(action),
@@ -242,7 +245,7 @@ describe("web-api: sessao e permissoes", () => {
       ].filter(Boolean);
       expect(groups, action).toHaveLength(1);
       expect(actionDenial("administrador", action), action).toBeNull();
-      if (!SUPPORT_ACTIONS.has(action)) {
+      if (!SUPPORT_ACTIONS.has(action) && !PRICE_CODE_ACTIONS.has(action)) {
         expect(actionDenial("gestor", action), action).toBeNull();
         expect(actionDenial("operacao", action), action).toBeNull();
       }
@@ -252,7 +255,7 @@ describe("web-api: sessao e permissoes", () => {
       const cadastro =
         CUSTOMER_ACTIONS.has(action) || FLEET_ACTIONS.has(action) || PRICE_ACTIONS.has(action);
       expect(actionDenial("comercial", action) === null, action).toBe(
-        cadastro || READ_ACTIONS.has(action)
+        cadastro || READ_ACTIONS.has(action) || PRICE_CODE_ACTIONS.has(action)
       );
     }
   });
@@ -778,6 +781,69 @@ describe("web-api: senha de preco no cadastro", () => {
     expect(result.status).toBe(403);
     expect(result.body.error).toContain("nao tem senha");
     expect(h.store.rows("price_password_failures")).toHaveLength(0);
+  });
+});
+
+describe("web-api: senha rotativa de preco", () => {
+  const SECRET = "12345678901234567890";
+  const nowCode = () => priceCodeForStep(SECRET, priceCodeStep(Date.parse(NOW)));
+  const oldCode = () => priceCodeForStep(SECRET, priceCodeStep(Date.parse(NOW)) - 1);
+
+  function rotating(role: WebSession["role"], requiresPricePassword = false) {
+    const h = harness({ role, requiresPricePassword });
+    // A senha fixa antiga continua na linha da pedreira: com a chave, ela nao vale mais.
+    h.store.seed("companies", [{ id: COMPANY, price_change_password: "0000" }]);
+    h.store.seed("company_price_codes", [{ company_id: COMPANY, secret: SECRET }]);
+    h.store.seed("products", [{ id: "p-1", company_id: COMPANY }]);
+    return h;
+  }
+
+  it("o comercial ve o codigo de agora, quando vence e a hora da nuvem", async () => {
+    const h = rotating("comercial");
+    const result = await h.call("price_code");
+    expect(result.status).toBe(200);
+    expect(result.body.code).toBe(await nowCode());
+    expect(result.body.periodSeconds).toBe(45);
+    expect(result.body.serverTime).toBe(NOW);
+    expect(Date.parse(String(result.body.expiresAt))).toBeGreaterThan(Date.parse(NOW));
+    expect(JSON.stringify(result.body)).not.toContain(SECRET);
+  });
+
+  it("quem digita a senha nao consegue ve-la", async () => {
+    for (const role of ["operacao", "gestor", "monitoramento"] as const) {
+      const result = await rotating(role).call("price_code");
+      expect(result.status, role).toBe(403);
+      expect(result.body.code, role).toBeUndefined();
+    }
+    expect((await rotating("administrador").call("price_code")).status).toBe(200);
+  });
+
+  it("pedreira sem chave ganha uma na primeira consulta", async () => {
+    const h = harness({ role: "comercial" });
+    const result = await h.call("price_code");
+    expect(result.status).toBe(200);
+    expect(String(result.body.code)).toMatch(/^\d{6}$/);
+    expect(h.store.rows("company_price_codes")).toHaveLength(1);
+  });
+
+  it("a operacao muda preco com o codigo atual, e nao com o vencido nem com a senha fixa", async () => {
+    const h = rotating("operacao", true);
+    const change = { productId: "p-1", unitPriceCents: 6500 };
+    const fixed = await h.call("set_product_default_price", { ...change, pricePassword: "0000" });
+    expect(fixed.status).toBe(403);
+    const expired = await h.call("set_product_default_price", {
+      ...change,
+      pricePassword: await oldCode()
+    });
+    expect(expired.status).toBe(403);
+    expect(expired.body.error).toContain("vencida");
+    expect(h.store.rows("product_default_prices")).toHaveLength(0);
+    const ok = await h.call("set_product_default_price", {
+      ...change,
+      pricePassword: await nowCode()
+    });
+    expect(ok.status).toBe(200);
+    expect(h.store.rows("price_password_failures")).toHaveLength(2);
   });
 });
 

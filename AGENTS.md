@@ -443,8 +443,9 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   `apps/web/src/lib/permissions.ts`. Tela que nao e do perfil nao aparece no menu, e o endereco
   digitado a mao volta para a tela inicial dele (`homeFor`). Tela nova entra nessa lista e no
   `NAV_SECTIONS` do `Layout.tsx`; rota nova usa o `only("<tela>", ...)` do `App.tsx`.
-- `monitoramento` so ve `/monitoramento`; `comercial` as cinco telas de analise mais Cadastros;
-  `gestor` tudo menos a Nova entrada; `operacao` tudo; `administrador` tudo mais `/suporte` (Logs).
+- `monitoramento` so ve `/monitoramento`; `comercial` as cinco telas de analise mais Cadastros e
+  `/senha-preco`; `gestor` tudo menos a Nova entrada; `operacao` tudo; `administrador` tudo mais
+  `/suporte` (Logs) e `/senha-preco`.
   So gestor, operacao e administrador tem a engrenagem de configuracoes; os outros tem so o botao
   Sair.
 - O que cada perfil **grava** mora na `web-api` (`_shared/web-session.ts`, `actionDenial` no
@@ -457,6 +458,20 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   acoes de preco do cadastro (`PRICE_ACTIONS`, inclusive remover), como no desktop. A mesma
   regra existe no site (`permissions.ts`, para mostrar o campo) e no painel
   (`pricePasswordRule`, que so mostra a regra nos dois perfis fixos).
+- **A senha de preco e rotativa** (migracao `202609280001_senha_rotativa_de_preco`): um codigo de
+  6 digitos que troca a cada 45 s (HOTP da RFC 4226 com contador = janela de 45 s), calculado de
+  uma chave por pedreira em `company_price_codes` — tabela SEPARADA de `companies` porque esta e
+  legivel por todo login da empresa, e quem tivesse a chave calcularia o codigo sem pedir ao
+  comercial. Quem VE o codigo: `comercial` e `administrador` (`canSeePriceCode`, acao `price_code`
+  da `web-api`, tela `/senha-preco`); quem digita nunca ve. So vale o codigo da janela ATUAL —
+  vencido e recusado, sem tolerancia. A conta vive em DOIS lugares, testados contra os mesmos
+  valores da RFC: `_shared/price-code.ts` (WebCrypto) e `apps/desktop/src/services/price-code.ts`
+  (`node:crypto`). A balanca recebe a chave no `desktop-status` (`priceCodeSecret`) e confere SEM
+  internet, com o relogio corrigido pelo `checkedAt` da nuvem — e o mesmo relogio pelo qual a tela
+  do comercial conta os segundos. A senha fixa `companies.price_change_password` so vale enquanto
+  a chave nao existe (migracao pendente na `web-api`; balanca que ainda nao falou com a nuvem
+  depois de atualizar). Ela protege tambem limpar operacoes e liberar o relatorio financeiro na
+  balanca.
 - A tela Monitoramento atualiza pelo aviso `operation_change_pings` (uma linha por empresa,
   carimbada por gatilho de STATEMENT em `weighing_operations`, migracao `202609260001`), com uma
   consulta de reserva lenta. Nao troque isso por consulta a cada poucos segundos: o banco ja

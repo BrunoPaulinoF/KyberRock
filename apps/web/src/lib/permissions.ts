@@ -10,10 +10,13 @@
  *   - `monitoramento` so o painel de vendas em tempo real, sem configuracoes;
  *   - `comercial`     aba Comercial (a tela do portal), insights, conferencia de faturamento,
  *                     relatorios, controle de caminhoes, relatorio por cliente e cadastros —
- *                     cadastra tudo e muda preco sem senha; sem configuracoes;
+ *                     cadastra tudo e muda preco sem senha; sem configuracoes. E o unico (com o
+ *                     administrador) que ve a tela "Senha de preco", o codigo rotativo que ele
+ *                     passa para a operacao mudar preco;
  *   - `gestor`        tudo, menos a Nova entrada, com configuracoes;
  *   - `operacao`      tudo, com configuracoes; mudar preco sempre pede a senha da pedreira;
- *   - `administrador` tudo, sem senha, mais os logs de suporte, com configuracoes.
+ *   - `administrador` tudo, sem senha, mais os logs de suporte e a senha de preco, com
+ *                     configuracoes.
  */
 
 export const ROLES = [
@@ -46,6 +49,7 @@ export const SCREENS = [
   "operacoes",
   "carteira",
   "cadastros",
+  "senha-preco",
   "comercial",
   "insights",
   "controle-caminhoes",
@@ -86,6 +90,7 @@ export const SCREENS_BY_ROLE: Record<Role, readonly Screen[]> = {
   comercial: [
     "comercial",
     "cadastros",
+    "senha-preco",
     "insights",
     "controle-caminhoes",
     "relatorio-cliente",
@@ -94,7 +99,8 @@ export const SCREENS_BY_ROLE: Record<Role, readonly Screen[]> = {
   ],
   gestor: DESK_SCREENS.filter((screen) => screen !== "nova-entrada"),
   operacao: DESK_SCREENS,
-  administrador: [...DESK_SCREENS, "suporte"]
+  // A senha de preco nao e tela do desktop: la ninguem a ve, so digita.
+  administrador: [...DESK_SCREENS, "senha-preco", "suporte"]
 };
 
 export function canSee(role: Role, screen: Screen): boolean {
@@ -140,6 +146,8 @@ export interface Capabilities {
   canCreateEntry: boolean;
   /** Engrenagem de configuracoes (Balanca, Impressao, Cloud). */
   hasSettings: boolean;
+  /** Ve a senha rotativa de preco (comercial e administrador). */
+  canSeePriceCode: boolean;
 }
 
 export function capabilitiesFor(role: Role): Capabilities {
@@ -153,14 +161,16 @@ export function capabilitiesFor(role: Role): Capabilities {
     canEditPrices: editsCadastro,
     canOperate: runsTheQuarry,
     canCreateEntry: role === "operacao" || role === "administrador",
-    hasSettings: canSee(role, "configuracoes")
+    hasSettings: canSee(role, "configuracoes"),
+    canSeePriceCode: canSee(role, "senha-preco")
   };
 }
 
 /**
  * Quem digita a senha de alteracao de preco da pedreira: a `operacao` sempre, o `administrador`
  * e o `comercial` nunca, e o gestor conforme a marca do login no painel. Mesma regra de
- * `requiresPricePasswordFor` na `web-api`, que e quem confere a senha.
+ * `requiresPricePasswordFor` na `web-api`, que e quem confere a senha. A senha e o codigo
+ * rotativo de 45 s que o comercial ve na tela "Senha de preco".
  */
 export function requiresPricePasswordFor(role: Role, flagged: boolean): boolean {
   if (role === "administrador" || role === "comercial") return false;

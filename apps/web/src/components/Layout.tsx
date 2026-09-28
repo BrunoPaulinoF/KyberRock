@@ -6,6 +6,7 @@ import {
   Database,
   FileText,
   Handshake,
+  KeyRound,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -53,7 +54,8 @@ const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
       { screen: "nova-entrada", to: "/nova-entrada", label: "Nova entrada", icon: PlusCircle },
       { screen: "operacoes", to: "/operacoes", label: "Operacoes", icon: ListChecks },
       { screen: "carteira", to: "/carteira", label: "Carteira", icon: Wallet },
-      { screen: "cadastros", to: "/cadastros", label: "Cadastros", icon: Database }
+      { screen: "cadastros", to: "/cadastros", label: "Cadastros", icon: Database },
+      { screen: "senha-preco", to: "/senha-preco", label: "Senha de preco", icon: KeyRound }
     ]
   },
   {

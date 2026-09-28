@@ -1,0 +1,77 @@
+/* Senha de preco — o codigo rotativo que o comercial passa para a operacao. */
+
+.price-code {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  max-width: 560px;
+}
+.price-code-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.price-code-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--kr-text-strong);
+  font-size: 18px;
+}
+.price-code-hint {
+  margin: 0;
+  color: var(--kr-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.price-code-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 28px 20px;
+  border: 1px solid var(--kr-card-border);
+  border-radius: 12px;
+  background: var(--kr-card-bg);
+  box-shadow: var(--kr-shadow);
+}
+.price-code-value {
+  color: var(--kr-text-strong);
+  font-size: clamp(40px, 12vw, 64px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.price-code-bar {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--kr-surface-soft);
+  border: 1px solid var(--kr-border);
+}
+.price-code-bar span {
+  display: block;
+  height: 100%;
+  background: var(--kr-accent);
+  transition: width 0.25s linear;
+}
+.price-code-timer {
+  color: var(--kr-muted);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.price-code-card.ending .price-code-bar span {
+  background: var(--kr-danger-strong);
+}
+.price-code-card.ending .price-code-timer {
+  color: var(--kr-danger);
+  font-weight: 600;
+}
+.price-code-loading {
+  color: var(--kr-muted);
+  font-size: 15px;
+}
