@@ -71,6 +71,7 @@ import {
   isOmieMissingDocumentFault,
   isOmieProtectedRecordFault,
   isOmieStaleCustomerCodeFault,
+  isOmieUnknownCadastroCodeFault,
   isOmieAlreadyBilledFault
 } from "./omie-fault-classifier.js";
 import { provisionPaymentTermsFromOmieMirror } from "./payment-terms.js";
@@ -4261,6 +4262,16 @@ export async function pushOmieCustomersToCloud(
         errors.push(
           `Cliente ${customer.trade_name || customer.legal_name}: o OMIE exige CPF/CNPJ. Preencha o documento do cliente para reenviar. Detalhe: ${message}`
         );
+      } else if (isOmieUnknownCadastroCodeFault(message)) {
+        // O codigo OMIE deste cadastro nao existe mais la (cliente excluido no OMIE).
+        // Re-tentar manda o mesmo codigo: sai da fila e avisa uma vez so. O codigo fica
+        // como esta — se o cliente voltar a comprar, o fechamento da pesagem refaz o
+        // vinculo sozinho (isOmieStaleCustomerCodeFault em processOmieSyncQueue).
+        markBlocked.run(customer.id);
+        failed++;
+        errors.push(
+          `Cliente ${customer.trade_name || customer.legal_name}: o codigo ${customer.omie_customer_id} nao existe mais no OMIE (o cadastro foi excluido la). O envio deste cliente foi pausado para o erro nao se repetir. Se ele ainda compra, a proxima pesagem dele refaz o vinculo sozinha; se nao compra mais, inative o cadastro. Detalhe: ${message}`
+        );
       } else {
         markError.run(customer.id);
         failed++;
@@ -4495,6 +4506,13 @@ export async function pushOmieCarriersToCloud(
         failed++;
         errors.push(
           `Transportadora ${carrier.name}: o OMIE exige CPF/CNPJ. Preencha o documento da transportadora para reenviar. Detalhe: ${message}`
+        );
+      } else if (isOmieUnknownCadastroCodeFault(message)) {
+        // Mesmo caso do cliente: o codigo OMIE da transportadora nao existe mais la.
+        markBlocked.run(carrier.id);
+        failed++;
+        errors.push(
+          `Transportadora ${carrier.name}: o codigo ${carrier.omie_customer_id} nao existe mais no OMIE (o cadastro foi excluido la). O envio desta transportadora foi pausado para o erro nao se repetir; se ela nao e mais usada, inative o cadastro. Detalhe: ${message}`
         );
       } else {
         markError.run(carrier.id);

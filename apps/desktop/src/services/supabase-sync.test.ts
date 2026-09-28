@@ -952,6 +952,81 @@ describe("supabase sync", () => {
     }
   });
 
+  // Caso real (Pedreira Ibiuna, 28/09/2026): 57 clientes excluidos no OMIE voltavam como
+  // erro a cada clique em sincronizar, porque a recusa deixava o cadastro na fila.
+  it("stops retrying a customer whose OMIE code no longer exists", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertLocalCustomer(database, "omie_11455923765", {
+        source: "hybrid",
+        omieCustomerId: 11455923765
+      });
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(
+          "OMIE HTTP 500 em AlterarCliente (/geral/clientes/) - ERROR: Cliente não cadastrado para o Código [11455923765] !"
+        ),
+        data: null
+      });
+
+      const result = await pushOmieCustomersToCloud(database, identity);
+
+      expect(result).toMatchObject({ pushed: 0, failed: 1 });
+      expect(result.errors[0]).toContain("nao existe mais no OMIE");
+      expect(result.errors[0]).toContain("11455923765");
+      expect(
+        database
+          .prepare(
+            "SELECT needs_push, sync_status, omie_customer_id FROM customers WHERE id = 'omie_11455923765'"
+          )
+          .get()
+      ).toEqual({ needs_push: 0, sync_status: "error", omie_customer_id: 11455923765 });
+
+      // Segunda sincronizacao nao chama mais o OMIE nem repete o erro.
+      invokeMock.mockClear();
+      const again = await pushOmieCustomersToCloud(database, identity);
+      expect(invokeMock).not.toHaveBeenCalled();
+      expect(again).toEqual({ pushed: 0, failed: 0, errors: [] });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("stops retrying a carrier whose OMIE code no longer exists", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertLocalCarrier(database, "carrier-1", { omieCustomerId: 777 });
+      invokeMock.mockResolvedValueOnce({
+        error: createFunctionHttpError(
+          "OMIE HTTP 500 em AlterarCliente (/geral/clientes/) - ERROR: Cliente não cadastrado para o Código [777] !"
+        ),
+        data: null
+      });
+
+      const result = await pushOmieCarriersToCloud(database, identity);
+
+      expect(result).toMatchObject({ pushed: 0, failed: 1 });
+      expect(result.errors[0]).toContain("nao existe mais no OMIE");
+      expect(
+        database
+          .prepare("SELECT needs_push, sync_status FROM carriers WHERE id = 'carrier-1'")
+          .get()
+      ).toEqual({ needs_push: 0, sync_status: "error" });
+
+      invokeMock.mockClear();
+      const again = await pushOmieCarriersToCloud(database, identity);
+      expect(invokeMock).not.toHaveBeenCalled();
+      expect(again).toEqual({ pushed: 0, failed: 0, errors: [] });
+    } finally {
+      database.close();
+    }
+  });
+
   it("blocks local customers without CPF/CNPJ before calling OMIE", async () => {
     const database = createDatabase();
 

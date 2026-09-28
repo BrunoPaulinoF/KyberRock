@@ -168,14 +168,21 @@ Deno.test(
 Deno.test(
   "mergeOmieCustomerTags soma a tag do papel as que o cadastro ja tem no OMIE",
   async () => {
+    const params: unknown[] = [];
     const queue = {
-      request: () => Promise.resolve({ tags: [{ tag: "Fornecedor" }, { tag: "  " }] })
+      request: (input: { param: unknown }) => {
+        params.push(input.param);
+        return Promise.resolve({ tags: [{ tag: "Fornecedor" }, { tag: "  " }] });
+      }
     } as unknown as OmieRequester;
 
     assertEquals(await mergeOmieCustomerTags(queue, credentials, 42, "cliente"), [
       "Fornecedor",
       "cliente"
     ]);
+    // Com sublinhado: `codigoClienteOmie` e recusado pelo OMIE ("Tag [CODIGOCLIENTEOMIE]
+    // nao faz parte da estrutura") e a consulta caia sempre no catch, apagando as outras tags.
+    assertEquals(params, [{ codigo_cliente_omie: 42 }]);
   }
 );
 
