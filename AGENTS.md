@@ -479,6 +479,30 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   carimbada por gatilho de STATEMENT em `weighing_operations`, migracao `202609260001`), com uma
   consulta de reserva lenta. Nao troque isso por consulta a cada poucos segundos: o banco ja
   estourou cota uma vez.
+- **Listas de 50 em 50.** Desenhar os 2 mil clientes de uma vez era o que deixava o site
+  pesado. `DataTable` mostra 50 linhas e o "Ver mais" (`LoadMore`, `useShowMore` em
+  `components/ui.tsx`); a lista de clientes vai alem e pagina NO BANCO (`q.customersPage` +
+  `usePaged`, busca montada em `lib/customer-search.ts`, que acha o CNPJ gravado com ou sem
+  pontuacao), e o seletor de cliente de Produtos busca enquanto digita (`CustomerPicker`).
+- **Cadastro repetido some so da TELA** (`lib/dedupe.ts`): cada balanca subiu a sua copia de
+  "Dinheiro", "Pix", contas, condicoes, placas e motoristas (na Pedreira Ibiuna, 38 formas de
+  pagamento para 8). As copias ficam no banco de proposito: pesagem, cliente e carteira apontam
+  para cada uma, e apagar na nuvem viraria lapide no pull e tiraria da balanca a forma que a
+  pesagem dela usa. O seletor mostra a representante e o padrao do cliente aponta para ela
+  (`representativeIds`); inativar e excluir valem para o grupo inteiro.
+- **Excluir cadastro** (`delete_customer`, `delete_carrier`, `delete_driver`, `delete_vehicle`)
+  pede a senha rotativa pela MESMA regra do preco (`DELETE_ACTIONS` no `handler.ts`). Cliente so
+  sai sem historico, como no desktop. Motorista e veiculo ganharam `deleted_at` na nuvem (migracao
+  `202609280002`); a balanca passou a enviar e a receber essa lapide.
+- **Preco padrao = tabela padrao OU valor do OMIE**, como o `PricingService` da balanca. A balanca
+  nunca enviava `products.unit_price_cents` e o site mostrava "Sem preco" em quase tudo; agora
+  envia, e o `desktop-sync` manda a parte do lote SEM preco sem a coluna
+  (`_shared/product-price.ts`) — maquina que nunca puxou o OMIE nao apaga o preco que outra enviou.
+- **Etapas do caminhao** (tela Comercial, `components/TruckStages.tsx`, conta em
+  `lib/truck-stages.ts`): ENTRADA (pesou a entrada) -> CARREGANDO (`loading_requests.loader_started_at`,
+  botao "Iniciar" do carregador) -> SAIDA (`loader_completed_at`, "Concluir") -> saiu (`closed_at`).
+  Etapa sem carimbo mostra "—" e o tempo dela fica na anterior. Atualiza pelo aviso Realtime, como
+  o Monitoramento; `loader_started_at` nao vai para a balanca.
 
 ## Balanca principal de precos
 

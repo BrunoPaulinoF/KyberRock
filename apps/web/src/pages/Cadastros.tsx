@@ -1,16 +1,21 @@
 import { useMemo, useState, type FormEvent } from "react";
 
 import { IconAction, NewButton, Pill, SearchBar, SectionHead } from "../components/desk";
+import { DeleteDialog } from "../components/PricePassword";
 import { Alert, DataTable, Field, Modal, Warnings, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
-import { formatDocument, formatPlate, isValidDocument } from "../lib/format";
+import { dedupeBy, dedupeDrivers, dedupeVehicles, type DedupedGroup } from "../lib/dedupe";
+import { formatDocument, formatPlate, isValidDocument, normalizeDocument } from "../lib/format";
 import { q, type Carrier, type Driver, type Vehicle } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
 
 /*
  * A aba Transporte da tela Cadastros: Motoristas, Transportadoras e Placas, cada um com a
  * lista no molde do desktop (`DriverCrud`, `CarrierCrud`, `VehicleCrud`).
+ *
+ * A mesma placa (ou o mesmo motorista) cadastrada em duas balancas aparece UMA vez
+ * (`lib/dedupe.ts`); inativar e excluir valem para todas as copias do grupo.
  */
 
 function InactiveToggle({
@@ -34,17 +39,60 @@ function useToggleActive(reload: () => Promise<void>) {
   const toast = useToast();
   return async (
     action: "set_vehicle_active" | "set_driver_active" | "set_carrier_active",
-    id: string,
+    ids: string[],
     isActive: boolean
   ) => {
     try {
-      await callWebApi(action, { id, isActive });
+      for (const id of ids) await callWebApi(action, { id, isActive });
       toast.push(isActive ? "Reativado." : "Inativado.");
       await reload();
     } catch (caught) {
       toast.push(errorMessage(caught), "error");
     }
   };
+}
+
+type DeleteAction = "delete_driver" | "delete_vehicle" | "delete_carrier";
+
+/** Excluir um cadastro (e as copias dele): senha rotativa para quem precisa, como o preco. */
+function DeleteGroup({
+  action,
+  label,
+  ids,
+  onClose,
+  onDeleted
+}: {
+  action: DeleteAction;
+  label: string;
+  ids: string[];
+  onClose: () => void;
+  onDeleted: () => Promise<void>;
+}) {
+  const user = useUser();
+  const toast = useToast();
+  return (
+    <DeleteDialog
+      title={`Excluir ${label}`}
+      description={
+        ids.length > 1
+          ? `Este cadastro esta repetido em ${ids.length} balancas: todas as copias saem. As pesagens antigas continuam com o nome/placa gravados.`
+          : "O cadastro sai das telas do site e das balancas. As pesagens antigas continuam com o nome/placa gravados."
+      }
+      askPassword={user.requiresPricePassword}
+      onClose={onClose}
+      onConfirm={async (pricePassword) => {
+        try {
+          for (const id of ids) await callWebApi(action, { id, pricePassword });
+          toast.push("Cadastro excluido.");
+          onClose();
+          await onDeleted();
+          return null;
+        } catch (caught) {
+          return errorMessage(caught);
+        }
+      }}
+    />
+  );
 }
 
 export function DriversSection() {
@@ -57,25 +105,26 @@ export function DriversSection() {
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const [driver, setDriver] = useState<Driver | "new" | null>(null);
-  const drivers = data ?? [];
+  const [removing, setRemoving] = useState<DedupedGroup<Driver> | null>(null);
+  const groups = useMemo(() => dedupeDrivers(data ?? []), [data]);
   const needle = search.trim().toLowerCase();
   const rows = useMemo(
     () =>
-      drivers.filter(
-        (d) =>
+      groups.filter(
+        ({ row: d }) =>
           (showInactive || d.is_active) &&
           (!needle ||
             d.name.toLowerCase().includes(needle) ||
             (d.document ?? "").toLowerCase().includes(needle))
       ),
-    [drivers, needle, showInactive]
+    [groups, needle, showInactive]
   );
 
   return (
     <>
       <SectionHead
         title="Motoristas"
-        count={drivers.filter((d) => d.is_active).length}
+        count={groups.filter((g) => g.row.is_active).length}
         description="Motoristas usados na identificacao do caminhao e impressos no cupom."
         action={
           user.canEditFleet && (
@@ -94,15 +143,16 @@ export function DriversSection() {
       </SearchBar>
       <DataTable
         rows={rows}
-        rowKey={(d) => d.id}
-        rowClassName={(d) => (d.is_active ? undefined : "inactive")}
+        rowKey={(g) => g.row.id}
+        rowClassName={(g) => (g.row.is_active ? undefined : "inactive")}
         empty={loading ? "Carregando..." : "Nenhum motorista."}
+        pageKey={`${needle}|${showInactive}`}
         columns={[
-          { key: "name", header: "Nome", render: (d) => <strong>{d.name}</strong> },
+          { key: "name", header: "Nome", render: ({ row: d }) => <strong>{d.name}</strong> },
           {
             key: "details",
             header: "Detalhes",
-            render: (d) =>
+            render: ({ row: d }) =>
               [
                 d.document ? `CPF: ${d.document}` : null,
                 d.phone ? `Tel: ${d.phone}` : null,
@@ -116,15 +166,27 @@ export function DriversSection() {
             key: "actions",
             header: "Acoes",
             numeric: true,
-            render: (d) =>
+            render: (group) =>
               user.canEditFleet && (
                 <span className="row-actions">
-                  <IconAction icon="edit" label="Editar motorista" onClick={() => setDriver(d)} />
+                  <IconAction
+                    icon="edit"
+                    label="Editar motorista"
+                    onClick={() => setDriver(group.row)}
+                  />
                   <IconAction
                     icon="power"
-                    label={d.is_active ? "Inativar" : "Reativar"}
-                    tone={d.is_active ? "danger" : "neutral"}
-                    onClick={() => void toggle("set_driver_active", d.id, !d.is_active)}
+                    label={group.row.is_active ? "Inativar" : "Reativar"}
+                    tone={group.row.is_active ? "danger" : "neutral"}
+                    onClick={() =>
+                      void toggle("set_driver_active", group.ids, !group.row.is_active)
+                    }
+                  />
+                  <IconAction
+                    icon="trash"
+                    label="Excluir motorista"
+                    tone="danger"
+                    onClick={() => setRemoving(group)}
                   />
                 </span>
               )
@@ -141,6 +203,15 @@ export function DriversSection() {
           }}
         />
       )}
+      {removing && (
+        <DeleteGroup
+          action="delete_driver"
+          label={removing.row.name}
+          ids={removing.ids}
+          onClose={() => setRemoving(null)}
+          onDeleted={reload}
+        />
+      )}
     </>
   );
 }
@@ -155,26 +226,32 @@ export function VehiclesSection() {
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const [vehicle, setVehicle] = useState<Vehicle | "new" | null>(null);
+  const [removing, setRemoving] = useState<DedupedGroup<Vehicle> | null>(null);
   const [vehicles, carriers] = data ?? [[], []];
-  const carrierName = (id: string | null) => carriers.find((c) => c.id === id)?.name ?? "—";
+  const carrierNames = useMemo(
+    () => new Map(carriers.map((carrier) => [carrier.id, carrier.name])),
+    [carriers]
+  );
+  const carrierName = (id: string | null) => (id ? carrierNames.get(id) : undefined) ?? "—";
+  const groups = useMemo(() => dedupeVehicles(vehicles), [vehicles]);
   const needle = search.trim().toLowerCase().replace(/[\s-]/g, "");
   const rows = useMemo(
     () =>
-      vehicles.filter(
-        (v) =>
+      groups.filter(
+        ({ row: v }) =>
           (showInactive || v.is_active) &&
           (!needle ||
-            v.plate.toLowerCase().includes(needle) ||
+            v.plate.toLowerCase().replace(/[\s-]/g, "").includes(needle) ||
             (v.description ?? "").toLowerCase().includes(needle))
       ),
-    [vehicles, needle, showInactive]
+    [groups, needle, showInactive]
   );
 
   return (
     <>
       <SectionHead
         title="Placas"
-        count={vehicles.filter((v) => v.is_active).length}
+        count={groups.filter((g) => g.row.is_active).length}
         description="Caminhoes identificados pela placa. A mesma placa pode atender varios clientes e transportadoras."
         action={
           user.canEditFleet && <NewButton onClick={() => setVehicle("new")}>Novo veiculo</NewButton>
@@ -191,20 +268,21 @@ export function VehiclesSection() {
       </SearchBar>
       <DataTable
         rows={rows}
-        rowKey={(v) => v.id}
-        rowClassName={(v) => (v.is_active ? undefined : "inactive")}
+        rowKey={(g) => g.row.id}
+        rowClassName={(g) => (g.row.is_active ? undefined : "inactive")}
         empty={loading ? "Carregando..." : "Nenhum veiculo."}
+        pageKey={`${needle}|${showInactive}`}
         columns={[
           {
             key: "plate",
             header: "Placa",
-            render: (v) => <strong className="plate-badge">{formatPlate(v.plate)}</strong>
+            render: ({ row: v }) => <strong className="plate-badge">{formatPlate(v.plate)}</strong>
           },
-          { key: "desc", header: "Descricao", render: (v) => v.description || "—" },
+          { key: "desc", header: "Descricao", render: ({ row: v }) => v.description || "—" },
           {
             key: "carrier",
             header: "Transportadora",
-            render: (v) => (
+            render: ({ row: v }) => (
               <>
                 {carrierName(v.carrier_id)}
                 {!v.is_active && <span className="cell-sub">Inativo</span>}
@@ -215,15 +293,27 @@ export function VehiclesSection() {
             key: "actions",
             header: "Acoes",
             numeric: true,
-            render: (v) =>
+            render: (group) =>
               user.canEditFleet && (
                 <span className="row-actions">
-                  <IconAction icon="edit" label="Editar veiculo" onClick={() => setVehicle(v)} />
+                  <IconAction
+                    icon="edit"
+                    label="Editar veiculo"
+                    onClick={() => setVehicle(group.row)}
+                  />
                   <IconAction
                     icon="power"
-                    label={v.is_active ? "Inativar" : "Reativar"}
-                    tone={v.is_active ? "danger" : "neutral"}
-                    onClick={() => void toggle("set_vehicle_active", v.id, !v.is_active)}
+                    label={group.row.is_active ? "Inativar" : "Reativar"}
+                    tone={group.row.is_active ? "danger" : "neutral"}
+                    onClick={() =>
+                      void toggle("set_vehicle_active", group.ids, !group.row.is_active)
+                    }
+                  />
+                  <IconAction
+                    icon="trash"
+                    label="Excluir veiculo"
+                    tone="danger"
+                    onClick={() => setRemoving(group)}
                   />
                 </span>
               )
@@ -239,6 +329,15 @@ export function VehiclesSection() {
             setVehicle(null);
             await reload();
           }}
+        />
+      )}
+      {removing && (
+        <DeleteGroup
+          action="delete_vehicle"
+          label={formatPlate(removing.row.plate)}
+          ids={removing.ids}
+          onClose={() => setRemoving(null)}
+          onDeleted={reload}
         />
       )}
     </>
@@ -439,19 +538,29 @@ export function CarriersSection() {
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const [editing, setEditing] = useState<Carrier | "new" | null>(null);
-  const carriers = data ?? [];
+  const [removing, setRemoving] = useState<DedupedGroup<Carrier> | null>(null);
+  // Mesma transportadora cadastrada em duas balancas: o documento e quem diz. Sem documento,
+  // cada uma fica sozinha (nome igual nao prova que e a mesma empresa).
+  const groups = useMemo(
+    () => dedupeBy(data ?? [], (carrier) => normalizeDocument(carrier.document ?? "")),
+    [data]
+  );
   const needle = search.trim().toLowerCase();
-  const rows = carriers.filter(
-    (c) =>
-      (showInactive || c.is_active) &&
-      (!needle || c.name.toLowerCase().includes(needle) || (c.document ?? "").includes(needle))
+  const rows = useMemo(
+    () =>
+      groups.filter(
+        ({ row: c }) =>
+          (showInactive || c.is_active) &&
+          (!needle || c.name.toLowerCase().includes(needle) || (c.document ?? "").includes(needle))
+      ),
+    [groups, needle, showInactive]
   );
 
   return (
     <>
       <SectionHead
         title="Transportadoras"
-        count={carriers.filter((c) => c.is_active).length}
+        count={groups.filter((g) => g.row.is_active).length}
         description="Sincronizadas do OMIE pela tag 'transportadora' ou criadas aqui. Com CNPJ, sobem ao OMIE como transportador."
         action={
           user.canEditFleet && (
@@ -470,16 +579,25 @@ export function CarriersSection() {
       </SearchBar>
       <DataTable
         rows={rows}
-        rowKey={(c) => c.id}
-        rowClassName={(c) => (c.is_active ? undefined : "inactive")}
+        rowKey={(g) => g.row.id}
+        rowClassName={(g) => (g.row.is_active ? undefined : "inactive")}
         empty={loading ? "Carregando..." : "Nenhuma transportadora."}
+        pageKey={`${needle}|${showInactive}`}
         columns={[
-          { key: "name", header: "Transportadora", render: (c) => <strong>{c.name}</strong> },
-          { key: "doc", header: "Documento", render: (c) => formatDocument(c.document) || "—" },
+          {
+            key: "name",
+            header: "Transportadora",
+            render: ({ row: c }) => <strong>{c.name}</strong>
+          },
+          {
+            key: "doc",
+            header: "Documento",
+            render: ({ row: c }) => formatDocument(c.document) || "—"
+          },
           {
             key: "origin",
             header: "Origem",
-            render: (c) => (
+            render: ({ row: c }) => (
               <span className="row-actions" style={{ justifyContent: "flex-start" }}>
                 {c.omie_customer_id ? (
                   <Pill tone="warning">OMIE</Pill>
@@ -494,19 +612,27 @@ export function CarriersSection() {
             key: "actions",
             header: "Acoes",
             numeric: true,
-            render: (c) =>
+            render: (group) =>
               user.canEditFleet && (
                 <span className="row-actions">
                   <IconAction
                     icon="edit"
                     label="Editar transportadora"
-                    onClick={() => setEditing(c)}
+                    onClick={() => setEditing(group.row)}
                   />
                   <IconAction
                     icon="power"
-                    label={c.is_active ? "Inativar" : "Reativar"}
-                    tone={c.is_active ? "danger" : "neutral"}
-                    onClick={() => void toggle("set_carrier_active", c.id, !c.is_active)}
+                    label={group.row.is_active ? "Inativar" : "Reativar"}
+                    tone={group.row.is_active ? "danger" : "neutral"}
+                    onClick={() =>
+                      void toggle("set_carrier_active", group.ids, !group.row.is_active)
+                    }
+                  />
+                  <IconAction
+                    icon="trash"
+                    label="Excluir transportadora"
+                    tone="danger"
+                    onClick={() => setRemoving(group)}
                   />
                 </span>
               )
@@ -521,6 +647,15 @@ export function CarriersSection() {
             setEditing(null);
             await reload();
           }}
+        />
+      )}
+      {removing && (
+        <DeleteGroup
+          action="delete_carrier"
+          label={removing.row.name}
+          ids={removing.ids}
+          onClose={() => setRemoving(null)}
+          onDeleted={reload}
         />
       )}
     </>

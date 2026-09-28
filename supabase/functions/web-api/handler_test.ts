@@ -1061,3 +1061,77 @@ describe("web-api: buscar CNPJ", () => {
     expect(result.status).toBe(403);
   });
 });
+
+describe("web-api: excluir cadastro", () => {
+  const SECRET = "12345678901234567890";
+  const nowCode = () => priceCodeForStep(SECRET, priceCodeStep(Date.parse(NOW)));
+
+  function seeded(role: WebSession["role"], requiresPricePassword = false) {
+    const h = harness({ role, requiresPricePassword });
+    h.store.seed("company_price_codes", [{ company_id: COMPANY, secret: SECRET }]);
+    h.store.seed("customers", [
+      { id: "c-novo", company_id: COMPANY, legal_name: "Sem historico", is_active: true },
+      { id: "c-velho", company_id: COMPANY, legal_name: "Com pesagem", is_active: true },
+      { id: "c-credito", company_id: COMPANY, legal_name: "Com credito", is_active: true }
+    ]);
+    h.store.seed("weighing_operations", [
+      { id: "op-1", company_id: COMPANY, customer_id: "c-velho", status: "synced" }
+    ]);
+    h.store.seed("customer_credit_movements", [
+      { id: "mv-1", company_id: COMPANY, customer_id: "c-credito" }
+    ]);
+    h.store.seed("drivers", [{ id: "d-1", company_id: COMPANY, name: "Joao", is_active: true }]);
+    h.store.seed("vehicles", [
+      { id: "v-1", company_id: COMPANY, plate: "ABC1D23", is_active: true }
+    ]);
+    h.store.seed("carriers", [{ id: "t-1", company_id: COMPANY, name: "Transp", is_active: true }]);
+    return h;
+  }
+
+  it("o comercial exclui sem senha e a lapide vai com o inativo", async () => {
+    const h = seeded("comercial");
+    for (const [action, table, id] of [
+      ["delete_driver", "drivers", "d-1"],
+      ["delete_vehicle", "vehicles", "v-1"],
+      ["delete_carrier", "carriers", "t-1"]
+    ] as const) {
+      const result = await h.call(action, { id });
+      expect(result.status, action).toBe(200);
+      const row = h.store.rows(table).find((candidate) => candidate.id === id);
+      expect(row?.deleted_at, action).toBe(NOW);
+      expect(row?.is_active, action).toBe(false);
+    }
+    // Ja excluido: nao encontrado, e nada muda.
+    expect((await h.call("delete_driver", { id: "d-1" })).status).toBe(404);
+  });
+
+  it("cliente so sai sem historico nenhum", async () => {
+    const h = seeded("comercial");
+    const withOperation = await h.call("delete_customer", { id: "c-velho" });
+    expect(withOperation.status).toBe(409);
+    expect(withOperation.body.error).toContain("Inativar");
+    expect((await h.call("delete_customer", { id: "c-credito" })).status).toBe(409);
+    expect((await h.call("delete_customer", { id: "c-novo" })).status).toBe(200);
+    const rows = h.store.rows("customers");
+    expect(rows.find((row) => row.id === "c-novo")?.deleted_at).toBe(NOW);
+    expect(rows.find((row) => row.id === "c-velho")?.deleted_at).toBeUndefined();
+  });
+
+  it("a operacao exclui so com o codigo rotativo de agora", async () => {
+    const h = seeded("operacao", true);
+    const without = await h.call("delete_vehicle", { id: "v-1" });
+    expect(without.status).toBe(403);
+    const wrong = await h.call("delete_vehicle", { id: "v-1", pricePassword: "000000" });
+    expect(wrong.status).toBe(403);
+    expect(h.store.rows("vehicles")[0].deleted_at).toBeUndefined();
+    const ok = await h.call("delete_vehicle", { id: "v-1", pricePassword: await nowCode() });
+    expect(ok.status).toBe(200);
+    expect(h.store.rows("vehicles")[0].deleted_at).toBe(NOW);
+  });
+
+  it("monitoramento nao exclui", async () => {
+    const h = seeded("monitoramento");
+    expect((await h.call("delete_driver", { id: "d-1" })).status).toBe(403);
+    expect(h.store.rows("drivers")[0].deleted_at).toBeUndefined();
+  });
+});

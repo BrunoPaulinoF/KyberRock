@@ -202,3 +202,8 @@
     break-inside: avoid;
   }
 }
+
+/* As etapas dos caminhoes ficam acima do relatorio, com um respiro entre os dois cartoes. */
+.comercial-stages {
+  margin-bottom: 14px;
+}

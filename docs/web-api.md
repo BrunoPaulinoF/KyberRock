@@ -172,8 +172,16 @@ O botão **Buscar CNPJ** do cadastro: consulta a Receita (BrasilAPI) pela mesma 
 (`_shared/cnpj-lookup.ts`, também usada pela `cnpj-lookup`). CNPJ que não está na base volta com
 `found: false`; documento que não é CNPJ é 400; Receita fora do ar é 502.
 
-**Não existe excluir cliente pela `web-api`.** Cliente com histórico só inativa; cadastro
-repetido se unifica na balança ("Cadastros repetidos"). É a regra D7 do plano.
+| Ação              | Payload                | Devolve |
+| ----------------- | ---------------------- | ------- |
+| `delete_customer` | `id`, `pricePassword?` | `id`    |
+
+**Excluir cliente só sem histórico** — a mesma trava do desktop (`findCustomerDeletionBlock`):
+qualquer pesagem (de qualquer status) ou lançamento de crédito do cliente é 409 com a orientação
+de Inativar; cadastro repetido se unifica na balança ("Cadastros repetidos"). A exclusão é a
+lápide `deleted_at`, que chega nas balanças pelo pull (`resolveCustomerTombstone`). Pede a senha
+rotativa pela mesma regra do preço (`requiresPricePassword`: o comercial e o administrador não
+digitam, a operação sempre, o gestor conforme o login) — ver `DELETE_ACTIONS` no `handler.ts`.
 
 ### 4.3 Bloco comercial e crédito (comercial, gestor, operação e administrador)
 
@@ -194,8 +202,18 @@ adotarem o bloco. `defaultCarrierId` e `defaultPaymentMethodId` precisam existir
 | `set_driver_active`  | `id`, `isActive`                                                                       | `id`, `isActive`               |
 | `upsert_vehicle`     | `id?`, `plate` (obrigatório ao criar), `description?`, `carrierId?`                    | `id`                           |
 | `set_vehicle_active` | `id`, `isActive`                                                                       | `id`, `isActive`               |
+| `delete_carrier`     | `id`, `pricePassword?`                                                                 | `id`                           |
+| `delete_driver`      | `id`, `pricePassword?`                                                                 | `id`                           |
+| `delete_vehicle`     | `id`, `pricePassword?`                                                                 | `id`                           |
 
 A placa é gravada em maiúsculas, sem espaço nem hífen (`ABC1D23`); placa repetida na empresa é 409. A transportadora com documento também sobe para o OMIE (`push_carrier`).
+
+Excluir grava a lápide `deleted_at` **e** `is_active = false`: a balança atualizada tira o
+cadastro da tela pela lápide, a que ainda não atualizou já deixa de oferecê-lo pelo inativo. Motorista e
+veículo ganharam `deleted_at` na nuvem na migração `202609280002` (antes a exclusão feita na balança
+subia só como inativo). As pesagens antigas guardam nome e placa por escrito — nada do histórico
+muda. A senha é a mesma do `delete_customer`. O site mostra UMA linha por placa/motorista repetido
+em várias balanças e exclui todas as cópias do grupo (`apps/web/src/lib/dedupe.ts`).
 
 ### 4.5 Vínculos (comercial, gestor, operação e administrador)
 
@@ -357,8 +375,8 @@ da empresa (sem senha, claro).
 | ------------ | ------- | ------------------------------------------------------------------- |
 | `price_code` | —       | `code` (6 dígitos), `expiresAt`, `periodSeconds` (45), `serverTime` |
 
-O código que libera mudar preço para quem tem `requiresPricePassword` no site e para **todos** na
-balança (que não tem login). Troca a cada 45 segundos, sem fim, e o vencido não vale mais. Sai de
+O código que libera mudar preço (e excluir cadastro, §4.2/§4.4) para quem tem
+`requiresPricePassword` no site e para **todos** na balança (que não tem login). Troca a cada 45 segundos, sem fim, e o vencido não vale mais. Sai de
 uma chave por pedreira (`company_price_codes`, que só a chave de serviço lê — a tabela nasce com
 uma linha por pedreira e o gatilho cria a da pedreira nova; se faltar, esta ação cria) e do
 relógio: HOTP da RFC 4226 (`_shared/price-code.ts`). A chave nunca sai na resposta. A tela conta

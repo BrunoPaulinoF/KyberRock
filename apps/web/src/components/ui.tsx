@@ -74,20 +74,82 @@ export interface Column<T> {
   numeric?: boolean;
 }
 
+/** Quantas linhas as listas mostram de cada vez; "Ver mais" traz outras tantas. */
+export const PAGE_SIZE = 50;
+
+/**
+ * "Mostrando 50 de 2.301" + "Ver mais". Serve a lista paginada na tela (`DataTable`) e a
+ * paginada no banco (clientes), que traz a proxima pagina so no clique.
+ */
+export function LoadMore({
+  shown,
+  total,
+  loading,
+  onMore,
+  step = PAGE_SIZE
+}: {
+  shown: number;
+  total: number;
+  loading?: boolean;
+  onMore: () => void;
+  step?: number;
+}) {
+  // Lista que cabe numa pagina so nao precisa de rodape.
+  if (total <= 0 || (shown >= total && total <= step)) return null;
+  const left = Math.max(0, total - shown);
+  return (
+    <div className="load-more">
+      <span>
+        Mostrando {Math.min(shown, total).toLocaleString("pt-BR")} de{" "}
+        {total.toLocaleString("pt-BR")}
+      </span>
+      {left > 0 && (
+        <button type="button" className="btn" disabled={loading} onClick={onMore}>
+          {loading ? "Carregando..." : `Ver mais ${Math.min(step, left).toLocaleString("pt-BR")}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Quantas linhas uma lista mostra agora: comeca em `pageSize` e cresce de `pageSize` a cada
+ * "Ver mais"; volta ao comeco quando `resetKey` muda (a busca, o filtro, a aba).
+ */
+export function useShowMore(resetKey: string, pageSize = PAGE_SIZE) {
+  const [limit, setLimit] = useState(pageSize);
+  useEffect(() => setLimit(pageSize), [resetKey, pageSize]);
+  return { limit, more: () => setLimit((current) => current + pageSize) };
+}
+
+/**
+ * Tabela das listas. Mostra `pageSize` linhas (50) e o "Ver mais" embaixo: desenhar as 2 mil
+ * linhas de uma vez era o que deixava as telas pesadas. `pageKey` volta para a primeira pagina
+ * quando muda (a busca, o filtro); `pageSize={0}` desliga (lista que ja vem paginada do banco).
+ */
 export function DataTable<T>({
   columns,
   rows,
   rowKey,
   rowClassName,
-  empty = "Nada por aqui."
+  empty = "Nada por aqui.",
+  pageSize = PAGE_SIZE,
+  pageKey,
+  footer
 }: {
   columns: Column<T>[];
   rows: T[];
   rowKey: (row: T) => string;
   rowClassName?: (row: T) => string | undefined;
   empty?: string;
+  pageSize?: number;
+  pageKey?: string;
+  /** Rodape dentro da moldura da tabela (o "Ver mais" da lista paginada no banco). */
+  footer?: ReactNode;
 }) {
+  const page = useShowMore(pageKey ?? "", pageSize);
   if (rows.length === 0) return <div className="empty">{empty}</div>;
+  const visible = pageSize > 0 ? rows.slice(0, page.limit) : rows;
   return (
     <div className="table-wrap">
       <table className="data">
@@ -101,7 +163,7 @@ export function DataTable<T>({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {visible.map((row) => (
             <tr key={rowKey(row)} className={rowClassName?.(row)}>
               {columns.map((column) => (
                 <td key={column.key} className={column.numeric ? "num" : undefined}>
@@ -112,6 +174,10 @@ export function DataTable<T>({
           ))}
         </tbody>
       </table>
+      {pageSize > 0 && rows.length > pageSize && (
+        <LoadMore shown={visible.length} total={rows.length} step={pageSize} onMore={page.more} />
+      )}
+      {footer}
     </div>
   );
 }

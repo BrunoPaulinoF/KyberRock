@@ -1748,7 +1748,7 @@ function upsertCloudDrivers(
     INSERT INTO drivers (
       id, company_id, name, document, phone, is_independent, is_active,
       created_at, updated_at, deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       name = excluded.name,
@@ -1757,7 +1757,9 @@ function upsertCloudDrivers(
       is_independent = excluded.is_independent,
       is_active = excluded.is_active,
       updated_at = excluded.updated_at,
-      deleted_at = NULL
+      -- A exclusao feita no site ou em outra balanca chega (lapide da migracao
+      -- 202609280002); nuvem sem a coluna manda null e o motorista continua vivo, como antes.
+      deleted_at = excluded.deleted_at
   `);
 
   let count = 0;
@@ -1775,7 +1777,8 @@ function upsertCloudDrivers(
       booleanToSql(row.is_independent, false),
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
-      updatedAt
+      updatedAt,
+      isoStringValue(row.deleted_at)
     );
     count++;
   }
@@ -1791,7 +1794,7 @@ function upsertCloudVehicles(
     INSERT INTO vehicles (
       id, company_id, plate, plate_normalized, description, carrier_id, is_active,
       created_at, updated_at, deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       plate = excluded.plate,
@@ -1800,7 +1803,8 @@ function upsertCloudVehicles(
       carrier_id = excluded.carrier_id,
       is_active = excluded.is_active,
       updated_at = excluded.updated_at,
-      deleted_at = NULL
+      -- Mesma regra do motorista: a lapide da nuvem chega, a ausencia dela nao apaga nada.
+      deleted_at = excluded.deleted_at
   `);
 
   let count = 0;
@@ -1821,7 +1825,8 @@ function upsertCloudVehicles(
       carrierId,
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
-      updatedAt
+      updatedAt,
+      isoStringValue(row.deleted_at)
     );
     count++;
   }
@@ -7474,7 +7479,7 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
       table: "products",
       alias: "p",
       columns:
-        "p.id, p.omie_product_id, p.code, p.description, p.unit, p.is_active, p.created_at, p.updated_at, p.deleted_at",
+        "p.id, p.omie_product_id, p.code, p.description, p.unit, p.unit_price_cents, p.is_active, p.created_at, p.updated_at, p.deleted_at",
       where: "p.company_id = @companyId"
     }),
     map: (row, companyId) => {
@@ -7486,6 +7491,11 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         code: stringValue(row.code) || stringValue(row.id),
         description: stringValue(row.description) || "Produto",
         unit: stringValue(row.unit) || "KG",
+        // O valor unitario do OMIE e o preco padrao do produto que nao tem tabela de preco
+        // padrao (`PricingService`): sem ele o site mostrava "Sem preco". Nulo nao apaga o
+        // preco da nuvem (o `desktop-sync` separa o lote), porque maquina que nunca puxou o
+        // OMIE tem o produto sem ele.
+        unit_price_cents: integerValue(row.unit_price_cents),
         is_active: cloudActive(row),
         created_at: cloudTimestamp(row.created_at, updatedAt),
         updated_at: updatedAt
@@ -7538,7 +7548,9 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         is_independent: Number(row.is_independent ?? 0) === 1,
         is_active: cloudActive(row),
         created_at: cloudTimestamp(row.created_at, updatedAt),
-        updated_at: updatedAt
+        updated_at: updatedAt,
+        // Lapide na nuvem desde a migracao `202609280002` (antes a exclusao so virava inativo).
+        deleted_at: cadastroTombstone(row)
       };
     }
   },
@@ -7562,7 +7574,8 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         carrier_id: nullableStringValue(row.carrier_id),
         is_active: cloudActive(row),
         created_at: cloudTimestamp(row.created_at, updatedAt),
-        updated_at: updatedAt
+        updated_at: updatedAt,
+        deleted_at: cadastroTombstone(row)
       };
     }
   },

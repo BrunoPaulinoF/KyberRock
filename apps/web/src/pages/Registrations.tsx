@@ -8,11 +8,13 @@ import {
   Users,
   type LucideIcon
 } from "lucide-react";
+import { useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { DeskPanel, IconTabs, SectionHead } from "../components/desk";
 import { Alert, DataTable } from "../components/ui";
 import { useUser } from "../lib/auth";
+import { dedupeByNameAndCode, dedupePaymentMethods } from "../lib/dedupe";
 import { q } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
 import { CarriersSection, DriversSection, VehiclesSection } from "./Cadastros";
@@ -89,7 +91,8 @@ export function Registrations() {
 
 /**
  * Aba Pagamento: formas, contas e condicoes. So consulta — o cadastro delas vem do OMIE e e
- * ajustado na balanca principal (`PaymentRegistrationsView` do desktop).
+ * ajustado na balanca principal (`PaymentRegistrationsView` do desktop). Cada balanca subiu a
+ * sua copia de cada forma/conta/condicao; a lista mostra uma de cada (`lib/dedupe.ts`).
  */
 function PaymentSection() {
   const user = useUser();
@@ -102,7 +105,18 @@ function PaymentSection() {
       ]),
     [user.companyId]
   );
-  const [methods, accounts, terms] = data ?? [[], [], []];
+  const methods = useMemo(
+    () => dedupePaymentMethods(data?.[0] ?? []).map((group) => group.row),
+    [data]
+  );
+  const accounts = useMemo(
+    () => dedupeByNameAndCode(data?.[1] ?? []).map((group) => group.row),
+    [data]
+  );
+  const terms = useMemo(
+    () => dedupeByNameAndCode(data?.[2] ?? []).map((group) => group.row),
+    [data]
+  );
   const status = (active: boolean) => (active ? "Ativa" : "Inativa");
 
   return (

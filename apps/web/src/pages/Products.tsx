@@ -1,19 +1,21 @@
 import { useMemo, useState } from "react";
 
+import { CustomerPicker } from "../components/CustomerPicker";
 import { EmptyState, IconAction, SearchBar, SectionHead } from "../components/desk";
-import { Picker } from "../components/Picker";
+import { PricePasswordField } from "../components/PricePassword";
 import { Alert, DataTable, Field, Modal, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
-import { formatDocument, formatMoney, parseMoneyToCents } from "../lib/format";
+import { formatMoney, parseMoneyToCents } from "../lib/format";
 import { matchesSearch } from "../lib/operation";
-import { PRICE_CODE_HINT } from "../lib/price-code";
 import { q, type Product } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
 
 /**
  * Aba Produtos da tela Cadastros (a `ProductsView` do desktop): o preco padrao de cada produto
- * e, logo abaixo, o preco especial por cliente. Publicar preco e de quem grava (gestor, operacao
+ * e, logo abaixo, o preco especial por cliente. O preco padrao e o MESMO da balanca
+ * (`listProductDefaultPriceSummaries`): o da tabela de preco padrao ou, sem ela, o valor
+ * unitario do OMIE gravado no produto. Publicar preco e de quem grava (gestor, operacao
  * e administrador); quem tem `requiresPricePassword` (a operacao sempre) digita a senha de preco
  * — o codigo rotativo que o comercial ve —, como no desktop; e a `web-api` que confere.
  */
@@ -23,15 +25,10 @@ export function ProductsSection() {
   const canEdit = user.canEditPrices;
   const askPassword = user.requiresPricePassword;
   const { data, loading, error, reload } = useAsync(
-    () =>
-      Promise.all([
-        q.products(user.companyId),
-        q.productDefaultPrices(user.companyId),
-        q.customers(user.companyId)
-      ]),
+    () => Promise.all([q.products(user.companyId), q.productDefaultPrices(user.companyId)]),
     [user.companyId]
   );
-  const [products, defaults, customers] = data ?? [[], [], []];
+  const [products, defaults] = data ?? [[], []];
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<{
     product: Product;
@@ -41,10 +38,21 @@ export function ProductsSection() {
   const [customerId, setCustomerId] = useState("");
   const [removing, setRemoving] = useState<Product | null>(null);
 
-  const defaultByProduct = useMemo(
+  // Preco da tabela padrao; sem ela, o valor unitario do OMIE — a regra do `PricingService`.
+  const tableByProduct = useMemo(
     () => new Map(defaults.map((p) => [p.product_id, p.unit_price_cents])),
     [defaults]
   );
+  const defaultByProduct = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const product of products) {
+      const price = tableByProduct.get(product.id) ?? product.unit_price_cents;
+      if (price != null && price > 0) map.set(product.id, price);
+    }
+    return map;
+  }, [products, tableByProduct]);
+  const fromOmie = (product: Product) =>
+    !tableByProduct.has(product.id) && defaultByProduct.has(product.id);
   const visibleProducts = products.filter((p) =>
     matchesSearch(`${p.description} ${p.code ?? ""}`, search)
   );
@@ -56,17 +64,6 @@ export function ProductsSection() {
   const specialByProduct = useMemo(
     () => new Map((special.data ?? []).map((p) => [p.product_id, p.unit_price_cents])),
     [special.data]
-  );
-  const customerOptions = useMemo(
-    () =>
-      customers
-        .filter((c) => c.is_active)
-        .map((c) => ({
-          value: c.id,
-          label: c.trade_name || c.legal_name,
-          hint: formatDocument(c.document) || undefined
-        })),
-    [customers]
   );
 
   async function save(cents: number, pricePassword?: string) {
@@ -145,7 +142,10 @@ export function ProductsSection() {
               numeric: true,
               render: (p) =>
                 defaultByProduct.has(p.id) ? (
-                  <strong>{formatMoney(defaultByProduct.get(p.id))}/ton</strong>
+                  <>
+                    <strong>{formatMoney(defaultByProduct.get(p.id))}/ton</strong>
+                    {fromOmie(p) && <span className="cell-sub">Valor do OMIE</span>}
+                  </>
                 ) : (
                   <span style={{ color: "var(--kr-warning)", fontWeight: 700 }}>Sem preco</span>
                 )
@@ -176,12 +176,7 @@ export function ProductsSection() {
         description="Escolha o cliente para ver o preco dele em cada produto. Sem preco especial, vale o padrao."
       />
       <div style={{ maxWidth: 420, marginBottom: 10 }}>
-        <Picker
-          value={customerId}
-          options={customerOptions}
-          onChange={setCustomerId}
-          placeholder="Buscar cliente..."
-        />
+        <CustomerPicker companyId={user.companyId} value={customerId} onChange={setCustomerId} />
       </div>
       {!customerId ? (
         <EmptyState title="Nenhum cliente escolhido." hint="Busque o cliente no campo acima." />
@@ -332,28 +327,6 @@ function PriceModal({
       </Field>
       {askPassword && <PricePasswordField value={password} onChange={setPassword} />}
     </Modal>
-  );
-}
-
-function PricePasswordField({
-  value,
-  onChange
-}: {
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <Field label="Senha de preco (do comercial)" hint={PRICE_CODE_HINT}>
-      <input
-        className="input"
-        type="password"
-        autoComplete="off"
-        inputMode="numeric"
-        maxLength={7}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      />
-    </Field>
   );
 }
 

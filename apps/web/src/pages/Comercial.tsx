@@ -3,6 +3,7 @@ import "./comercial.css";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { DeskPanel } from "../components/desk";
+import { TruckStages } from "../components/TruckStages";
 import { useUser } from "../lib/auth";
 import {
   aggregateSalesReport,
@@ -21,7 +22,8 @@ import { downloadFile } from "../lib/report-output";
 import { supabase } from "../lib/supabase";
 
 /**
- * Aba Comercial: a tela "Relatorio de vendas" do KyberRock Portal (`apps/loader-web`,
+ * Aba Comercial (perfis comercial e gestor). No topo, as etapas dos caminhoes na pedreira em
+ * tempo real (`components/TruckStages.tsx`); embaixo, a tela "Relatorio de vendas" do KyberRock Portal (`apps/loader-web`,
  * `pages/SalesReport.tsx`), que era a tela do comercial, com as mesmas visoes, filtros,
  * disposicao, impressao e CSV. A conta e copia byte a byte da do portal
  * (`lib/portal/sales-report.ts`, guardada por `portal-copies.test.ts`); aqui muda so a casca,
@@ -262,6 +264,11 @@ export function Comercial() {
 
   return (
     <div className="comercial-page">
+      <div className="comercial-no-print comercial-stages">
+        <DeskPanel>
+          <TruckStages />
+        </DeskPanel>
+      </div>
       <DeskPanel>
         <section className="comercial-panel" aria-labelledby="sales-report-title">
           <div className="comercial-head">

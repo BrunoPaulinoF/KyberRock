@@ -141,12 +141,16 @@ export const WEB_API_ACTIONS = [
   "upsert_customer",
   "set_customer_active",
   "set_customer_commercial",
+  "delete_customer",
   "upsert_carrier",
   "set_carrier_active",
+  "delete_carrier",
   "upsert_driver",
   "set_driver_active",
+  "delete_driver",
   "upsert_vehicle",
   "set_vehicle_active",
+  "delete_vehicle",
   "set_customer_vehicle",
   "set_customer_carrier",
   "set_driver_carrier",
@@ -200,6 +204,19 @@ export const PRICE_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "set_customer_price_table"
 ]);
 
+/**
+ * Excluir cadastro. Pede a MESMA senha do preco (o codigo rotativo que o comercial ve), pela
+ * mesma regra (`requiresPricePassword`): o comercial e o administrador excluem direto, a operacao
+ * sempre digita, o gestor conforme o login. O perfil que pode excluir e o que grava aquele
+ * cadastro — o cliente em `CUSTOMER_ACTIONS`, o resto em `FLEET_ACTIONS`.
+ */
+export const DELETE_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
+  "delete_customer",
+  "delete_carrier",
+  "delete_driver",
+  "delete_vehicle"
+]);
+
 /** So leitura, para todo perfil do site. */
 export const READ_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "me",
@@ -224,6 +241,7 @@ export const CUSTOMER_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>
   "lookup_cnpj",
   "set_customer_active",
   "set_customer_commercial",
+  "delete_customer",
   "set_customer_vehicle",
   "set_customer_carrier"
 ]);
@@ -232,10 +250,13 @@ export const CUSTOMER_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>
 export const FLEET_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "upsert_carrier",
   "set_carrier_active",
+  "delete_carrier",
   "upsert_driver",
   "set_driver_active",
+  "delete_driver",
   "upsert_vehicle",
   "set_vehicle_active",
+  "delete_vehicle",
   "set_driver_carrier",
   "set_vehicle_carrier"
 ]);
@@ -679,6 +700,62 @@ async function setActive(ctx: ActionContext, table: string, label: string): Prom
     updated_at: ctx.nowIso
   });
   return { id, isActive };
+}
+
+/**
+ * Excluir cliente — a mesma trava do desktop (`findCustomerDeletionBlock`): so sai o cadastro
+ * SEM historico nenhum (pesagem de qualquer status ou lancamento de credito). A exclusao nunca
+ * apaga pesagem, mas tira o cadastro de todas as telas e, com ele, o caminho ate as cargas;
+ * quem tem historico usa Inativar. A lapide chega nas balancas pelo pull
+ * (`resolveCustomerTombstone`, que ainda recusa apagar quem la tem pesagem viva).
+ */
+async function deleteCustomer(ctx: ActionContext): Promise<Row> {
+  const id = requiredId(ctx.payload, "id", "o cliente");
+  await requireRow(ctx, "customers", id, "Cliente");
+  const [operation] = await ctx.store.listRows(
+    "weighing_operations",
+    ctx.session.companyId,
+    "id",
+    [{ column: "customer_id", value: id }],
+    { limit: 1 }
+  );
+  const [movement] = operation
+    ? []
+    : await ctx.store.listRows(
+        "customer_credit_movements",
+        ctx.session.companyId,
+        "id",
+        [{ column: "customer_id", value: id }],
+        { limit: 1 }
+      );
+  if (operation || movement) {
+    throw new WebApiError(
+      409,
+      "Este cliente tem historico (pesagens ou lancamentos de credito). Excluir tiraria o cadastro de todas as telas e, com ele, o caminho ate esses registros. Use Inativar."
+    );
+  }
+  await ctx.store.updateRow("customers", ctx.session.companyId, id, {
+    deleted_at: ctx.nowIso,
+    updated_at: ctx.nowIso
+  });
+  return { id };
+}
+
+/**
+ * Excluir transportadora, motorista ou placa: a lapide (`deleted_at`) e o `is_active = false`
+ * juntos — a balanca nova le a lapide e tira o cadastro da tela; a que ainda nao atualizou le o
+ * inativo e ja deixa de oferece-lo. As pesagens antigas guardam o nome/placa por escrito, entao
+ * nada do historico muda.
+ */
+async function deleteCadastro(ctx: ActionContext, table: string, label: string): Promise<Row> {
+  const id = requiredId(ctx.payload, "id", `o ${label.toLowerCase()}`);
+  await requireRow(ctx, table, id, label);
+  await ctx.store.updateRow(table, ctx.session.companyId, id, {
+    deleted_at: ctx.nowIso,
+    is_active: false,
+    updated_at: ctx.nowIso
+  });
+  return { id };
 }
 
 // ---------------------------------------------------------------------------
@@ -1896,6 +1973,14 @@ async function runAction(action: WebApiAction, ctx: ActionContext): Promise<Row>
       return setActive(ctx, "customers", "Cliente");
     case "set_customer_commercial":
       return setCustomerCommercial(ctx);
+    case "delete_customer":
+      return deleteCustomer(ctx);
+    case "delete_carrier":
+      return deleteCadastro(ctx, "carriers", "Transportadora");
+    case "delete_driver":
+      return deleteCadastro(ctx, "drivers", "Motorista");
+    case "delete_vehicle":
+      return deleteCadastro(ctx, "vehicles", "Veiculo");
     case "upsert_carrier":
       return upsertCarrier(ctx);
     case "set_carrier_active":
@@ -1997,7 +2082,10 @@ export async function handleWebApiRequest(
   try {
     // Preco do cadastro pede a senha como o desktop pede (`verifyPriceChangePassword`); o de
     // uma pesagem e conferido dentro do `request_operation`, que sabe se o preco mudou.
-    if (PRICE_ACTIONS.has(body.action)) await checkPricePassword(ctx);
+    // Excluir cadastro pede a mesma senha, pela mesma regra.
+    if (PRICE_ACTIONS.has(body.action) || DELETE_ACTIONS.has(body.action)) {
+      await checkPricePassword(ctx);
+    }
     const result = await runAction(body.action, ctx);
     return jsonResponse({ ok: true, ...result, warnings: ctx.warnings });
   } catch (error) {

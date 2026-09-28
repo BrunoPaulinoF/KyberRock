@@ -1,77 +1,292 @@
-/* Senha de preco — o codigo rotativo que o comercial passa para a operacao. */
+/* Senha de preco — o codigo rotativo que o comercial passa para quem precisa mudar preco. */
 
-.price-code {
+.pc {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
   min-width: 0;
-  max-width: 560px;
 }
-.price-code-header {
+.pc-head {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 12px;
 }
-.price-code-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  color: var(--kr-text-strong);
-  font-size: 18px;
+.pc-head-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--kr-accent-soft);
+  color: var(--kr-info-text);
+  border: 1px solid var(--kr-accent-border);
 }
-.price-code-hint {
+.pc-head-text {
   margin: 0;
   color: var(--kr-muted);
   font-size: 14px;
   line-height: 1.5;
 }
-.price-code-card {
+
+.pc-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+/* ---------- o codigo ---------- */
+.pc-code-card {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding: 28px 20px;
+  justify-content: center;
+  gap: 22px;
+  padding: 26px 20px;
   border: 1px solid var(--kr-card-border);
-  border-radius: 12px;
-  background: var(--kr-card-bg);
-  box-shadow: var(--kr-shadow);
-}
-.price-code-value {
-  color: var(--kr-text-strong);
-  font-size: clamp(40px, 12vw, 64px);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.08em;
-  white-space: nowrap;
-}
-.price-code-bar {
-  width: 100%;
-  height: 8px;
-  overflow: hidden;
-  border-radius: 999px;
+  border-radius: 16px;
   background: var(--kr-surface-soft);
-  border: 1px solid var(--kr-border);
 }
-.price-code-bar span {
-  display: block;
-  height: 100%;
-  background: var(--kr-accent);
-  transition: width 0.25s linear;
-}
-.price-code-timer {
+.pc-label {
   color: var(--kr-muted);
-  font-size: 14px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.pc-code {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pc-digit {
+  display: grid;
+  place-items: center;
+  width: clamp(40px, 9vw, 64px);
+  height: clamp(54px, 12vw, 80px);
+  border: 1px solid var(--kr-border);
+  border-radius: 12px;
+  background: var(--kr-surface);
+  box-shadow: var(--kr-shadow);
+  color: var(--kr-text-strong);
+  font-size: clamp(28px, 7vw, 46px);
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
-.price-code-card.ending .price-code-bar span {
-  background: var(--kr-danger-strong);
+.pc-code-gap {
+  width: clamp(8px, 2vw, 16px);
 }
-.price-code-card.ending .price-code-timer {
-  color: var(--kr-danger);
-  font-weight: 600;
-}
-.price-code-loading {
+.pc-loading {
+  display: grid;
+  place-items: center;
+  min-height: 80px;
   color: var(--kr-muted);
   font-size: 15px;
+}
+
+.pc-timer {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  width: 100%;
+  max-width: 480px;
+}
+.pc-ring {
+  flex-shrink: 0;
+  width: 116px;
+  height: 116px;
+}
+.pc-ring circle {
+  fill: none;
+  stroke-width: 10;
+}
+.pc-ring-track {
+  stroke: var(--kr-border);
+}
+.pc-ring-value {
+  stroke: var(--kr-accent);
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 66px 66px;
+  transition:
+    stroke-dashoffset 0.25s linear,
+    stroke 0.2s;
+}
+.pc-ring-number {
+  fill: var(--kr-text-strong);
+  font-size: 34px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.pc-ring-unit {
+  fill: var(--kr-muted);
+  font-size: 12px;
+}
+.pc-timer-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+.pc-timer-text strong {
+  color: var(--kr-text-strong);
+  font-size: 16px;
+}
+.pc-timer-text span {
+  color: var(--kr-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.pc-timer-text .btn {
+  margin-top: 4px;
+}
+.pc-code-card.ending .pc-ring-value {
+  stroke: var(--kr-danger-strong);
+}
+.pc-code-card.ending .pc-timer-text strong {
+  color: var(--kr-danger);
+}
+
+/* ---------- as orientacoes ---------- */
+.pc-info {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+.pc-card {
+  padding: 14px 16px;
+  border: 1px solid var(--kr-border);
+  border-radius: 14px;
+  background: var(--kr-surface);
+}
+.pc-card h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  color: var(--kr-text-strong);
+  font-size: 14px;
+}
+.pc-card p {
+  margin: 0;
+  color: var(--kr-text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.pc-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  counter-reset: pc-step;
+  list-style: none;
+}
+.pc-steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--kr-text);
+  font-size: 13px;
+  line-height: 1.45;
+  counter-increment: pc-step;
+}
+.pc-steps li::before {
+  content: counter(pc-step);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--kr-primary-strong);
+  color: var(--kr-primary-text);
+  font-size: 12px;
+  font-weight: 800;
+}
+.pc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pc-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--kr-text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.pc-list svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--kr-muted);
+}
+.pc-roles {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pc-roles li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--kr-border);
+  color: var(--kr-text);
+  font-size: 13px;
+}
+.pc-roles li:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.pc-tag {
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--kr-border);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.pc-tag.ask {
+  border-color: var(--kr-warning-border);
+  background: var(--kr-warning-soft);
+  color: var(--kr-warning);
+}
+.pc-tag.maybe {
+  color: var(--kr-muted);
+}
+.pc-tag.free {
+  border-color: var(--kr-success-border);
+  background: var(--kr-success-soft);
+  color: var(--kr-success);
+}
+.pc-safety {
+  background: var(--kr-surface-soft);
+}
+
+@media (max-width: 960px) {
+  .pc-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 520px) {
+  .pc-timer {
+    flex-direction: column;
+    text-align: center;
+  }
+  .pc-timer-text {
+    align-items: center;
+  }
+  .pc-code {
+    gap: 5px;
+  }
 }
