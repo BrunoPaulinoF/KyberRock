@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+/**
+ * A senha e o codigo rotativo de 6 digitos que so o comercial ve no site (tela "Senha de preco")
+ * e que troca a cada 45 s — ver `services/price-code.ts`. O aviso vai em toda confirmacao, porque
+ * e a mesma senha para preco, limpeza do historico e relatorio financeiro.
+ */
+export const PRICE_CODE_NOTE =
+  "A senha troca a cada 45 segundos. Peca ao comercial a senha que esta na tela dele agora.";
+
+/** Mensagem de senha recusada: errada ou ja vencida. */
+export const PRICE_CODE_REJECTED = "Senha incorreta ou vencida. Peca ao comercial a senha atual.";
+
 interface PriceChangePasswordDialogProps {
   title?: string;
   description?: string;
@@ -11,7 +22,7 @@ interface PriceChangePasswordDialogProps {
 
 export function PriceChangePasswordDialog({
   title = "Confirmar alteracao de preco",
-  description = "Digite a senha de 4 digitos para alterar precos.",
+  description = "Digite a senha de preco para alterar precos.",
   error,
   submitting = false,
   onCancel,
@@ -44,11 +55,13 @@ export function PriceChangePasswordDialog({
           {title}
         </h2>
         <p style={styles.text}>{description}</p>
+        <p style={styles.note}>{PRICE_CODE_NOTE}</p>
         <input
           ref={inputRef}
           type="password"
           inputMode="numeric"
-          autoComplete="current-password"
+          autoComplete="off"
+          maxLength={7}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           style={styles.input}
@@ -119,6 +132,12 @@ const styles = {
     fontSize: "14px",
     background: "var(--kr-input-bg)",
     color: "var(--kr-text-strong)"
+  },
+  note: {
+    margin: 0,
+    color: "var(--kr-text)",
+    fontSize: "12px",
+    fontWeight: 600
   },
   error: {
     margin: 0,

@@ -172,7 +172,7 @@ import { WalletView } from "./WalletView";
 import { CustomersView } from "./CustomersView";
 import { HelpTooltip, Tooltip } from "./Tooltip";
 import { IconActionButton, OpIcon } from "./IconActionButton";
-import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
+import { PRICE_CODE_REJECTED, PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 import { PriceMasterNotice, priceMasterHint, usePriceAuthority } from "./PriceMasterNotice";
 import { TIPS } from "./tooltip-messages";
 import {
@@ -2546,7 +2546,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     try {
       const valid = await desktopApi.verifyPriceChangePassword(password);
       if (!valid) {
-        setClearOperationsError("Senha incorreta.");
+        setClearOperationsError(PRICE_CODE_REJECTED);
         return;
       }
 
@@ -4044,8 +4044,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 }
                 description={
                   clearOperationsRequest === "closed"
-                    ? "Isto remove da lista e dos relatorios as operacoes concluidas ate ontem (as de hoje ficam). O pedido/NF ja enviado ao OMIE nao e afetado. Digite a senha da unidade para confirmar."
-                    : "Isto remove da lista todas as operacoes canceladas. Digite a senha da unidade para confirmar."
+                    ? "Isto remove da lista e dos relatorios as operacoes concluidas ate ontem (as de hoje ficam). O pedido/NF ja enviado ao OMIE nao e afetado. Digite a senha de preco para confirmar."
+                    : "Isto remove da lista todas as operacoes canceladas. Digite a senha de preco para confirmar."
                 }
                 error={clearOperationsError}
                 submitting={clearOperationsBusy}
@@ -8113,7 +8113,7 @@ function OperationDetailsDialog({
       return;
     }
 
-    // Alterar preco pede a senha de 4 digitos, como nas telas de produto e cliente.
+    // Alterar preco pede a senha de preco (a rotativa do comercial), como nas telas de produto e cliente.
     if (priceChanged && pricePassword === undefined) {
       setError(null);
       setPasswordError(null);
@@ -8126,7 +8126,7 @@ function OperationDetailsDialog({
       if (priceChanged && pricePassword !== undefined) {
         const valid = await desktopApi.verifyPriceChangePassword(pricePassword);
         if (!valid) {
-          setPasswordError("Senha incorreta.");
+          setPasswordError(PRICE_CODE_REJECTED);
           return;
         }
       }
@@ -8418,7 +8418,7 @@ function OperationDetailsDialog({
       {askPricePassword ? (
         <PriceChangePasswordDialog
           title="Confirmar alteracao de preco"
-          description="Digite a senha de 4 digitos para alterar o preco desta operacao."
+          description="Digite a senha de preco para alterar o preco desta operacao."
           error={passwordError}
           submitting={saving}
           onCancel={() => {
@@ -12880,7 +12880,7 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
     try {
       const valid = await desktopApi.verifyPriceChangePassword(password);
       if (!valid) {
-        setPricePasswordError("Senha incorreta.");
+        setPricePasswordError(PRICE_CODE_REJECTED);
         return;
       }
 
@@ -13118,7 +13118,7 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
               hint={
                 pricesAreReadOnly
                   ? priceMasterHint(priceAuthority.masterDeviceNames)
-                  : "Vazio remove o preco padrao. Alterar preco pede a senha de 4 digitos."
+                  : "Vazio remove o preco padrao. Alterar preco pede a senha de preco do comercial."
               }
             />
           </FormSection>
@@ -13159,8 +13159,8 @@ function ProductsView({ desktopApi }: { desktopApi: KyberRockDesktopApi }) {
           }
           description={
             pendingDefaultPrice.action === "remove"
-              ? `Digite a senha de 4 digitos para remover o preco padrao de ${pendingDefaultPrice.productDescription}.`
-              : "Digite a senha de 4 digitos para alterar precos."
+              ? `Digite a senha de preco para remover o preco padrao de ${pendingDefaultPrice.productDescription}.`
+              : "Digite a senha de preco para alterar precos."
           }
           error={pricePasswordError}
           submitting={savingDefaultPrice}

@@ -59,7 +59,7 @@ import {
   useFlash
 } from "./crud-ui";
 import type { DetailSectionData } from "./crud-ui";
-import { PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
+import { PRICE_CODE_REJECTED, PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 import { PriceMasterNotice, priceMasterHint, usePriceAuthority } from "./PriceMasterNotice";
 import { formatDbDateTime } from "./format-datetime";
 
@@ -1465,7 +1465,7 @@ export function CustomersView({
     try {
       const valid = await desktopApi.verifyPriceChangePassword(password);
       if (!valid) {
-        setPricePasswordError("Senha incorreta.");
+        setPricePasswordError(PRICE_CODE_REJECTED);
         return;
       }
 

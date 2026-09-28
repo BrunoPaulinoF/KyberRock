@@ -1545,20 +1545,13 @@ export function AdminDashboard() {
           title={`Editar ${editingCompany.name}`}
           company={editingCompany}
           onClose={() => setEditingCompany(null)}
-          onSubmit={async (payload, priceChangePassword) => {
+          onSubmit={async (payload) => {
             const ok = await run(
               "update_company",
               { companyId: editingCompany.id, ...payload },
               "Pedreira atualizada."
             );
             if (!ok) return;
-            if (priceChangePassword) {
-              await run(
-                "update_company_price_password",
-                { companyId: editingCompany.id, priceChangePassword },
-                "Pedreira e senha de precos atualizadas."
-              );
-            }
             setEditingCompany(null);
           }}
         />
@@ -1776,23 +1769,13 @@ function CompanyFormModal({
   title: string;
   company?: Company;
   onClose: () => void;
-  onSubmit: (
-    payload: Record<string, unknown>,
-    priceChangePassword?: string
-  ) => void | Promise<void>;
+  onSubmit: (payload: Record<string, unknown>) => void | Promise<void>;
 }) {
-  const [error, setError] = useState<string | null>(null);
   const formId = "company-form";
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const priceChangePassword = String(form.get("priceChangePassword") ?? "").trim();
-    if (priceChangePassword && !/^\d{4}$/.test(priceChangePassword)) {
-      setError("A senha para alterar precos deve ter exatamente 4 digitos.");
-      return;
-    }
-    setError(null);
 
     const payload: Record<string, unknown> = {
       name: form.get("name"),
@@ -1812,7 +1795,7 @@ function CompanyFormModal({
       payload.omieAppSecret = omieAppSecret || null;
     }
 
-    void onSubmit(payload, priceChangePassword || undefined);
+    void onSubmit(payload);
   }
 
   return (
@@ -1880,16 +1863,6 @@ function CompanyFormModal({
               />
             </Field>
           </div>
-        </Fieldset>
-
-        <Fieldset legend="Senha para alterar precos">
-          <Field
-            label="Senha de 4 digitos"
-            hint="Pedida no desktop para alterar precos padrao. Vazio mantem a atual."
-            error={error}
-          >
-            <PasswordInput name="priceChangePassword" maxLength={4} />
-          </Field>
         </Fieldset>
       </form>
     </Modal>

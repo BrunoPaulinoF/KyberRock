@@ -4,6 +4,7 @@ import { isReadUnavailable, isUnknownColumnError } from "../_shared/db-read-erro
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 import { deviceHealthColumns, normalizeDeviceHealth } from "../_shared/device-health.ts";
 import { orderedTouchAttempts, shouldWriteDeviceTouch } from "../_shared/device-touch.ts";
+import { isUsablePriceCodeSecret } from "../_shared/price-code.ts";
 import {
   resolveUpdateNotice,
   type DeliveredUpdateNotice
@@ -339,6 +340,17 @@ Deno.serve(async (req) => {
   // a migracao nao fosse aplicada.
   const priceMasters = await selectPriceMasters(supabase, typedDevice.company_id);
 
+  // Chave da senha rotativa de preco (`_shared/price-code.ts`): com ela a balanca confere o
+  // codigo que o comercial le no site sem precisar de internet. Consulta separada e tolerante
+  // pelo mesmo motivo das principais: tabela nova, e a migracao pode estar pendente.
+  const { data: priceCodeRow } = await supabase
+    .from("company_price_codes")
+    .select("secret")
+    .eq("company_id", typedDevice.company_id)
+    .maybeSingle();
+  const storedSecret: unknown = priceCodeRow?.secret;
+  const priceCodeSecret = isUsablePriceCodeSecret(storedSecret) ? storedSecret : undefined;
+
   return jsonResponse({
     status: "approved",
     allowed: true,
@@ -375,6 +387,8 @@ Deno.serve(async (req) => {
           priceMasterDeviceName: priceMasters.length === 1 ? priceMasters[0].name || null : null
         }),
     unitDevices: unitDevices ?? [],
+    // Ausente = nuvem sem a chave ainda: a balanca mantem o que ja sabia (ou a senha fixa).
+    ...(priceCodeSecret ? { priceCodeSecret } : {}),
     checkedAt
   });
 });

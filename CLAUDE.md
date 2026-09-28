@@ -112,6 +112,16 @@ These recur across the codebase and are easy to violate accidentally:
   A pesagem continua nascendo e fechando no SQLite. Nunca reescrever essa conta na nuvem: preco,
   frete, credito e pedido do OMIE so existem inteiros no desktop. O id da pesagem de entrada nasce
   no pedido para que reexecutar (pedido devolvido a fila) nao crie um segundo caminhao.
+- **Senha de preco rotativa** (AGENTS.md "Perfis e telas do KyberRock Web", migracao
+  `202609280001`): a senha que libera mudar preco (e limpar operacoes / relatorio financeiro na
+  balanca) e um codigo de 6 digitos que troca a cada 45 s, calculado de uma chave por pedreira
+  (`company_price_codes`, so a chave de servico le) e do relogio — HOTP da RFC 4226. So o
+  `comercial` e o `administrador` VEEM o codigo (tela `/senha-preco`, acao `price_code`); o
+  comercial muda preco sem senha. A conta vive em `_shared/price-code.ts` e em
+  `apps/desktop/src/services/price-code.ts`, testadas contra os mesmos valores: mudou uma, mude a
+  outra. A balanca recebe a chave no `desktop-status` e confere offline, com o relogio corrigido
+  pelo da nuvem. So vale o codigo da janela atual; a senha fixa antiga
+  (`companies.price_change_password`) so vale enquanto a chave nao chegou.
 - **Data ownership is split**: KyberRock owns operations, coupons, prices, vehicles/drivers and
   loading requests; OMIE owns customer/product/payment cadastros — OMIE-owned fields are locked
   locally. See the ownership table in `docs/ARCHITECTURE.md`.

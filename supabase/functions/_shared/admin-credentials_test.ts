@@ -12,7 +12,6 @@ const FULL_COMPANY = {
   legal_name: "Serra Azul Mineracao LTDA",
   omie_app_key: "1234567890123",
   omie_app_secret: "abcdef0123456789abcdef0123456789",
-  price_change_password: "4271",
   desktop_activation_code: "830192"
 };
 
@@ -24,7 +23,7 @@ describe("buildCompanyCredentials", () => {
     expect(bundle.credentials.map((credential) => credential.value)).toEqual([
       "1234567890123",
       "abcdef0123456789abcdef0123456789",
-      "4271",
+      "Rotativa: 6 digitos, troca a cada 45 segundos",
       "830192"
     ]);
     expect(bundle.credentials.every((credential) => credential.unavailable === undefined)).toBe(
@@ -34,7 +33,7 @@ describe("buildCompanyCredentials", () => {
 
   it("diz o que fazer quando o campo esta vazio, em vez de so mostrar em branco", () => {
     const bundle = buildCompanyCredentials({ name: "Pedreira X" });
-    for (const credential of bundle.credentials) {
+    for (const credential of bundle.credentials.filter((item) => item.kind !== "info")) {
       expect(credential.value).toBeNull();
       expect(credential.unavailable).toBeTruthy();
     }

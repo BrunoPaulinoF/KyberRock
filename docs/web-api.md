@@ -54,14 +54,17 @@ teste garante que toda ação nova caia em algum grupo, para nenhuma nascer libe
 consulta. `me` devolve `canManagePrices`, `canEditPrices`, `canEditCustomers`, `canEditFleet`,
 `canOperate`, `canCreateEntry`, `canSeeSupport` e `requiresPricePassword`.
 
-**Senha de preço.** Quem tem `requiresPricePassword` digita a senha de alteração de preço da
-pedreira (`companies.price_change_password`, a mesma da balança) para mudar preço — o da
+**Senha de preço.** Quem tem `requiresPricePassword` digita a senha de preço — o código
+**rotativo** de 6 dígitos que troca a cada 45 segundos e que só o `comercial` e o `administrador`
+veem (ação `price_code`, tela "Senha de preço"; ver 4.13) — para mudar preço — o da
 pesagem (`request_operation` `update` com `unitPriceCents`) e o do cadastro (todas as ações de
 4.6, inclusive remover). A `operacao` sempre pede, o `administrador` e o `comercial` nunca
 (negociar preço é o trabalho do comercial), e o `gestor` segue a marca "Pede senha de preço" do
 login no painel. Cinco erros em 15 minutos travam o
-login por 15 minutos (429). Pedreira sem senha definida responde 403 pedindo para definir no
-painel, sem contar como erro.
+login por 15 minutos (429). Só vale o código da janela atual: o vencido é recusado como senha
+errada. Enquanto a pedreira não tem a chave (`company_price_codes`, migração `202609280001`), vale
+a senha fixa antiga (`companies.price_change_password`); sem nenhuma das duas, 403 pedindo para
+falar com o suporte, sem contar como erro.
 
 O carregador e o comercial ainda entram também pelo KyberRock Portal (`apps/loader-web`); o
 portal deixa de receber os dois depois dos testes.
@@ -131,9 +134,9 @@ Convenções de payload: campos em **camelCase**; campo **ausente** não mexe na
 
 ### 4.1 Sessão
 
-| Ação | Payload | Devolve                                                                                                                                                                                            |
-| ---- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `me` | —       | `user { id, email, name, role, unitId, canManagePrices, canEditPrices, canEditCustomers, canEditFleet, canOperate, canCreateEntry, canSeeSupport, requiresPricePassword }`, `companyId`, `units[]` |
+| Ação | Payload | Devolve                                                                                                                                                                                                             |
+| ---- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `me` | —       | `user { id, email, name, role, unitId, canManagePrices, canEditPrices, canEditCustomers, canEditFleet, canOperate, canCreateEntry, canSeeSupport, canSeePriceCode, requiresPricePassword }`, `companyId`, `units[]` |
 
 ### 4.2 Cliente (comercial, gestor, operação e administrador)
 
@@ -360,7 +363,21 @@ OMIE parado por falha (`failed`, `cadastro_incompleto`, `service_order_failed`,
 automáticos (diário e financeiro) de 30 dias, as senhas de preço erradas de 7 dias e os logins
 da empresa (sem senha, claro).
 
-### 4.13 O que ainda não está na `web-api` (próximas versões)
+### 4.13 Senha de preço (comercial e administrador)
+
+| Ação         | Payload | Devolve                                                             |
+| ------------ | ------- | ------------------------------------------------------------------- |
+| `price_code` | —       | `code` (6 dígitos), `expiresAt`, `periodSeconds` (45), `serverTime` |
+
+O código que libera mudar preço para quem tem `requiresPricePassword` no site e para **todos** na
+balança (que não tem login). Troca a cada 45 segundos, sem fim, e o vencido não vale mais. Sai de
+uma chave por pedreira (`company_price_codes`, que só a chave de serviço lê — a tabela nasce com
+uma linha por pedreira e o gatilho cria a da pedreira nova; se faltar, esta ação cria) e do
+relógio: HOTP da RFC 4226 (`_shared/price-code.ts`). A chave nunca sai na resposta. A tela conta
+os segundos pelo `serverTime`, não pelo relógio do computador do comercial. A balança recebe a
+chave no `desktop-status` e confere o código sem internet (`apps/desktop/src/services/price-code.ts`).
+
+### 4.14 O que ainda não está na `web-api` (próximas versões)
 
 - Regra de frete do cliente (`customer_freight_rules.rule_json`) — o formato do JSON é o da
   balança (`apps/desktop/src/services/customer-freight-rules.ts`) e precisa ser documentado

@@ -3,9 +3,10 @@
 // O botao de olho do console abre isto. A parte que importa nao e a listagem: e
 // de onde cada valor vem, porque sao tres origens diferentes:
 //
-//   - `companies` guarda app key, app secret, senha de precos e codigo de
-//     ativacao em TEXTO, porque o desktop precisa receber esses valores de
-//     volta. Aparecem direto.
+//   - `companies` guarda app key, app secret e codigo de ativacao em TEXTO,
+//     porque o desktop precisa receber esses valores de volta. Aparecem direto.
+//     A senha de precos NAO aparece: e rotativa (`_shared/price-code.ts`), troca
+//     a cada 45 s e quem a ve e o comercial, no site.
 //   - a senha do usuario vive no Supabase Auth como BCRYPT, que nao volta. Ela
 //     so aparece quando foi capturada pelo painel no momento em que foi definida
 //     e guardada no cofre cifrado (`user_password_vault` +
@@ -55,7 +56,6 @@ export interface CompanyCredentialSource {
   document?: string | null;
   omie_app_key?: string | null;
   omie_app_secret?: string | null;
-  price_change_password?: string | null;
   desktop_activation_code?: string | null;
   desktop_activation_code_rotated_at?: string | null;
 }
@@ -63,7 +63,6 @@ export interface CompanyCredentialSource {
 export function buildCompanyCredentials(company: CompanyCredentialSource): CredentialBundle {
   const appKey = text(company.omie_app_key);
   const appSecret = text(company.omie_app_secret);
-  const pricePassword = text(company.price_change_password);
   const activationCode = text(company.desktop_activation_code);
 
   return {
@@ -87,10 +86,9 @@ export function buildCompanyCredentials(company: CompanyCredentialSource): Crede
       },
       {
         label: "Senha para alterar precos",
-        kind: "secret",
-        value: pricePassword || null,
-        hint: "Quatro digitos pedidos no desktop para alterar precos padrao.",
-        unavailable: pricePassword ? undefined : "Nao definida. Configure em Editar."
+        kind: "info",
+        value: "Rotativa: 6 digitos, troca a cada 45 segundos",
+        hint: "Quem ve a senha do momento e o comercial, no KyberRock Web (tela Senha de preco)."
       },
       {
         label: "Codigo de ativacao do desktop",

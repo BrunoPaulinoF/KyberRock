@@ -170,7 +170,7 @@ export const documentationSections: DocumentationSection[] = [
       "Na fila de operacoes abertas, as cargas ja concluidas pelo carregador sobem para o topo, na ordem em que ele concluiu.",
       "Se a mesma placa ja estiver aberta, o sistema avisa para evitar duplicidade — confirme se nao e a mesma viagem.",
       "Duplo clique na linha (ou o botao de ficha) abre a operacao inteira. Com a operacao em andamento, Editar operacao libera cliente, produto, preco por tonelada, frete, placa, motorista, transportadora, forma e condicao de pagamento e o tipo de fechamento.",
-      "Alterar o preco pede a senha de 4 digitos definida pela empresa. Depois de fechada, a ficha continua abrindo, mas so para consulta.",
+      "Alterar o preco pede a senha de preco do comercial. Depois de fechada, a ficha continua abrindo, mas so para consulta.",
       "Cancelar exige motivo. O cancelamento e auditado, estorna credito quando aplicavel e cancela o pedido no OMIE se ele ja tiver subido — desde que ainda nao esteja faturado.",
       "A busca das operacoes concluidas aceita cliente, CNPJ/CPF com ou sem pontuacao, produto, placa ou motorista.",
       "Toda lista de escolha do aplicativo — cliente, produto, placa, motorista, transportadora — funciona ESCREVENDO. Ao abrir, a lista mostra so os primeiros cadastros em ordem alfabetica; escreva o nome, o nome fantasia, o CNPJ/CPF ou a placa e a lista passa a mostrar so o que corresponde, com o mais parecido no topo. O rodape diz quantos cadastros casaram, entao quando aparecer 'mostrando 50 de 312' e so escrever mais uma letra em vez de rolar."
@@ -546,7 +546,7 @@ export const documentationSections: DocumentationSection[] = [
       "Aba Transporte do cliente: o TIPO DE FRETE escolhido ali preenche a nova entrada quando o cliente e selecionado — o operador continua podendo trocar, e o valor de frete que o cliente ja usou naquele produto continua tendo a ultima palavra. TRANSPORTE PROPRIO usa (e cria, se ainda nao existir) a transportadora com o nome e o CNPJ/CPF do proprio cliente. As PLACAS vinculadas ali aparecem primeiro no campo Placa da nova entrada; ao comecar a digitar, o campo volta a procurar em todas as placas da pedreira — placa de fora nunca e proibida.",
       "A ordem de preco e: preco especial do cliente e, sem ele, o preco padrao do produto. Mudou o preco no cadastro, a proxima entrada ja sai com o valor novo.",
       "A condicao de pagamento da nova entrada vem do CADASTRO do cliente (condicao padrao), nao da ultima operacao. O operador pode trocar na entrada; para mudar de vez, altere a condicao padrao no cadastro.",
-      "Alterar preco na operacao pede a senha de 4 digitos da empresa.",
+      "Alterar preco pede a senha de preco: um codigo de 6 digitos que troca sozinho a cada 45 segundos. Quem ve a senha e o comercial, na tela Senha de preco do KyberRock Web — peca a ele a senha que esta na tela e digite antes de ela trocar. Senha vencida nao funciona mais. A mesma senha libera limpar operacoes e o relatorio financeiro. O comercial nao precisa de senha para mudar preco pelo site.",
       "Balancas principais de precos: quando a pedreira tem mais de um computador, o administrador escolhe no painel web quais deles definem os precos — pode ser um, pode ser mais de um. Nos demais, preco padrao, preco especial, tabela de preco e valor de frete do cadastro aparecem so para consulta, com um aviso dizendo em quais computadores alterar. Cadastre o preco numa balanca principal: em segundos ele chega aos outros computadores.",
       "Quando ha mais de uma balanca principal, vale o preco que foi alterado por ultimo — as duas podem cadastrar, e o valor mais recente e o que fica em toda a pedreira.",
       "Sem balanca principal escolhida, cada computador continua com o preco que foi digitado nele — e por isso que um preco especial podia existir numa balanca e nao na outra. Se voce ve precos diferentes entre os computadores da pedreira, peca ao administrador para marcar a balanca principal no painel.",
@@ -569,6 +569,11 @@ export const documentationSections: DocumentationSection[] = [
       "preco diferente em cada computador",
       "preco nao sincroniza",
       "preco bloqueado",
+      "senha de preco",
+      "senha rotativa",
+      "senha do comercial",
+      "senha incorreta",
+      "senha vencida",
       "veiculo",
       "placa",
       "transporte",
@@ -860,7 +865,7 @@ export const documentationFaqs: DocumentationFaq[] = [
   {
     question: "Como vejo ou corrijo todos os dados de uma operacao?",
     answer:
-      "Em Operacoes, de duplo clique na linha (ou use o botao de ficha) para abrir a operacao inteira: pesos, precos, frete, pagamento, transporte e situacao no OMIE. Enquanto a operacao estiver em andamento, o botao Editar operacao libera a correcao completa — cliente, produto, preco por tonelada, valor e regra de frete, placa, motorista, transportadora, forma e condicao de pagamento e o tipo de fechamento. Alterar o preco pede a senha de 4 digitos. Depois de fechada, a ficha continua abrindo, mas so para consulta.",
+      "Em Operacoes, de duplo clique na linha (ou use o botao de ficha) para abrir a operacao inteira: pesos, precos, frete, pagamento, transporte e situacao no OMIE. Enquanto a operacao estiver em andamento, o botao Editar operacao libera a correcao completa — cliente, produto, preco por tonelada, valor e regra de frete, placa, motorista, transportadora, forma e condicao de pagamento e o tipo de fechamento. Alterar o preco pede a senha de preco do comercial, que troca a cada 45 segundos. Depois de fechada, a ficha continua abrindo, mas so para consulta.",
     category: "operacao",
     sectionId: "weighing",
     keywords: [
@@ -1431,7 +1436,7 @@ export const documentationFaqs: DocumentationFaq[] = [
   {
     question: "Quem define o preco da tonelada?",
     answer:
-      "A ordem e: preco especial do cliente e, sem ele, o preco padrao do produto. Sem nenhum dos dois, a entrada nao e registrada ate cadastrar um preco. Alterar o preco na operacao pede a senha de 4 digitos da empresa.",
+      "A ordem e: preco especial do cliente e, sem ele, o preco padrao do produto. Sem nenhum dos dois, a entrada nao e registrada ate cadastrar um preco. Alterar o preco na operacao pede a senha de preco do comercial.",
     category: "financeiro",
     sectionId: "registrations",
     keywords: [
@@ -1833,7 +1838,7 @@ export const troubleshootingFlows: TroubleshootingFlow[] = [
       "Abra a ficha da operacao e confira o preco por tonelada aplicado e a origem dele.",
       "Confira, nesta ordem: preco especial do cliente e preco padrao do produto. A origem aparece no quadro de preco da entrada.",
       "Confira se o frete esta somando ao valor e se era para somar nesta operacao.",
-      "Com a operacao ainda em andamento, use Editar operacao para corrigir — alterar preco pede a senha de 4 digitos.",
+      "Com a operacao ainda em andamento, use Editar operacao para corrigir — alterar preco pede a senha de preco do comercial (troca a cada 45 segundos).",
       "Se a operacao ja fechou, cancele com o motivo e refaca, ou corrija o pedido dentro do OMIE antes de faturar."
     ],
     escalation:
