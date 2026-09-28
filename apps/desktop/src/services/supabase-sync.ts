@@ -8010,6 +8010,41 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
   }
 ];
 
+/**
+ * O cursor do push anda pelo `updated_at` das linhas LOCAIS — e nelas tambem mora o que
+ * o pull trouxe de outras balancas, do site e do OMIE, com o relogio de QUEM editou. Uma
+ * balanca com o relogio adiantado (medido em 28/09/2026: linhas chegando 5 a 17 min "no
+ * futuro") empurrava o cursor das outras para o futuro, e o cliente cadastrado aqui na
+ * hora certa ficava ATRAS do cursor: nao subia ate o relogio alcancar (ou nunca). Era o
+ * "cadastro do site aparece na balanca na hora, o da balanca nao aparece no site".
+ *
+ * Regra: o cursor nunca passa do relogio desta maquina. Linha "do futuro" sobe (e volta
+ * a subir, barato) ate o relogio passar dela, mas nao leva o cursor junto.
+ */
+function cursorClock(now: Date): string {
+  return now.toISOString().slice(0, 19).replace("T", " ");
+}
+
+/**
+ * Cursor gravado por versao anterior pode estar no futuro (e o que ficou atras dele nunca
+ * subiu). Uma vez por maquina, recua todos para no maximo 24 h atras, e o push reenvia o
+ * que mudou nesse periodo — reenviar e idempotente (upsert por id).
+ */
+const CADASTRO_PUSH_CLOCK_REWIND_KEY = "cloud_cadastro_push_clock_rewind_v1";
+const CADASTRO_PUSH_CLOCK_REWIND_MS = 24 * 60 * 60 * 1000;
+
+function rewindCadastroPushCursorsOnce(database: DesktopDatabase, now: Date): void {
+  if (readLocalSetting<boolean>(database, CADASTRO_PUSH_CLOCK_REWIND_KEY)) return;
+  const limit = cursorClock(new Date(now.getTime() - CADASTRO_PUSH_CLOCK_REWIND_MS));
+  const state = readCadastroPushState(database);
+  const next: CadastroPushState = {};
+  for (const [key, cursor] of Object.entries(state)) {
+    next[key] = cursor && cursor.at > limit ? { at: limit, id: "" } : cursor;
+  }
+  writeLocalSetting(database, CADASTRO_PUSH_STATE_KEY, next);
+  writeLocalSetting(database, CADASTRO_PUSH_CLOCK_REWIND_KEY, true);
+}
+
 function readCadastroPushState(database: DesktopDatabase): CadastroPushState {
   return readLocalSetting<CadastroPushState>(database, CADASTRO_PUSH_STATE_KEY) ?? {};
 }
@@ -8133,9 +8168,11 @@ async function sendCadastroBatch(
 export async function pushSharedCadastroToCloud(
   database: DesktopDatabase,
   identity: LocalDesktopIdentity,
-  options: { batchSize?: number; maxRounds?: number } = {}
+  options: { batchSize?: number; maxRounds?: number; now?: () => Date } = {}
 ): Promise<{ pushed: number; errors: string[] }> {
   const settings = getCloudSettings(database, identity);
+  const now = options.now ?? (() => new Date());
+  rewindCadastroPushCursorsOnce(database, now());
   const batchSize = options.batchSize ?? CADASTRO_PUSH_BATCH_SIZE;
   const maxRounds = options.maxRounds ?? CADASTRO_PUSH_MAX_ROUNDS;
   const errors: string[] = [];
@@ -8165,6 +8202,16 @@ export async function pushSharedCadastroToCloud(
     const stripColumns = authority.mode === "follower" ? (entity.masteredColumns ?? null) : null;
 
     let cursor = readCadastroPushState(database)[entity.key] ?? null;
+    // Cursor no futuro so acontece se o relogio desta maquina voltou (acerto de hora):
+    // o que foi editado desde entao ficou atras dele. Recua a janela inteira.
+    const clockNow = cursorClock(now());
+    if (cursor && cursor.at > clockNow) {
+      cursor = {
+        at: cursorClock(new Date(now().getTime() - CADASTRO_PUSH_CLOCK_REWIND_MS)),
+        id: ""
+      };
+      writeCadastroPushCursor(database, entity.key, cursor);
+    }
 
     for (let round = 0; round < maxRounds; round++) {
       let rows: Array<Record<string, unknown>>;
@@ -8196,7 +8243,17 @@ export async function pushSharedCadastroToCloud(
       if (sent.systemicFailure) break;
 
       const last = rows[rows.length - 1];
-      cursor = { at: String(last.cursor_at ?? ""), id: String(last.id ?? "") };
+      const lastAt = String(last.cursor_at ?? "");
+      if (lastAt > clockNow) {
+        // Linha com relogio de outra maquina adiantado: o cursor para no relogio daqui.
+        // Como a ordem e por horario, tudo o que vem depois dela tambem e "do futuro" e ja
+        // esta na nuvem (veio de la); o que for editado aqui a partir de agora fica na
+        // frente do cursor e sobe no proximo envio.
+        cursor = { at: clockNow, id: "" };
+        writeCadastroPushCursor(database, entity.key, cursor);
+        break;
+      }
+      cursor = { at: lastAt, id: String(last.id ?? "") };
       writeCadastroPushCursor(database, entity.key, cursor);
 
       if (rows.length < batchSize) break;

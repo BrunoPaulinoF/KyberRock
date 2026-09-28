@@ -21,6 +21,10 @@ export const OFFLINE_ALLOWED_VIEWS: readonly string[] = [
   "cloud"
 ];
 
+export const OFFLINE_DROPPED_MESSAGE =
+  "A conexao com a internet caiu. Enquanto ela nao voltar, nao e possivel acessar as " +
+  "outras telas - so Nova entrada, Insights e Configuracoes.";
+
 export const OFFLINE_BLOCKED_MESSAGE =
   "Sem internet: esta tela fica bloqueada ate a conexao voltar. " +
   "Voce pode usar Nova entrada, Insights e as Configuracoes.";

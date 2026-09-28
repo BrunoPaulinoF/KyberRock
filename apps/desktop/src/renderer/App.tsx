@@ -128,9 +128,11 @@ import type { UnitDeviceInfo } from "../services/unit-devices";
 import { ActivationGate } from "./ActivationGate";
 import {
   OFFLINE_BLOCKED_MESSAGE,
+  OFFLINE_DROPPED_MESSAGE,
   OFFLINE_FALLBACK_VIEW,
   isViewBlockedOffline
 } from "./offline-lock";
+import { useInternetStatus } from "./internet-status";
 import { formatDbDateTime, parseDbTimestamp } from "./format-datetime";
 import { MountainOutline } from "./MountainOutline";
 import { CrudFormModal } from "./CrudFormModal";
@@ -607,26 +609,22 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   // Sem internet so ficam liberadas Nova entrada, Insights e as Configuracoes
   // (`offline-lock.ts`). Toda troca de tela passa por `setActiveView`, que recusa
   // as bloqueadas; o ref deixa a funcao estavel para os atalhos de teclado.
-  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const probeInternet = useMemo(
+    () =>
+      desktopApi && typeof desktopApi.probeInternet === "function"
+        ? () => desktopApi.probeInternet()
+        : null,
+    [desktopApi]
+  );
+  const isOnline = useInternetStatus(probeInternet);
   const isOnlineRef = useRef(isOnline);
+  isOnlineRef.current = isOnline;
   const setActiveView = useCallback((view: ActiveView) => {
     if (isViewBlockedOffline(view, isOnlineRef.current)) {
       setMessage(OFFLINE_BLOCKED_MESSAGE);
       return;
     }
     setActiveViewState(view);
-  }, []);
-  useEffect(() => {
-    const update = () => {
-      isOnlineRef.current = navigator.onLine;
-      setIsOnline(navigator.onLine);
-    };
-    window.addEventListener("online", update);
-    window.addEventListener("offline", update);
-    return () => {
-      window.removeEventListener("online", update);
-      window.removeEventListener("offline", update);
-    };
   }, []);
   // A internet caiu com uma tela bloqueada aberta: volta para a Nova entrada.
   useEffect(() => {
@@ -1580,7 +1578,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         nextReceipts,
         nextActiveProfile
       ] = await Promise.all([
-        desktopApi.getStatus(navigator.onLine),
+        desktopApi.getStatus(navigator.onLine && isOnlineRef.current),
         desktopApi.getUpdateState(),
         desktopApi.listOpenWeighingOperations(),
         desktopApi.listCanceledWeighingOperations(),
@@ -1682,7 +1680,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       setCloudStatus(nextCloudStatus);
       const probe = await desktopApi.probeConnectivity();
       setCloudConnected(probe.cloudReachable);
-      const refreshStatus = await desktopApi.getStatus(navigator.onLine);
+      const refreshStatus = await desktopApi.getStatus(navigator.onLine && isOnlineRef.current);
       setStatus(refreshStatus);
     } catch (error) {
       setMessage(
@@ -1767,24 +1765,19 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
+  // Aviso na troca de estado da internet (o teste real, nao so a placa de rede).
+  const previousOnlineRef = useRef(isOnline);
   useEffect(() => {
+    if (previousOnlineRef.current === isOnline) return;
+    previousOnlineRef.current = isOnline;
     if (!desktopApi || phase !== "unlocked") return;
-    const handleOnline = () => {
-      setMessage("Internet disponivel novamente - drenando fila de sincronizacao.");
+    if (isOnline) {
+      setMessage("Internet disponivel novamente - telas liberadas e fila de envio sendo drenada.");
       void autoSyncCloud();
-    };
-    const handleOffline = () => {
-      setMessage(
-        "A conexao com a internet caiu - so Nova entrada, Insights e Configuracoes ficam liberadas."
-      );
-    };
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
-  }, [desktopApi, phase, autoSyncCloud]);
+    } else {
+      setMessage(OFFLINE_DROPPED_MESSAGE);
+    }
+  }, [isOnline, desktopApi, phase, autoSyncCloud]);
 
   async function refreshOpenOperations(): Promise<void> {
     if (!desktopApi) {
@@ -1796,7 +1789,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         desktopApi.listOpenWeighingOperations(),
         desktopApi.listCanceledWeighingOperations(),
         desktopApi.listUnitDevices(),
-        desktopApi.getStatus(navigator.onLine)
+        desktopApi.getStatus(navigator.onLine && isOnlineRef.current)
       ]);
     setOpenOperations(nextOpenOperations);
     setCanceledOperations(nextCanceledOperations);

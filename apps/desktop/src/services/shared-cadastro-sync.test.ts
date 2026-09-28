@@ -1006,6 +1006,69 @@ describe("cadastro compartilhado da pedreira", () => {
       database.close();
     }
   });
+  it("linha com relogio adiantado de outra maquina nao prende o cadastro feito aqui", async () => {
+    const database = createMachine("desktop-a");
+    const at = (iso: string) => () => new Date(iso);
+
+    try {
+      const identity = readIdentity(database);
+      seedLocalCadastro(database);
+      await pushSharedCadastroToCloud(database, identity, { now: at("2026-07-28T12:00:00.000Z") });
+
+      // Veio pelo pull de uma balanca com o relogio 17 min adiantado.
+      database
+        .prepare(
+          `INSERT INTO drivers (id, company_id, name, is_active, created_at, updated_at)
+           VALUES ('driver-futuro', 'company-1', 'Da Outra Balanca', 1, ?, ?)`
+        )
+        .run("2026-07-28T12:17:00.000Z", "2026-07-28T12:17:00.000Z");
+      await pushSharedCadastroToCloud(database, identity, { now: at("2026-07-28T12:00:30.000Z") });
+
+      // Um minuto depois o operador cadastra um motorista aqui, no horario certo.
+      database
+        .prepare(
+          `INSERT INTO drivers (id, company_id, name, is_active, created_at, updated_at)
+           VALUES ('driver-novo', 'company-1', 'Cadastrado Agora', 1, ?, ?)`
+        )
+        .run("2026-07-28T12:01:00.000Z", "2026-07-28T12:01:00.000Z");
+      invokeMock.mockClear();
+      await pushSharedCadastroToCloud(database, identity, { now: at("2026-07-28T12:01:05.000Z") });
+
+      expect(payloadFor("drivers").map((row) => row.id)).toContain("driver-novo");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("cursor deixado no futuro por versao anterior recua uma vez e reenvia o que ficou atras", async () => {
+    const database = createMachine("desktop-a");
+
+    try {
+      const identity = readIdentity(database);
+      database
+        .prepare(
+          `INSERT INTO drivers (id, company_id, name, is_active, created_at, updated_at)
+           VALUES ('driver-preso', 'company-1', 'Ficou Atras', 1, ?, ?)`
+        )
+        .run("2026-07-28T11:50:00.000Z", "2026-07-28T11:50:00.000Z");
+      database
+        .prepare("INSERT INTO local_settings (key, value_json, updated_at) VALUES (?, ?, ?)")
+        .run(
+          "cloud_cadastro_push_state",
+          JSON.stringify({ drivers: { at: "2026-07-28 11:55:00", id: "zzz" } }),
+          "2026-07-28T11:55:00.000Z"
+        );
+
+      await pushSharedCadastroToCloud(database, identity, {
+        now: () => new Date("2026-07-28T12:00:00.000Z")
+      });
+
+      expect(payloadFor("drivers").map((row) => row.id)).toContain("driver-preso");
+    } finally {
+      database.close();
+    }
+  });
+
   it("publica as placas do cliente depois do cliente e do veiculo que elas ligam", async () => {
     const database = createMachine("desktop-a");
 

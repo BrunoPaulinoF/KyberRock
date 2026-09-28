@@ -2144,6 +2144,11 @@ function registerIpcHandlers(): void {
     }
   );
 
+  ipcMain.handle("desktop:probe-internet", async () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.probeInternetReachable();
+  });
+
   ipcMain.handle("desktop:probe-connectivity", async () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.probeCloudConnectivity();
