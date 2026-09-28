@@ -172,8 +172,9 @@ function ScaleSettings() {
                     : `${executor.executor.name} fora do ar`}
           </strong>
           <span>
-            O site nao le o peso da balanca: na Nova entrada o peso e digitado, e a balanca
-            executora registra a pesagem com as mesmas regras do botao "Capturar peso".
+            O site nao le o peso da balanca: no fechamento pelo site o peso e digitado, e a balanca
+            executora registra a pesagem com as mesmas regras do botao "Capturar peso". A Nova
+            entrada so e feita no KyberRock Desktop.
           </span>
         </div>
         <p className="desk-muted">

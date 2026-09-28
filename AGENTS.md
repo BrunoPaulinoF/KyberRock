@@ -429,7 +429,7 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
 
 ## Condicao de pagamento da nova entrada
 
-- A Nova entrada (desktop `App.tsx` e site `NewEntry.tsx`) preenche a **condicao** com a
+- A Nova entrada (desktop `App.tsx`; o site nao tem Nova entrada) preenche a **condicao** com a
   condicao **padrao do cadastro** do cliente, nao com a da ultima entrada — o combinado com o
   cliente vale mais que uma excecao. Transportadora e **forma** de pagamento continuam vindo
   da ultima entrada (`getCustomerLastEntryPreferences`).
@@ -444,15 +444,18 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   digitado a mao volta para a tela inicial dele (`homeFor`). Tela nova entra nessa lista e no
   `NAV_SECTIONS` do `Layout.tsx`; rota nova usa o `only("<tela>", ...)` do `App.tsx`.
 - `monitoramento` so ve `/monitoramento`; `comercial` as cinco telas de analise mais Cadastros e
-  `/senha-preco`; `gestor` tudo menos a Nova entrada; `operacao` tudo; `administrador` tudo mais
+  `/senha-preco`; `gestor` e `operacao` tudo; `administrador` tudo mais
   `/suporte` (Logs) e `/senha-preco`.
   So gestor, operacao e administrador tem a engrenagem de configuracoes; os outros tem so o botao
   Sair.
 - O que cada perfil **grava** mora na `web-api` (`_shared/web-session.ts`, `actionDenial` no
   `handler.ts`) — esconder a tela nao protege nada. O monitoramento so consulta; o comercial
   grava todo o cadastro (cliente, bloco comercial, frota e preco), mas nao pesa nem mexe em
-  carteira, fechamento e destinatarios. A Nova entrada e conferida dentro do `request_operation`
-  (`canCreateEntry`), porque o tipo do pedido vem no payload.
+  carteira, fechamento e destinatarios.
+- **Nova entrada nao existe no site** para perfil nenhum: a entrada so nasce no KyberRock
+  Desktop. A `web-api` recusa `request_operation` `entry` com 403 (a recusa fica no servidor
+  porque uma aba antiga do site ainda pode mandar o pedido); `/nova-entrada` volta para
+  `/operacoes`.
 - Senha de preco: `requiresPricePasswordFor` — a `operacao` SEMPRE pede, o `administrador` e o
   `comercial` NUNCA, o `gestor` segue a marca do login no painel. Vale para o preco da pesagem e para todas as
   acoes de preco do cadastro (`PRICE_ACTIONS`, inclusive remover), como no desktop. A mesma

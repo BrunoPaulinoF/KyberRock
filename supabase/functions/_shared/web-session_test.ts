@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   bearerToken,
-  canCreateEntry,
   canEditCustomers,
   canEditFleet,
   canEditPrices,
@@ -162,10 +161,6 @@ describe("o que cada perfil grava", () => {
     for (const check of [canManagePrices, canOperate]) {
       expect(WEB_ROLES.filter(check), check.name).toEqual(["gestor", "operacao", "administrador"]);
     }
-  });
-
-  it("Nova entrada: operacao e administrador, nao o gestor", () => {
-    expect(WEB_ROLES.filter(canCreateEntry)).toEqual(["operacao", "administrador"]);
   });
 
   it("logs de suporte: so o administrador", () => {

@@ -281,7 +281,6 @@ describe("web-api: sessao e permissoes", () => {
       canEditCustomers: true,
       canEditFleet: true,
       canOperate: true,
-      canCreateEntry: false,
       canSeeSupport: false
     });
     expect((result.body.units as Row[]).map((unit) => unit.id)).toEqual(["unit-1"]);

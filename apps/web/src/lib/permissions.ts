@@ -13,10 +13,13 @@
  *                     cadastra tudo e muda preco sem senha; sem configuracoes. E o unico (com o
  *                     administrador) que ve a tela "Senha de preco", o codigo rotativo que ele
  *                     passa para a operacao mudar preco;
- *   - `gestor`        tudo, menos a Nova entrada, com configuracoes;
+ *   - `gestor`        tudo, com configuracoes;
  *   - `operacao`      tudo, com configuracoes; mudar preco sempre pede a senha da pedreira;
  *   - `administrador` tudo, sem senha, mais os logs de suporte e a senha de preco, com
  *                     configuracoes.
+ *
+ * Nova entrada nao existe no site para perfil nenhum: a entrada so nasce no KyberRock Desktop,
+ * na balanca (a `web-api` recusa o pedido de entrada).
  */
 
 export const ROLES = [
@@ -45,7 +48,6 @@ export function isRole(value: unknown): value is Role {
 /** As telas do site. `configuracoes` e a engrenagem do rodape (Balanca, Impressao, Cloud). */
 export const SCREENS = [
   "painel",
-  "nova-entrada",
   "operacoes",
   "carteira",
   "cadastros",
@@ -65,10 +67,9 @@ export const SCREENS = [
 ] as const;
 export type Screen = (typeof SCREENS)[number];
 
-/** As telas do KyberRock Desktop (menu lateral), na ordem dele. */
+/** As telas do KyberRock Desktop (menu lateral), na ordem dele, menos a Nova entrada. */
 const DESK_SCREENS: readonly Screen[] = [
   "painel",
-  "nova-entrada",
   "operacoes",
   "carteira",
   "cadastros",
@@ -97,7 +98,7 @@ export const SCREENS_BY_ROLE: Record<Role, readonly Screen[]> = {
     "conferencia-faturamento",
     "relatorios"
   ],
-  gestor: DESK_SCREENS.filter((screen) => screen !== "nova-entrada"),
+  gestor: DESK_SCREENS,
   operacao: DESK_SCREENS,
   // A senha de preco nao e tela do desktop: la ninguem a ve, so digita.
   administrador: [...DESK_SCREENS, "senha-preco", "suporte"]
@@ -142,8 +143,6 @@ export interface Capabilities {
    * unidade — o site so pede.
    */
   canOperate: boolean;
-  /** Nova entrada pelo site: operacao e administrador (o gestor nao). */
-  canCreateEntry: boolean;
   /** Engrenagem de configuracoes (Balanca, Impressao, Cloud). */
   hasSettings: boolean;
   /** Ve a senha rotativa de preco (comercial e administrador). */
@@ -160,7 +159,6 @@ export function capabilitiesFor(role: Role): Capabilities {
     canManagePrices: runsTheQuarry,
     canEditPrices: editsCadastro,
     canOperate: runsTheQuarry,
-    canCreateEntry: role === "operacao" || role === "administrador",
     hasSettings: canSee(role, "configuracoes"),
     canSeePriceCode: canSee(role, "senha-preco")
   };

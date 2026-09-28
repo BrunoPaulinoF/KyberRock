@@ -38,7 +38,7 @@ const { data: profile } = await supabase
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `monitoramento` | Só **Monitoramento** (vendas em tempo real), sem configurações                                                                    | Nada — só consulta (403 em toda escrita)                                                                                                        |
 | `comercial`     | Insights, Conferência de faturamento, Relatórios, Controle de caminhões, Relatório por cliente e **Cadastros**, sem configurações | Todo o cadastro (cliente, bloco comercial, frota e preço), **sem senha de preço**; não pesa, não mexe em carteira, fechamento nem destinatários |
-| `gestor`        | Todas, **menos a Nova entrada**, com configurações                                                                                | Tudo, menos a Nova entrada (`request_operation` `entry`)                                                                                        |
+| `gestor`        | Todas, com configurações                                                                                                          | Tudo                                                                                                                                            |
 | `operacao`      | Todas, com configurações                                                                                                          | Tudo; mudar preço **sempre** pede a senha da pedreira                                                                                           |
 | `administrador` | Todas **+ Logs** (suporte), com configurações                                                                                     | Tudo, sem senha nenhuma, **+ `support_overview`**                                                                                               |
 | `loader`        | Só a fila da unidade (tela `/carregamento`)                                                                                       | Nada — a `web-api` responde 403                                                                                                                 |
@@ -48,11 +48,16 @@ tela e a escrita. As telas de cada perfil estão em `apps/web/src/lib/permission
 (`SCREENS_BY_ROLE`): a que não é do perfil nem aparece no menu, e o endereço digitado à mão volta
 para a tela inicial dele. `administrador` entrou na migração
 `202609260001_perfis_por_tela_e_aviso_de_vendas`. A regra de quem grava o quê vive em
-`_shared/web-session.ts` (`canWrite`, `canCreateEntry`, `canSeeSupport`,
+`_shared/web-session.ts` (`canWrite`, `canOperate`, `canSeeSupport`,
 `requiresPricePasswordFor`) e o mapa ação → grupo em `web-api/handler.ts` (`actionDenial`); um
 teste garante que toda ação nova caia em algum grupo, para nenhuma nascer liberada a quem só
 consulta. `me` devolve `canManagePrices`, `canEditPrices`, `canEditCustomers`, `canEditFleet`,
-`canOperate`, `canCreateEntry`, `canSeeSupport` e `requiresPricePassword`.
+`canOperate`, `canSeeSupport` e `requiresPricePassword`.
+
+**Nova entrada não existe no site** para perfil nenhum (desde 28/09/2026): a entrada só nasce no
+KyberRock Desktop, na balança. A tela saiu do site e a `web-api` recusa `request_operation`
+`entry` com 403 — a recusa fica no servidor porque uma aba antiga do site ainda pode mandar o
+pedido.
 
 **Senha de preço.** Quem tem `requiresPricePassword` digita a senha de preço — o código
 **rotativo** de 6 dígitos que troca a cada 45 segundos e que só o `comercial` e o `administrador`
@@ -134,9 +139,9 @@ Convenções de payload: campos em **camelCase**; campo **ausente** não mexe na
 
 ### 4.1 Sessão
 
-| Ação | Payload | Devolve                                                                                                                                                                                                             |
-| ---- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `me` | —       | `user { id, email, name, role, unitId, canManagePrices, canEditPrices, canEditCustomers, canEditFleet, canOperate, canCreateEntry, canSeeSupport, canSeePriceCode, requiresPricePassword }`, `companyId`, `units[]` |
+| Ação | Payload | Devolve                                                                                                                                                                                             |
+| ---- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `me` | —       | `user { id, email, name, role, unitId, canManagePrices, canEditPrices, canEditCustomers, canEditFleet, canOperate, canSeeSupport, canSeePriceCode, requiresPricePassword }`, `companyId`, `units[]` |
 
 ### 4.2 Cliente (comercial, gestor, operação e administrador)
 
@@ -261,7 +266,7 @@ Para montar a tela do fechamento: `weighing_operations` (período pela data de *
 balança projeta essas três colunas a partir da versão que traz a migração `202609220004`.
 Se a balança da unidade estiver desligada, o pedido fica `pending` até ela ligar.
 
-### 4.9 Pesagem pelo site (operação e administrador; o gestor tudo menos a entrada)
+### 4.9 Pesagem pelo site (gestor, operação e administrador; sem Nova entrada)
 
 | Ação                | Payload                                          | Devolve                                              |
 | ------------------- | ------------------------------------------------ | ---------------------------------------------------- |
@@ -278,34 +283,17 @@ pelas mesmas funções dos botões do desktop e devolve o resultado.
 
 `kind` e `data`:
 
-| `kind`    | `data`                                                                                                                                                                                                                                                                   |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `entry`   | `customerId`, `vehicleId`, `driverId`, `productId`, `entryWeightKg`; opcionais `carrierId`, `paymentMethodId`, `paymentTermId`, `conditionText`, `operationType` (`invoice` padrão, ou `internal`), `freightModality`, `freight`, `deductFreightFromCredit` (ver abaixo) |
-| `exit`    | `exitWeightKg`; opcional `operationType`. O cupom sai na impressora da executora, com o número de vias do perfil dela (1 ou 2)                                                                                                                                           |
-| `update`  | só o que muda: `customerId`, `productId`, `vehicleId`, `driverId`, `carrierId` (`null` tira), `paymentMethodId`, `paymentTermId`, `operationType`, `unitPriceCents`. Pesagem concluída: só cliente, produto e transportadora                                             |
-| `cancel`  | `reason`                                                                                                                                                                                                                                                                 |
-| `reprint` | — (só pesagem concluída)                                                                                                                                                                                                                                                 |
+| `kind`    | `data`                                                                                                                                                                                                                       |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `entry`   | **Recusado (403) para todo perfil**: a entrada só nasce no KyberRock Desktop. A balança executora continua sabendo executar um pedido `entry` antigo que tenha ficado na fila                                                |
+| `exit`    | `exitWeightKg`; opcional `operationType`. O cupom sai na impressora da executora, com o número de vias do perfil dela (1 ou 2)                                                                                               |
+| `update`  | só o que muda: `customerId`, `productId`, `vehicleId`, `driverId`, `carrierId` (`null` tira), `paymentMethodId`, `paymentTermId`, `operationType`, `unitPriceCents`. Pesagem concluída: só cliente, produto e transportadora |
+| `cancel`  | `reason`                                                                                                                                                                                                                     |
+| `reprint` | — (só pesagem concluída)                                                                                                                                                                                                     |
 
 - O peso é **digitado** (como a balança virtual) e fica marcado `WEB:<kg>` na auditoria da pesagem.
-- **Frete e condição da entrada** — o mesmo bloco da Nova entrada do desktop:
-  - `freightModality`: `fob` (com frete, valor na nota), `cif` (com frete, valor só no sistema),
-    `third_party` (sem frete, transportador na nota) ou `none` (sem ocorrência). Ausente = o padrão
-    da balança (`third_party`), como antes.
-  - `freight` (só com `fob`/`cif`): `calculationType` (`per_ton` | `per_ton_km` | `fixed_plus_ton`),
-    `baseValueCents`, `fixedValueCents?`, `distanceKm` (obrigatória no ton-km), `destination?`. A
-    balança monta o frete como o `buildFreightInput` do desktop (pagador pela situação, valor no
-    cupom só no `fob`) e, com frete da Pedreira na forma "crédito do cliente", abate do crédito.
-  - `conditionText`: a condição digitada ("30", "7 14 21", "s+20"); vence `paymentTermId`. A
-    balança reusa a condição local com a mesma regra ou cria uma nova (a mesma do campo livre da
-    tela); texto que o desktop não entende volta como falha com a mensagem dele.
-  - Executora abaixo da `0.8.253` (`ENTRY_FREIGHT_MIN_EXECUTOR_VERSION`, lida de
-    `device_registrations.app_version`) registraria a entrada **ignorando** frete e condição, em
-    silêncio: por isso a ação responde 409 pedindo a atualização da balança.
-  - As regras de frete e de condição do site (`apps/web/src/lib/desktop/`) são cópias de
-    `apps/desktop/src/services/` guardadas por teste (`desktop-copies.test.ts`).
-- Na entrada o id da pesagem nasce na `web-api` (`operationId` da resposta): executar o mesmo
-  pedido duas vezes (resposta perdida, pedido devolvido à fila) encontra a pesagem em vez de
-  criar outro caminhão no pátio. Fechar ou cancelar de novo também é reconhecido como já feito.
+- Fechar ou cancelar de novo (resposta perdida, pedido devolvido à fila) é reconhecido como já
+  feito, sem mexer duas vezes na pesagem.
 - Mudar `unitPriceCents` exige `pricePassword` (a senha de alteração de preço da pedreira) de
   quem tem `user_profiles.requires_price_password` — marcado no painel, por login. A senha é
   conferida aqui e nunca é gravada no pedido.

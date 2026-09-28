@@ -12,7 +12,6 @@ import {
   LogOut,
   MonitorPlay,
   Moon,
-  PlusCircle,
   Printer,
   ReceiptText,
   Scale,
@@ -35,7 +34,8 @@ import { useTheme } from "../lib/theme";
  * A casca do site: o mesmo menu lateral do KyberRock Desktop — mesmas secoes (Operacional e
  * Analise), mesmos nomes, mesma ordem e mesmos icones (`lucide-react`) —, com o rodape de
  * usuario, tema e a engrenagem de configuracoes. Fica de fora so o que nao existe no site
- * (Exportar e Restaurar mexem no banco local da balanca); o que o perfil nao ve nem aparece
+ * (Exportar e Restaurar mexem no banco local da balanca; a Nova entrada so e feita na balanca);
+ * o que o perfil nao ve nem aparece
  * (`lib/permissions.ts`). Monitoramento abre em tela cheia; Logs e o suporte do administrador.
  */
 
@@ -51,7 +51,6 @@ const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
     title: "Operacional",
     items: [
       { screen: "painel", to: "/painel", label: "Painel", icon: LayoutDashboard },
-      { screen: "nova-entrada", to: "/nova-entrada", label: "Nova entrada", icon: PlusCircle },
       { screen: "operacoes", to: "/operacoes", label: "Operacoes", icon: ListChecks },
       { screen: "carteira", to: "/carteira", label: "Carteira", icon: Wallet },
       { screen: "cadastros", to: "/cadastros", label: "Cadastros", icon: Database },

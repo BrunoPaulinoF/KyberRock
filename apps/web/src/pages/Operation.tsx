@@ -9,7 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode
 } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 
 import {
   CountBadge,
@@ -64,7 +64,8 @@ import { useAsync } from "../lib/use-async";
  * unidade EXECUTA pelas mesmas funcoes dos botoes do desktop, imprimindo o cupom do fechamento
  * na impressora dela. Esta tela e a "Operacoes" do desktop (abertas, canceladas, concluidas),
  * com os mesmos botoes; cada clique vira um pedido, acompanhado ao vivo (enviando -> balanca
- * registrando -> pronto). A Nova entrada fica em `NewEntry.tsx`. Contrato em `docs/web-api.md`.
+ * registrando -> pronto). Nova entrada nao ha no site: so no KyberRock Desktop. Contrato em
+ * `docs/web-api.md`.
  */
 
 // ---------------------------------------------------------------------------
@@ -382,7 +383,6 @@ type Dialog =
 export function Operations() {
   const user = useUser();
   const toast = useToast();
-  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const tabParam = params.get("aba");
   const tab: OperationsTab = isOperationsTab(tabParam) ? tabParam : "abertas";
@@ -445,19 +445,6 @@ export function Operations() {
       window.clearInterval(poll);
     };
   }, [reloadOpen, reloadLoading]);
-
-  // F2 abre a Nova entrada, como no desktop.
-  useEffect(() => {
-    if (!user.canCreateEntry) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "F2") {
-        event.preventDefault();
-        navigate("/nova-entrada");
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [user.canCreateEntry, navigate]);
 
   const pendingOps = useMemo(
     () =>
