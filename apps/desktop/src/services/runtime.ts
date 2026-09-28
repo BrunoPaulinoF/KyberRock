@@ -66,7 +66,7 @@ import {
   mergeDuplicateCustomersByDocument,
   type CustomerMergeResult
 } from "./customer-merge.js";
-import { probeInternet, probeOmie } from "./connectivity.js";
+import { probeInternet, probeOmie, probeSupabase } from "./connectivity.js";
 import {
   getDesktopStatusSnapshot,
   recordLastBackupAt,
@@ -2726,6 +2726,17 @@ export class DesktopRuntime {
         });
       }
     }
+  }
+
+  /**
+   * Teste leve de "tem internet?" usado pela trava de telas: basta UM destino
+   * responder. Nao passa pelo OMIE (mais lento) e cai na nuvem da empresa quando a
+   * rede da pedreira bloqueia os destinos publicos.
+   */
+  async probeInternetReachable(): Promise<boolean> {
+    const internet = await probeInternet();
+    if (internet.online) return true;
+    return (await probeSupabase()).online;
   }
 
   async probeCloudConnectivity(): Promise<{

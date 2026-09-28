@@ -873,6 +873,8 @@ export interface KyberRockDesktopApi {
     cloudReachable: boolean;
     omieReachable: boolean;
   }>;
+  /** Teste leve de internet (sem OMIE) usado pela trava de telas sem conexao. */
+  probeInternet: () => Promise<boolean>;
   lookupCep: (cep: string) => Promise<{
     zipcode: string;
     street: string;
