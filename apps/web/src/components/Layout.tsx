@@ -13,6 +13,7 @@ import {
   MonitorPlay,
   Moon,
   Printer,
+  Receipt,
   ReceiptText,
   Scale,
   ScrollText,
@@ -55,6 +56,7 @@ const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
       { screen: "operacoes", to: "/operacoes", label: "Operacoes", icon: ListChecks },
       { screen: "carteira", to: "/carteira", label: "Carteira", icon: Wallet },
       { screen: "cadastros", to: "/cadastros", label: "Cadastros", icon: Database },
+      { screen: "cupons", to: "/cupons", label: "Cupons", icon: Receipt },
       { screen: "senha-preco", to: "/senha-preco", label: "Senha de preco", icon: KeyRound }
     ]
   },

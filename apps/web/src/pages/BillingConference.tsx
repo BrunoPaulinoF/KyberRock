@@ -29,7 +29,7 @@ import {
   type BillingSituation
 } from "../lib/billing-conference";
 import { formatDateTime, formatDocument, todayIso } from "../lib/format";
-import { deliverReports } from "../lib/report-output";
+import { deliverReports, spreadsheetFileName } from "../lib/report-output";
 import { useAsync } from "../lib/use-async";
 
 const HELP =
@@ -115,7 +115,10 @@ export function BillingConference() {
     setExportMessage(null);
     try {
       const files = buildBillingReportFiles(report, selectedFormats);
-      const names = [...files.pdf, ...files.xls].map((file) => file.filename);
+      const names = [
+        ...files.pdf.map((file) => file.filename),
+        ...files.xls.map((file) => spreadsheetFileName(file.filename))
+      ];
       await deliverReports(files);
       setExportMessage(
         names.length === 1

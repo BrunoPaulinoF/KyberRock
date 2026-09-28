@@ -87,6 +87,7 @@ import {
   type DesktopUpdateChannel
 } from "../services/update-channel.js";
 import type { OperationType } from "../services/weighing-operations.js";
+import { spreadsheetHtmlToXlsx, xlsxFileName } from "../services/html-to-xlsx.js";
 
 const require = createRequire(import.meta.url);
 const { autoUpdater } = require("electron-updater") as typeof ElectronUpdater;
@@ -901,10 +902,12 @@ function registerIpcHandlers(): void {
       // Planilha, e nao o HTML A4 do e-mail: e a versao com as celulas tipadas (numero,
       // valor e data), a unica em que a coluna soma e aceita formula no Excel.
       const html = runtime.getReportSpreadsheet(startDate, endDate);
-      const filePath = await pickReportFilePath(`relatorio-${startDate}-a-${endDate}.xls`, ["xls"]);
+      const filePath = await pickReportFilePath(`relatorio-${startDate}-a-${endDate}.xlsx`, [
+        "xlsx"
+      ]);
       if (!filePath) return null;
       const fs = await import("node:fs/promises");
-      await fs.writeFile(filePath, html, "utf8");
+      await fs.writeFile(filePath, spreadsheetHtmlToXlsx(html, `relatorio ${startDate}`));
       return { path: filePath };
     }
   );
@@ -2982,13 +2985,18 @@ async function saveReportDocuments(
       await fs.writeFile(filePath, await renderHtmlToPdf(document.html));
       return;
     }
-    await fs.writeFile(filePath, document.html, "utf8");
+    // Planilha de verdade (.xlsx), e nao o HTML gravado como .xls: esse abria no Excel em
+    // Modo Protegido, como pagina da web, e nao deixava editar nem usar formula.
+    const sheetName = path.basename(filePath).replace(/\.xlsx?$/i, "");
+    await fs.writeFile(filePath, spreadsheetHtmlToXlsx(document.html, sheetName));
   };
+  const fileNameOf = (document: (typeof documents)[number]): string =>
+    document.format === "pdf" ? document.fileName : xlsxFileName(document.fileName);
 
   if (documents.length === 1) {
     const [document] = documents;
-    const filePath = await pickReportFilePath(document.fileName, [
-      document.format === "pdf" ? "pdf" : "xls"
+    const filePath = await pickReportFilePath(fileNameOf(document), [
+      document.format === "pdf" ? "pdf" : "xlsx"
     ]);
     if (!filePath) return null;
     await writeDocument(document, filePath);
@@ -3003,7 +3011,7 @@ async function saveReportDocuments(
 
   const files: string[] = [];
   for (const document of documents) {
-    const filePath = path.join(folder.filePaths[0], document.fileName);
+    const filePath = path.join(folder.filePaths[0], fileNameOf(document));
     await writeDocument(document, filePath);
     files.push(filePath);
   }
