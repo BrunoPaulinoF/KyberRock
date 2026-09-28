@@ -115,7 +115,7 @@ export const SITE_ROLE_OPTIONS: ReadonlyArray<{ value: UserRole; label: string; 
   {
     value: "gestor",
     label: "Gestor",
-    hint: "Tudo, menos a Nova entrada. Com configuracoes."
+    hint: "Tudo. Com configuracoes."
   },
   {
     value: "operacao",
