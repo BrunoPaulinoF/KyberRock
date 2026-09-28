@@ -6,6 +6,8 @@ import { DeskPanel, EmptyState, IconAction, Pill } from "../components/desk";
 import { Alert, DataTable, useToast } from "../components/ui";
 import { callWebApi } from "../lib/api";
 import { useUser } from "../lib/auth";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { formatDateTime, formatMoney, formatPlate } from "../lib/format";
 import { fiscalStatus, formatElapsedSince, REQUEST_KIND_LABELS } from "../lib/operation";
 import { q } from "../lib/queries";
@@ -325,6 +327,8 @@ function CloudSettings() {
     () => q.closedOperations(user.companyId, period.startIso, period.endIso),
     [user.companyId, period.startIso, period.endIso]
   );
+  // O pedido chegando ao OMIE (ou a nota saindo) na balanca some desta lista na hora.
+  useOnCadastroChange(closed.refresh, CADASTRO_TABLES.operations);
   const pendingOmie = useMemo(
     () =>
       (closed.data ?? [])

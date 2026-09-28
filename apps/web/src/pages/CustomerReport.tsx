@@ -6,6 +6,8 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Picker, type PickerOption } from "../components/Picker";
 import { errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import {
   PERIOD_OPTIONS,
   buildCustomerOptions,
@@ -133,6 +135,8 @@ export function CustomerReport() {
       ? { kind: "overview", overview: buildCustomersOverview(input) }
       : { kind: "report", report: buildCustomerReport({ ...input, customerId }) };
   }, [lookups.data, customerId, range.start, range.end, range.label, user.companyId, user.unitId]);
+  // Pesagem fechada, editada ou cancelada na balanca entra no relatorio na hora.
+  useOnCadastroChange(result.refresh, CADASTRO_TABLES.operations);
 
   const report = result.data?.kind === "report" ? result.data.report : null;
   const overview = result.data?.kind === "overview" ? result.data.overview : null;

@@ -5,6 +5,8 @@ import { useMemo, useState } from "react";
 
 import { Picker } from "../components/Picker";
 import { useUser } from "../lib/auth";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import {
   BILLING_PERIOD_OPTIONS,
   BILLING_SITUATIONS,
@@ -77,10 +79,13 @@ export function BillingConference() {
     [customers.data]
   );
 
-  const { data, loading, error } = useAsync(
+  const { data, loading, error, refresh } = useAsync(
     () => loadBillingRows(user.companyId, user.unitId, range, customerId || null),
     [user.companyId, user.unitId, range.start, range.end, customerId]
   );
+  // Pesagem fechada, editada ou cancelada na balanca entra na tela na hora.
+  useOnCadastroChange(refresh, CADASTRO_TABLES.operations);
+  useOnCadastroChange(customers.refresh, CADASTRO_TABLES.customers);
 
   // O mesmo relatorio alimenta a tela e o arquivo: o PDF/planilha sai com as MESMAS linhas
   // que estao na tela, e o envelope (periodo, cliente, situacoes, busca) diz o que ele mostra.

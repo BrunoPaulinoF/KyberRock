@@ -17,6 +17,8 @@ import { DeskPanel, EmptyState, IconAction, PillTabs, SectionHead } from "../com
 import { Picker } from "../components/Picker";
 import { Alert } from "../components/ui";
 import { useUser } from "../lib/auth";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { firstDayOfMonth, formatMoney, formatTons, periodToIso, todayIso } from "../lib/format";
 import { q } from "../lib/queries";
 import {
@@ -128,6 +130,8 @@ export function SalesReport() {
         : Promise.resolve([]),
     [user.companyId, period.startIso, period.endIso, validRange]
   );
+  // Pesagem fechada, editada ou cancelada na balanca entra na tela na hora.
+  useOnCadastroChange(ops.refresh, CADASTRO_TABLES.operations);
   const operations = useMemo(() => filterByUnit(ops.data ?? [], unitId), [ops.data, unitId]);
 
   // Trocar de periodo pode invalidar os filtros escolhidos (como no desktop).

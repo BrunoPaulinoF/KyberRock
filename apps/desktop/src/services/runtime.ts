@@ -987,6 +987,7 @@ export class DesktopRuntime {
       );
       if (merged.length > 0) {
         console.info(`Cadastros duplicados unificados na abertura: ${merged.length}`);
+        this.triggerCadastroCloudPush("customer_merge_startup");
       }
     } catch (error) {
       console.error("Unificacao automatica de cadastros duplicados falhou", error);
@@ -1240,7 +1241,9 @@ export class DesktopRuntime {
    * operacao descartada e qualquer outra que tenha esbarrado na mesma trava.
    */
   private async runOmieQueue(
-    entityId?: string
+    entityId?: string,
+    /** Falso so dentro de `syncCloudNow`, que sobe as pesagens logo depois na reconciliacao. */
+    pushResults = true
   ): Promise<{ processed: number; failed: number; errors: string[] } | null> {
     if (this.omieQueueProcessing) {
       this.omieQueueRerunRequested = true;
@@ -1259,7 +1262,14 @@ export class DesktopRuntime {
         return { processed: 0, failed: 0, errors: ["Supabase nao configurado."] };
       }
       const identity = this.ensureIdentity();
-      return await processOmieSyncQueue(this.database, identity, { entityId });
+      const result = await processOmieSyncQueue(this.database, identity, { entityId });
+      // O pedido criado (numero, status) e gravado na pesagem local; sem isto ele so chegava
+      // ao site na proxima varredura completa.
+      if (pushResults && (result.processed > 0 || result.failed > 0)) {
+        if (entityId) this.triggerOperationCloudPush("omie_queue", entityId);
+        else this.triggerBackgroundCloudSync("omie_queue", { processed: result.processed });
+      }
+      return result;
     } finally {
       this.omieQueueProcessing = false;
       if (this.omieQueueRerunRequested) {
@@ -1328,7 +1338,10 @@ export class DesktopRuntime {
    * credencial de nuvem nao ha o que perguntar, e a falha nunca sobe — a conferencia e a
    * ultima coisa do sistema que pode derrubar um envio de fechamento.
    */
-  private async runOmieBillingCheck(): Promise<OmieBillingReconcileResult> {
+  private async runOmieBillingCheck(
+    /** Falso so dentro de `syncCloudNow`, que sobe as pesagens logo depois na reconciliacao. */
+    pushResults = true
+  ): Promise<OmieBillingReconcileResult> {
     const idle: OmieBillingReconcileResult = {
       checked: 0,
       billed: 0,
@@ -1340,7 +1353,15 @@ export class DesktopRuntime {
     if (!this.hasCloudCredentials()) return idle;
     initializeSupabaseFromSettings(this.database);
     if (!isSupabaseInitialized()) return idle;
-    return await reconcileOmieBillingFromOmie(this.database, this.ensureIdentity());
+    const result = await reconcileOmieBillingFromOmie(this.database, this.ensureIdentity());
+    // Pesagem que o OMIE faturou (status, numero da NF) sobe agora, e nao na proxima varredura.
+    if (pushResults && (result.billed > 0 || result.invoiceNumbers > 0)) {
+      this.triggerBackgroundCloudSync("omie_billing_check", {
+        billed: result.billed,
+        invoiceNumbers: result.invoiceNumbers
+      });
+    }
+    return result;
   }
 
   /**
@@ -2272,12 +2293,16 @@ export class DesktopRuntime {
 
   setCustomerFutureBillingInvoice(input: SetCustomerFutureBillingInvoiceInput) {
     this.assertDesktopAccess();
-    return setCustomerFutureBillingInvoice(this.database, input);
+    const result = setCustomerFutureBillingInvoice(this.database, input);
+    this.triggerCadastroCloudPush("customer_future_billing_invoice");
+    return result;
   }
 
   removeCustomerFutureBillingInvoice(invoiceId: string) {
     this.assertDesktopAccess();
-    return removeCustomerFutureBillingInvoice(this.database, invoiceId);
+    const result = removeCustomerFutureBillingInvoice(this.database, invoiceId);
+    this.triggerCadastroCloudPush("customer_future_billing_invoice");
+    return result;
   }
 
   configureReceiptPrintProfile(
@@ -2306,22 +2331,28 @@ export class DesktopRuntime {
     return listPrintReceipts(this.database);
   }
 
-  printReceipt(operationId: string): Promise<PrintReceiptSummary> {
+  async printReceipt(operationId: string): Promise<PrintReceiptSummary> {
     this.assertDesktopAccess();
-    return printWeighingReceipt(
+    const receipt = await printWeighingReceipt(
       this.database,
       { operationId, identity: this.ensureIdentity() },
       this.receiptPrinter
     );
+    // A via so entrava na fila e esperava a proxima varredura: se a do fechamento ja tinha
+    // passado da fila, o cupom ficava ate 30 min fora da nuvem.
+    this.triggerBackgroundCloudSync("print_receipt", { operationId });
+    return receipt;
   }
 
-  reprintReceipt(receiptId: string): Promise<PrintReceiptSummary> {
+  async reprintReceipt(receiptId: string): Promise<PrintReceiptSummary> {
     this.assertDesktopAccess();
-    return reprintWeighingReceipt(
+    const receipt = await reprintWeighingReceipt(
       this.database,
       { receiptId, identity: this.ensureIdentity() },
       this.receiptPrinter
     );
+    this.triggerBackgroundCloudSync("reprint_receipt", { receiptId });
+    return receipt;
   }
 
   printTestReceipt(): Promise<PrintReceiptSummary> {
@@ -2333,14 +2364,20 @@ export class DesktopRuntime {
     );
   }
 
-  processFiscalBilling(operationId: string): Promise<FiscalBillingResult> {
+  async processFiscalBilling(operationId: string): Promise<FiscalBillingResult> {
     this.assertDesktopAccess();
-    return processFiscalBillingNow(
-      this.database,
-      this.ensureIdentity(),
-      operationId,
-      (documentUrl) => this.fiscalDocumentPrinter.printDocument(documentUrl)
-    );
+    try {
+      return await processFiscalBillingNow(
+        this.database,
+        this.ensureIdentity(),
+        operationId,
+        (documentUrl) => this.fiscalDocumentPrinter.printDocument(documentUrl)
+      );
+    } finally {
+      // O numero/status da NF so mudava aqui e subia na reconciliacao da proxima varredura:
+      // o site mostrava a pesagem "sem nota" ate 30 min depois de faturada.
+      this.triggerOperationCloudPush("fiscal_billing", operationId);
+    }
   }
 
   lookupCnpj(cnpj: string): Promise<CnpjLookupResult> {
@@ -2503,7 +2540,7 @@ export class DesktopRuntime {
       // cloud — que roda logo apos cada fechamento e no agendador — para o envio ao
       // OMIE nao depender da varredura completa; falhas re-tentam a cada ciclo.
       try {
-        const omieQueue = await this.runOmieQueue();
+        const omieQueue = await this.runOmieQueue(undefined, false);
         if (omieQueue) {
           synced += omieQueue.processed;
           failed += omieQueue.failed;
@@ -2521,7 +2558,7 @@ export class DesktopRuntime {
       // Nunca derruba a sincronizacao: o cadastro e as operacoes valem mais do que saber
       // a situacao de faturamento agora.
       try {
-        const billingCheck = await this.runOmieBillingCheck();
+        const billingCheck = await this.runOmieBillingCheck(false);
         synced += billingCheck.billed;
         errors.push(...billingCheck.errors);
       } catch (error) {
@@ -4175,6 +4212,8 @@ export class DesktopRuntime {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
     const result = await syncCustomerAdvancesFromCloud(this.database, identity, options);
+    // O extrato de credito e cadastro compartilhado: o saldo novo vai para o site na hora.
+    this.triggerCadastroCloudPush("customer_advances");
     this.recordTechnicalLog("info", "omie-sync", "Adiantamentos do OMIE sincronizados.", {
       advances: result.advances,
       imported: result.imported,
@@ -4232,6 +4271,7 @@ export class DesktopRuntime {
       const result = await syncCustomerAdvancesFromCloud(this.database, this.ensureIdentity(), {
         customerOmieCode: omieCode
       });
+      this.triggerCadastroCloudPush("customer_advance");
       this.recordTechnicalLog(
         "info",
         "omie-sync",
@@ -5071,7 +5111,7 @@ export class DesktopRuntime {
       // syncCloudNow); se outro processamento estiver em andamento, os jobs ficam
       // para a proxima passada.
       const queue = (await this.runOmieQueue()) ?? { processed: 0, failed: 0, errors: [] };
-      this.cacheStore.invalidateAll(identity.companyId);
+      this.cadastroPulledFromOmie(identity.companyId);
       return {
         customersPulled: loop.customersPulled,
         customersPushed: customerPush.pushed,
@@ -5108,7 +5148,7 @@ export class DesktopRuntime {
     const service = new OmieSyncService(client, this.database);
     await service.pushCarriersToOmie(identity.companyId);
     const result = await service.syncAll(identity.companyId);
-    this.cacheStore.invalidateAll(identity.companyId);
+    this.cadastroPulledFromOmie(identity.companyId);
     return {
       customersPulled: result.customersPulled,
       customersPushed: result.customersPushed,
@@ -5123,7 +5163,9 @@ export class DesktopRuntime {
   async syncOmieMasterData(options?: SyncOmieMasterDataOptions): Promise<OmieSyncResult> {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
-    return syncOmieMasterData(this.database, identity.companyId, options);
+    const result = await syncOmieMasterData(this.database, identity.companyId, options);
+    this.cadastroPulledFromOmie(identity.companyId);
+    return result;
   }
 
   getLastOmieSyncRun(): ReturnType<typeof getLastSyncRun> {
@@ -5225,7 +5267,7 @@ export class DesktopRuntime {
           `Pull OMIE (pagina clientes ${before.customersPage}/produtos ${before.productsPage}): ${message}`
         );
         if (consecutiveFailures >= OMIE_PULL_MAX_CONSECUTIVE_FAILURES) {
-          this.cacheStore.invalidateAll(identity.companyId);
+          this.cadastroPulledFromOmie(identity.companyId);
           return {
             customersPulled,
             productsSynced,
@@ -5296,7 +5338,7 @@ export class DesktopRuntime {
           0;
       if (noProgress || !after.inProgress) {
         writeOmiePullState(this.database, { inProgress: false });
-        this.cacheStore.invalidateAll(identity.companyId);
+        this.cadastroPulledFromOmie(identity.companyId);
         return {
           customersPulled,
           productsSynced,
@@ -5315,7 +5357,7 @@ export class DesktopRuntime {
       }
     }
 
-    this.cacheStore.invalidateAll(identity.companyId);
+    this.cadastroPulledFromOmie(identity.companyId);
     return {
       customersPulled,
       productsSynced,
@@ -5430,6 +5472,16 @@ export class DesktopRuntime {
   private cadastroChanged(entityType: CacheEntityType, companyId: string): void {
     this.cacheStore.invalidate(entityType, companyId);
     this.triggerCadastroCloudPush(entityType);
+  }
+
+  /**
+   * O pull do OMIE gravou cadastro nesta maquina (cliente, produto, condicao...). Publica
+   * na hora, pelo mesmo caminho da edicao manual: sem isto o que veio do OMIE so chegava ao
+   * site e as outras balancas na varredura completa.
+   */
+  private cadastroPulledFromOmie(companyId: string): void {
+    this.cacheStore.invalidateAll(companyId);
+    this.triggerCadastroCloudPush("omie_pull");
   }
 
   /**

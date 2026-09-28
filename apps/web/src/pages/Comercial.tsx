@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DeskPanel } from "../components/desk";
 import { TruckStages } from "../components/TruckStages";
 import { useUser } from "../lib/auth";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import {
   aggregateSalesReport,
   buildSalesReportCsv,
@@ -157,51 +159,65 @@ export function Comercial() {
     [period, customStart, customEnd]
   );
 
-  const loadRows = useCallback(async () => {
-    if (!resolvedPeriod) return;
-    setIsLoading(true);
-    setLoadError(null);
-    try {
-      const fetched: FetchedRow[] = [];
-      let hitCap = false;
-      for (let page = 0; page < MAX_PAGES; page++) {
-        const { data, error } = await supabase
-          .from("weighing_operations")
-          .select(
-            "customer_id, customer_name, product_id, product_description, freight_type, net_weight_kg, product_total_cents, freight_total_cents, total_cents, created_at, closed_at"
-          )
-          .eq("company_id", user.companyId)
-          .in("status", [...SALES_CLOSED_STATUSES])
-          // Periodo pela data de FECHAMENTO (a data da venda e a de emissao no OMIE); operacao
-          // antiga, sem `closed_at`, entra pela criacao — o mesmo recorte do portal.
-          .or(
-            [
-              `and(closed_at.gte."${resolvedPeriod.startIso}",closed_at.lt."${resolvedPeriod.endIso}")`,
-              `and(closed_at.is.null,created_at.gte."${resolvedPeriod.startIso}",created_at.lt."${resolvedPeriod.endIso}")`
-            ].join(",")
-          )
-          .order("closed_at", { ascending: true, nullsFirst: true })
-          .order("created_at", { ascending: true })
-          .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
-        if (error) throw new Error(error.message);
-        fetched.push(...((data ?? []) as FetchedRow[]));
-        if (!data || data.length < PAGE_SIZE) break;
-        if (page === MAX_PAGES - 1) hitCap = true;
+  /** `silent`: releitura pelo aviso da balanca, sem "Carregando..." e sem apagar o erro. */
+  const loadRows = useCallback(
+    async (silent = false) => {
+      if (!resolvedPeriod) return;
+      if (!silent) {
+        setIsLoading(true);
+        setLoadError(null);
       }
-      setRows(fetched);
-      setTruncated(hitCap);
-    } catch (error) {
-      setLoadError(
-        error instanceof Error ? error.message : "Falha ao carregar as vendas do período."
-      );
-    } finally {
-      setIsLoading(false);
-    }
-  }, [user.companyId, resolvedPeriod]);
+      try {
+        const fetched: FetchedRow[] = [];
+        let hitCap = false;
+        for (let page = 0; page < MAX_PAGES; page++) {
+          const { data, error } = await supabase
+            .from("weighing_operations")
+            .select(
+              "customer_id, customer_name, product_id, product_description, freight_type, net_weight_kg, product_total_cents, freight_total_cents, total_cents, created_at, closed_at"
+            )
+            .eq("company_id", user.companyId)
+            .in("status", [...SALES_CLOSED_STATUSES])
+            // Periodo pela data de FECHAMENTO (a data da venda e a de emissao no OMIE); operacao
+            // antiga, sem `closed_at`, entra pela criacao — o mesmo recorte do portal.
+            .or(
+              [
+                `and(closed_at.gte."${resolvedPeriod.startIso}",closed_at.lt."${resolvedPeriod.endIso}")`,
+                `and(closed_at.is.null,created_at.gte."${resolvedPeriod.startIso}",created_at.lt."${resolvedPeriod.endIso}")`
+              ].join(",")
+            )
+            .order("closed_at", { ascending: true, nullsFirst: true })
+            .order("created_at", { ascending: true })
+            .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
+          if (error) throw new Error(error.message);
+          fetched.push(...((data ?? []) as FetchedRow[]));
+          if (!data || data.length < PAGE_SIZE) break;
+          if (page === MAX_PAGES - 1) hitCap = true;
+        }
+        setRows(fetched);
+        setTruncated(hitCap);
+        if (silent) setLoadError(null);
+      } catch (error) {
+        // Releitura de fundo que falhou fica calada: a tela segue com o que ja tinha.
+        if (!silent) {
+          setLoadError(
+            error instanceof Error ? error.message : "Falha ao carregar as vendas do período."
+          );
+        }
+      } finally {
+        if (!silent) setIsLoading(false);
+      }
+    },
+    [user.companyId, resolvedPeriod]
+  );
 
   useEffect(() => {
     void loadRows();
   }, [loadRows]);
+
+  // Venda fechada, editada ou cancelada na balanca entra na lista na hora.
+  const refreshRows = useCallback(() => loadRows(true), [loadRows]);
+  useOnCadastroChange(refreshRows, CADASTRO_TABLES.operations);
 
   const customerOptions = useMemo(() => {
     const map = new Map<string, string>();

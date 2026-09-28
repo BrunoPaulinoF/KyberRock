@@ -479,6 +479,16 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   carimbada por gatilho de STATEMENT em `weighing_operations`, migracao `202609260001`), com uma
   consulta de reserva lenta. Nao troque isso por consulta a cada poucos segundos: o banco ja
   estourou cota uma vez.
+- **Toda tela dentro da casca (`Layout`) atualiza sozinha.** `CadastroLiveProvider` assina os
+  DOIS avisos, cada um no seu canal: `cadastro_change_pings` e `operation_change_pings` (este
+  com `source` = `weighing_operations` | `loading_requests` desde a migracao `202609280004`, que
+  tambem liga `loading_requests` e os gatilhos de DELETE nos dois avisos). Tela que mostra
+  pesagem usa `useOnCadastroChange(x.refresh, CADASTRO_TABLES.operations)` (ou
+  `operationsAndLoading`) — Painel, Operacoes, Carteira, Comercial, relatorios, Visao geral,
+  Controle de caminhoes, Conferencia, Impressao. Tela nova que le pesagem entra na mesma lista.
+  Do lado da balanca, tudo o que muda pesagem ou cadastro publica na hora: alem das edicoes,
+  o resultado da fila OMIE e da conferencia de faturamento, a NF manual, o cupom impresso, o
+  faturamento futuro, os adiantamentos e o pull do OMIE (`cadastroPulledFromOmie`).
 - **Listas de 50 em 50.** Desenhar os 2 mil clientes de uma vez era o que deixava o site
   pesado. `DataTable` mostra 50 linhas e o "Ver mais" (`LoadMore`, `useShowMore` em
   `components/ui.tsx`); a lista de clientes vai alem e pagina NO BANCO (`q.customersPage` +

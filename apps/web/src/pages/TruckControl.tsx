@@ -5,6 +5,8 @@ import { useMemo, useState } from "react";
 
 import { LoadMore, useShowMore } from "../components/ui";
 import { useUser } from "../lib/auth";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { todayIso } from "../lib/format";
 import { downloadSpreadsheet, printReportHtml } from "../lib/report-output";
 import {
@@ -45,11 +47,14 @@ export function TruckControl() {
     data: report,
     loading,
     error,
-    reload
+    reload,
+    refresh
   } = useAsync(
     () => loadTruckControl(user.companyId, user.unitId, startDate, endDate),
     [user.companyId, user.unitId, startDate, endDate]
   );
+  // Pesagem fechada, editada ou cancelada na balanca entra na tela na hora.
+  useOnCadastroChange(refresh, CADASTRO_TABLES.operationsAndLoading);
 
   // A mesma funcao de recorte vale para a lista e para os arquivos.
   const visible = useMemo(

@@ -7,6 +7,8 @@ import { Picker } from "../components/Picker";
 import { Alert } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { localDay, periodToIso, todayIso } from "../lib/format";
 import {
   INSIGHTS_PERIOD_OPTIONS,
@@ -81,6 +83,9 @@ export function Insights() {
     () => q.openOperations(user.companyId, user.unitId),
     [user.companyId, user.unitId]
   );
+  // Pesagem fechada, editada ou cancelada na balanca entra na tela na hora.
+  useOnCadastroChange(operations.refresh, CADASTRO_TABLES.operations);
+  useOnCadastroChange(openOperations.refresh, CADASTRO_TABLES.operations);
 
   // Trocar de periodo pode invalidar os filtros selecionados.
   useEffect(() => {

@@ -29,6 +29,19 @@
 export const CADASTRO_PING_TABLE = "cadastro_change_pings";
 
 /**
+ * O aviso de PESAGEM (migracao `202609260001`, com `source` desde a `202609280004`): a balanca
+ * gravou pesagem ou solicitacao de carregamento da empresa. Passa pela mesma porta do aviso de
+ * cadastro, com o nome da tabela, para as telas de relatorio e operacao relerem na hora.
+ */
+export const OPERATION_PING_TABLE = "operation_change_pings";
+
+/**
+ * Aviso de pesagem gravado antes da coluna `source` existir (migracao pendente) nao diz a
+ * tabela; nesse caso ele so pode ter vindo de `weighing_operations`.
+ */
+export const OPERATION_PING_DEFAULT_SOURCE = "weighing_operations";
+
+/**
  * Espera juntando avisos antes de reler. Um salvamento na balanca sobe cada tabela num lote
  * proprio (cliente, depois as transportadoras dele...): sao varios avisos para UMA mudanca.
  */
@@ -144,5 +157,8 @@ export const CADASTRO_TABLES = {
   drivers: ["drivers"],
   vehicles: ["vehicles"],
   payment: ["payment_methods", "payment_terms", "accounts"],
-  reportRecipients: ["report_recipients"]
+  reportRecipients: ["report_recipients"],
+  // Nao sao cadastro, mas chegam pela mesma porta (`OPERATION_PING_TABLE`).
+  operations: ["weighing_operations"],
+  operationsAndLoading: ["weighing_operations", "loading_requests"]
 } as const satisfies Record<string, readonly string[]>;
