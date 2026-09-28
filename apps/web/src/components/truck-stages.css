@@ -7,6 +7,7 @@
   --ts-carregando: #eb6834;
   --ts-saida: #1baf7a;
   --ts-exit: #78716c;
+  --ts-cancelada: #b91c1c;
   --ts-live: #15803d;
   display: flex;
   flex-direction: column;
@@ -18,6 +19,7 @@
   --ts-carregando: #d95926;
   --ts-saida: #199e70;
   --ts-exit: #a8a29e;
+  --ts-cancelada: #f87171;
   --ts-live: #4ade80;
 }
 .ts-entrada {
@@ -31,6 +33,9 @@
 }
 .ts-exit {
   --stage: var(--ts-exit);
+}
+.ts-cancelada {
+  --stage: var(--ts-cancelada);
 }
 
 .ts-head {
@@ -181,8 +186,18 @@
 /* ---------- as listas embaixo de cada etapa ---------- */
 .ts-columns {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+}
+/* O motivo do cancelamento, embaixo do produto. */
+.ts-item-text .ts-item-reason {
+  color: var(--ts-cancelada);
+  font-weight: 600;
+}
+@media (max-width: 1280px) {
+  .ts-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .ts-column,
 .ts-finished {
@@ -237,9 +252,14 @@
 }
 .ts-item {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  /* Placa e tempo na linha de cima; cliente e produto embaixo, na largura toda do cartao —
+     com quatro colunas, o nome do cliente espremido entre os dois ficava ilegivel. */
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "plate time"
+    "text text";
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
   width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--kr-border);
@@ -255,7 +275,11 @@
   border-color: var(--stage);
   outline: none;
 }
+.ts-item .plate-badge {
+  grid-area: plate;
+}
 .ts-item-text {
+  grid-area: text;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -276,6 +300,7 @@
   font-size: 11px;
 }
 .ts-item-time {
+  grid-area: time;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
