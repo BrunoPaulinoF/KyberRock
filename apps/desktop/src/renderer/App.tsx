@@ -33,7 +33,9 @@ import {
   Car,
   Power,
   Search,
-  Wallet
+  Wallet,
+  WifiOff,
+  Lock
 } from "lucide-react";
 
 import { desktopAppInfo } from "../app-info";
@@ -124,6 +126,11 @@ import {
 import type { OmieCategoryOption } from "../services/omie-categories";
 import type { UnitDeviceInfo } from "../services/unit-devices";
 import { ActivationGate } from "./ActivationGate";
+import {
+  OFFLINE_BLOCKED_MESSAGE,
+  OFFLINE_FALLBACK_VIEW,
+  isViewBlockedOffline
+} from "./offline-lock";
 import { formatDbDateTime, parseDbTimestamp } from "./format-datetime";
 import { MountainOutline } from "./MountainOutline";
 import { CrudFormModal } from "./CrudFormModal";
@@ -594,9 +601,39 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   });
   const [form, setForm] = useState<WeighingFormState>(initialWeighingForm);
   const [creditMethodIds, setCreditMethodIds] = useState<string[]>([]);
-  const [activeView, setActiveView] = useState<ActiveView>("new-weighing");
+  const [activeView, setActiveViewState] = useState<ActiveView>("new-weighing");
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  // Sem internet so ficam liberadas Nova entrada, Insights e as Configuracoes
+  // (`offline-lock.ts`). Toda troca de tela passa por `setActiveView`, que recusa
+  // as bloqueadas; o ref deixa a funcao estavel para os atalhos de teclado.
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const isOnlineRef = useRef(isOnline);
+  const setActiveView = useCallback((view: ActiveView) => {
+    if (isViewBlockedOffline(view, isOnlineRef.current)) {
+      setMessage(OFFLINE_BLOCKED_MESSAGE);
+      return;
+    }
+    setActiveViewState(view);
+  }, []);
+  useEffect(() => {
+    const update = () => {
+      isOnlineRef.current = navigator.onLine;
+      setIsOnline(navigator.onLine);
+    };
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
+  // A internet caiu com uma tela bloqueada aberta: volta para a Nova entrada.
+  useEffect(() => {
+    if (isViewBlockedOffline(activeView, isOnline)) {
+      setActiveViewState(OFFLINE_FALLBACK_VIEW);
+    }
+  }, [activeView, isOnline]);
   const [cloudConnected, setCloudConnected] = useState(false);
   const [cloudSyncing, setCloudSyncing] = useState(false);
   const [cloudBootstrapStatus, setCloudBootstrapStatus] = useState<{
@@ -1738,7 +1775,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     };
     const handleOffline = () => {
       setMessage(
-        "Internet indisponivel - operacao segue normalmente, dados ficarao na fila para envio."
+        "A conexao com a internet caiu - so Nova entrada, Insights e Configuracoes ficam liberadas."
       );
     };
     window.addEventListener("online", handleOnline);
@@ -2123,9 +2160,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         settleFromAdvance: form.settleFromAdvance,
         scaleCaptureId
       });
-      setMessage(`Entrada registrada com peso estavel capturado: ${operation.entryWeightKg} kg.`);
       setForm(initialWeighingForm);
-      setActiveView("open-operations");
+      // Sem internet a tela de operacoes esta bloqueada e o operador fica na Nova
+      // entrada; a mensagem vem depois para nao ser trocada pelo aviso da trava.
+      if (!isViewBlockedOffline("open-operations", isOnlineRef.current)) {
+        setActiveView("open-operations");
+      }
+      setMessage(`Entrada registrada com peso estavel capturado: ${operation.entryWeightKg} kg.`);
       await refreshOpenOperations();
     } catch (error) {
       setFormError(getErrorMessage(error));
@@ -2862,6 +2903,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon={LayoutDashboard}
                 activeView={activeView}
                 onSelect={setActiveView}
+                offline={!isOnline}
                 tooltip={TIPS.nav.panel}
               />
               <SidebarItem
@@ -2870,6 +2912,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon={PlusCircle}
                 activeView={activeView}
                 onSelect={setActiveView}
+                offline={!isOnline}
               />
               <SidebarItem
                 id="open-operations"
@@ -2877,6 +2920,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon={ListChecks}
                 activeView={activeView}
                 onSelect={setActiveView}
+                offline={!isOnline}
               />
               <SidebarItem
                 id="wallet"
@@ -2884,6 +2928,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon={Wallet}
                 activeView={activeView}
                 onSelect={setActiveView}
+                offline={!isOnline}
               />
               <SidebarItem
                 id="registrations"
@@ -2891,6 +2936,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon={Database}
                 activeView={activeView}
                 onSelect={setActiveView}
+                offline={!isOnline}
               />
             </SidebarSection>
             <SidebarSection title="Analise">
@@ -2900,6 +2946,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon={BarChart3}
                 activeView={activeView}
                 onSelect={setActiveView}
+                offline={!isOnline}
                 tooltip={TIPS.nav.insights}
               />
               <SidebarItem
@@ -2908,6 +2955,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon={Truck}
                 activeView={activeView}
                 onSelect={setActiveView}
+                offline={!isOnline}
               />
               <SidebarItem
                 id="customer-report"
@@ -2915,6 +2963,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon={UserSearch}
                 activeView={activeView}
                 onSelect={setActiveView}
+                offline={!isOnline}
                 tooltip={TIPS.nav.customerReport}
               />
               <SidebarItem
@@ -2923,6 +2972,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon={ClipboardCheck}
                 activeView={activeView}
                 onSelect={setActiveView}
+                offline={!isOnline}
                 tooltip={TIPS.nav.billingConference}
               />
               <SidebarItem
@@ -2931,6 +2981,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon={ReceiptText}
                 activeView={activeView}
                 onSelect={setActiveView}
+                offline={!isOnline}
                 tooltip={TIPS.nav.invoiceClosing}
               />
               <SidebarItem
@@ -2939,6 +2990,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon={FileText}
                 activeView={activeView}
                 onSelect={setActiveView}
+                offline={!isOnline}
               />
               <SidebarItem
                 id="documentation"
@@ -2946,6 +2998,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 icon={BookOpen}
                 activeView={activeView}
                 onSelect={setActiveView}
+                offline={!isOnline}
               />
             </SidebarSection>
           </nav>
@@ -3109,6 +3162,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         </aside>
         <div style={styles.contentColumn}>
           <div style={styles.contentBody}>
+            {!isOnline ? (
+              <div role="alert" style={styles.offlineBanner}>
+                <WifiOff size={18} style={{ flexShrink: 0 }} />
+                <div>
+                  <strong>A conexao com a internet caiu.</strong> Enquanto ela nao voltar, so ficam
+                  liberadas Nova entrada, Insights e as Configuracoes. As entradas registradas agora
+                  ficam guardadas neste computador e sobem sozinhas quando a internet voltar.
+                </div>
+              </div>
+            ) : null}
             {showSettings ? (
               <div
                 style={{ position: "fixed", inset: 0, zIndex: 99 }}
@@ -5763,6 +5826,8 @@ interface SidebarItemProps {
   activeView: ActiveView;
   onSelect: (view: ActiveView) => void;
   disabled?: boolean;
+  /** Sem internet: a tela fica travada se nao estiver na lista liberada. */
+  offline?: boolean;
   badge?: string;
   tooltip?: string;
 }
@@ -5773,12 +5838,15 @@ function SidebarItem({
   icon: Icon,
   activeView,
   onSelect,
-  disabled,
+  disabled: disabledProp,
+  offline,
   badge,
   tooltip
 }: SidebarItemProps) {
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const isActive = activeView === id;
+  const lockedOffline = offline === true && isViewBlockedOffline(id, false);
+  const disabled = disabledProp || lockedOffline;
   const baseStyle: React.CSSProperties = {
     display: "flex",
     alignItems: "center",
@@ -5839,7 +5907,7 @@ function SidebarItem({
       >
         <Icon size={16} strokeWidth={2.2} style={{ flexShrink: 0 }} />
         <span
-          title={label}
+          title={lockedOffline ? `${label} (bloqueada sem internet)` : label}
           style={{
             flex: 1,
             minWidth: 0,
@@ -5850,6 +5918,9 @@ function SidebarItem({
         >
           {label}
         </span>
+        {lockedOffline ? (
+          <Lock size={13} aria-label="Bloqueada sem internet" style={{ flexShrink: 0 }} />
+        ) : null}
         {badge ? (
           <span
             style={{
@@ -13302,6 +13373,18 @@ const styles = {
     // de uma vez e a lista inteira se remexe na hora de trocar de tela.
     scrollbarGutter: "stable" as const,
     paddingRight: "4px"
+  },
+  offlineBanner: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    padding: "10px 14px",
+    borderRadius: "10px",
+    border: "1px solid #fca5a5",
+    background: "#fef2f2",
+    color: "#991b1b",
+    fontSize: "13px",
+    lineHeight: 1.4
   },
   contentColumn: {
     flex: 1,
