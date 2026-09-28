@@ -502,7 +502,9 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   `lib/truck-stages.ts`) saem so da pesagem que a BALANCA grava, nunca de marca do carregador:
   ENTRADA = pesou a entrada ha menos de `ENTRY_WINDOW_MINUTES` (10), CARREGANDO = operacao ainda
   em aberto depois disso (na balanca ela so tem o estado "Aguardando" ate fechar), SAIDA =
-  operacao concluida hoje (`closed_at`). Atualiza pelo aviso `operation_change_pings`, como o
+  operacao concluida hoje (`closed_at`). A coluna CANCELADAS (fora das setas do fluxo) lista as
+  canceladas hoje, com o motivo; a hora e o `updated_at` da linha, porque a nuvem nao guarda a
+  hora do cancelamento (o mesmo recorte da aba Canceladas). Atualiza pelo aviso `operation_change_pings`, como o
   Monitoramento. A coluna `loading_requests.loader_started_at` (migracao `202609280002`) ficou
   sem uso: o botao "Iniciar" do carregador foi retirado quando a regra passou a ser a da balanca.
 

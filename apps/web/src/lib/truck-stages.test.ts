@@ -111,3 +111,26 @@ describe("formatDuration", () => {
     expect(formatDuration(27 * 60 * MIN)).toBe("1d 3h");
   });
 });
+
+describe("canceladas", () => {
+  it("cancelada vai para a coluna propria, a ultima cancelada primeiro", () => {
+    const now = T0 + 60 * MIN;
+    const groups = groupByStage(
+      [
+        truck({ operationId: "cedo", cancelledAt: at(15), cancelReason: "Desistiu" }),
+        truck({ operationId: "agora", entryAt: at(40), cancelledAt: at(55) }),
+        truck({ operationId: "patio", entryAt: at(20) })
+      ],
+      now
+    );
+    expect(groups.cancelada.map((row) => row.operationId)).toEqual(["agora", "cedo"]);
+    expect(groups.carregando.map((row) => row.operationId)).toEqual(["patio"]);
+    expect(stageOf(truck({ cancelledAt: at(3) }), T0 + 5 * MIN)).toBe("cancelada");
+  });
+
+  it("o tempo da cancelada para no cancelamento", () => {
+    const cancelled = truck({ cancelledAt: at(25) });
+    expect(stageDurations(cancelled, T0 + 999 * MIN).total).toBe(25 * MIN);
+    expect(timeInCurrentStage(cancelled, T0 + 999 * MIN)).toBe(25 * MIN);
+  });
+});

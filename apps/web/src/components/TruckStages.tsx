@@ -1,6 +1,6 @@
 import "./truck-stages.css";
 
-import { ArrowRight, Clock, LogIn, LogOut, PackageCheck, Truck } from "lucide-react";
+import { ArrowRight, Ban, Clock, LogIn, LogOut, PackageCheck, Truck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useUser } from "../lib/auth";
@@ -8,6 +8,7 @@ import { formatPlate, todayIso } from "../lib/format";
 import { OPEN_STATUS } from "../lib/operation";
 import { supabase } from "../lib/supabase";
 import {
+  BOARD_COLUMNS,
   ENTRY_WINDOW_MINUTES,
   STAGE_HINTS,
   STAGE_LABELS,
@@ -37,7 +38,7 @@ import { Alert, Modal } from "./ui";
  */
 
 const OPERATION_COLUMNS =
-  "id, plate, customer_name, product_description, driver_name, created_at, closed_at";
+  "id, plate, customer_name, product_description, driver_name, created_at, closed_at, updated_at, cancel_reason";
 const CLOSED_STATUSES = ["closed_local", "pending_cloud", "pending_omie", "synced", "sync_error"];
 const REALTIME_DEBOUNCE_MS = 1_500;
 const POLL_FALLBACK_MS = 30_000;
@@ -52,9 +53,13 @@ type OperationRow = {
   driver_name: string | null;
   created_at: string;
   closed_at: string | null;
+  updated_at: string;
+  cancel_reason: string | null;
 };
 
-function toTruck(row: OperationRow, exited: boolean): StageTruck {
+type RowKind = "open" | "closed" | "cancelled";
+
+function toTruck(row: OperationRow, kind: RowKind): StageTruck {
   return {
     operationId: row.id,
     plate: row.plate ?? "",
@@ -62,14 +67,18 @@ function toTruck(row: OperationRow, exited: boolean): StageTruck {
     productDescription: row.product_description || "Produto nao informado",
     driverName: row.driver_name || "",
     entryAt: row.created_at,
-    exitAt: exited ? (row.closed_at ?? null) : null
+    exitAt: kind === "closed" ? (row.closed_at ?? null) : null,
+    // A nuvem nao guarda a hora do cancelamento: a ultima escrita da linha e ela (o mesmo
+    // recorte da aba Canceladas, `q.cancelledOperations`).
+    cancelledAt: kind === "cancelled" ? row.updated_at : null,
+    cancelReason: kind === "cancelled" ? row.cancel_reason : null
   };
 }
 
-/** As operacoes em aberto da unidade e as concluidas hoje. */
+/** As operacoes em aberto da unidade, as concluidas hoje e as canceladas hoje. */
 async function loadTrucks(companyId: string, unitId: string): Promise<StageTruck[]> {
   const startOfDay = `${todayIso()}T00:00:00-03:00`;
-  const [open, closed] = await Promise.all([
+  const [open, closed, cancelled] = await Promise.all([
     supabase
       .from("weighing_operations")
       .select(OPERATION_COLUMNS)
@@ -86,13 +95,24 @@ async function loadTrucks(companyId: string, unitId: string): Promise<StageTruck
       .in("status", CLOSED_STATUSES)
       .gte("closed_at", startOfDay)
       .order("closed_at", { ascending: false })
+      .limit(300),
+    supabase
+      .from("weighing_operations")
+      .select(OPERATION_COLUMNS)
+      .eq("company_id", companyId)
+      .eq("unit_id", unitId)
+      .eq("status", "cancelled")
+      .gte("updated_at", startOfDay)
+      .order("updated_at", { ascending: false })
       .limit(300)
   ]);
   if (open.error) throw new Error(open.error.message);
   if (closed.error) throw new Error(closed.error.message);
+  if (cancelled.error) throw new Error(cancelled.error.message);
   return [
-    ...((open.data ?? []) as OperationRow[]).map((row) => toTruck(row, false)),
-    ...((closed.data ?? []) as OperationRow[]).map((row) => toTruck(row, true))
+    ...((open.data ?? []) as OperationRow[]).map((row) => toTruck(row, "open")),
+    ...((closed.data ?? []) as OperationRow[]).map((row) => toTruck(row, "closed")),
+    ...((cancelled.data ?? []) as OperationRow[]).map((row) => toTruck(row, "cancelled"))
   ];
 }
 
@@ -110,7 +130,8 @@ function clock(iso: string | null): string {
 const STAGE_ICONS: Record<TruckStage, typeof Truck> = {
   entrada: LogIn,
   carregando: Truck,
-  saida: PackageCheck
+  saida: PackageCheck,
+  cancelada: Ban
 };
 
 type RealtimeState = "connecting" | "live" | "down";
@@ -241,7 +262,8 @@ export function TruckStages() {
   const stageNote: Record<TruckStage, string> = {
     entrada: `Chegaram nos ultimos ${ENTRY_WINDOW_MINUTES} min`,
     carregando: `Espera media hoje: ${formatDuration(averages.carregando)}`,
-    saida: `Tempo medio na pedreira: ${formatDuration(averages.total)}`
+    saida: `Tempo medio na pedreira: ${formatDuration(averages.total)}`,
+    cancelada: "Canceladas hoje na balanca"
   };
 
   return (
@@ -253,7 +275,10 @@ export function TruckStages() {
           </h2>
           <p className="ts-subtitle">
             {insideCount === 1 ? "1 caminhao agora" : `${insideCount} caminhoes agora`} ·{" "}
-            {groups.saida.length === 1 ? "1 saiu hoje" : `${groups.saida.length} sairam hoje`}
+            {groups.saida.length === 1 ? "1 saiu hoje" : `${groups.saida.length} sairam hoje`} ·{" "}
+            {groups.cancelada.length === 1
+              ? "1 cancelada hoje"
+              : `${groups.cancelada.length} canceladas hoje`}
           </p>
         </div>
         <span className={`ts-live ${realtime}`} role="status">
@@ -294,7 +319,7 @@ export function TruckStages() {
       </ol>
 
       <div className="ts-columns">
-        {TRUCK_STAGES.map((stage) => (
+        {BOARD_COLUMNS.map((stage) => (
           <div key={stage} className={`ts-column ts-${stage}`}>
             <div className="ts-column-head">
               <span className="ts-swatch" aria-hidden="true" />
@@ -319,13 +344,20 @@ export function TruckStages() {
                     <span className="ts-item-text">
                       <strong>{truck.customerName}</strong>
                       <span>{truck.productDescription}</span>
+                      {truck.cancelledAt && (
+                        <span className="ts-item-reason" title={truck.cancelReason ?? undefined}>
+                          {truck.cancelReason || "Sem motivo registrado"}
+                        </span>
+                      )}
                     </span>
                     <span className="ts-item-time">
                       <strong>{formatDuration(timeInCurrentStage(truck, now))}</strong>
                       <span>
-                        {truck.exitAt
-                          ? `saiu ${clock(truck.exitAt)}`
-                          : `entrou ${clock(truck.entryAt)}`}
+                        {truck.cancelledAt
+                          ? `cancelou ${clock(truck.cancelledAt)}`
+                          : truck.exitAt
+                            ? `saiu ${clock(truck.exitAt)}`
+                            : `entrou ${clock(truck.entryAt)}`}
                       </span>
                     </span>
                   </button>
@@ -450,23 +482,41 @@ function TruckTimeline({
             {current === "carregando" && <small>ate agora</small>}
           </span>
         </li>
-        <li className={`ts-timeline-step ts-saida${current === "saida" ? " current" : ""}`}>
-          <span className="ts-swatch" aria-hidden="true">
-            <ArrowRight size={12} />
-          </span>
-          <div>
-            <strong>{STAGE_LABELS.saida}</strong>
-            <span>
-              {truck.exitAt
-                ? `Operacao concluida: pesou a saida as ${clock(truck.exitAt)}`
-                : "Ainda nao pesou a saida"}
+        {truck.cancelledAt ? (
+          <li className="ts-timeline-step ts-cancelada current">
+            <span className="ts-swatch" aria-hidden="true">
+              <Ban size={10} />
             </span>
-          </div>
-          <span className="ts-timeline-duration total">
-            {formatDuration(durations.total)}
-            <small>{truck.exitAt ? "na pedreira" : "ate agora"}</small>
-          </span>
-        </li>
+            <div>
+              <strong>Cancelada</strong>
+              <span>
+                As {clock(truck.cancelledAt)} — {truck.cancelReason || "sem motivo registrado"}
+              </span>
+            </div>
+            <span className="ts-timeline-duration total">
+              {formatDuration(durations.total)}
+              <small>ate cancelar</small>
+            </span>
+          </li>
+        ) : (
+          <li className={`ts-timeline-step ts-saida${current === "saida" ? " current" : ""}`}>
+            <span className="ts-swatch" aria-hidden="true">
+              <ArrowRight size={12} />
+            </span>
+            <div>
+              <strong>{STAGE_LABELS.saida}</strong>
+              <span>
+                {truck.exitAt
+                  ? `Operacao concluida: pesou a saida as ${clock(truck.exitAt)}`
+                  : "Ainda nao pesou a saida"}
+              </span>
+            </div>
+            <span className="ts-timeline-duration total">
+              {formatDuration(durations.total)}
+              <small>{truck.exitAt ? "na pedreira" : "ate agora"}</small>
+            </span>
+          </li>
+        )}
       </ol>
       <p className="ts-note">
         As etapas saem da pesagem da balanca: a entrada vale nos primeiros {ENTRY_WINDOW_MINUTES}{" "}

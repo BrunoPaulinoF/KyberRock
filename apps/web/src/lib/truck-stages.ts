@@ -7,14 +7,19 @@
  *   - ENTRADA    pesou a entrada ha menos de `ENTRY_WINDOW_MINUTES` (acabou de chegar)
  *   - CARREGANDO operacao ainda em aberto depois disso (aguardando carregar e pesar a saida)
  *   - SAIDA      operacao concluida: pesou a saida (`weighing_operations.closed_at`)
+ *   - CANCELADA  operacao cancelada hoje na balanca — fora do fluxo, numa coluna propria
  *
  * Na balanca a operacao aberta so tem um estado ("Aguardando") ate fechar; a janela da entrada e
  * o que separa quem acabou de chegar de quem ja esta no patio.
  */
 
-export type TruckStage = "entrada" | "carregando" | "saida";
+export type TruckStage = "entrada" | "carregando" | "saida" | "cancelada";
 
+/** O fluxo das setas. A cancelada nao e um passo dele: sai do caminho em qualquer ponto. */
 export const TRUCK_STAGES: readonly TruckStage[] = ["entrada", "carregando", "saida"];
+
+/** As colunas do quadro: o fluxo e, por ultimo, as canceladas. */
+export const BOARD_COLUMNS: readonly TruckStage[] = [...TRUCK_STAGES, "cancelada"];
 
 /** Quanto tempo depois da pesagem de entrada o caminhao ainda conta como "chegando". */
 export const ENTRY_WINDOW_MINUTES = 10;
@@ -23,14 +28,16 @@ const ENTRY_WINDOW_MS = ENTRY_WINDOW_MINUTES * 60_000;
 export const STAGE_LABELS: Record<TruckStage, string> = {
   entrada: "Entrada",
   carregando: "Carregando",
-  saida: "Saida"
+  saida: "Saida",
+  cancelada: "Canceladas"
 };
 
 /** O que cada etapa quer dizer, para quem esta olhando a tela. */
 export const STAGE_HINTS: Record<TruckStage, string> = {
   entrada: `Pesou a entrada nos ultimos ${ENTRY_WINDOW_MINUTES} minutos.`,
   carregando: "Operacao em aberto: aguardando carregar e pesar a saida.",
-  saida: "Operacao concluida hoje: ja pesou a saida."
+  saida: "Operacao concluida hoje: ja pesou a saida.",
+  cancelada: "Operacao cancelada hoje na balanca."
 };
 
 export interface StageTruck {
@@ -43,6 +50,9 @@ export interface StageTruck {
   entryAt: string;
   /** Pesagem de saida (so na operacao concluida). */
   exitAt: string | null;
+  /** Quando a operacao foi cancelada (so na cancelada). */
+  cancelledAt?: string | null;
+  cancelReason?: string | null;
 }
 
 export interface StageDurations {
@@ -60,7 +70,11 @@ function ms(iso: string | null | undefined): number | null {
 }
 
 /** Etapa do caminhao agora. */
-export function stageOf(truck: Pick<StageTruck, "entryAt" | "exitAt">, nowMs: number): TruckStage {
+export function stageOf(
+  truck: Pick<StageTruck, "entryAt" | "exitAt" | "cancelledAt">,
+  nowMs: number
+): TruckStage {
+  if (truck.cancelledAt) return "cancelada";
   if (truck.exitAt) return "saida";
   const entry = ms(truck.entryAt) ?? nowMs;
   return nowMs - entry < ENTRY_WINDOW_MS ? "entrada" : "carregando";
@@ -69,7 +83,7 @@ export function stageOf(truck: Pick<StageTruck, "entryAt" | "exitAt">, nowMs: nu
 /** Tempo em cada etapa. Para quem ainda nao saiu, conta ate `nowMs`. */
 export function stageDurations(truck: StageTruck, nowMs: number): StageDurations {
   const entry = ms(truck.entryAt) ?? nowMs;
-  const end = Math.max(entry, ms(truck.exitAt) ?? nowMs);
+  const end = Math.max(entry, ms(truck.exitAt) ?? ms(truck.cancelledAt) ?? nowMs);
   const total = end - entry;
   return {
     entrada: Math.min(total, ENTRY_WINDOW_MS),
@@ -78,7 +92,7 @@ export function stageDurations(truck: StageTruck, nowMs: number): StageDurations
   };
 }
 
-/** Ha quanto tempo na etapa atual; na SAIDA, o tempo total que ficou na pedreira. */
+/** Ha quanto tempo na etapa atual; na SAIDA e na cancelada, o tempo total na pedreira. */
 export function timeInCurrentStage(truck: StageTruck, nowMs: number): number {
   const durations = stageDurations(truck, nowMs);
   const stage = stageOf(truck, nowMs);
@@ -95,7 +109,12 @@ export function groupByStage(
   trucks: readonly StageTruck[],
   nowMs: number
 ): Record<TruckStage, StageTruck[]> {
-  const groups: Record<TruckStage, StageTruck[]> = { entrada: [], carregando: [], saida: [] };
+  const groups: Record<TruckStage, StageTruck[]> = {
+    entrada: [],
+    carregando: [],
+    saida: [],
+    cancelada: []
+  };
   for (const truck of trucks) groups[stageOf(truck, nowMs)].push(truck);
   for (const stage of ["entrada", "carregando"] as const) {
     groups[stage].sort(
@@ -107,6 +126,11 @@ export function groupByStage(
   groups.saida.sort(
     (a, b) =>
       (ms(b.exitAt) ?? 0) - (ms(a.exitAt) ?? 0) || a.operationId.localeCompare(b.operationId)
+  );
+  groups.cancelada.sort(
+    (a, b) =>
+      (ms(b.cancelledAt) ?? 0) - (ms(a.cancelledAt) ?? 0) ||
+      a.operationId.localeCompare(b.operationId)
   );
   return groups;
 }
