@@ -82,7 +82,10 @@ import {
   metricValue,
   parseMonitorFilters,
   paymentBreakdown,
+  mergePaymentMethods,
   paymentOptions,
+  withCanonicalPaymentFilters,
+  withCanonicalPayments,
   productKeyOf,
   productLabelOf,
   productOptions,
@@ -593,11 +596,11 @@ function slotColor(slot: number | null): string {
 
 export function MonitorView(props: MonitorViewProps) {
   const {
-    filters,
+    filters: storedFilters,
     onFiltersChange,
-    operations,
-    yard,
-    paymentMethods,
+    operations: rawOperations,
+    yard: rawYard,
+    paymentMethods: rawPaymentMethods,
     timeZone,
     now,
     status,
@@ -608,6 +611,22 @@ export function MonitorView(props: MonitorViewProps) {
   // Painel de parede (notebook, TV, tablet deitado): tudo cabe no `100dvh` e cada lista mostra o
   // que cabe no proprio painel. Fora dele (celular), a pagina rola uma vez e as listas sao curtas.
   const fit = useMediaQuery(MONITOR_FIT_QUERY);
+
+  // Formas de mesmo nome (uma copia por balanca) viram uma so em toda a tela.
+  const mergedPayments = useMemo(() => mergePaymentMethods(rawPaymentMethods), [rawPaymentMethods]);
+  const paymentMethods = mergedPayments.methods;
+  const operations = useMemo(
+    () => withCanonicalPayments(rawOperations, mergedPayments),
+    [rawOperations, mergedPayments]
+  );
+  const yard = useMemo(
+    () => withCanonicalPayments(rawYard, mergedPayments),
+    [rawYard, mergedPayments]
+  );
+  const filters = useMemo(
+    () => withCanonicalPaymentFilters(storedFilters, mergedPayments),
+    [storedFilters, mergedPayments]
+  );
 
   const periodWindow = useMemo(
     () => resolvePeriodWindow(filters.period, now, timeZone),
