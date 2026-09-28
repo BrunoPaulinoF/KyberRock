@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   ListChecks,
   LogOut,
+  Menu,
   MonitorPlay,
   Moon,
   Printer,
@@ -21,9 +22,10 @@ import {
   Sun,
   Truck,
   UserSearch,
-  Wallet
+  Wallet,
+  X
 } from "lucide-react";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, Suspense, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
 
@@ -39,6 +41,10 @@ import { useTheme } from "../lib/theme";
  * (Exportar e Restaurar mexem no banco local da balanca; a Nova entrada so e feita na balanca);
  * o que o perfil nao ve nem aparece
  * (`lib/permissions.ts`). Monitoramento abre em tela cheia; Logs e o suporte do administrador.
+ *
+ * No celular o menu nao cabe ao lado do conteudo: vira uma barra fina no topo (botao de menu +
+ * nome da tela) e o mesmo menu desliza da esquerda por cima da tela, fechando ao escolher uma
+ * tela, ao tocar fora ou no Esc. Um menu so, dois jeitos de mostrar — o CSS decide qual.
  */
 
 interface NavItem {
@@ -99,6 +105,17 @@ const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
     items: [{ screen: "suporte", to: "/suporte", label: "Logs", icon: ScrollText }]
   }
 ];
+/** Nome da tela aberta, para a barra do celular (a tela das configuracoes nao esta no menu). */
+function currentLabel(pathname: string): string | null {
+  if (pathname.startsWith("/configuracoes")) return "Configuracoes";
+  for (const section of NAV_SECTIONS) {
+    for (const item of section.items) {
+      if (pathname === item.to || pathname.startsWith(`${item.to}/`)) return item.label;
+    }
+  }
+  return null;
+}
+
 export function Layout() {
   const user = useUser();
   const { logout } = useAuth();
@@ -107,10 +124,30 @@ export function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [showSettings, setShowSettings] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
+  const current = currentLabel(location.pathname);
 
   // O menu fecha ao trocar de tela, ao clicar fora e no Esc — como o do desktop.
-  useEffect(() => setShowSettings(false), [location.pathname]);
+  useEffect(() => {
+    setShowSettings(false);
+    setNavOpen(false);
+  }, [location.pathname]);
+
+  // Menu do celular aberto: a pagina de tras nao rola junto e o Esc fecha.
+  useEffect(() => {
+    if (!navOpen) return undefined;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setNavOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previous;
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [navOpen]);
   useEffect(() => {
     if (!showSettings) return undefined;
     function onPointer(event: MouseEvent) {
@@ -133,12 +170,41 @@ export function Layout() {
   }
 
   return (
-    <div className="shell">
-      <aside className="sidebar">
+    <div className={`shell${navOpen ? " nav-open" : ""}`}>
+      <header className="mobile-bar">
+        <button
+          type="button"
+          className="mobile-bar-btn"
+          onClick={() => setNavOpen(true)}
+          aria-label="Abrir menu"
+          aria-expanded={navOpen}
+          aria-controls="kr-sidebar"
+        >
+          <Menu size={22} />
+        </button>
+        <img src="./logo.png" alt="" className="sidebar-logo" />
+        <span className="mobile-bar-title">{current ?? "KyberRock"}</span>
+      </header>
+      <button
+        type="button"
+        className="sidebar-backdrop"
+        aria-label="Fechar menu"
+        tabIndex={-1}
+        onClick={() => setNavOpen(false)}
+      />
+      <aside className="sidebar" id="kr-sidebar">
         <div className="sidebar-header">
           <img src="./logo.png" alt="" className="sidebar-logo" />
           <span className="sidebar-brand">KyberRock</span>
           <span className="sidebar-meta">Web</span>
+          <button
+            type="button"
+            className="sidebar-close"
+            onClick={() => setNavOpen(false)}
+            aria-label="Fechar menu"
+          >
+            <X size={20} />
+          </button>
         </div>
         <nav className="sidebar-nav" aria-label="Navegacao principal">
           {NAV_SECTIONS.map((section) => {
@@ -232,7 +298,10 @@ export function Layout() {
       <main className="main">
         {/* Cadastro gravado na balanca aparece nas telas na hora (`lib/cadastro-live.ts`). */}
         <CadastroLiveProvider companyId={user.companyId}>
-          <Outlet />
+          {/* A tela chega em arquivo proprio (App.tsx): o menu fica na tela enquanto ela baixa. */}
+          <Suspense fallback={<div className="empty">Carregando...</div>}>
+            <Outlet />
+          </Suspense>
         </CadastroLiveProvider>
       </main>
     </div>

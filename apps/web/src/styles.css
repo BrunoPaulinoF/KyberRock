@@ -1944,46 +1944,202 @@ input[type="radio"] {
 }
 
 /* ---------- celular ---------- */
+/* A barra do topo e o fundo escuro do menu so existem no celular (Layout.tsx). */
+.mobile-bar,
+.sidebar-backdrop,
+.sidebar-close {
+  display: none;
+}
 @media (max-width: 800px) {
-  .shell {
-    flex-direction: column;
-    padding: 8px;
-    gap: 8px;
+  html {
+    -webkit-text-size-adjust: 100%;
   }
+  body {
+    -webkit-tap-highlight-color: transparent;
+  }
+  .shell {
+    display: block;
+    min-height: 100dvh;
+    padding: 0 8px calc(8px + env(safe-area-inset-bottom));
+  }
+
+  /* barra fina no topo: botao de menu + nome da tela */
+  .mobile-bar {
+    position: sticky;
+    top: 0;
+    z-index: 900;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 -8px 8px;
+    padding: calc(6px + env(safe-area-inset-top)) 12px 6px;
+    min-height: 52px;
+    background: var(--kr-surface);
+    border-bottom: 1px solid var(--kr-border);
+    box-shadow: var(--kr-shadow);
+  }
+  .mobile-bar-btn,
+  .sidebar-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--kr-text-strong);
+    cursor: pointer;
+  }
+  .mobile-bar-btn:active,
+  .sidebar-close:active {
+    background: var(--kr-surface-soft);
+  }
+  .mobile-bar-title {
+    min-width: 0;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--kr-text-strong);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sidebar-close {
+    margin-left: auto;
+  }
+
+  /* o menu lateral vira uma gaveta que desliza da esquerda */
   .sidebar {
-    position: static;
-    width: auto;
-    height: auto;
-    padding: 8px 0;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 950;
+    width: min(300px, 86vw);
+    height: 100dvh;
+    padding: calc(10px + env(safe-area-inset-top)) 0 calc(10px + env(safe-area-inset-bottom));
+    border-radius: 0 16px 16px 0;
+    border-left: none;
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition:
+      transform 220ms ease,
+      visibility 0s linear 220ms;
+  }
+  .nav-open .sidebar {
+    transform: none;
+    visibility: visible;
+    transition: transform 220ms ease;
+  }
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 940;
+    border: none;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 220ms ease;
+  }
+  .nav-open .sidebar-backdrop {
+    opacity: 1;
+    pointer-events: auto;
   }
   .sidebar-nav {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 4px;
-    padding: 0 8px;
-  }
-  .nav-section {
-    display: none;
+    padding-right: 8px;
   }
   .nav-link {
-    width: auto;
-    border-left: none;
-    border-radius: 10px;
-    padding: 7px 10px;
+    min-height: 44px;
+    font-size: 15px;
   }
-  .nav-link.active {
-    border-left: none;
+  .main {
+    gap: 8px;
   }
-  .sidebar-footer {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    padding-top: 8px;
-    margin-top: 4px;
+
+  /* dedo, nao mouse: alvos maiores e campo que nao faz o iPhone dar zoom (abaixo de 16px ele da) */
+  .input,
+  .select,
+  .textarea,
+  .search-box input,
+  .picker .input {
+    font-size: 16px;
   }
+  .input,
+  .select {
+    min-height: 42px;
+  }
+  .btn {
+    min-height: 40px;
+  }
+  .btn.small {
+    min-height: 34px;
+  }
+  .btn.link {
+    min-height: 0;
+  }
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: 18px;
+    height: 18px;
+  }
+  .check {
+    min-height: 36px;
+  }
+
+  /* cabecalhos: titulo em cima, botoes embaixo, dividindo a largura */
   .page-head {
     flex-direction: column;
+    padding: 12px 14px;
   }
+  .page-head h1 {
+    font-size: 21px;
+  }
+  .page-head .actions,
+  .page-head > .btn {
+    width: 100%;
+  }
+  .page-head .actions .btn {
+    flex: 1 1 auto;
+  }
+  .desk-panel {
+    padding: 12px;
+  }
+  .desk-title-row,
+  .section-head {
+    flex-wrap: wrap;
+  }
+  .section-head > .btn {
+    flex: 1 1 auto;
+  }
+  .toolbar > .input,
+  .toolbar > .select,
+  .toolbar > label {
+    flex: 1 1 160px;
+  }
+  .badge {
+    white-space: normal;
+  }
+
+  /* abas numa linha so que rola para o lado, em vez de quebrar em varias linhas */
+  .tabs,
+  .icon-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar,
+  .icon-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .tab,
+  .icon-tab {
+    flex-shrink: 0;
+    min-height: 40px;
+  }
+
   .grid-2,
   .grid-3,
   .entry-grid,
@@ -1994,11 +2150,50 @@ input[type="radio"] {
   .entry-shell {
     min-height: 0;
   }
-  .modal-backdrop {
-    padding: 12px 8px;
-  }
   .kpis {
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  }
+  .kpi strong {
+    font-size: 19px;
+  }
+  .table-wrap {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .picker-list {
+    max-height: 45vh;
+  }
+
+  /* janelas abrem de baixo para cima, na largura toda, com os botoes sempre a vista */
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal,
+  .modal.wide {
+    max-width: none;
+    max-height: 92dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+  }
+  .modal-head,
+  .modal-body {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .modal-foot {
+    position: sticky;
+    bottom: 0;
+    padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+  }
+  .modal-foot .btn {
+    flex: 1 1 auto;
+  }
+  .toast-stack {
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    width: calc(100vw - 24px);
   }
 }
 

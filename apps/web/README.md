@@ -56,6 +56,15 @@ As telas seguem a disposicao do KyberRock Desktop (mesmo menu, mesmos nomes, aba
 botoes quadrados de acao): quem opera a balanca nao deve estranhar o site. As pecas comuns
 estao em `src/components/desk.tsx`.
 
+**No celular** (ate 800 px, bloco "celular" de `src/styles.css`) o menu lateral vira uma barra
+fina no topo com o botao de menu e o nome da tela, e o mesmo menu desliza da esquerda
+(`Layout.tsx`). Campos com 16 px (abaixo disso o iPhone da zoom ao tocar), botoes com altura de
+dedo, abas numa linha que rola, janelas abrindo de baixo com Salvar/Cancelar sempre a vista e
+tabela larga rolando dentro do proprio cartao — nunca a pagina inteira para o lado. Cada tela e
+um arquivo separado (`lazy` no `App.tsx`), baixado so quando aberta: o primeiro carregamento caiu
+de ~320 kB para ~150 kB compactados. Por isso o CSS de uma tela (`pages/*.css`) so chega com ela —
+classe usada em mais de uma tela mora no `styles.css`.
+
 | Rota                       | Quem                                    | O que faz                                                                                            |
 | -------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `/carregamento`            | carregador                              | Fila de carregamento da unidade: concluir e devolver carga                                           |

@@ -1,3 +1,4 @@
+import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from "react";
 import { BrowserRouter, HashRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { Layout } from "./components/Layout";
@@ -5,25 +6,38 @@ import { ToastProvider } from "./components/ui";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { canSee, homeFor, usesSidebar, type Screen } from "./lib/permissions";
 import { ThemeProvider } from "./lib/theme";
-import { BillingConference } from "./pages/BillingConference";
-import { Comercial } from "./pages/Comercial";
-import { CustomerReport } from "./pages/CustomerReport";
-import { Dashboard } from "./pages/Dashboard";
-import { Documentation } from "./pages/Documentation";
-import { Insights } from "./pages/Insights";
-import { InvoiceClosing } from "./pages/InvoiceClosing";
-import { Loading } from "./pages/Loading";
 import { Login } from "./pages/Login";
-import { Monitor } from "./pages/Monitor";
-import { Operations } from "./pages/Operation";
-import { PriceCodePage } from "./pages/PriceCode";
-import { Receipts } from "./pages/Receipts";
-import { Registrations } from "./pages/Registrations";
-import { SalesReport } from "./pages/SalesReport";
-import { Settings } from "./pages/Settings";
-import { SupportLogs } from "./pages/SupportLogs";
-import { TruckControl } from "./pages/TruckControl";
-import { Wallet } from "./pages/Wallet";
+
+/*
+ * Cada tela vira um arquivo separado, baixado so quando e aberta. No celular (4G no patio) isso
+ * e a diferenca entre abrir a fila do carregador na hora e esperar o site inteiro — relatorio,
+ * monitoramento, documentacao — descer antes da primeira tela.
+ */
+function page<K extends string>(
+  load: () => Promise<Record<K, ComponentType>>,
+  name: K
+): LazyExoticComponent<ComponentType> {
+  return lazy(() => load().then((module) => ({ default: module[name] })));
+}
+
+const BillingConference = page(() => import("./pages/BillingConference"), "BillingConference");
+const Comercial = page(() => import("./pages/Comercial"), "Comercial");
+const CustomerReport = page(() => import("./pages/CustomerReport"), "CustomerReport");
+const Dashboard = page(() => import("./pages/Dashboard"), "Dashboard");
+const Documentation = page(() => import("./pages/Documentation"), "Documentation");
+const Insights = page(() => import("./pages/Insights"), "Insights");
+const InvoiceClosing = page(() => import("./pages/InvoiceClosing"), "InvoiceClosing");
+const Loading = page(() => import("./pages/Loading"), "Loading");
+const Monitor = page(() => import("./pages/Monitor"), "Monitor");
+const Operations = page(() => import("./pages/Operation"), "Operations");
+const PriceCodePage = page(() => import("./pages/PriceCode"), "PriceCodePage");
+const Receipts = page(() => import("./pages/Receipts"), "Receipts");
+const Registrations = page(() => import("./pages/Registrations"), "Registrations");
+const SalesReport = page(() => import("./pages/SalesReport"), "SalesReport");
+const Settings = page(() => import("./pages/Settings"), "Settings");
+const SupportLogs = page(() => import("./pages/SupportLogs"), "SupportLogs");
+const TruckControl = page(() => import("./pages/TruckControl"), "TruckControl");
+const Wallet = page(() => import("./pages/Wallet"), "Wallet");
 
 /**
  * Guarda de rota. Cada perfil tem um conjunto fechado de telas (`lib/permissions.ts`): o
@@ -71,71 +85,79 @@ export function App() {
       <AuthProvider>
         <ToastProvider>
           <Router>
-            <Routes>
-              <Route path="/login" element={<Login />} />
-              <Route path="/carregamento" element={only("carregamento", <Loading />)} />
-              <Route path="/monitoramento" element={only("monitoramento", <Monitor />)} />
-              <Route
-                element={
-                  <Private sidebar>
-                    <Layout />
-                  </Private>
-                }
-              >
-                <Route index element={<Home />} />
-                <Route path="/painel" element={only("painel", <Dashboard />)} />
-                <Route path="/operacoes" element={only("operacoes", <Operations />)} />
-                <Route path="/carteira" element={only("carteira", <Wallet />)} />
-                <Route path="/cadastros" element={only("cadastros", <Registrations />)} />
-                <Route path="/cadastros/:tab" element={only("cadastros", <Registrations />)} />
-                <Route path="/cadastros/:tab/:sub" element={only("cadastros", <Registrations />)} />
-                <Route path="/senha-preco" element={only("senha-preco", <PriceCodePage />)} />
-                <Route path="/cupons" element={only("cupons", <Receipts />)} />
-                <Route path="/comercial" element={only("comercial", <Comercial />)} />
-                <Route path="/insights" element={only("insights", <Insights />)} />
+            <Suspense fallback={<div className="empty">Carregando...</div>}>
+              <Routes>
+                <Route path="/login" element={<Login />} />
+                <Route path="/carregamento" element={only("carregamento", <Loading />)} />
+                <Route path="/monitoramento" element={only("monitoramento", <Monitor />)} />
                 <Route
-                  path="/controle-caminhoes"
-                  element={only("controle-caminhoes", <TruckControl />)}
-                />
-                <Route
-                  path="/relatorio-cliente"
-                  element={only("relatorio-cliente", <CustomerReport />)}
-                />
-                <Route
-                  path="/conferencia-faturamento"
-                  element={only("conferencia-faturamento", <BillingConference />)}
-                />
-                <Route path="/fechamento" element={only("fechamento", <InvoiceClosing />)} />
-                <Route path="/relatorios" element={only("relatorios", <SalesReport />)} />
-                <Route path="/documentacao" element={only("documentacao", <Documentation />)} />
-                <Route path="/suporte" element={only("suporte", <SupportLogs />)} />
-                <Route
-                  path="/configuracoes"
-                  element={only("configuracoes", <Navigate to="/configuracoes/balanca" replace />)}
-                />
-                <Route path="/configuracoes/:tab" element={only("configuracoes", <Settings />)} />
-                {/* Enderecos antigos (favoritos, links mandados por mensagem). */}
-                <Route path="/operacao" element={<Navigate to="/operacoes" replace />} />
-                {/* A entrada so nasce no KyberRock Desktop, na balanca. */}
-                <Route path="/nova-entrada" element={<Navigate to="/operacoes" replace />} />
-                <Route
-                  path="/operacao/concluidas"
-                  element={<Navigate to="/operacoes?aba=concluidas" replace />}
-                />
-                <Route path="/clientes" element={<Navigate to="/cadastros/clientes" replace />} />
-                <Route
-                  path="/veiculos"
-                  element={<Navigate to="/cadastros/transporte/placas" replace />}
-                />
-                <Route
-                  path="/transportadoras"
-                  element={<Navigate to="/cadastros/transporte/transportadoras" replace />}
-                />
-                <Route path="/precos" element={<Navigate to="/cadastros/produtos" replace />} />
-                <Route path="/vendas" element={<Navigate to="/relatorios" replace />} />
-              </Route>
-              <Route path="*" element={<Home />} />
-            </Routes>
+                  element={
+                    <Private sidebar>
+                      <Layout />
+                    </Private>
+                  }
+                >
+                  <Route index element={<Home />} />
+                  <Route path="/painel" element={only("painel", <Dashboard />)} />
+                  <Route path="/operacoes" element={only("operacoes", <Operations />)} />
+                  <Route path="/carteira" element={only("carteira", <Wallet />)} />
+                  <Route path="/cadastros" element={only("cadastros", <Registrations />)} />
+                  <Route path="/cadastros/:tab" element={only("cadastros", <Registrations />)} />
+                  <Route
+                    path="/cadastros/:tab/:sub"
+                    element={only("cadastros", <Registrations />)}
+                  />
+                  <Route path="/senha-preco" element={only("senha-preco", <PriceCodePage />)} />
+                  <Route path="/cupons" element={only("cupons", <Receipts />)} />
+                  <Route path="/comercial" element={only("comercial", <Comercial />)} />
+                  <Route path="/insights" element={only("insights", <Insights />)} />
+                  <Route
+                    path="/controle-caminhoes"
+                    element={only("controle-caminhoes", <TruckControl />)}
+                  />
+                  <Route
+                    path="/relatorio-cliente"
+                    element={only("relatorio-cliente", <CustomerReport />)}
+                  />
+                  <Route
+                    path="/conferencia-faturamento"
+                    element={only("conferencia-faturamento", <BillingConference />)}
+                  />
+                  <Route path="/fechamento" element={only("fechamento", <InvoiceClosing />)} />
+                  <Route path="/relatorios" element={only("relatorios", <SalesReport />)} />
+                  <Route path="/documentacao" element={only("documentacao", <Documentation />)} />
+                  <Route path="/suporte" element={only("suporte", <SupportLogs />)} />
+                  <Route
+                    path="/configuracoes"
+                    element={only(
+                      "configuracoes",
+                      <Navigate to="/configuracoes/balanca" replace />
+                    )}
+                  />
+                  <Route path="/configuracoes/:tab" element={only("configuracoes", <Settings />)} />
+                  {/* Enderecos antigos (favoritos, links mandados por mensagem). */}
+                  <Route path="/operacao" element={<Navigate to="/operacoes" replace />} />
+                  {/* A entrada so nasce no KyberRock Desktop, na balanca. */}
+                  <Route path="/nova-entrada" element={<Navigate to="/operacoes" replace />} />
+                  <Route
+                    path="/operacao/concluidas"
+                    element={<Navigate to="/operacoes?aba=concluidas" replace />}
+                  />
+                  <Route path="/clientes" element={<Navigate to="/cadastros/clientes" replace />} />
+                  <Route
+                    path="/veiculos"
+                    element={<Navigate to="/cadastros/transporte/placas" replace />}
+                  />
+                  <Route
+                    path="/transportadoras"
+                    element={<Navigate to="/cadastros/transporte/transportadoras" replace />}
+                  />
+                  <Route path="/precos" element={<Navigate to="/cadastros/produtos" replace />} />
+                  <Route path="/vendas" element={<Navigate to="/relatorios" replace />} />
+                </Route>
+                <Route path="*" element={<Home />} />
+              </Routes>
+            </Suspense>
           </Router>
         </ToastProvider>
       </AuthProvider>
