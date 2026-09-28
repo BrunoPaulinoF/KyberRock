@@ -14,10 +14,13 @@
  *   - `monitoramento` so consulta (a tela dele e o painel de vendas em tempo real);
  *   - `comercial`     todo o CADASTRO (cliente, bloco comercial, frota e preco), sem senha de
  *                     preco; nao pesa, nao mexe em carteira, fechamento nem destinatarios;
- *   - `gestor`        tudo, menos a Nova entrada (fecha, altera, cancela e reimprime);
+ *   - `gestor`        tudo (fecha, altera, cancela e reimprime);
  *   - `operacao`      tudo, e mudanca de preco SEMPRE pede a senha da pedreira (o codigo
  *                     rotativo de 45 s que so o comercial ve, `_shared/price-code.ts`);
  *   - `administrador` tudo, sem senha nenhuma, mais os logs de suporte.
+ *
+ * Nova entrada nao e feita pelo site por perfil nenhum: so no KyberRock Desktop (a `web-api`
+ * recusa o pedido `entry`).
  *
  * O carregador (`loader`) tem login valido mas nao tem o que fazer aqui — a tela dele le a fila
  * direto, por RLS —, e cai em 403, nao em 401, que o site trataria como "faca login de novo".
