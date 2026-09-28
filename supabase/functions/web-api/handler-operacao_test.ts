@@ -134,43 +134,49 @@ const ENTRY = {
 };
 
 describe("web-api: pesagem pelo site", () => {
-  it("entrada vira pedido pendente para a balanca, com o id da pesagem ja definido", async () => {
+  it("Nova entrada nao e feita pelo site, para perfil nenhum", async () => {
+    for (const role of [
+      "monitoramento",
+      "comercial",
+      "gestor",
+      "operacao",
+      "administrador"
+    ] as const) {
+      const h = harness(role);
+      const result = await h.call("request_operation", { kind: "entry", data: ENTRY });
+      expect(result.status, role).toBe(403);
+      // Monitoramento e comercial ja param antes, por nao pesarem.
+      if (role === "gestor" || role === "operacao" || role === "administrador") {
+        expect(String(result.body.error), role).toContain("KyberRock Desktop");
+      }
+      expect(h.store.rows("operation_requests"), role).toHaveLength(0);
+    }
+  });
+
+  it("fechamento vira pedido pendente para a balanca da unidade da pesagem", async () => {
     const h = harness();
-    const result = await h.call("request_operation", { kind: "entry", data: ENTRY });
+    const result = await h.call("request_operation", {
+      kind: "exit",
+      operationId: "op-open",
+      data: { exitWeightKg: 40000 }
+    });
     expect(result.status).toBe(200);
-    expect(result.body).toMatchObject({ requestId: "id-2", operationId: "id-1", warnings: [] });
+    expect(result.body).toMatchObject({ requestId: "id-1", operationId: "op-open", warnings: [] });
     expect(h.store.rows("operation_requests")).toEqual([
       expect.objectContaining({
-        id: "id-2",
+        id: "id-1",
         company_id: COMPANY,
         unit_id: "unit-1",
-        kind: "entry",
-        operation_id: "id-1",
+        kind: "exit",
+        operation_id: "op-open",
         status: "pending",
         requested_by: "user-1",
-        requested_by_name: "Operador",
-        payload: {
-          customerId: "c1",
-          vehicleId: "v1",
-          driverId: "d1",
-          productId: "p1",
-          carrierId: "t1",
-          operationType: "invoice",
-          entryWeightKg: 15420
-        }
+        requested_by_name: "Operador"
       })
     ]);
   });
 
-  it("Nova entrada: so operacao e administrador; o gestor fecha, altera e reimprime", async () => {
-    for (const role of ["monitoramento", "comercial", "gestor"] as const) {
-      const result = await harness(role).call("request_operation", { kind: "entry", data: ENTRY });
-      expect(result.status, role).toBe(403);
-    }
-    expect(
-      (await harness("administrador").call("request_operation", { kind: "entry", data: ENTRY }))
-        .status
-    ).toBe(200);
+  it("o gestor fecha, altera e reimprime", async () => {
     const gestor = harness("gestor");
     expect(
       (await gestor.call("request_operation", { kind: "reprint", operationId: "op-done" })).status
@@ -181,13 +187,15 @@ describe("web-api: pesagem pelo site", () => {
   it("recusa cadastro inativo ou de fora da empresa antes de chegar na balanca", async () => {
     const h = harness();
     const inactive = await h.call("request_operation", {
-      kind: "entry",
-      data: { ...ENTRY, customerId: "c-off" }
+      kind: "update",
+      operationId: "op-open",
+      data: { customerId: "c-off" }
     });
     expect(inactive.status).toBe(400);
     const missing = await h.call("request_operation", {
-      kind: "entry",
-      data: { ...ENTRY, productId: "p-outra-empresa" }
+      kind: "update",
+      operationId: "op-open",
+      data: { productId: "p-outra-empresa" }
     });
     expect(missing.status).toBe(404);
     expect(h.store.rows("operation_requests")).toHaveLength(0);
@@ -195,8 +203,9 @@ describe("web-api: pesagem pelo site", () => {
 
   it("sem balanca executora marcada, nao aceita o pedido", async () => {
     const result = await harness("operacao", { executor: false }).call("request_operation", {
-      kind: "entry",
-      data: ENTRY
+      kind: "exit",
+      operationId: "op-open",
+      data: { exitWeightKg: 40000 }
     });
     expect(result.status).toBe(409);
     expect(String(result.body.error)).toContain("Acessos do sistema");
@@ -205,7 +214,7 @@ describe("web-api: pesagem pelo site", () => {
   it("executora fora do ar: aceita e avisa que fica na fila", async () => {
     const result = await harness("operacao", { executorSeenAt: "2026-09-25T14:00:00.000Z" }).call(
       "request_operation",
-      { kind: "entry", data: ENTRY }
+      { kind: "exit", operationId: "op-open", data: { exitWeightKg: 40000 } }
     );
     expect(result.status).toBe(200);
     expect(String((result.body.warnings as string[])[0])).toContain("fora do ar");
@@ -339,38 +348,6 @@ describe("web-api: pesagem pelo site", () => {
     });
     expect(result.status).toBe(409);
     expect(String(result.body.error)).toContain("Ja existe um fechamento");
-  });
-
-  it("frete ou condicao digitada so vai para executora que entende (versao nova)", async () => {
-    const withFreight = {
-      kind: "entry",
-      data: {
-        ...ENTRY,
-        freightModality: "fob",
-        freight: { calculationType: "per_ton", baseValueCents: 1500 }
-      }
-    };
-    const old = await harness("operacao").call("request_operation", withFreight);
-    expect(old.status).toBe(409);
-    expect(String(old.body.error)).toContain("precisa ser atualizada");
-    const oldCondition = await harness("operacao").call("request_operation", {
-      kind: "entry",
-      data: { ...ENTRY, conditionText: "30" }
-    });
-    expect(oldCondition.status).toBe(409);
-    // Sem frete e sem condicao digitada, a executora antiga continua servindo.
-    const plain = await harness("operacao").call("request_operation", {
-      kind: "entry",
-      data: { ...ENTRY, freightModality: "third_party" }
-    });
-    expect(plain.status).toBe(200);
-    const h = harness("operacao", { appVersion: "0.8.260" });
-    const ok = await h.call("request_operation", withFreight);
-    expect(ok.status).toBe(200);
-    expect(h.store.rows("operation_requests")[0].payload).toMatchObject({
-      freightModality: "fob",
-      freight: { calculationType: "per_ton", baseValueCents: 1500 }
-    });
   });
 
   it("status da executora para a tela", async () => {

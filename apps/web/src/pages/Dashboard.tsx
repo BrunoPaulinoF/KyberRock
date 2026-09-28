@@ -6,7 +6,6 @@ import {
   ClipboardList,
   FolderOpen,
   ListChecks,
-  PlusCircle,
   Receipt,
   Scale,
   Table2,
@@ -157,12 +156,6 @@ export function Dashboard() {
           </h1>
         </div>
         <div className="dash-hero-actions">
-          {user.canCreateEntry && (
-            <button type="button" className="btn primary" onClick={() => navigate("/nova-entrada")}>
-              <PlusCircle size={16} />
-              Nova entrada
-            </button>
-          )}
           <button type="button" className="btn" onClick={() => navigate("/operacoes")}>
             <ListChecks size={16} />
             Operacoes

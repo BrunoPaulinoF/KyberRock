@@ -15,7 +15,6 @@ import { InvoiceClosing } from "./pages/InvoiceClosing";
 import { Loading } from "./pages/Loading";
 import { Login } from "./pages/Login";
 import { Monitor } from "./pages/Monitor";
-import { NewEntry } from "./pages/NewEntry";
 import { Operations } from "./pages/Operation";
 import { PriceCodePage } from "./pages/PriceCode";
 import { Registrations } from "./pages/Registrations";
@@ -84,7 +83,6 @@ export function App() {
               >
                 <Route index element={<Home />} />
                 <Route path="/painel" element={only("painel", <Dashboard />)} />
-                <Route path="/nova-entrada" element={only("nova-entrada", <NewEntry />)} />
                 <Route path="/operacoes" element={only("operacoes", <Operations />)} />
                 <Route path="/carteira" element={only("carteira", <Wallet />)} />
                 <Route path="/cadastros" element={only("cadastros", <Registrations />)} />
@@ -116,6 +114,8 @@ export function App() {
                 <Route path="/configuracoes/:tab" element={only("configuracoes", <Settings />)} />
                 {/* Enderecos antigos (favoritos, links mandados por mensagem). */}
                 <Route path="/operacao" element={<Navigate to="/operacoes" replace />} />
+                {/* A entrada so nasce no KyberRock Desktop, na balanca. */}
+                <Route path="/nova-entrada" element={<Navigate to="/operacoes" replace />} />
                 <Route
                   path="/operacao/concluidas"
                   element={<Navigate to="/operacoes?aba=concluidas" replace />}

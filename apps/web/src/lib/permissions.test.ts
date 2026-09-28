@@ -32,12 +32,15 @@ describe("telas de cada perfil", () => {
       ].sort()
     );
     expect(canSee("comercial", "configuracoes")).toBe(false);
-    expect(canSee("comercial", "nova-entrada")).toBe(false);
   });
 
-  it("gestor ve tudo menos a Nova entrada (e os logs)", () => {
+  it("Nova entrada nao e tela do site: a entrada so nasce no KyberRock Desktop", () => {
+    expect((SCREENS as readonly string[]).includes("nova-entrada")).toBe(false);
+  });
+
+  it("gestor ve tudo menos os logs", () => {
     const hidden = SCREENS.filter((screen) => !canSee("gestor", screen));
-    expect(hidden.sort()).toEqual(["carregamento", "nova-entrada", "senha-preco", "suporte"]);
+    expect(hidden.sort()).toEqual(["carregamento", "senha-preco", "suporte"]);
   });
 
   it("operacao ve tudo menos os logs; administrador ve tambem os logs", () => {
@@ -73,8 +76,7 @@ describe("o que cada perfil faz", () => {
         canEditFleet: false,
         canManagePrices: false,
         canEditPrices: false,
-        canOperate: false,
-        canCreateEntry: false
+        canOperate: false
       });
     }
   });
@@ -85,28 +87,17 @@ describe("o que cada perfil faz", () => {
       canEditFleet: true,
       canEditPrices: true,
       canManagePrices: false,
-      canOperate: false,
-      canCreateEntry: false
+      canOperate: false
     });
   });
 
-  it("gestor faz tudo menos a Nova entrada", () => {
-    expect(capabilitiesFor("gestor")).toMatchObject({
-      canEditCustomers: true,
-      canEditPrices: true,
-      canManagePrices: true,
-      canOperate: true,
-      canCreateEntry: false
-    });
-  });
-
-  it("operacao e administrador fazem tudo", () => {
-    for (const role of ["operacao", "administrador"] as const) {
+  it("gestor, operacao e administrador fazem tudo", () => {
+    for (const role of ["gestor", "operacao", "administrador"] as const) {
       expect(capabilitiesFor(role)).toMatchObject({
         canEditCustomers: true,
         canEditPrices: true,
-        canOperate: true,
-        canCreateEntry: true
+        canManagePrices: true,
+        canOperate: true
       });
     }
   });

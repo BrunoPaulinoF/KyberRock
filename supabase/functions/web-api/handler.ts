@@ -38,7 +38,6 @@ import {
   parseVehicleInput
 } from "../_shared/web-cadastro.ts";
 import {
-  canCreateEntry,
   canEditCustomers,
   canEditFleet,
   canEditPrices,
@@ -65,12 +64,10 @@ import { tryParsePaymentCondition } from "../_shared/payment-condition-parser.ts
 import {
   ENTRY_FREIGHT_MIN_EXECUTOR_VERSION,
   changesPrice,
-  entryNeedsFreightSupport,
   isExecutorOnline,
   isOperationRequestKind,
   isVersionAtLeast,
   validateOperationRequest,
-  type EntryRequestPayload,
   type OperationRequestKind,
   type OperationRequestPayload,
   type UpdateRequestPayload
@@ -211,8 +208,8 @@ export const READ_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
 ]);
 
 /**
- * Pesagem pelo site (quem executa e a balanca da unidade). A Nova entrada ainda passa por
- * `canCreateEntry` dentro da acao, porque o tipo do pedido vem no payload.
+ * Pesagem pelo site (quem executa e a balanca da unidade). A Nova entrada e recusada dentro da
+ * acao, porque o tipo do pedido vem no payload: entrada so nasce no KyberRock Desktop.
  */
 export const OPERATION_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "request_operation"
@@ -1731,33 +1728,26 @@ async function requestOperation(ctx: ActionContext): Promise<Row> {
   if (!isOperationRequestKind(kind)) {
     throw new WebApiError(400, "Tipo de pedido invalido (entry, exit, update, cancel, reprint).");
   }
+  // A entrada so nasce na balanca (KyberRock Desktop). A recusa e aqui, e nao so na tela, porque
+  // uma aba antiga do site ainda pode mandar o pedido.
+  if (kind === "entry") {
+    throw new WebApiError(
+      403,
+      "Nova entrada nao e mais feita pelo site. Registre a entrada no KyberRock Desktop, na balanca."
+    );
+  }
   const raw =
     ctx.payload.data && typeof ctx.payload.data === "object" ? (ctx.payload.data as Row) : {};
   const validation = validateOperationRequest(kind, raw);
   if (!validation.ok) throw new WebApiError(400, validation.error);
   const data: OperationRequestPayload = validation.value;
 
-  // Entrada: o id da pesagem nasce aqui (ver migracao `202609250001`: e o que torna a repeticao
-  // do pedido segura). Os outros tipos apontam para uma pesagem que ja existe na nuvem.
-  let operationId: string;
-  let unitId = ctx.session.unitId;
-  if (kind === "entry") {
-    if (!canCreateEntry(ctx.session.role)) {
-      throw new WebApiError(
-        403,
-        `O perfil ${WEB_ROLE_LABELS[ctx.session.role]} nao faz Nova entrada pelo site.`
-      );
-    }
-    operationId = ctx.newId();
-    await checkReferences(ctx, data as EntryRequestPayload as unknown as Row);
-  } else {
-    operationId = optionalText(ctx.payload, "operationId") ?? "";
-    if (!operationId) throw new WebApiError(400, "Informe a pesagem.");
-    const operation = await requireRow(ctx, "weighing_operations", operationId, "Pesagem");
-    unitId = typeof operation.unit_id === "string" ? operation.unit_id : unitId;
-    await checkOperationState(ctx, kind, operation, data);
-    if (kind === "update") await checkReferences(ctx, data as UpdateRequestPayload as Row);
-  }
+  const operationId = optionalText(ctx.payload, "operationId") ?? "";
+  if (!operationId) throw new WebApiError(400, "Informe a pesagem.");
+  const operation = await requireRow(ctx, "weighing_operations", operationId, "Pesagem");
+  const unitId = typeof operation.unit_id === "string" ? operation.unit_id : ctx.session.unitId;
+  await checkOperationState(ctx, kind, operation, data);
+  if (kind === "update") await checkReferences(ctx, data as UpdateRequestPayload as Row);
   if (changesPrice(kind, data)) await checkPricePassword(ctx);
 
   const executor = await executorOf(ctx, unitId);
@@ -1765,16 +1755,6 @@ async function requestOperation(ctx: ActionContext): Promise<Row> {
     throw new WebApiError(
       409,
       "Nenhuma balanca desta unidade esta marcada para executar os pedidos do site. Marque uma no painel (Acessos do sistema)."
-    );
-  }
-  if (
-    kind === "entry" &&
-    entryNeedsFreightSupport(data as EntryRequestPayload) &&
-    !isVersionAtLeast(executor.app_version, ENTRY_FREIGHT_MIN_EXECUTOR_VERSION)
-  ) {
-    throw new WebApiError(
-      409,
-      `A balanca ${String(executor.name ?? "executora")} precisa ser atualizada (versao ${ENTRY_FREIGHT_MIN_EXECUTOR_VERSION} ou mais nova) para receber entrada com frete ou condicao digitada. Atualize a balanca ou envie sem frete e com a condicao da lista.`
     );
   }
 
@@ -1897,7 +1877,6 @@ async function me(ctx: ActionContext): Promise<Row> {
       canEditCustomers: canEditCustomers(ctx.session.role),
       canEditFleet: canEditFleet(ctx.session.role),
       canOperate: canOperate(ctx.session.role),
-      canCreateEntry: canCreateEntry(ctx.session.role),
       canSeeSupport: canSeeSupport(ctx.session.role),
       canSeePriceCode: canSeePriceCode(ctx.session.role),
       requiresPricePassword: ctx.session.requiresPricePassword

@@ -127,11 +127,6 @@ export function canOperate(role: WebRole): boolean {
   return runsTheQuarry(role);
 }
 
-/** Nova entrada pelo site: o gestor faz tudo MENOS isto. */
-export function canCreateEntry(role: WebRole): boolean {
-  return role === "operacao" || role === "administrador";
-}
-
 /** Veiculo, motorista e transportadora. */
 export function canEditFleet(role: WebRole): boolean {
   return canWrite(role);
