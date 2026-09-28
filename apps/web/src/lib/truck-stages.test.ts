@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  averageStageDurations,
+  ENTRY_WINDOW_MINUTES,
+  averageDurations,
   formatDuration,
   groupByStage,
   stageDurations,
@@ -22,107 +23,82 @@ function truck(overrides: Partial<StageTruck> = {}): StageTruck {
     productDescription: "Brita 1",
     driverName: "Joao",
     entryAt: at(0),
-    loadStartedAt: null,
-    loadedAt: null,
     exitAt: null,
     ...overrides
   };
 }
 
 describe("stageOf", () => {
-  it("segue ENTRADA -> CARREGANDO -> SAIDA pelos carimbos do carregador", () => {
-    expect(stageOf(truck())).toBe("entrada");
-    expect(stageOf(truck({ loadStartedAt: at(5) }))).toBe("carregando");
-    expect(stageOf(truck({ loadStartedAt: at(5), loadedAt: at(20) }))).toBe("saida");
-    // "Concluir" sem "Iniciar": ja esta carregado.
-    expect(stageOf(truck({ loadedAt: at(20) }))).toBe("saida");
+  it("segue a pesagem da balanca: recem-chegou, em aberto, concluida", () => {
+    expect(ENTRY_WINDOW_MINUTES).toBe(10);
+    expect(stageOf(truck(), T0 + 3 * MIN)).toBe("entrada");
+    expect(stageOf(truck(), T0 + 10 * MIN)).toBe("carregando");
+    expect(stageOf(truck(), T0 + 90 * MIN)).toBe("carregando");
+    expect(stageOf(truck({ exitAt: at(40) }), T0 + 41 * MIN)).toBe("saida");
   });
 });
 
 describe("stageDurations", () => {
-  it("caminhao que ja saiu: cada etapa com o seu tempo", () => {
-    const durations = stageDurations(
-      truck({ loadStartedAt: at(10), loadedAt: at(35), exitAt: at(42) }),
-      T0 + 999 * MIN
-    );
-    expect(durations).toEqual({
+  it("operacao concluida: janela de entrada, o resto aguardando, e o total", () => {
+    expect(stageDurations(truck({ exitAt: at(42) }), T0 + 999 * MIN)).toEqual({
       entrada: 10 * MIN,
-      carregando: 25 * MIN,
-      saida: 7 * MIN,
+      carregando: 32 * MIN,
       total: 42 * MIN
     });
   });
 
-  it("sem carimbo do carregador, o tempo todo fica na entrada", () => {
-    const durations = stageDurations(truck({ exitAt: at(30) }), T0 + 999 * MIN);
-    expect(durations).toEqual({
-      entrada: 30 * MIN,
+  it("saiu dentro da janela: nao passou pelo carregando", () => {
+    expect(stageDurations(truck({ exitAt: at(6) }), T0)).toEqual({
+      entrada: 6 * MIN,
       carregando: null,
-      saida: null,
-      total: 30 * MIN
+      total: 6 * MIN
     });
   });
 
-  it("'Concluir' sem 'Iniciar': o carregamento fica na entrada", () => {
-    const durations = stageDurations(truck({ loadedAt: at(20), exitAt: at(26) }), T0);
-    expect(durations.entrada).toBe(20 * MIN);
-    expect(durations.carregando).toBeNull();
-    expect(durations.saida).toBe(6 * MIN);
-  });
-
   it("quem ainda esta na pedreira conta ate agora", () => {
-    const now = T0 + 18 * MIN;
-    const current = truck({ loadStartedAt: at(4) });
-    expect(stageDurations(current, now).carregando).toBe(14 * MIN);
-    expect(timeInCurrentStage(current, now)).toBe(14 * MIN);
+    const now = T0 + 25 * MIN;
+    expect(stageDurations(truck(), now).carregando).toBe(15 * MIN);
+    expect(timeInCurrentStage(truck(), now)).toBe(15 * MIN);
+    expect(timeInCurrentStage(truck(), T0 + 4 * MIN)).toBe(4 * MIN);
+    expect(timeInCurrentStage(truck({ exitAt: at(30) }), now)).toBe(30 * MIN);
   });
 
-  it("carimbo fora de ordem nao da tempo negativo", () => {
-    const durations = stageDurations(
-      truck({ loadStartedAt: at(-5), loadedAt: at(50), exitAt: at(40) }),
-      T0
-    );
-    expect(durations.entrada).toBe(0);
-    expect(durations.saida).toBe(0);
-    expect(durations.total).toBe(40 * MIN);
+  it("saida antes da entrada (relogio de outra maquina) nao da tempo negativo", () => {
+    expect(stageDurations(truck({ exitAt: at(-5) }), T0).total).toBe(0);
   });
 });
 
 describe("groupByStage", () => {
-  it("separa por etapa, quem esta ha mais tempo na etapa primeiro", () => {
+  it("separa por etapa: mais tempo primeiro, e a ultima saida primeiro", () => {
     const now = T0 + 60 * MIN;
     const groups = groupByStage(
       [
-        truck({ operationId: "novo", entryAt: at(50) }),
-        truck({ operationId: "antigo", entryAt: at(10) }),
-        truck({ operationId: "carregando", loadStartedAt: at(55) }),
-        truck({ operationId: "pronto", loadedAt: at(58) })
+        truck({ operationId: "chegou", entryAt: at(55) }),
+        truck({ operationId: "patio-novo", entryAt: at(40) }),
+        truck({ operationId: "patio-antigo", entryAt: at(5) }),
+        truck({ operationId: "saiu-cedo", entryAt: at(0), exitAt: at(20) }),
+        truck({ operationId: "saiu-agora", entryAt: at(10), exitAt: at(58) })
       ],
       now
     );
-    expect(groups.entrada.map((row) => row.operationId)).toEqual(["antigo", "novo"]);
-    expect(groups.carregando.map((row) => row.operationId)).toEqual(["carregando"]);
-    expect(groups.saida.map((row) => row.operationId)).toEqual(["pronto"]);
+    expect(groups.entrada.map((row) => row.operationId)).toEqual(["chegou"]);
+    expect(groups.carregando.map((row) => row.operationId)).toEqual(["patio-antigo", "patio-novo"]);
+    expect(groups.saida.map((row) => row.operationId)).toEqual(["saiu-agora", "saiu-cedo"]);
   });
 });
 
-describe("averageStageDurations", () => {
-  it("media so entre quem tem o carimbo da etapa", () => {
-    const averages = averageStageDurations(
-      [
-        truck({ loadStartedAt: at(10), loadedAt: at(30), exitAt: at(40) }),
-        truck({ exitAt: at(20) })
-      ],
+describe("averageDurations", () => {
+  it("espera media so de quem passou da janela; total de todos", () => {
+    const averages = averageDurations(
+      [truck({ exitAt: at(40) }), truck({ exitAt: at(20) }), truck({ exitAt: at(6) })],
       T0
     );
-    expect(averages.entrada).toBe(15 * MIN);
     expect(averages.carregando).toBe(20 * MIN);
-    expect(averages.saida).toBe(10 * MIN);
-    expect(averages.total).toBe(30 * MIN);
+    expect(averages.total).toBe(22 * MIN);
   });
 
   it("sem ninguem, sem media", () => {
-    expect(averageStageDurations([], T0).entrada).toBeNull();
+    expect(averageDurations([], T0)).toEqual({ carregando: null, total: null });
   });
 });
 

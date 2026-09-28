@@ -498,11 +498,13 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   nunca enviava `products.unit_price_cents` e o site mostrava "Sem preco" em quase tudo; agora
   envia, e o `desktop-sync` manda a parte do lote SEM preco sem a coluna
   (`_shared/product-price.ts`) — maquina que nunca puxou o OMIE nao apaga o preco que outra enviou.
-- **Etapas do caminhao** (tela Comercial, `components/TruckStages.tsx`, conta em
-  `lib/truck-stages.ts`): ENTRADA (pesou a entrada) -> CARREGANDO (`loading_requests.loader_started_at`,
-  botao "Iniciar" do carregador) -> SAIDA (`loader_completed_at`, "Concluir") -> saiu (`closed_at`).
-  Etapa sem carimbo mostra "—" e o tempo dela fica na anterior. Atualiza pelo aviso Realtime, como
-  o Monitoramento; `loader_started_at` nao vai para a balanca.
+- **Etapas do caminhao** (tela Comercial, `components/TruckStages.tsx`, regra em
+  `lib/truck-stages.ts`) saem so da pesagem que a BALANCA grava, nunca de marca do carregador:
+  ENTRADA = pesou a entrada ha menos de `ENTRY_WINDOW_MINUTES` (10), CARREGANDO = operacao ainda
+  em aberto depois disso (na balanca ela so tem o estado "Aguardando" ate fechar), SAIDA =
+  operacao concluida hoje (`closed_at`). Atualiza pelo aviso `operation_change_pings`, como o
+  Monitoramento. A coluna `loading_requests.loader_started_at` (migracao `202609280002`) ficou
+  sem uso: o botao "Iniciar" do carregador foi retirado quando a regra passou a ser a da balanca.
 
 ## Balanca principal de precos
 

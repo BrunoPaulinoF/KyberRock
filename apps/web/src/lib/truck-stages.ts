@@ -2,21 +2,23 @@
  * Etapas do caminhao na pedreira, em tempo real: ENTRADA -> CARREGANDO -> SAIDA (tela Comercial,
  * perfis comercial e gestor).
  *
- * Cada etapa comeca num carimbo que ja existe na nuvem:
+ * Tudo sai da pesagem que a BALANCA grava — nada depende de marca do carregador:
  *
- *   - ENTRADA    pesou a entrada          `weighing_operations.created_at`
- *   - CARREGANDO o carregador iniciou     `loading_requests.loader_started_at` (botao "Iniciar")
- *   - SAIDA      o carregador concluiu    `loading_requests.loader_completed_at`
- *   - (fim)      pesou a saida            `weighing_operations.closed_at`
+ *   - ENTRADA    pesou a entrada ha menos de `ENTRY_WINDOW_MINUTES` (acabou de chegar)
+ *   - CARREGANDO operacao ainda em aberto depois disso (aguardando carregar e pesar a saida)
+ *   - SAIDA      operacao concluida: pesou a saida (`weighing_operations.closed_at`)
  *
- * O carregador pode pular o "Iniciar" e ir direto ao "Concluir" (ou nao marcar nada): o tempo
- * que nao tem carimbo proprio fica na etapa anterior, e a etapa sem carimbo aparece como "—" em
- * vez de um numero inventado.
+ * Na balanca a operacao aberta so tem um estado ("Aguardando") ate fechar; a janela da entrada e
+ * o que separa quem acabou de chegar de quem ja esta no patio.
  */
 
 export type TruckStage = "entrada" | "carregando" | "saida";
 
 export const TRUCK_STAGES: readonly TruckStage[] = ["entrada", "carregando", "saida"];
+
+/** Quanto tempo depois da pesagem de entrada o caminhao ainda conta como "chegando". */
+export const ENTRY_WINDOW_MINUTES = 10;
+const ENTRY_WINDOW_MS = ENTRY_WINDOW_MINUTES * 60_000;
 
 export const STAGE_LABELS: Record<TruckStage, string> = {
   entrada: "Entrada",
@@ -26,9 +28,9 @@ export const STAGE_LABELS: Record<TruckStage, string> = {
 
 /** O que cada etapa quer dizer, para quem esta olhando a tela. */
 export const STAGE_HINTS: Record<TruckStage, string> = {
-  entrada: "Pesou a entrada e espera o carregador comecar.",
-  carregando: "O carregador marcou que comecou a carregar.",
-  saida: "Carregado, a caminho da pesagem de saida."
+  entrada: `Pesou a entrada nos ultimos ${ENTRY_WINDOW_MINUTES} minutos.`,
+  carregando: "Operacao em aberto: aguardando carregar e pesar a saida.",
+  saida: "Operacao concluida hoje: ja pesou a saida."
 };
 
 export interface StageTruck {
@@ -39,17 +41,15 @@ export interface StageTruck {
   driverName: string;
   /** Pesagem de entrada. */
   entryAt: string;
-  loadStartedAt: string | null;
-  loadedAt: string | null;
-  /** Pesagem de saida (so no caminhao que ja saiu). */
+  /** Pesagem de saida (so na operacao concluida). */
   exitAt: string | null;
 }
 
 export interface StageDurations {
-  /** Em ms; `null` quando a etapa nao tem carimbo (o tempo dela ficou na anterior). */
-  entrada: number | null;
+  /** Em ms. A entrada vai ate a janela (ou ate a saida, se saiu antes dela). */
+  entrada: number;
+  /** Depois da janela ate a saida (ou ate agora); `null` quando saiu dentro da janela. */
   carregando: number | null;
-  saida: number | null;
   total: number;
 }
 
@@ -59,86 +59,80 @@ function ms(iso: string | null | undefined): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-function span(from: number, to: number): number {
-  return Math.max(0, to - from);
+/** Etapa do caminhao agora. */
+export function stageOf(truck: Pick<StageTruck, "entryAt" | "exitAt">, nowMs: number): TruckStage {
+  if (truck.exitAt) return "saida";
+  const entry = ms(truck.entryAt) ?? nowMs;
+  return nowMs - entry < ENTRY_WINDOW_MS ? "entrada" : "carregando";
 }
 
-/** Etapa atual de quem ainda esta na pedreira. */
-export function stageOf(truck: Pick<StageTruck, "loadStartedAt" | "loadedAt">): TruckStage {
-  if (truck.loadedAt) return "saida";
-  if (truck.loadStartedAt) return "carregando";
-  return "entrada";
-}
-
-/** Tempo em cada etapa. Para quem ainda nao saiu, a etapa atual conta ate `nowMs`. */
+/** Tempo em cada etapa. Para quem ainda nao saiu, conta ate `nowMs`. */
 export function stageDurations(truck: StageTruck, nowMs: number): StageDurations {
   const entry = ms(truck.entryAt) ?? nowMs;
   const end = Math.max(entry, ms(truck.exitAt) ?? nowMs);
-  // Carimbo fora de ordem (relogio de outra maquina) nao pode dar tempo negativo.
-  const started = clampBetween(ms(truck.loadStartedAt), entry, end);
-  const loaded = clampBetween(ms(truck.loadedAt), started ?? entry, end);
+  const total = end - entry;
   return {
-    entrada: span(entry, started ?? loaded ?? end),
-    carregando: started === null ? null : span(started, loaded ?? end),
-    saida: loaded === null ? null : span(loaded, end),
-    total: span(entry, end)
+    entrada: Math.min(total, ENTRY_WINDOW_MS),
+    carregando: total > ENTRY_WINDOW_MS ? total - ENTRY_WINDOW_MS : null,
+    total
   };
 }
 
-function clampBetween(value: number | null, min: number, max: number): number | null {
-  if (value === null) return null;
-  return Math.min(Math.max(value, min), max);
-}
-
-/** Ha quanto tempo o caminhao esta na etapa atual. */
+/** Ha quanto tempo na etapa atual; na SAIDA, o tempo total que ficou na pedreira. */
 export function timeInCurrentStage(truck: StageTruck, nowMs: number): number {
   const durations = stageDurations(truck, nowMs);
-  return durations[stageOf(truck)] ?? durations.total;
+  const stage = stageOf(truck, nowMs);
+  if (stage === "entrada") return durations.entrada;
+  if (stage === "carregando") return durations.carregando ?? 0;
+  return durations.total;
 }
 
-/** Os caminhoes da pedreira por etapa, quem esta ha mais tempo na etapa primeiro. */
+/**
+ * Os caminhoes por etapa. Na ENTRADA e no CARREGANDO, quem esta ha mais tempo primeiro; na
+ * SAIDA, quem saiu por ultimo primeiro.
+ */
 export function groupByStage(
   trucks: readonly StageTruck[],
   nowMs: number
 ): Record<TruckStage, StageTruck[]> {
   const groups: Record<TruckStage, StageTruck[]> = { entrada: [], carregando: [], saida: [] };
-  for (const truck of trucks) groups[stageOf(truck)].push(truck);
-  for (const stage of TRUCK_STAGES) {
+  for (const truck of trucks) groups[stageOf(truck, nowMs)].push(truck);
+  for (const stage of ["entrada", "carregando"] as const) {
     groups[stage].sort(
       (a, b) =>
         timeInCurrentStage(b, nowMs) - timeInCurrentStage(a, nowMs) ||
         a.operationId.localeCompare(b.operationId)
     );
   }
+  groups.saida.sort(
+    (a, b) =>
+      (ms(b.exitAt) ?? 0) - (ms(a.exitAt) ?? 0) || a.operationId.localeCompare(b.operationId)
+  );
   return groups;
 }
 
 /**
- * Media (ms) de cada etapa entre os caminhoes que ja sairam, contando so quem tem o carimbo
- * daquela etapa — senao a media do "Carregando" cairia a zero por causa de quem nao marcou.
+ * Medias (ms) de quem ja saiu hoje: quanto tempo ficou aguardando depois da entrada (so quem
+ * passou da janela) e quanto tempo ficou na pedreira ao todo.
  */
-export function averageStageDurations(
+export function averageDurations(
   finished: readonly StageTruck[],
   nowMs: number
-): Record<TruckStage | "total", number | null> {
-  const sums = { entrada: 0, carregando: 0, saida: 0, total: 0 };
-  const counts = { entrada: 0, carregando: 0, saida: 0, total: 0 };
+): { carregando: number | null; total: number | null } {
+  let waitSum = 0;
+  let waitCount = 0;
+  let totalSum = 0;
   for (const truck of finished) {
     const durations = stageDurations(truck, nowMs);
-    for (const key of ["entrada", "carregando", "saida", "total"] as const) {
-      const value = durations[key];
-      if (value === null) continue;
-      sums[key] += value;
-      counts[key] += 1;
+    totalSum += durations.total;
+    if (durations.carregando !== null) {
+      waitSum += durations.carregando;
+      waitCount += 1;
     }
   }
-  const average = (key: keyof typeof sums) =>
-    counts[key] === 0 ? null : Math.round(sums[key] / counts[key]);
   return {
-    entrada: average("entrada"),
-    carregando: average("carregando"),
-    saida: average("saida"),
-    total: average("total")
+    carregando: waitCount === 0 ? null : Math.round(waitSum / waitCount),
+    total: finished.length === 0 ? null : Math.round(totalSum / finished.length)
   };
 }
 

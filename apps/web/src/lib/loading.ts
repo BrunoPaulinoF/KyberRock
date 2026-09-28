@@ -11,8 +11,6 @@ export interface LoadingItem {
   driverName: string;
   productDescription: string;
   createdAt: string;
-  /** "Iniciar": o carregador comecou a carregar (etapa CARREGANDO da tela Comercial). */
-  loaderStartedAt?: string | null;
   loaderCompletedAt: string | null;
 }
 
