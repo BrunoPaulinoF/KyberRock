@@ -96,6 +96,46 @@ describe("cadastro compartilhado da pedreira", () => {
   // a linha da nuvem sem aproveitar o codigo deixava o cadastro local para sempre sem
   // omie_customer_id: todo fechamento dele repetia um IncluirCliente de um cadastro que ja
   // existe no OMIE ("Cliente ja cadastrado") e a operacao nunca subia.
+  it("cadastro feito sem internet nao esconde o gemeo do site: os dois chegam para a conferencia", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, document, is_active, offline_pending, created_at, updated_at)
+           VALUES ('offline-uuid', 'company-1', 'local', 'Apenas Teste LTDA', 'Apenas Teste', '26463463000183', 1, 1, ?, ?)`
+        )
+        .run("2026-09-28T15:00:00.000Z", "2026-09-28T15:00:00.000Z");
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          customers: [
+            {
+              id: "site-uuid",
+              legal_name: "Apenas Teste LTDA",
+              trade_name: "Apenas Teste",
+              document: "26463463000183",
+              omie_customer_id: 777,
+              is_active: true,
+              updated_at: "2026-09-28T15:05:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      const ids = database
+        .prepare("SELECT id FROM customers WHERE deleted_at IS NULL ORDER BY id")
+        .pluck()
+        .all();
+      expect(ids).toEqual(["offline-uuid", "site-uuid"]);
+    } finally {
+      database.close();
+    }
+  });
+
   it("adota no cadastro local o codigo OMIE do gemeo que veio da nuvem", async () => {
     const database = createMachine("desktop-b");
 

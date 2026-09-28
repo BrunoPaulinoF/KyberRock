@@ -127,7 +127,7 @@ export const documentationSections: DocumentationSection[] = [
       "Confira pendencias no Painel (F1), em Insights (F5) e na tela Cloud (F8)."
     ],
     details: [
-      "O desktop e offline-first: toda operacao nasce e fecha no banco local, e a sincronizacao vem depois. Ficar sem internet nao para a balanca.",
+      "O desktop e offline-first: toda operacao nasce e fecha no banco local, e a sincronizacao vem depois. Sem internet a Nova entrada continua funcionando; as telas que dependem da nuvem travam ate a conexao voltar.",
       "A nuvem e uma projecao do que ja aconteceu aqui. Ela nunca e a origem da operacao viva — se a nuvem e o desktop divergirem, o desktop e quem manda.",
       "O peso sempre vem da balanca configurada. O sistema nao foi desenhado para digitar peso na mao.",
       "Atalhos: F1 Painel, F2 Nova entrada, F3 Operacoes, F4 Cadastros, F5 Insights, F6 Balanca, F7 Impressao, F8 Cloud, F9 OMIE sync, F10 Logs, F11 tema claro/escuro, Esc volta, Ctrl+Enter confirma.",
@@ -1137,7 +1137,7 @@ export const documentationFaqs: DocumentationFaq[] = [
   {
     question: "Estou sem internet. Posso continuar operando?",
     answer:
-      "Sim. O desktop e offline-first: a pesagem abre, fecha e imprime normalmente, e tudo entra numa fila local que sobe quando a internet voltar. O unico limite e o periodo de tolerancia da licenca — passado esse prazo sem nenhuma validacao online, o app pede internet para revalidar.",
+      "Em parte. Quando a internet cai aparece uma faixa vermelha no topo e so ficam liberadas Nova entrada, Insights e as Configuracoes (Balanca, Impressao, Cloud); as outras telas travam ate a conexao voltar, e quem estava numa delas volta para a Nova entrada. Na Nova entrada da para registrar a entrada e cadastrar cliente, transportadora, placa e motorista novos — editar um cadastro que ja existia fica bloqueado, porque o site pode estar mudando o mesmo cadastro. O que foi feito sem internet fica guardado no computador e, quando a conexao volta, o sistema confere se o mesmo cadastro foi feito no site nesse meio tempo (cliente e transportadora pelo CPF/CNPJ, placa pela placa, motorista pelo nome): achando, junta os dois e passa as pesagens para o que ja existia; so depois envia. O periodo de tolerancia da licenca continua valendo — passado o prazo sem validacao online, o app pede internet para revalidar.",
     category: "cloud",
     sectionId: "cloud",
     keywords: [
@@ -1146,7 +1146,10 @@ export const documentationFaqs: DocumentationFaq[] = [
       "internet caiu",
       "posso operar",
       "fila local",
-      "tolerancia"
+      "tolerancia",
+      "telas bloqueadas",
+      "cadastro sem internet",
+      "cadastro repetido"
     ]
   },
   {

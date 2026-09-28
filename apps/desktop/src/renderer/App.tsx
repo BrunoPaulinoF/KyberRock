@@ -1765,6 +1765,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
+  // O processo principal precisa saber para travar a edicao de cadastro antigo e, na volta,
+  // conferir o cadastro feito sem internet antes de enviar (`offline-cadastro.ts`).
+  useEffect(() => {
+    if (!desktopApi || typeof desktopApi.setInternetOnline !== "function") return;
+    void desktopApi.setInternetOnline(isOnline).catch(() => undefined);
+  }, [desktopApi, isOnline]);
+
   // Aviso na troca de estado da internet (o teste real, nao so a placa de rede).
   const previousOnlineRef = useRef(isOnline);
   useEffect(() => {
@@ -3420,6 +3427,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
             {activeView === "new-weighing" ? (
               <WeighingForm
                 desktopApi={desktopApi}
+                isOnline={isOnline}
                 form={form}
                 setForm={setForm}
                 formError={formError}
@@ -6589,6 +6597,8 @@ const INITIAL_SCALE_LINK: ScaleLinkViewModel = {
 
 interface WeighingFormProps {
   desktopApi: KyberRockDesktopApi | null;
+  /** Sem internet so cadastra: editar fica para o que foi criado nesta queda. */
+  isOnline: boolean;
   form: WeighingFormState;
   setForm: React.Dispatch<React.SetStateAction<WeighingFormState>>;
   formError: string | null;
@@ -6610,7 +6620,8 @@ function OmieCadastroBlocker({
   onFix
 }: {
   readiness: OmieCustomerReadiness | null;
-  onFix: () => void;
+  /** `null` = sem internet num cadastro que ja existia: completar fica para depois. */
+  onFix: (() => void) | null;
 }) {
   if (!readiness || readiness.ready) return null;
 
@@ -6632,29 +6643,36 @@ function OmieCadastroBlocker({
           : "Cadastro do cliente incompleto para o OMIE"}
       </strong>
       <p style={{ margin: "6px 0 0", fontSize: "12px", lineHeight: 1.4 }}>{readiness.message}</p>
-      <button
-        type="button"
-        onClick={onFix}
-        style={{
-          marginTop: "8px",
-          border: "1px solid currentColor",
-          background: "transparent",
-          color: "inherit",
-          borderRadius: "999px",
-          padding: "4px 12px",
-          cursor: "pointer",
-          fontWeight: 800,
-          fontSize: "11px"
-        }}
-      >
-        Completar cadastro
-      </button>
+      {onFix ? (
+        <button
+          type="button"
+          onClick={onFix}
+          style={{
+            marginTop: "8px",
+            border: "1px solid currentColor",
+            background: "transparent",
+            color: "inherit",
+            borderRadius: "999px",
+            padding: "4px 12px",
+            cursor: "pointer",
+            fontWeight: 800,
+            fontSize: "11px"
+          }}
+        >
+          Completar cadastro
+        </button>
+      ) : (
+        <p style={{ margin: "6px 0 0", fontSize: "12px", fontWeight: 700 }}>
+          Sem internet: este cadastro so pode ser completado quando a conexao voltar.
+        </p>
+      )}
     </div>
   );
 }
 
 function WeighingForm({
   desktopApi,
+  isOnline,
   form,
   setForm,
   formError,
@@ -6705,6 +6723,29 @@ function WeighingForm({
   // validateWeighingForm, com a mensagem certa para o campo vazio.
   const omieBlocked = Boolean(form.customerId) && omieReadiness !== null && !omieReadiness.ready;
   const [carrierRefreshKey, setCarrierRefreshKey] = useState(0);
+  // Sem internet, editar so o que foi cadastrado nesta queda (ainda so desta maquina); o
+  // processo principal recusa o resto de qualquer jeito (`assertCadastroEditable`).
+  const [offlinePending, setOfflinePending] = useState<{
+    customers: string[];
+    carriers: string[];
+  }>({ customers: [], carriers: [] });
+  useEffect(() => {
+    if (isOnline || !desktopApi || typeof desktopApi.listOfflinePendingCadastro !== "function") {
+      return;
+    }
+    let active = true;
+    void desktopApi
+      .listOfflinePendingCadastro()
+      .then((pending) => {
+        if (active) setOfflinePending(pending);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [desktopApi, isOnline, customerRefreshKey, carrierRefreshKey]);
+  const canEditCustomer = isOnline || offlinePending.customers.includes(form.customerId);
+  const canEditCarrier = isOnline || offlinePending.carriers.includes(form.carrierId);
   const [availableCarrierIds, setAvailableCarrierIds] = useState<string[] | undefined>(undefined);
   const [availableVehicleIds, setAvailableVehicleIds] = useState<string[] | undefined>(undefined);
   /**
@@ -7427,6 +7468,12 @@ function WeighingForm({
             title="Dados comerciais"
             description="Cliente, produto e pagamento"
           />
+          {!isOnline ? (
+            <p style={{ ...styles.helperText, color: "#b45309", margin: "0 0 8px" }}>
+              Sem internet: da para cadastrar cliente, transportadora, placa e motorista novos.
+              Editar um cadastro que ja existia fica bloqueado ate a conexao voltar.
+            </p>
+          ) : null}
           <CacheSelect
             label="Cliente"
             entityType="customer"
@@ -7513,10 +7560,14 @@ function WeighingForm({
               setEditingCustomerId(null);
               setShowCustomerModal(true);
             }}
-            onEditSelected={() => {
-              setEditingCustomerId(form.customerId);
-              setShowCustomerModal(true);
-            }}
+            onEditSelected={
+              canEditCustomer
+                ? () => {
+                    setEditingCustomerId(form.customerId);
+                    setShowCustomerModal(true);
+                  }
+                : undefined
+            }
             desktopApi={desktopApi}
             refreshKey={customerRefreshKey}
           />
@@ -7722,10 +7773,14 @@ function WeighingForm({
               setEditingCarrierId(null);
               setShowCarrierModal(true);
             }}
-            onEditSelected={() => {
-              setEditingCarrierId(form.carrierId);
-              setShowCarrierModal(true);
-            }}
+            onEditSelected={
+              canEditCarrier
+                ? () => {
+                    setEditingCarrierId(form.carrierId);
+                    setShowCarrierModal(true);
+                  }
+                : undefined
+            }
             // Limpar a transportadora nao mexe na placa nem no motorista: quem deixa o
             // campo vazio quer a entrada SEM transportadora, nao recomecar o transporte.
             onClear={() => setForm((prev) => ({ ...prev, carrierId: "" }))}
@@ -7817,10 +7872,14 @@ function WeighingForm({
           <PriceDetailsPanel details={priceDetails} />
           <OmieCadastroBlocker
             readiness={omieReadiness}
-            onFix={() => {
-              setEditingCustomerId(form.customerId);
-              setShowCustomerModal(true);
-            }}
+            onFix={
+              canEditCustomer
+                ? () => {
+                    setEditingCustomerId(form.customerId);
+                    setShowCustomerModal(true);
+                  }
+                : null
+            }
           />
           <div style={styles.actionStack}>
             <button

@@ -430,6 +430,8 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:cloud-scheduler-config", config),
   probeConnectivity: () => ipcRenderer.invoke("desktop:probe-connectivity"),
   probeInternet: () => ipcRenderer.invoke("desktop:probe-internet"),
+  setInternetOnline: (online: boolean) => ipcRenderer.invoke("desktop:set-internet-online", online),
+  listOfflinePendingCadastro: () => ipcRenderer.invoke("desktop:list-offline-pending-cadastro"),
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
     ipcRenderer.on("desktop:update-available", callback),
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) =>

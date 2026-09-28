@@ -1633,6 +1633,10 @@ function recalculateCreditBalances(database: DesktopDatabase, customerIds: strin
  * nuvem com id diferente reintroduzia — ou ressuscitava — o gemeo de um cadastro
  * que ja existe aqui. Quando o documento ja esta em uso localmente, a linha da
  * nuvem e ignorada: o cadastro local e o dono do documento.
+ *
+ * Menos quando o local foi feito SEM INTERNET e ainda nao subiu (`offline_pending`): ai o
+ * dono e o da nuvem, que precisa chegar aqui para `reconcileOfflineCadastros` juntar os
+ * dois (`services/offline-cadastro.ts`).
  */
 function findLocalCadastroWithDocument(
   database: DesktopDatabase,
@@ -1649,6 +1653,7 @@ function findLocalCadastroWithDocument(
        WHERE company_id = ?
          AND id <> ?
          AND deleted_at IS NULL
+         AND offline_pending = 0
          AND ${DOCUMENT_KEY_SQL} = ?
        LIMIT 1`
     )

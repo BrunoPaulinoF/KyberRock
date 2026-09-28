@@ -66,6 +66,17 @@ import {
   mergeDuplicateCustomersByDocument,
   type CustomerMergeResult
 } from "./customer-merge.js";
+import {
+  hasOfflinePendingCadastro,
+  isOfflinePending,
+  lastRowId,
+  listOfflinePendingCadastro,
+  markCreatedOffline,
+  reconcileOfflineCadastros,
+  releaseOfflineCadastros,
+  type OfflineCadastroTable,
+  type OfflinePendingCadastro
+} from "./offline-cadastro.js";
 import { probeInternet, probeOmie, probeSupabase } from "./connectivity.js";
 import {
   getDesktopStatusSnapshot,
@@ -685,6 +696,13 @@ export class DesktopRuntime {
   /** O mesmo para o cadastro: um envio de cada vez, com as edicoes da rajada juntas. */
   private cadastroPushChain: Promise<void> = Promise.resolve();
   private cadastroPushQueued = false;
+  /**
+   * Internet segundo o teste real do renderer (`desktop:set-internet-online`). `null` =
+   * ainda nao informado: nada e marcado nem liberado ate a tela dizer o estado.
+   */
+  private internetOnline: boolean | null = null;
+  /** Conferencia do cadastro feito sem internet em andamento (uma por vez). */
+  private offlineReconcileRun: Promise<boolean> | null = null;
   private omieSyncInProgress = false;
   private omieQueueProcessing = false;
   /** Pedido de execucao da fila OMIE que chegou com outra em andamento — roda ao terminar. */
@@ -2515,6 +2533,17 @@ export class DesktopRuntime {
         };
       }
 
+      // Cadastro feito sem internet: confere (e junta os repetidos) antes de qualquer envio.
+      const offlineReady = this.offlineCadastroReadyToPublish();
+      if (offlineReady !== true && !(await offlineReady)) {
+        return {
+          success: false,
+          synced: 0,
+          failed: 0,
+          errors: ["Cadastro feito sem internet aguardando a conexao para ser conferido."]
+        };
+      }
+
       // Antes de processar: devolve a fila o que uma queda anterior tinha matado.
       // Vale para nuvem e OMIE, e cobre as maquinas que ficaram com `dead_letter`
       // de uma queda longa — dali em diante `markSyncJobFailed` nao deixa mais uma
@@ -4135,6 +4164,7 @@ export class DesktopRuntime {
     password?: string;
   }): unknown {
     this.assertDesktopAccess();
+    this.assertCadastroEditable("customers", input.customerId);
     this.assertPriceAuthority();
     this.assertSpecialPricePassword(input.password);
     const identity = this.ensureIdentity();
@@ -4171,6 +4201,7 @@ export class DesktopRuntime {
   /** Excluir preco especial: mesma senha e mesmo historico de `setCustomerSpecialPrice`. */
   removeCustomerSpecialPrice(customerId: string, productId: string, password?: string): void {
     this.assertDesktopAccess();
+    this.assertCadastroEditable("customers", customerId);
     this.assertPriceAuthority();
     this.assertSpecialPricePassword(password);
     const identity = this.ensureIdentity();
@@ -4388,10 +4419,13 @@ export class DesktopRuntime {
   createCustomer(input: Omit<CreateCustomerInput, "companyId">): unknown {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
-    const result = createCustomer(this.database, {
-      ...input,
-      companyId: identity.companyId
-    });
+    // Cliente novo leva junto a transportadora "(padrao)" dele: as duas nascem marcadas.
+    const result = this.createCadastro(["customers", "carriers"], identity.companyId, () =>
+      createCustomer(this.database, {
+        ...input,
+        companyId: identity.companyId
+      })
+    );
     this.cadastroChanged("customer", identity.companyId);
     this.cadastroChanged("carrier", identity.companyId);
     return result;
@@ -4403,6 +4437,7 @@ export class DesktopRuntime {
     options?: { overrideOmieFields?: boolean }
   ): unknown {
     this.assertDesktopAccess();
+    this.assertCadastroEditable("customers", id);
     this.assertCustomerCommercialAuthority(id, input);
     const identity = this.ensureIdentity();
     const result = updateCustomer(this.database, id, input, new Date(), {
@@ -4566,6 +4601,7 @@ export class DesktopRuntime {
 
   deleteCustomer(id: string): void {
     this.assertDesktopAccess();
+    this.assertCadastroEditable("customers", id);
     const identity = this.ensureIdentity();
     deleteCustomer(this.database, id);
     this.cadastroChanged("customer", identity.companyId);
@@ -4754,13 +4790,16 @@ export class DesktopRuntime {
     // createVehicle ja cria o vinculo em vehicle_carriers (o seletor de placa da entrada
     // lista os veiculos VINCULADOS a transportadora, nao os que tem carrier_id) e
     // reaproveita a placa que ja existe em vez de recusar o cadastro.
-    const result = createVehicle(this.database, { ...input, companyId: identity.companyId });
+    const result = this.createCadastro(["vehicles"], identity.companyId, () =>
+      createVehicle(this.database, { ...input, companyId: identity.companyId })
+    );
     this.cadastroChanged("vehicle", identity.companyId);
     return result;
   }
 
   updateVehicle(id: string, input: UpdateVehicleInput): unknown {
     this.assertDesktopAccess();
+    this.assertCadastroEditable("vehicles", id);
     const identity = this.ensureIdentity();
     const result = updateVehicle(this.database, id, input);
     this.cadastroChanged("vehicle", identity.companyId);
@@ -4769,6 +4808,7 @@ export class DesktopRuntime {
 
   deleteVehicle(id: string): void {
     this.assertDesktopAccess();
+    this.assertCadastroEditable("vehicles", id);
     const identity = this.ensureIdentity();
     deleteVehicle(this.database, id);
     this.cadastroChanged("vehicle", identity.companyId);
@@ -4777,7 +4817,9 @@ export class DesktopRuntime {
   findOrCreateVehicle(plate: string): unknown {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
-    const result = findOrCreateVehicle(this.database, identity.companyId, plate);
+    const result = this.createCadastro(["vehicles"], identity.companyId, () =>
+      findOrCreateVehicle(this.database, identity.companyId, plate)
+    );
     this.cadastroChanged("vehicle", identity.companyId);
     return result;
   }
@@ -4802,13 +4844,16 @@ export class DesktopRuntime {
   createDriver(input: Omit<CreateDriverInput, "companyId">): unknown {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
-    const result = createDriver(this.database, { ...input, companyId: identity.companyId });
+    const result = this.createCadastro(["drivers"], identity.companyId, () =>
+      createDriver(this.database, { ...input, companyId: identity.companyId })
+    );
     this.cadastroChanged("driver", identity.companyId);
     return result;
   }
 
   updateDriver(id: string, input: UpdateDriverInput): unknown {
     this.assertDesktopAccess();
+    this.assertCadastroEditable("drivers", id);
     const identity = this.ensureIdentity();
     const result = updateDriver(this.database, id, input);
     this.cadastroChanged("driver", identity.companyId);
@@ -4817,6 +4862,7 @@ export class DesktopRuntime {
 
   deleteDriver(id: string): void {
     this.assertDesktopAccess();
+    this.assertCadastroEditable("drivers", id);
     const identity = this.ensureIdentity();
     deleteDriver(this.database, id);
     this.cadastroChanged("driver", identity.companyId);
@@ -4825,7 +4871,9 @@ export class DesktopRuntime {
   findOrCreateDriver(name: string): unknown {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
-    const result = findOrCreateDriver(this.database, identity.companyId, name);
+    const result = this.createCadastro(["drivers"], identity.companyId, () =>
+      findOrCreateDriver(this.database, identity.companyId, name)
+    );
     this.cadastroChanged("driver", identity.companyId);
     return result;
   }
@@ -4833,13 +4881,16 @@ export class DesktopRuntime {
   createCarrier(input: Omit<CreateCarrierInput, "companyId">): unknown {
     this.assertDesktopAccess();
     const identity = this.ensureIdentity();
-    const result = createCarrier(this.database, { ...input, companyId: identity.companyId });
+    const result = this.createCadastro(["carriers"], identity.companyId, () =>
+      createCarrier(this.database, { ...input, companyId: identity.companyId })
+    );
     this.cadastroChanged("carrier", identity.companyId);
     return result;
   }
 
   updateCarrier(id: string, input: UpdateCarrierInput): unknown {
     this.assertDesktopAccess();
+    this.assertCadastroEditable("carriers", id);
     const identity = this.ensureIdentity();
     const result = updateCarrier(this.database, id, input);
     this.cadastroChanged("carrier", identity.companyId);
@@ -4848,6 +4899,7 @@ export class DesktopRuntime {
 
   deleteCarrier(id: string): void {
     this.assertDesktopAccess();
+    this.assertCadastroEditable("carriers", id);
     const identity = this.ensureIdentity();
     deleteCarrier(this.database, id);
     this.cadastroChanged("carrier", identity.companyId);
@@ -5527,6 +5579,125 @@ export class DesktopRuntime {
   }
 
   /**
+   * O renderer avisa quando a internet cai e volta (teste real, `internet-status.ts`). Na
+   * volta, confere o cadastro feito sem internet e libera o envio de tudo o que esperou.
+   */
+  setInternetOnline(online: boolean): void {
+    const cameBack = online && this.internetOnline !== true;
+    this.internetOnline = online;
+    if (cameBack && hasOfflinePendingCadastro(this.database)) {
+      void this.prepareOfflineCadastroForPublish()
+        .then((ready) => {
+          if (!ready) return;
+          this.triggerCadastroCloudPush("offline_cadastro_released");
+          this.triggerBackgroundCloudSync("offline_cadastro_released");
+        })
+        .catch((error: unknown) => {
+          this.recordTechnicalLog(
+            "warning",
+            "cloud-sync",
+            "Conferencia do cadastro feito sem internet nao rodou.",
+            { error: error instanceof Error ? error.message : String(error) }
+          );
+        });
+    }
+  }
+
+  /** Cadastros feitos sem internet que ainda esperam a conferencia (a tela libera editar). */
+  listOfflinePendingCadastro(): OfflinePendingCadastro {
+    return listOfflinePendingCadastro(this.database);
+  }
+
+  /**
+   * Sem internet, cadastro que JA EXISTIA nao muda: o site pode estar mudando o mesmo
+   * cadastro, e na volta um apagaria o outro. O que foi criado nesta queda e so desta
+   * maquina e continua editavel (completar endereco, por exemplo).
+   */
+  private assertCadastroEditable(table: OfflineCadastroTable, id: string): void {
+    if (this.internetOnline !== false) return;
+    if (isOfflinePending(this.database, table, id)) return;
+    throw new Error(
+      "Sem internet: nao e possivel alterar um cadastro que ja existia. Voce pode cadastrar " +
+        "novos; alterar fica liberado quando a internet voltar."
+    );
+  }
+
+  /** Roda `create` e, sem internet, marca o que nasceu como feito sem internet. */
+  private createCadastro<T>(
+    tables: readonly OfflineCadastroTable[],
+    companyId: string,
+    create: () => T
+  ): T {
+    const before = tables.map((table) => lastRowId(this.database, table));
+    const result = create();
+    if (this.internetOnline === false) {
+      tables.forEach((table, index) => {
+        markCreatedOffline(this.database, table, companyId, before[index]);
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Nada sobe enquanto houver cadastro feito sem internet sem conferencia: a pesagem e o
+   * vinculo que apontam para ele cairiam na chave estrangeira da nuvem (ou deixariam o
+   * repetido la). Com internet, confere primeiro — puxa a nuvem, junta os gemeos
+   * (`reconcileOfflineCadastros`) — e so entao libera. Se o pull falhar a nuvem esta fora
+   * de alcance, e o envio falharia do mesmo jeito: segue segurando.
+   */
+  private offlineCadastroReadyToPublish(): true | Promise<boolean> {
+    // Sem nada marcado (o caso de sempre) responde na hora e quem chama nem da `await`: o
+    // envio segue exatamente como antes desta trava, sem ceder a vez a ninguem.
+    if (!hasOfflinePendingCadastro(this.database)) return true;
+    return this.prepareOfflineCadastroForPublish();
+  }
+
+  private async prepareOfflineCadastroForPublish(): Promise<boolean> {
+    if (!hasOfflinePendingCadastro(this.database)) return true;
+    if (this.internetOnline !== true) return false;
+    this.offlineReconcileRun ??= this.reconcileOfflineCadastrosNow().finally(() => {
+      this.offlineReconcileRun = null;
+    });
+    return this.offlineReconcileRun;
+  }
+
+  private async reconcileOfflineCadastrosNow(): Promise<boolean> {
+    const identity = this.ensureIdentity();
+    try {
+      initializeSupabaseFromSettings(this.database);
+      if (!isSupabaseInitialized()) return false;
+      await pullDesktopDataFromCloud(this.database, identity, { incremental: true });
+    } catch (error) {
+      this.recordTechnicalLog(
+        "warning",
+        "cloud-sync",
+        "Cadastro feito sem internet segue aguardando: a nuvem nao respondeu ao pull.",
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+      return false;
+    }
+    try {
+      const result = reconcileOfflineCadastros(this.database);
+      this.recordTechnicalLog("info", "cloud-sync", "Cadastro feito sem internet conferido.", {
+        released: result.released,
+        merged: result.merged
+      });
+    } catch (error) {
+      // Erro na juncao nao pode prender o envio para sempre: sobe sem juntar (no pior caso
+      // fica um repetido, que o painel "Cadastros repetidos" resolve) em vez de nada subir.
+      releaseOfflineCadastros(this.database);
+      this.recordTechnicalLog(
+        "error",
+        "cloud-sync",
+        "Conferencia do cadastro feito sem internet falhou; liberado sem juntar repetidos.",
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+    }
+    this.cacheStore.invalidateAll(identity.companyId);
+    return true;
+  }
+
+  /**
    * Um cadastro desta maquina mudou: atualiza o cache de leitura e publica na nuvem.
    *
    * Sem o segundo passo o cadastro so saia daqui na varredura completa — a cada 30 min por
@@ -5581,6 +5752,8 @@ export class DesktopRuntime {
 
   private async pushCadastroToCloud(): Promise<void> {
     if (!this.hasCloudCredentials()) return;
+    const offlineReady = this.offlineCadastroReadyToPublish();
+    if (offlineReady !== true && !(await offlineReady)) return;
     initializeSupabaseFromSettings(this.database);
     if (!isSupabaseInitialized()) return;
     const identity = this.ensureIdentity();
@@ -5594,6 +5767,8 @@ export class DesktopRuntime {
 
   private async pushOperationToCloud(operationId: string): Promise<void> {
     if (!this.hasCloudCredentials()) return;
+    const offlineReady = this.offlineCadastroReadyToPublish();
+    if (offlineReady !== true && !(await offlineReady)) return;
     initializeSupabaseFromSettings(this.database);
     if (!isSupabaseInitialized()) return;
     const identity = this.ensureIdentity();
