@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 import { LoadMore, useShowMore } from "../components/ui";
 import { useUser } from "../lib/auth";
 import { todayIso } from "../lib/format";
-import { downloadSpreadsheet, printReportHtml } from "../lib/report-output";
+import { downloadSpreadsheet, printReportHtml, spreadsheetFileName } from "../lib/report-output";
 import {
   filterTruckControlReport,
   formatClock,
@@ -78,7 +78,7 @@ export function TruckControl() {
         await printReportHtml(file.html, file.filename);
       } else {
         downloadSpreadsheet(file);
-        setNotice(`Excel salvo em: ${file.filename}`);
+        setNotice(`Excel salvo em: ${spreadsheetFileName(file.filename)}`);
       }
     } catch (err) {
       setExportError(

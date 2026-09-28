@@ -1,0 +1,199 @@
+/* Relatorios: pesagens do cliente por produto e o cartao Info (components/CustomerPanels.tsx). */
+
+/* A lista de pesagens tem nove colunas: a janela larga padrao (860 px) cortaria o total. */
+.modal.wide:has(.cp-weighings) {
+  max-width: 1120px;
+}
+
+.cp {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.cp-muted {
+  margin: 0;
+  color: var(--kr-muted);
+  font-size: 13px;
+}
+.cp-filters {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cp-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+  gap: 8px;
+}
+.cp-total {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--kr-card-border);
+  border-radius: 10px;
+  background: var(--kr-surface-soft);
+  min-width: 0;
+}
+.cp-total span {
+  color: var(--kr-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.cp-total strong {
+  color: var(--kr-text-strong);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---------- um produto ---------- */
+.cp-product {
+  border: 1px solid var(--kr-card-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.cp-product-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  background: var(--kr-surface-soft);
+  color: var(--kr-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cp-product-head:hover {
+  background: var(--kr-card-hover);
+}
+.cp-product-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--kr-text-strong);
+  font-size: 14px;
+  font-weight: 800;
+}
+.cp-caret {
+  color: var(--kr-muted);
+  width: 12px;
+}
+.cp-product-sum {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--kr-muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.cp-product-sum {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+.cp-product-sum > * {
+  white-space: nowrap;
+}
+.cp-product-sum strong {
+  color: var(--kr-text-strong);
+}
+.cp-table {
+  max-height: 340px;
+  overflow: auto;
+  border: 0;
+  border-top: 1px solid var(--kr-card-border);
+  border-radius: 0;
+}
+.cp-table td,
+.cp-table th {
+  white-space: nowrap;
+}
+.cp-code {
+  font-family: "Courier New", ui-monospace, monospace;
+  font-weight: 700;
+}
+.cp-code a {
+  color: var(--kr-info-text);
+}
+
+/* ---------- cartao Info ---------- */
+.cp-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cp-tags:empty {
+  display: none;
+}
+.cp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--kr-card-border);
+  border-radius: 12px;
+  background: var(--kr-card-bg);
+}
+.cp-card h3 {
+  margin: 0;
+  color: var(--kr-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.cp-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+.cp-item {
+  min-width: 0;
+}
+.cp-item.wide {
+  grid-column: 1 / -1;
+}
+.cp-item dt {
+  color: var(--kr-muted);
+  font-size: 12px;
+}
+.cp-item dd {
+  margin: 2px 0 0;
+  color: var(--kr-text-strong);
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+/* ---------- na tabela do relatorio ---------- */
+.report-customer {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--kr-text-strong);
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+.report-customer:hover,
+.report-customer:focus-visible {
+  color: var(--kr-info-text);
+  text-decoration: underline;
+}
+.report-info-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}

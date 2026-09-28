@@ -5,6 +5,7 @@ import {
   CalendarDays,
   CalendarRange,
   Download,
+  Eye,
   Info,
   Table2,
   Users
@@ -13,10 +14,12 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
+import { CustomerInfoModal, CustomerWeighingsModal } from "../components/CustomerPanels";
 import { DeskPanel, EmptyState, IconAction, PillTabs, SectionHead } from "../components/desk";
 import { Picker } from "../components/Picker";
 import { Alert } from "../components/ui";
 import { useUser } from "../lib/auth";
+import { sumWeighings, type CustomerRef } from "../lib/customer-weighings";
 import { firstDayOfMonth, formatMoney, formatTons, periodToIso, todayIso } from "../lib/format";
 import { q } from "../lib/queries";
 import {
@@ -35,9 +38,12 @@ import {
   presetRange,
   reportLines,
   reportUnits,
+  saleInstant,
   salesPivot,
   sumLines,
   sumSeries,
+  type ReportLine,
+  type ReportOperation,
   type ReportTotals,
   type SalesFreightFilter,
   type SalesPivotGroupBy
@@ -60,10 +66,54 @@ const RECIPIENTS_TAB = { id: "recipients" as const, label: "Destinatarios", icon
 const TAB_DESCRIPTION: Record<ReportTab, string> = {
   daily: "As vendas do dia, pesagem a pesagem — o mesmo fechamento que a balanca envia.",
   period: "Cada carregamento do periodo, com o valor por tonelada do material e do frete.",
-  pivot: "Vendas agrupadas por cliente, produto ou dia, com preco medio por tonelada.",
+  pivot:
+    "Vendas agrupadas por cliente, produto ou dia. Clique no cliente para ver as pesagens; o olho (Info) mostra o cadastro e o preco medio.",
   monthly: "Total do mes e a evolucao dia a dia.",
   recipients: "Quem recebe o fechamento diario por e-mail ou WhatsApp."
 };
+
+/** O que abre ao clicar num cliente: as pesagens dele ou o cartao Info. */
+interface CustomerPanel {
+  kind: "weighings" | "info";
+  customer: CustomerRef;
+}
+
+/** Cliente clicavel so quando da para acha-lo: com cadastro ou, sem cadastro, com nome. */
+function customerRef(id: string | null, name: string | null): CustomerRef | null {
+  if (id) return { id, name: name || "Cliente" };
+  if (name && name !== "N/A") return { id: null, name };
+  return null;
+}
+
+function belongsTo(op: ReportOperation, customer: CustomerRef): boolean {
+  return customer.id
+    ? op.customer_id === customer.id
+    : !op.customer_id && op.customer_name === customer.name;
+}
+
+/** Nome do cliente que abre as pesagens dele. */
+function CustomerName({
+  id,
+  name,
+  onOpen
+}: {
+  id: string | null;
+  name: string | null;
+  onOpen: (customer: CustomerRef) => void;
+}) {
+  const ref = customerRef(id, name);
+  if (!ref) return <strong>{name ?? "N/A"}</strong>;
+  return (
+    <button
+      type="button"
+      className="report-customer"
+      title="Ver as pesagens deste cliente"
+      onClick={() => onOpen(ref)}
+    >
+      {name}
+    </button>
+  );
+}
 
 function perTon(totalCents: number, netWeightKg: number): string {
   const cents = centsPerTon(totalCents, netWeightKg);
@@ -111,6 +161,7 @@ export function SalesReport() {
   const [groupBy, setGroupBy] = useState<SalesPivotGroupBy>("customer");
   const [customerId, setCustomerId] = useState("");
   const [productId, setProductId] = useState("");
+  const [panel, setPanel] = useState<CustomerPanel | null>(null);
 
   const range = useMemo(() => {
     if (tab === "daily") return { start: day, end: day };
@@ -172,6 +223,12 @@ export function SalesReport() {
   }
 
   const activeTab = TABS.find((item) => item.id === tab) ?? TABS[0];
+  const openWeighings = (customer: CustomerRef) => setPanel({ kind: "weighings", customer });
+  const openInfo = (customer: CustomerRef) => setPanel({ kind: "info", customer });
+  const panelOps = useMemo(
+    () => (panel ? operations.filter((op) => belongsTo(op, panel.customer)) : []),
+    [operations, panel]
+  );
 
   return (
     <DeskPanel>
@@ -359,9 +416,20 @@ export function SalesReport() {
             )}
             {ops.error && <Alert kind="error">{ops.error}</Alert>}
 
-            {tab === "daily" && <DailyReport lines={lines} totals={totals} />}
-            {tab === "period" && <PeriodReport lines={lines} totals={totals} />}
-            {tab === "pivot" && <PivotReport pivot={pivot} groupBy={groupBy} />}
+            {tab === "daily" && (
+              <DailyReport lines={lines} totals={totals} onCustomer={openWeighings} />
+            )}
+            {tab === "period" && (
+              <PeriodReport lines={lines} totals={totals} onCustomer={openWeighings} />
+            )}
+            {tab === "pivot" && (
+              <PivotReport
+                pivot={pivot}
+                groupBy={groupBy}
+                onCustomer={openWeighings}
+                onInfo={openInfo}
+              />
+            )}
             {tab === "monthly" && <MonthlyReport series={series} totals={monthTotals} />}
 
             <p className="reports-note reports-no-print">
@@ -371,6 +439,30 @@ export function SalesReport() {
               os canais (e-mail e WhatsApp) sao configurados na tela Relatorios da balanca.
             </p>
           </>
+        )}
+
+        {panel?.kind === "weighings" && (
+          <CustomerWeighingsModal
+            customer={panel.customer}
+            start={range.start}
+            end={range.end}
+            unitId={unitId}
+            onInfo={() => openInfo(panel.customer)}
+            onClose={() => setPanel(null)}
+          />
+        )}
+        {panel?.kind === "info" && (
+          <CustomerInfoModal
+            customer={panel.customer}
+            periodLabel={periodLabel}
+            totals={sumWeighings(panelOps)}
+            lastSale={panelOps.reduce<string | null>((last, op) => {
+              const instant = saleInstant(op);
+              return !last || instant > last ? instant : last;
+            }, null)}
+            onWeighings={() => openWeighings(panel.customer)}
+            onClose={() => setPanel(null)}
+          />
         )}
       </div>
     </DeskPanel>
@@ -422,10 +514,12 @@ function totalsKpis(totals: ReportTotals) {
 
 function DailyReport({
   lines,
-  totals
+  totals,
+  onCustomer
 }: {
-  lines: ReturnType<typeof reportLines>;
+  lines: ReportLine[];
   totals: ReportTotals;
+  onCustomer: (customer: CustomerRef) => void;
 }) {
   return (
     <>
@@ -457,7 +551,7 @@ function DailyReport({
           {lines.map((line) => (
             <tr key={line.id}>
               <td>
-                <strong>{line.customerName}</strong>
+                <CustomerName id={line.customerId} name={line.customerName} onOpen={onCustomer} />
               </td>
               <td>{line.productDescription}</td>
               <td className="num">{kg(line.netWeightKg)}</td>
@@ -476,10 +570,12 @@ function DailyReport({
 
 function PeriodReport({
   lines,
-  totals
+  totals,
+  onCustomer
 }: {
-  lines: ReturnType<typeof reportLines>;
+  lines: ReportLine[];
   totals: ReportTotals;
+  onCustomer: (customer: CustomerRef) => void;
 }) {
   return (
     <>
@@ -517,7 +613,7 @@ function PeriodReport({
             <tr key={line.id}>
               <td>{formatDayLabel(line.date)}</td>
               <td>
-                <strong>{line.customerName}</strong>
+                <CustomerName id={line.customerId} name={line.customerName} onOpen={onCustomer} />
               </td>
               <td>{line.productDescription}</td>
               <td className="num">{kg(line.netWeightKg)}</td>
@@ -538,12 +634,18 @@ function PeriodReport({
 
 function PivotReport({
   pivot,
-  groupBy
+  groupBy,
+  onCustomer,
+  onInfo
 }: {
   pivot: ReturnType<typeof salesPivot>;
   groupBy: SalesPivotGroupBy;
+  onCustomer: (customer: CustomerRef) => void;
+  onInfo: (customer: CustomerRef) => void;
 }) {
   const columns = pivotGroupColumns(groupBy);
+  // Linha de cliente troca o preco medio pelo olho (Info): o medio passa a morar no cartao.
+  const byCustomer = columns.includes("customer");
   return (
     <>
       <Kpis
@@ -567,7 +669,11 @@ function PivotReport({
               {columns.includes("product") && <th>Produto</th>}
               <th className="num">Operacoes</th>
               <th className="num">Quantidade</th>
-              <th className="num">Preco medio</th>
+              {byCustomer ? (
+                <th className="report-info-col">Info</th>
+              ) : (
+                <th className="num">Preco medio</th>
+              )}
               <th className="num">Valor produto</th>
               <th className="num">Frete</th>
               <th className="num">Total</th>
@@ -578,7 +684,11 @@ function PivotReport({
               <td colSpan={columns.length}>TOTAL</td>
               <td className="num">{pivot.totals.totalOperations.toLocaleString("pt-BR")}</td>
               <td className="num">{formatTons(pivot.totals.totalWeightKg)}</td>
-              <td className="num">{formatMoney(pivot.totals.avgPriceCentsPerTon)}/t</td>
+              {byCustomer ? (
+                <td />
+              ) : (
+                <td className="num">{formatMoney(pivot.totals.avgPriceCentsPerTon)}/t</td>
+              )}
               <td className="num">{formatMoney(pivot.totals.totalValueCents)}</td>
               <td className="num">{formatMoney(pivot.totals.freightCents)}</td>
               <td className="num">{formatMoney(pivot.totals.grandTotalCents)}</td>
@@ -590,13 +700,22 @@ function PivotReport({
               {columns.includes("day") && <td>{row.date ? formatDayLabel(row.date) : "-"}</td>}
               {columns.includes("customer") && (
                 <td>
-                  <strong>{row.customerName ?? "N/A"}</strong>
+                  <CustomerName id={row.customerId} name={row.customerName} onOpen={onCustomer} />
                 </td>
               )}
               {columns.includes("product") && <td>{row.productDescription ?? "N/A"}</td>}
               <td className="num">{row.totalOperations.toLocaleString("pt-BR")}</td>
               <td className="num">{formatTons(row.totalWeightKg)}</td>
-              <td className="num">{formatMoney(row.avgPriceCentsPerTon)}/t</td>
+              {byCustomer ? (
+                <td className="report-info-col">
+                  <InfoButton
+                    customer={customerRef(row.customerId, row.customerName)}
+                    onInfo={onInfo}
+                  />
+                </td>
+              ) : (
+                <td className="num">{formatMoney(row.avgPriceCentsPerTon)}/t</td>
+              )}
               <td className="num">{formatMoney(row.totalValueCents)}</td>
               <td className="num">{formatMoney(row.freightCents)}</td>
               <td className="num">
@@ -607,6 +726,29 @@ function PivotReport({
         </ReportTable>
       )}
     </>
+  );
+}
+
+/** O botao de olho da tabela dinamica: abre o cartao com o cadastro do cliente. */
+function InfoButton({
+  customer,
+  onInfo
+}: {
+  customer: CustomerRef | null;
+  onInfo: (customer: CustomerRef) => void;
+}) {
+  if (!customer) return <span className="reports-muted">—</span>;
+  return (
+    <button
+      type="button"
+      className="btn small report-info-btn"
+      title="Ver as informacoes do cliente"
+      aria-label={`Info de ${customer.name}`}
+      onClick={() => onInfo(customer)}
+    >
+      <Eye size={14} />
+      Info
+    </button>
   );
 }
 

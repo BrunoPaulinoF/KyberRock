@@ -32,7 +32,7 @@ import {
   type ReportTable
 } from "../lib/customer-report";
 import { formatDocument, todayIso } from "../lib/format";
-import { deliverReports } from "../lib/report-output";
+import { deliverReports, spreadsheetFileName } from "../lib/report-output";
 import { useAsync } from "../lib/use-async";
 
 /**
@@ -167,7 +167,10 @@ export function CustomerReport() {
           ? buildCustomerReportFiles(report, selectedVariants, selectedFormats)
           : null;
       if (!files) return;
-      const names = [...files.pdf, ...files.xls].map((file) => file.filename);
+      const names = [
+        ...files.pdf.map((file) => file.filename),
+        ...files.xls.map((file) => spreadsheetFileName(file.filename))
+      ];
       setExportMessage(
         [
           names.length === 1
@@ -211,7 +214,7 @@ export function CustomerReport() {
                   ? `Gerar ${fileCount} arquivos`
                   : "Gerar relatorio"
             }
-            title="Gera os arquivos escolhidos: o Excel e baixado como planilha (.xls) e cada PDF abre a janela de impressao, um depois do outro."
+            title="Gera os arquivos escolhidos: o Excel e baixado como planilha (.xlsx) e cada PDF abre a janela de impressao, um depois do outro."
             disabled={exporting || !customerId || loading || !result.data}
             onClick={() => void handleExport()}
           >

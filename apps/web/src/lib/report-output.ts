@@ -7,8 +7,15 @@
  *
  * - PDF: abre a janela de impressao do navegador com o documento — la se imprime ou escolhe
  *   "Salvar como PDF", ja com o nome de arquivo do desktop.
- * - Excel: baixa o HTML como `.xls`, com o mesmo nome de arquivo do desktop.
+ * - Excel: converte o HTML numa planilha de verdade (`.xlsx`, `desktop/html-to-xlsx.ts`) e baixa
+ *   com o nome de arquivo do desktop trocando `.xls` por `.xlsx`. O HTML salvo como `.xls`
+ *   abria no Excel em Modo Protegido, como pagina da web, e nao deixava editar nem usar formula.
  */
+
+import { spreadsheetHtmlToXlsx, XLSX_MIME, xlsxFileName } from "./desktop/html-to-xlsx";
+
+/** O nome com que a planilha chega na pasta de downloads (`.xls` vira `.xlsx`). */
+export { xlsxFileName as spreadsheetFileName };
 
 /** Um documento pronto do desktop: nome do arquivo e o HTML. */
 export interface ReportFile {
@@ -66,8 +73,10 @@ export function printReportHtml(html: string, filename?: string): Promise<void> 
 }
 
 /** Baixa um arquivo gerado no navegador. */
-export function downloadFile(filename: string, content: string, type: string): void {
-  const blob = new Blob([content], { type });
+export function downloadFile(filename: string, content: string | Uint8Array, type: string): void {
+  const part: BlobPart =
+    typeof content === "string" ? content : (content.slice().buffer as ArrayBuffer);
+  const blob = new Blob([part], { type });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -78,9 +87,11 @@ export function downloadFile(filename: string, content: string, type: string): v
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-/** O "Excel" do desktop: o HTML de planilha salvo como `.xls` (UTF-8, como o desktop grava). */
+/** O "Excel" dos relatorios: o HTML de planilha convertido em `.xlsx` de verdade. */
 export function downloadSpreadsheet(file: ReportFile): void {
-  downloadFile(file.filename, file.html, "application/vnd.ms-excel;charset=utf-8");
+  const filename = xlsxFileName(file.filename);
+  const sheetName = filename.replace(/\.xlsx$/i, "");
+  downloadFile(filename, spreadsheetHtmlToXlsx(file.html, sheetName), XLSX_MIME);
 }
 
 /**

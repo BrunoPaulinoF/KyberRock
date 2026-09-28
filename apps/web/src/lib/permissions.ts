@@ -9,7 +9,8 @@
  *   - `loader`        carregador: so a fila de carregamento da propria unidade;
  *   - `monitoramento` so o painel de vendas em tempo real, sem configuracoes;
  *   - `comercial`     aba Comercial (a tela do portal), insights, conferencia de faturamento,
- *                     relatorios, controle de caminhoes, relatorio por cliente e cadastros —
+ *                     relatorios, controle de caminhoes, relatorio por cliente, cupons e
+ *                     cadastros —
  *                     cadastra tudo e muda preco sem senha; sem configuracoes. E o unico (com o
  *                     administrador) que ve a tela "Senha de preco", o codigo rotativo que ele
  *                     passa para a operacao mudar preco;
@@ -52,6 +53,7 @@ export const SCREENS = [
   "carteira",
   "cadastros",
   "senha-preco",
+  "cupons",
   "comercial",
   "insights",
   "controle-caminhoes",
@@ -92,16 +94,18 @@ export const SCREENS_BY_ROLE: Record<Role, readonly Screen[]> = {
     "comercial",
     "cadastros",
     "senha-preco",
+    "cupons",
     "insights",
     "controle-caminhoes",
     "relatorio-cliente",
     "conferencia-faturamento",
     "relatorios"
   ],
-  gestor: DESK_SCREENS,
-  operacao: DESK_SCREENS,
+  // A consulta de cupom e so do site: na balanca o cupom se reimprime pela propria operacao.
+  gestor: [...DESK_SCREENS, "cupons"],
+  operacao: [...DESK_SCREENS, "cupons"],
   // A senha de preco nao e tela do desktop: la ninguem a ve, so digita.
-  administrador: [...DESK_SCREENS, "senha-preco", "suporte"]
+  administrador: [...DESK_SCREENS, "cupons", "senha-preco", "suporte"]
 };
 
 export function canSee(role: Role, screen: Screen): boolean {

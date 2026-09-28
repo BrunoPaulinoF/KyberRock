@@ -555,6 +555,10 @@ table.data td strong {
   font-weight: 700;
   color: var(--kr-text-strong);
 }
+/* A placa e um <strong> de fundo escuro: a cor de texto da tabela a deixaria ilegivel no claro. */
+table.data td strong.plate-badge {
+  color: var(--kr-plate-text);
+}
 table.data tbody tr:hover td {
   background: var(--kr-card-hover);
 }

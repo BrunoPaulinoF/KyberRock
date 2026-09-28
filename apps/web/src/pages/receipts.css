@@ -1,0 +1,310 @@
+/* Cupons — consulta do cupom pelo codigo, com a via impressa e os dados da pesagem. */
+
+.rc {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.rc-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.rc-head-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--kr-accent-soft);
+  color: var(--kr-info-text);
+  border: 1px solid var(--kr-accent-border);
+}
+.rc-head-text {
+  margin: 0;
+  color: var(--kr-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ---------- busca ---------- */
+.rc-search {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.rc-search-field {
+  position: relative;
+  flex: 1 1 280px;
+  max-width: 460px;
+}
+.rc-search-field svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--kr-muted);
+  pointer-events: none;
+}
+.rc-search-field .input {
+  width: 100%;
+  padding-left: 36px;
+  font-size: 15px;
+}
+
+/* ---------- varias pesagens com o mesmo numero ---------- */
+.rc-matches-title {
+  margin: 0 0 8px;
+  color: var(--kr-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+.rc-match-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.rc-match {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--kr-card-border);
+  border-radius: 12px;
+  background: var(--kr-card-bg);
+  color: var(--kr-text);
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.rc-match:hover {
+  background: var(--kr-card-hover);
+}
+.rc-match.active {
+  border-color: var(--kr-accent);
+  box-shadow: 0 0 0 1px var(--kr-accent);
+}
+.rc-match strong {
+  color: var(--kr-text-strong);
+  font-size: 14px;
+}
+.rc-match-code {
+  color: var(--kr-info-text);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+.rc-match-date {
+  color: var(--kr-muted);
+  font-size: 12px;
+}
+
+/* ---------- cupom + informacoes ---------- */
+.rc-grid {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.rc-paper-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--kr-card-border);
+  border-radius: 16px;
+  background: var(--kr-surface-soft);
+  position: sticky;
+  top: 0;
+}
+.rc-paper-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.rc-copies {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.rc-copy {
+  padding: 5px 10px;
+  border: 1px solid var(--kr-border);
+  border-radius: 999px;
+  background: var(--kr-surface);
+  color: var(--kr-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.rc-copy.active {
+  background: var(--kr-primary);
+  border-color: var(--kr-primary);
+  color: var(--kr-primary-text);
+}
+/* O papel do cupom: branco nos dois temas, como sai da impressora. */
+.rc-paper {
+  margin: 0;
+  padding: 16px 14px;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  background: #fffef8;
+  color: #1a1a1a;
+  border-radius: 4px;
+  box-shadow: var(--kr-shadow);
+  font:
+    12px/1.4 "Courier New",
+    ui-monospace,
+    monospace;
+  white-space: pre;
+}
+.rc-paper.cancelled {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent 0 22px,
+    rgba(220, 38, 38, 0.06) 22px 44px
+  );
+}
+.rc-paper-empty {
+  width: 340px;
+  max-width: 100%;
+  padding: 28px 18px;
+  border: 1px dashed var(--kr-border);
+  border-radius: 10px;
+  color: var(--kr-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.rc-info {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.rc-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px solid var(--kr-accent-border);
+  border-radius: 14px;
+  background: var(--kr-accent-soft);
+}
+.rc-summary > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.rc-summary-code {
+  color: var(--kr-info-text);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+.rc-summary-name {
+  color: var(--kr-text-strong);
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+.rc-summary-side {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.rc-summary-total {
+  color: var(--kr-text-strong);
+  font-size: 20px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.rc-card {
+  padding: 12px 16px 14px;
+  border: 1px solid var(--kr-card-border);
+  border-radius: 14px;
+  background: var(--kr-card-bg);
+}
+.rc-card h2 {
+  margin: 0 0 10px;
+  color: var(--kr-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.rc-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+.rc-item {
+  min-width: 0;
+}
+.rc-item.wide {
+  grid-column: 1 / -1;
+}
+.rc-item dt {
+  color: var(--kr-muted);
+  font-size: 12px;
+}
+.rc-item dd {
+  margin: 2px 0 0;
+  color: var(--kr-text-strong);
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.rc-item.strong dd {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.rc-prints {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  grid-column: 1 / -1;
+}
+.rc-print {
+  display: grid;
+  grid-template-columns: 60px 110px 150px minmax(0, 1fr);
+  gap: 10px;
+  font-size: 13px;
+}
+.rc-mono {
+  font-family: "Courier New", ui-monospace, monospace;
+}
+.rc-muted {
+  color: var(--kr-muted);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 960px) {
+  .rc-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rc-paper-card {
+    position: static;
+  }
+  .rc-paper {
+    width: auto;
+  }
+}
+@media (max-width: 560px) {
+  .rc-print {
+    grid-template-columns: 1fr 1fr;
+  }
+}
