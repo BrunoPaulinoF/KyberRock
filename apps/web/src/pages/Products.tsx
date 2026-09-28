@@ -6,6 +6,8 @@ import { PricePasswordField } from "../components/PricePassword";
 import { Alert, DataTable, Field, Modal, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { formatMoney, parseMoneyToCents } from "../lib/format";
 import { matchesSearch } from "../lib/operation";
 import { q, type Product } from "../lib/queries";
@@ -24,10 +26,11 @@ export function ProductsSection() {
   const toast = useToast();
   const canEdit = user.canEditPrices;
   const askPassword = user.requiresPricePassword;
-  const { data, loading, error, reload } = useAsync(
+  const { data, loading, error, reload, refresh } = useAsync(
     () => Promise.all([q.products(user.companyId), q.productDefaultPrices(user.companyId)]),
     [user.companyId]
   );
+  useOnCadastroChange(refresh, CADASTRO_TABLES.products);
   const [products, defaults] = data ?? [[], []];
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<{
@@ -61,6 +64,7 @@ export function ProductsSection() {
     () => (customerId ? q.customerSpecialPrices(user.companyId, customerId) : Promise.resolve([])),
     [user.companyId, customerId]
   );
+  useOnCadastroChange(special.refresh, CADASTRO_TABLES.specialPrices);
   const specialByProduct = useMemo(
     () => new Map((special.data ?? []).map((p) => [p.product_id, p.unit_price_cents])),
     [special.data]

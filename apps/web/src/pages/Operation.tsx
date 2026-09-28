@@ -25,6 +25,8 @@ import { Picker, type PickerOption } from "../components/Picker";
 import { Alert, Badge, Field, LoadMore, Modal, useShowMore, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import {
   dedupeByNameAndCode,
   dedupeDrivers,
@@ -108,8 +110,12 @@ export function representativeOf(map: Map<string, string>, id: string | null): s
   return map.get(id) ?? id;
 }
 
+/**
+ * Os seletores da pesagem pelo site. Cliente, placa ou motorista cadastrado na balanca entra
+ * aqui na hora, sem recarregar a pagina (`useOnCadastroChange`).
+ */
 export function useCatalog(companyId: string) {
-  return useAsync(async (): Promise<Catalog> => {
+  const catalog = useAsync(async (): Promise<Catalog> => {
     const [customers, vehicles, drivers, products, carriers, methods, terms] = await Promise.all([
       q.customers(companyId),
       q.vehicles(companyId),
@@ -174,6 +180,15 @@ export function useCatalog(companyId: string) {
       )
     };
   }, [companyId]);
+  useOnCadastroChange(catalog.refresh, [
+    ...CADASTRO_TABLES.customers,
+    ...CADASTRO_TABLES.vehicles,
+    ...CADASTRO_TABLES.drivers,
+    ...CADASTRO_TABLES.products,
+    ...CADASTRO_TABLES.carriers,
+    ...CADASTRO_TABLES.payment
+  ]);
+  return catalog;
 }
 
 export interface ExecutorStatus {
