@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  REMOVED_PAYMENT_KEY,
+  mergePaymentMethods,
+  withCanonicalPaymentFilters,
+  withCanonicalPayments,
   DEFAULT_YARD_ATTENTION_MIN,
   DEFAULT_YARD_LATE_MIN,
   MONITOR_FILTERS_STORAGE_KEY,
@@ -676,6 +680,50 @@ describe("unidade e opcoes", () => {
       { key: NO_PAYMENT_KEY, label: "Sem forma de pagamento" },
       { key: "pm-velha", label: "Forma removida" }
     ]);
+  });
+});
+
+describe("formas de pagamento repetidas", () => {
+  // Cada balanca cria a propria "Em carteira", com id diferente.
+  const merged = mergePaymentMethods([
+    { id: "pm-boleto", name: "Boleto" },
+    { id: "pm-cart-1", name: "Em carteira" },
+    { id: "pm-cart-2", name: "Em Carteira " },
+    { id: "pm-cart-3", name: "em carteira" }
+  ]);
+
+  it("mostra uma opcao por nome e uma so para as formas fora do cadastro", () => {
+    const rows = withCanonicalPayments(
+      [
+        op({ id: "a", payment_method_id: "pm-cart-1" }),
+        op({ id: "b", payment_method_id: "pm-cart-3" }),
+        op({ id: "c", payment_method_id: "pm-sumiu-1" }),
+        op({ id: "d", payment_method_id: "pm-sumiu-2" }),
+        op({ id: "e", payment_method_id: "pm-boleto" })
+      ],
+      merged
+    );
+    expect(paymentOptions(rows, merged.methods, [])).toEqual([
+      { key: "pm-boleto", label: "Boleto" },
+      { key: "pm-cart-1", label: "Em carteira" },
+      { key: REMOVED_PAYMENT_KEY, label: "Forma removida" }
+    ]);
+  });
+
+  it("filtro guardado com o id de uma copia continua valendo", () => {
+    const filters = {
+      ...defaultMonitorFilters(),
+      payments: ["pm-cart-2", "pm-cart-1", "pm-sumiu"]
+    };
+    expect(withCanonicalPaymentFilters(filters, merged).payments).toEqual([
+      "pm-cart-1",
+      REMOVED_PAYMENT_KEY
+    ]);
+  });
+
+  it("sem cadastro carregado nada muda", () => {
+    const rows = [op({ payment_method_id: "pm-x" })];
+    expect(withCanonicalPayments(rows, mergePaymentMethods([]))).toBe(rows);
   });
 });
 

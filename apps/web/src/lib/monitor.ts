@@ -568,6 +568,80 @@ export function paymentOptions(
   return options;
 }
 
+/** Venda cuja forma nao esta no cadastro da nuvem: todas viram UMA opcao, nao uma por id. */
+export const REMOVED_PAYMENT_KEY = "forma-removida";
+
+export interface MergedPaymentMethods {
+  /** Uma forma por nome, na ordem do cadastro (a primeira de cada nome da o id). */
+  methods: MonitorPaymentMethod[];
+  /** Id de qualquer copia -> id da forma que representa o nome. */
+  canonicalOf: ReadonlyMap<string, string>;
+}
+
+/**
+ * Junta as formas de mesmo nome. A forma do sistema (ex.: "Em carteira") nasce com id sorteado
+ * em cada balanca, entao a empresa tem uma copia por maquina — e a tela mostrava um botao, uma
+ * cor e uma etiqueta para cada copia, todos com o mesmo nome.
+ */
+export function mergePaymentMethods(
+  methods: readonly MonitorPaymentMethod[]
+): MergedPaymentMethods {
+  const byName = new Map<string, MonitorPaymentMethod>();
+  const canonicalOf = new Map<string, string>();
+  const merged: MonitorPaymentMethod[] = [];
+  for (const method of methods) {
+    const name = normalizeText(method.name) || method.id;
+    let first = byName.get(name);
+    if (!first) {
+      first = method;
+      byName.set(name, method);
+      merged.push(method);
+    }
+    canonicalOf.set(method.id, first.id);
+  }
+  return { methods: merged, canonicalOf };
+}
+
+/** Id da forma que representa esta; fora do cadastro vira `REMOVED_PAYMENT_KEY`. */
+export function canonicalPaymentKey(key: string, merged: MergedPaymentMethods): string {
+  if (key === NO_PAYMENT_KEY || key === REMOVED_PAYMENT_KEY) return key;
+  // Cadastro ainda nao chegou: sem ele nao da para dizer que a forma foi removida.
+  if (merged.canonicalOf.size === 0) return key;
+  return merged.canonicalOf.get(key) ?? REMOVED_PAYMENT_KEY;
+}
+
+/** As vendas com a forma trocada pela que representa o nome (mesma lista se nada mudar). */
+export function withCanonicalPayments(
+  operations: MonitorOperation[],
+  merged: MergedPaymentMethods
+): MonitorOperation[] {
+  let changed = false;
+  const list = operations.map((op) => {
+    if (!op.payment_method_id) return op;
+    const key = canonicalPaymentKey(op.payment_method_id, merged);
+    if (key === op.payment_method_id) return op;
+    changed = true;
+    return { ...op, payment_method_id: key };
+  });
+  return changed ? list : operations;
+}
+
+/** Filtro guardado com o id de uma copia passa a apontar para a forma que representa o nome. */
+export function withCanonicalPaymentFilters(
+  filters: MonitorFilters,
+  merged: MergedPaymentMethods
+): MonitorFilters {
+  const payments: string[] = [];
+  for (const key of filters.payments) {
+    const canonical = canonicalPaymentKey(key, merged);
+    if (!payments.includes(canonical)) payments.push(canonical);
+  }
+  const same =
+    payments.length === filters.payments.length &&
+    payments.every((key, index) => key === filters.payments[index]);
+  return same ? filters : { ...filters, payments };
+}
+
 // ---------------------------------------------------------------------------
 // Guardar os filtros no navegador
 // ---------------------------------------------------------------------------
