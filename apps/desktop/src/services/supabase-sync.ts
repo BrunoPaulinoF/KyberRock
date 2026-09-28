@@ -7980,6 +7980,33 @@ const CADASTRO_PUSH_ENTITIES: readonly CadastroPushEntity[] = [
         updated_at: createdAt
       };
     }
+  },
+  {
+    // Historico de preco especial (`price-change-log.ts`): so acrescimo, entao o cursor anda
+    // pelo created_at, como o log de credito. A nuvem carimba empresa, unidade e balanca pelo
+    // token (`_shared/price-change-log.ts`); o que vai aqui e so o que aconteceu.
+    key: "priceChangeLog",
+    label: "historico de preco especial",
+    sql: buildCadastroSelect({
+      table: "price_change_log",
+      alias: "pl",
+      columns:
+        "pl.id, pl.action, pl.customer_id, pl.customer_name, pl.product_id, pl.product_description, pl.old_price_cents, pl.new_price_cents, pl.changed_at, pl.created_at",
+      where: "pl.company_id = @companyId",
+      cursorColumn: "created_at"
+    }),
+    map: (row, companyId) => ({
+      id: stringValue(row.id),
+      company_id: companyId,
+      action: stringValue(row.action),
+      customer_id: nullableStringValue(row.customer_id),
+      customer_name: nullableStringValue(row.customer_name),
+      product_id: nullableStringValue(row.product_id),
+      product_description: nullableStringValue(row.product_description),
+      old_price_cents: integerValue(row.old_price_cents),
+      new_price_cents: integerValue(row.new_price_cents),
+      changed_at: cloudTimestamp(row.changed_at, new Date().toISOString())
+    })
   }
 ];
 

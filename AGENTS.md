@@ -475,6 +475,18 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   a chave nao existe (migracao pendente na `web-api`; balanca que ainda nao falou com a nuvem
   depois de atualizar). Ela protege tambem limpar operacoes e liberar o relatorio financeiro na
   balanca.
+- **Preco especial na balanca pede a senha NO RUNTIME, e fica no historico.** Adicionar, trocar
+  ou excluir preco especial de cliente chama `setCustomerSpecialPrice`/`removeCustomerSpecialPrice`
+  com a senha, conferida no processo principal (`assertSpecialPricePassword`) — a tela so repassa.
+  No mesmo salvamento a alteracao entra em `price_change_log` (local, migracao 59;
+  `services/price-change-log.ts`), que sobe pelo envio do cadastro (chave `priceChangeLog`) para
+  `public.price_change_log` (migracao `202609280005`). O `desktop-sync` grava com
+  `ignoreDuplicates` e carimba empresa, unidade e balanca pelo token
+  (`_shared/price-change-log.ts`); o nome de quem fez sai do dispositivo, por gatilho. O site grava
+  o seu pela `web-api` com o nome do usuario. A tela e `components/PriceHistory.tsx`, na aba
+  Comercial e na "Senha de preco". Registro explicito de proposito: um gatilho em
+  `customer_special_prices` veria a disputa entre principais e a unificacao de clientes como
+  "removido/adicionado".
 - A tela Monitoramento atualiza pelo aviso `operation_change_pings` (uma linha por empresa,
   carimbada por gatilho de STATEMENT em `weighing_operations`, migracao `202609260001`), com uma
   consulta de reserva lenta. Nao troque isso por consulta a cada poucos segundos: o banco ja

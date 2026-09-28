@@ -112,6 +112,7 @@ const WEB_OPERATION_POLL_INTERVAL_MS = 30_000;
 const WEB_OPERATION_NON_EXECUTOR_RECHECK_MS = 5 * 60_000;
 import { readUpdateChannel, type DesktopUpdateChannel } from "./update-channel.js";
 import { verifyStoredPriceCode } from "./price-code.js";
+import { currentSpecialPriceCents, recordSpecialPriceChange } from "./price-change-log.js";
 import {
   checkCustomerOmieReadiness,
   type OmieCustomerReadiness,
@@ -665,6 +666,10 @@ export interface StartWeighingInput {
   settleFromAdvance?: boolean;
   scaleCaptureId?: string;
 }
+
+/** Recusa da senha de preco especial (mesma frase da tela: `PRICE_CODE_REJECTED`). */
+export const SPECIAL_PRICE_PASSWORD_REJECTED =
+  "Senha incorreta ou vencida. Peca ao comercial a senha atual.";
 
 export class DesktopRuntime {
   private database: DesktopDatabase;
@@ -4106,28 +4111,78 @@ export class DesktopRuntime {
     return listCustomerSpecialPrices(this.database, customerId);
   }
 
+  /**
+   * Adicionar ou trocar preco especial pede a senha rotativa do comercial, conferida AQUI (no
+   * processo principal) e nao so na tela: sem a senha certa nada e gravado. A alteracao entra
+   * no historico (`price-change-log.ts`) no mesmo salvamento, e o comercial ve no site.
+   */
   setCustomerSpecialPrice(input: {
     customerId: string;
     productId: string;
     unitPriceCents: number;
     unit?: string;
+    password?: string;
   }): unknown {
     this.assertDesktopAccess();
     this.assertPriceAuthority();
+    this.assertSpecialPricePassword(input.password);
     const identity = this.ensureIdentity();
-    const result = setCustomerSpecialPrice(this.database, {
-      ...input,
-      companyId: identity.companyId
+    const price = {
+      customerId: input.customerId,
+      productId: input.productId,
+      unitPriceCents: input.unitPriceCents,
+      unit: input.unit
+    };
+    const save = this.database.transaction(() => {
+      const oldPriceCents = currentSpecialPriceCents(
+        this.database,
+        price.customerId,
+        price.productId
+      );
+      const saved = setCustomerSpecialPrice(this.database, {
+        ...price,
+        companyId: identity.companyId
+      });
+      recordSpecialPriceChange(this.database, {
+        companyId: identity.companyId,
+        customerId: price.customerId,
+        productId: price.productId,
+        oldPriceCents,
+        newPriceCents: price.unitPriceCents
+      });
+      return saved;
     });
+    const result = save();
     this.triggerCadastroCloudPush("customer_special_price");
     return result;
   }
 
-  removeCustomerSpecialPrice(customerId: string, productId: string): void {
+  /** Excluir preco especial: mesma senha e mesmo historico de `setCustomerSpecialPrice`. */
+  removeCustomerSpecialPrice(customerId: string, productId: string, password?: string): void {
     this.assertDesktopAccess();
     this.assertPriceAuthority();
-    removeCustomerSpecialPrice(this.database, customerId, productId);
+    this.assertSpecialPricePassword(password);
+    const identity = this.ensureIdentity();
+    const remove = this.database.transaction(() => {
+      const oldPriceCents = currentSpecialPriceCents(this.database, customerId, productId);
+      removeCustomerSpecialPrice(this.database, customerId, productId);
+      recordSpecialPriceChange(this.database, {
+        companyId: identity.companyId,
+        customerId,
+        productId,
+        oldPriceCents,
+        newPriceCents: null
+      });
+    });
+    remove();
     this.triggerCadastroCloudPush("customer_special_price");
+  }
+
+  private assertSpecialPricePassword(password: string | undefined): void {
+    const typed = typeof password === "string" ? password.trim() : "";
+    if (!typed || !this.verifyPriceChangePassword(typed)) {
+      throw new Error(SPECIAL_PRICE_PASSWORD_REJECTED);
+    }
   }
 
   listOmieCategories(): OmieCategoryOption[] {

@@ -542,13 +542,19 @@ export interface KyberRockDesktopApi {
   }) => Promise<unknown>;
   productDefaultPricesRemove: (productId: string) => Promise<void>;
   customerSpecialPricesList: (customerId: string) => Promise<CustomerSpecialPriceSummary[]>;
+  /** `password`: a senha rotativa do comercial — conferida no processo principal. */
   customerSpecialPricesSet: (input: {
     customerId: string;
     productId: string;
     unitPriceCents: number;
     unit?: string;
+    password: string;
   }) => Promise<unknown>;
-  customerSpecialPricesRemove: (customerId: string, productId: string) => Promise<void>;
+  customerSpecialPricesRemove: (
+    customerId: string,
+    productId: string,
+    password: string
+  ) => Promise<void>;
   omieCategoriesList: () => Promise<OmieCategoryOption[]>;
   productOmieCategorySet: (productId: string, categoryCode: string | null) => Promise<void>;
   omieDefaultCategoryGet: () => Promise<string | null>;

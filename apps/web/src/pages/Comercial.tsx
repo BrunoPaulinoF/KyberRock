@@ -3,6 +3,7 @@ import "./comercial.css";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { DeskPanel } from "../components/desk";
+import { PriceHistory } from "../components/PriceHistory";
 import { TruckStages } from "../components/TruckStages";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
@@ -527,6 +528,12 @@ export function Comercial() {
           )}
         </section>
       </DeskPanel>
+      {/* O que a balanca e o site mudaram de preco especial — com a senha que o comercial passa. */}
+      <div className="comercial-no-print">
+        <DeskPanel>
+          <PriceHistory />
+        </DeskPanel>
+      </div>
     </div>
   );
 }
