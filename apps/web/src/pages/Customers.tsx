@@ -17,6 +17,8 @@ import {
 } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { dedupePaymentMethods, representativeIds } from "../lib/dedupe";
 import { conditionTextOf, describePaymentCondition } from "../lib/entry-freight";
 import {
@@ -78,6 +80,13 @@ export function CustomersSection() {
       ]),
     [user.companyId]
   );
+  // Cliente salvo, inativado ou excluido na balanca aparece aqui sem clicar em atualizar.
+  useOnCadastroChange(list.refresh, CADASTRO_TABLES.customers);
+  useOnCadastroChange(aux.refresh, [
+    ...CADASTRO_TABLES.customers,
+    ...CADASTRO_TABLES.payment,
+    ...CADASTRO_TABLES.carriers
+  ]);
   const [editing, setEditing] = useState<Customer | "new" | null>(null);
   const [commercial, setCommercial] = useState<Customer | null>(null);
   const [removing, setRemoving] = useState<Customer | null>(null);

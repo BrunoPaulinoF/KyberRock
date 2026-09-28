@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { periodToIso } from "../lib/format";
 import {
   INVOICE_CLOSING_PERIOD_KINDS,
@@ -87,6 +89,8 @@ export function Wallet() {
 
   const methods = useAsync(() => q.paymentMethods(user.companyId), [user.companyId]);
   const customers = useAsync(() => q.customers(user.companyId), [user.companyId]);
+  useOnCadastroChange(methods.refresh, CADASTRO_TABLES.payment);
+  useOnCadastroChange(customers.refresh, CADASTRO_TABLES.customers);
   const walletIds = useMemo(
     () => (methods.data ?? []).filter((method) => method.is_wallet).map((method) => method.id),
     [methods.data]

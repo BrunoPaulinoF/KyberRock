@@ -6,6 +6,8 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { Picker, type PickerOption } from "../components/Picker";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { formatDateTime, formatDocument, periodToIso } from "../lib/format";
 import {
   DUPLICATE_WEIGHING_WINDOW_DAYS,
@@ -111,6 +113,10 @@ export function InvoiceClosing() {
   const products = useAsync(() => q.products(user.companyId), [user.companyId]);
   const vehicles = useAsync(() => q.vehicles(user.companyId), [user.companyId]);
   const carriers = useAsync(() => q.carriers(user.companyId), [user.companyId]);
+  useOnCadastroChange(customers.refresh, CADASTRO_TABLES.customers);
+  useOnCadastroChange(products.refresh, CADASTRO_TABLES.products);
+  useOnCadastroChange(vehicles.refresh, CADASTRO_TABLES.vehicles);
+  useOnCadastroChange(carriers.refresh, CADASTRO_TABLES.carriers);
   const ops = useAsync(
     () => q.closedOperations(user.companyId, iso.startIso, iso.endIso),
     [user.companyId, iso.startIso, iso.endIso]

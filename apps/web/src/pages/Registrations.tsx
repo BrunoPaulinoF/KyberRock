@@ -14,6 +14,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { DeskPanel, IconTabs, SectionHead } from "../components/desk";
 import { Alert, DataTable } from "../components/ui";
 import { useUser } from "../lib/auth";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { dedupeByNameAndCode, dedupePaymentMethods } from "../lib/dedupe";
 import { q } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
@@ -96,7 +98,7 @@ export function Registrations() {
  */
 function PaymentSection() {
   const user = useUser();
-  const { data, loading, error } = useAsync(
+  const { data, loading, error, refresh } = useAsync(
     () =>
       Promise.all([
         q.paymentMethods(user.companyId),
@@ -105,6 +107,7 @@ function PaymentSection() {
       ]),
     [user.companyId]
   );
+  useOnCadastroChange(refresh, CADASTRO_TABLES.payment);
   const methods = useMemo(
     () => dedupePaymentMethods(data?.[0] ?? []).map((group) => group.row),
     [data]

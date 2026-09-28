@@ -27,6 +27,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
 
 import { useAuth, useUser } from "../lib/auth";
+import { CadastroLiveProvider } from "../lib/cadastro-live-provider";
 import { canSee, ROLE_LABELS, type Screen } from "../lib/permissions";
 import { useTheme } from "../lib/theme";
 
@@ -227,7 +228,10 @@ export function Layout() {
         </div>
       </aside>
       <main className="main">
-        <Outlet />
+        {/* Cadastro gravado na balanca aparece nas telas na hora (`lib/cadastro-live.ts`). */}
+        <CadastroLiveProvider companyId={user.companyId}>
+          <Outlet />
+        </CadastroLiveProvider>
       </main>
     </div>
   );

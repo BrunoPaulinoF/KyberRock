@@ -3,6 +3,8 @@ import { useState } from "react";
 import { EmptyState, IconAction, NewButton, Pill, SectionHead } from "../components/desk";
 import { Alert, DataTable, Field, Modal, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { useAsync } from "../lib/use-async";
 
 /**
@@ -78,7 +80,7 @@ const CHANNEL_LABEL: Record<Channel, string> = {
 
 export function ReportRecipients() {
   const toast = useToast();
-  const { data, loading, error, reload } = useAsync(
+  const { data, loading, error, reload, refresh } = useAsync(
     async () =>
       (await callWebApi("list_report_recipients")) as unknown as {
         recipients: Recipient[];
@@ -86,6 +88,7 @@ export function ReportRecipients() {
       },
     []
   );
+  useOnCadastroChange(refresh, CADASTRO_TABLES.reportRecipients);
   const [form, setForm] = useState<FormState | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

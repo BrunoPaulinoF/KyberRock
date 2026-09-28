@@ -5,6 +5,8 @@ import { DeleteDialog } from "../components/PricePassword";
 import { Alert, DataTable, Field, Modal, Warnings, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { dedupeBy, dedupeDrivers, dedupeVehicles, type DedupedGroup } from "../lib/dedupe";
 import { formatDocument, formatPlate, isValidDocument, normalizeDocument } from "../lib/format";
 import { q, type Carrier, type Driver, type Vehicle } from "../lib/queries";
@@ -97,10 +99,11 @@ function DeleteGroup({
 
 export function DriversSection() {
   const user = useUser();
-  const { data, loading, error, reload } = useAsync(
+  const { data, loading, error, reload, refresh } = useAsync(
     () => q.drivers(user.companyId),
     [user.companyId]
   );
+  useOnCadastroChange(refresh, CADASTRO_TABLES.drivers);
   const toggle = useToggleActive(reload);
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
@@ -218,10 +221,11 @@ export function DriversSection() {
 
 export function VehiclesSection() {
   const user = useUser();
-  const { data, loading, error, reload } = useAsync(
+  const { data, loading, error, reload, refresh } = useAsync(
     () => Promise.all([q.vehicles(user.companyId), q.carriers(user.companyId)]),
     [user.companyId]
   );
+  useOnCadastroChange(refresh, [...CADASTRO_TABLES.vehicles, ...CADASTRO_TABLES.carriers]);
   const toggle = useToggleActive(reload);
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
@@ -530,10 +534,11 @@ function DriverForm({
 
 export function CarriersSection() {
   const user = useUser();
-  const { data, loading, error, reload } = useAsync(
+  const { data, loading, error, reload, refresh } = useAsync(
     () => q.carriers(user.companyId),
     [user.companyId]
   );
+  useOnCadastroChange(refresh, CADASTRO_TABLES.carriers);
   const toggle = useToggleActive(reload);
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
