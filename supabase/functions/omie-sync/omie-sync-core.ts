@@ -761,14 +761,17 @@ export async function mergeOmieCustomerTags(
   requiredTag: string
 ): Promise<string[]> {
   try {
+    // `codigo_cliente_omie`, com sublinhado: o OMIE recusa `codigoClienteOmie` ("Tag
+    // [CODIGOCLIENTEOMIE] nao faz parte da estrutura") e, como a falha cai no catch abaixo,
+    // toda alteracao gravava so a tag do papel e apagava as outras em silencio.
     const current = await queue.request<
-      { codigoClienteOmie: number },
+      { codigo_cliente_omie: number },
       { tags?: Record<string, unknown> | unknown[] }
     >({
       credentials,
       endpoint: "/geral/clientes/",
       call: "ConsultarCliente",
-      param: { codigoClienteOmie: omieCustomerId }
+      param: { codigo_cliente_omie: omieCustomerId }
     });
     const existing = readOmieTagValues(current?.tags).filter((tag) => tag.trim().length > 0);
     return forceOmieTag(existing, requiredTag);

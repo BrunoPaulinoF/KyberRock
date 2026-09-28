@@ -83,6 +83,24 @@ export function isOmieStaleCustomerCodeFault(message: string): boolean {
 }
 
 /**
+ * Envio de CADASTRO (cliente ou transportadora) recusado no `AlterarCliente` com "Cliente
+ * nao cadastrado para o Codigo [...]": o codigo OMIE gravado aqui aponta para um registro
+ * que nao existe mais la — tipicamente um cadastro excluido no OMIE. Deterministico:
+ * re-tentar manda o MESMO codigo, entao cada clique em sincronizar repetia a recusa (em
+ * 28/09/2026 foram 57 clientes da Pedreira Ibiuna, todos excluidos no OMIE, voltando como
+ * erro a cada sincronizacao).
+ *
+ * Exige o `AlterarCliente` de proposito: e so no envio de cadastro com codigo conhecido que
+ * o conserto e parar de enviar. No fechamento, a mesma frase tem outro tratamento (refazer
+ * o vinculo — ver `isOmieStaleCustomerCodeFault`).
+ */
+export function isOmieUnknownCadastroCodeFault(message: string): boolean {
+  if (!message) return false;
+  const text = normalize(message);
+  return text.includes("alterarcliente") && text.includes("cliente nao cadastrado para o codigo");
+}
+
+/**
  * Fechamento que nao foi ao OMIE porque o CLIENTE nao pode ser cadastrado la.
  * Deterministico: re-tentar sem corrigir o cadastro so repete a recusa (e gera retry
  * storm). O envio volta sozinho quando o cliente entra no OMIE — ver

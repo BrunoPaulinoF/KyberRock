@@ -6,6 +6,7 @@ import {
   isOmieMissingDocumentFault,
   isOmieProtectedRecordFault,
   isOmieStaleCustomerCodeFault,
+  isOmieUnknownCadastroCodeFault,
   isOmieAlreadyBilledFault
 } from "./omie-fault-classifier.js";
 
@@ -147,6 +148,37 @@ describe("isOmieStaleCustomerCodeFault", () => {
     expect(isOmieStaleCustomerCodeFault("OMIE offline, tente novamente")).toBe(false);
     expect(isOmieStaleCustomerCodeFault("OMIE nao retornou orderId")).toBe(false);
     expect(isOmieStaleCustomerCodeFault("")).toBe(false);
+  });
+});
+
+describe("isOmieUnknownCadastroCodeFault", () => {
+  it("matches the AlterarCliente refusal of a code deleted in OMIE", () => {
+    // Texto real que o omie-sync devolveu em 28/09/2026.
+    expect(
+      isOmieUnknownCadastroCodeFault(
+        "OMIE HTTP 500 em AlterarCliente (/geral/clientes/) - ERROR: Cliente não cadastrado " +
+          "para o Código [11455923765] !"
+      )
+    ).toBe(true);
+  });
+
+  it("does not match transient faults nor the billing refusal", () => {
+    // Fila do OMIE: some sozinho, tem que continuar re-tentando.
+    expect(
+      isOmieUnknownCadastroCodeFault(
+        "OMIE HTTP 500 em AlterarCliente (/geral/clientes/) - ERROR: Consumo redundante " +
+          "detectado. Aguarde 14 segundos para tentar novamente (REDUNDANT)."
+      )
+    ).toBe(false);
+    // Mesma frase no fechamento: la o conserto e refazer o vinculo, nao parar de enviar.
+    expect(
+      isOmieUnknownCadastroCodeFault(
+        "OMIE HTTP 500 em IncluirPedido (/produtos/pedido/) - ERROR: Cliente não cadastrado " +
+          "para o Código [11455924790] ! - tag: [codigo_cliente]"
+      )
+    ).toBe(false);
+    expect(isOmieUnknownCadastroCodeFault("Credencial OMIE invalida")).toBe(false);
+    expect(isOmieUnknownCadastroCodeFault("")).toBe(false);
   });
 });
 

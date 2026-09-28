@@ -176,6 +176,12 @@ describe("cliente ja cadastrado no OMIE", () => {
 
     expect(id).toBe(11474590160);
     expect(fetchFn).toHaveBeenCalledTimes(3);
+    // A consulta das tags usa `codigo_cliente_omie`, com sublinhado: o OMIE recusa
+    // `codigoClienteOmie` ("Tag [CODIGOCLIENTEOMIE] nao faz parte da estrutura") e a
+    // falha, engolida, fazia toda alteracao apagar as outras tags do cadastro.
+    const lookupRequest = readRequestBody(fetchFn, 1);
+    expect(lookupRequest.call).toBe("ConsultarCliente");
+    expect(lookupRequest.param).toEqual([{ codigo_cliente_omie: 11474590160 }]);
     const updateRequest = readRequestBody(fetchFn, 2);
     expect(updateRequest.call).toBe("AlterarCliente");
     expect(updateRequest.param).toEqual([
