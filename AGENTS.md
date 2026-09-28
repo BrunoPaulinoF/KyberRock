@@ -1085,6 +1085,18 @@ Dois cuidados que nao podem se perder numa mudanca futura:
   com o recorte antigo (pior janela, nunca cadastro nenhum) — e so quando o erro **e** a coluna
   que falta, pela mesma razao da secao anterior.
 
+**2b. O cursor do PUSH tambem andava pela hora errada.** O push anda por `updated_at` das
+linhas locais, e nelas tambem mora o que o pull trouxe — com o relogio de QUEM editou. Em
+28/09/2026 a nuvem tinha linhas gravadas 5 a 17 min "no futuro" (balanca com o relogio
+adiantado, inclusive no pull do OMIE). O pull as trazia, o push as reenviava e o cursor ia junto
+para o futuro; o motorista cadastrado aqui na hora certa ficava ATRAS do cursor e so subia depois
+(medido: 1 a 105 min) — o sintoma era "cadastro do site aparece na balanca na hora, o da balanca
+nao aparece no site". Regra agora (`pushSharedCadastroToCloud`): o cursor **nunca passa do
+relogio desta maquina** — linha "do futuro" sobe, mas o cursor para em `agora`. Cursor que ja
+estava no futuro (versao anterior, ou relogio desta maquina voltou) recua 24 h, uma vez por
+maquina (`cloud_cadastro_push_clock_rewind_v1`) e sempre que for achado a frente do relogio;
+reenviar e idempotente (upsert por id).
+
 **3. A outra maquina ainda precisava PERGUNTAR.** Resolvidos os dois acima, o cadastro saia na
 hora e entrava na janela do pull — mas so era descoberto no tique seguinte do renderer
 (`MULTI_DESKTOP_PULL_INTERVAL_MS`, 15 s): ~7 s de espera na media, 15 s no pior caso, com a
