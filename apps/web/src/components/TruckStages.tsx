@@ -8,10 +8,11 @@ import { formatPlate, todayIso } from "../lib/format";
 import { OPEN_STATUS } from "../lib/operation";
 import { supabase } from "../lib/supabase";
 import {
+  ENTRY_WINDOW_MINUTES,
   STAGE_HINTS,
   STAGE_LABELS,
   TRUCK_STAGES,
-  averageStageDurations,
+  averageDurations,
   formatDuration,
   groupByStage,
   stageDurations,
@@ -24,14 +25,15 @@ import { CountBadge, PlateBadge } from "./desk";
 import { Alert, Modal } from "./ui";
 
 /*
- * Etapas do caminhao na pedreira (ENTRADA -> CARREGANDO -> SAIDA), em tempo real. A conta vive
- * em `lib/truck-stages.ts`; aqui e a leitura e o desenho.
+ * Etapas do caminhao na pedreira (ENTRADA -> CARREGANDO -> SAIDA), em tempo real, a partir da
+ * pesagem que a BALANCA grava (a regra vive em `lib/truck-stages.ts`); aqui e a leitura e o
+ * desenho.
  *
- * Carga no banco (o projeto ja estourou cota): quem avisa que algo mudou e o Realtime —
- * `operation_change_pings` (a balanca gravou pesagem) e `loading_requests` da unidade (o
- * carregador marcou Iniciar/Concluir) —, e o aviso so faz a tela reler, com folga de 1,5 s para
- * varios avisos virarem uma leitura. A releitura periodica e a rede de seguranca (30 s sem o
- * aviso, 90 s com ele) e para com a aba escondida — a mesma disciplina da tela Monitoramento.
+ * Carga no banco (o projeto ja estourou cota): quem avisa que algo mudou e o Realtime de
+ * `operation_change_pings` (a balanca gravou pesagem), e o aviso so faz a tela reler, com folga
+ * de 1,5 s para varios avisos virarem uma leitura. A releitura periodica e a rede de seguranca
+ * (30 s sem o aviso, 90 s com ele) e para com a aba escondida — a mesma disciplina da tela
+ * Monitoramento. O relogio de 15 s e o que passa o caminhao da ENTRADA para o CARREGANDO.
  */
 
 const OPERATION_COLUMNS =
@@ -41,8 +43,6 @@ const REALTIME_DEBOUNCE_MS = 1_500;
 const POLL_FALLBACK_MS = 30_000;
 const POLL_WITH_REALTIME_MS = 90_000;
 const CLOCK_MS = 15_000;
-/** Ids por consulta de `loading_requests` (o `in(...)` vai na URL). */
-const ID_CHUNK = 150;
 
 type OperationRow = {
   id: string;
@@ -54,26 +54,7 @@ type OperationRow = {
   closed_at: string | null;
 };
 
-type LoaderMarks = { loader_started_at: string | null; loader_completed_at: string | null };
-
-async function loadLoaderMarks(
-  companyId: string,
-  operationIds: string[]
-): Promise<Map<string, LoaderMarks>> {
-  const marks = new Map<string, LoaderMarks>();
-  for (let index = 0; index < operationIds.length; index += ID_CHUNK) {
-    const { data, error } = await supabase
-      .from("loading_requests")
-      .select("operation_id, loader_started_at, loader_completed_at")
-      .eq("company_id", companyId)
-      .in("operation_id", operationIds.slice(index, index + ID_CHUNK));
-    if (error) throw new Error(error.message);
-    for (const row of data ?? []) marks.set(row.operation_id, row);
-  }
-  return marks;
-}
-
-function toTruck(row: OperationRow, marks: LoaderMarks | undefined, exited: boolean): StageTruck {
+function toTruck(row: OperationRow, exited: boolean): StageTruck {
   return {
     operationId: row.id,
     plate: row.plate ?? "",
@@ -81,17 +62,12 @@ function toTruck(row: OperationRow, marks: LoaderMarks | undefined, exited: bool
     productDescription: row.product_description || "Produto nao informado",
     driverName: row.driver_name || "",
     entryAt: row.created_at,
-    loadStartedAt: marks?.loader_started_at ?? null,
-    loadedAt: marks?.loader_completed_at ?? null,
     exitAt: exited ? (row.closed_at ?? null) : null
   };
 }
 
-/** Quem esta na pedreira agora e quem ja saiu hoje, com os carimbos do carregador. */
-async function loadStages(
-  companyId: string,
-  unitId: string
-): Promise<{ inside: StageTruck[]; finished: StageTruck[] }> {
+/** As operacoes em aberto da unidade e as concluidas hoje. */
+async function loadTrucks(companyId: string, unitId: string): Promise<StageTruck[]> {
   const startOfDay = `${todayIso()}T00:00:00-03:00`;
   const [open, closed] = await Promise.all([
     supabase
@@ -114,16 +90,10 @@ async function loadStages(
   ]);
   if (open.error) throw new Error(open.error.message);
   if (closed.error) throw new Error(closed.error.message);
-  const openRows = (open.data ?? []) as OperationRow[];
-  const closedRows = (closed.data ?? []) as OperationRow[];
-  const marks = await loadLoaderMarks(companyId, [
-    ...openRows.map((row) => row.id),
-    ...closedRows.map((row) => row.id)
-  ]);
-  return {
-    inside: openRows.map((row) => toTruck(row, marks.get(row.id), false)),
-    finished: closedRows.map((row) => toTruck(row, marks.get(row.id), true))
-  };
+  return [
+    ...((open.data ?? []) as OperationRow[]).map((row) => toTruck(row, false)),
+    ...((closed.data ?? []) as OperationRow[]).map((row) => toTruck(row, true))
+  ];
 }
 
 function clock(iso: string | null): string {
@@ -147,8 +117,7 @@ type RealtimeState = "connecting" | "live" | "down";
 
 export function TruckStages() {
   const user = useUser();
-  const [inside, setInside] = useState<StageTruck[]>([]);
-  const [finished, setFinished] = useState<StageTruck[]>([]);
+  const [trucks, setTrucks] = useState<StageTruck[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [realtime, setRealtime] = useState<RealtimeState>("connecting");
@@ -166,10 +135,9 @@ export function TruckStages() {
     }
     inFlight.current = true;
     try {
-      const result = await loadStages(user.companyId, user.unitId);
+      const result = await loadTrucks(user.companyId, user.unitId);
       if (!mounted.current) return;
-      setInside(result.inside);
-      setFinished(result.finished);
+      setTrucks(result);
       setNow(Date.now());
       setError(null);
     } catch {
@@ -203,12 +171,12 @@ export function TruckStages() {
     };
   }, [load]);
 
-  // Aviso em tempo real: pesagem gravada pela balanca ou marca do carregador -> rele.
+  // Aviso em tempo real: a balanca gravou pesagem da empresa -> rele.
   useEffect(() => {
     let subscribedBefore = false;
     setRealtime("connecting");
     const channel = supabase
-      .channel(`truck-stages:${user.companyId}:${user.unitId}`)
+      .channel(`truck-stages:${user.companyId}`)
       .on(
         "postgres_changes",
         {
@@ -216,16 +184,6 @@ export function TruckStages() {
           schema: "public",
           table: "operation_change_pings",
           filter: `company_id=eq.${user.companyId}`
-        },
-        schedule
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "loading_requests",
-          filter: `unit_id=eq.${user.unitId}`
         },
         schedule
       )
@@ -243,7 +201,7 @@ export function TruckStages() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [user.companyId, user.unitId, schedule]);
+  }, [user.companyId, schedule]);
 
   // Rede de seguranca e relogio, so com a aba visivel.
   const pollMs = realtime === "live" ? POLL_WITH_REALTIME_MS : POLL_FALLBACK_MS;
@@ -277,11 +235,14 @@ export function TruckStages() {
     };
   }, [load, pollMs, schedule]);
 
-  const groups = useMemo(() => groupByStage(inside, now), [inside, now]);
-  const averages = useMemo(() => averageStageDurations(finished, now), [finished, now]);
-  const noLoaderMarks =
-    inside.length + finished.length > 0 &&
-    [...inside, ...finished].every((truck) => !truck.loadStartedAt && !truck.loadedAt);
+  const groups = useMemo(() => groupByStage(trucks, now), [trucks, now]);
+  const averages = useMemo(() => averageDurations(groups.saida, now), [groups, now]);
+  const insideCount = groups.entrada.length + groups.carregando.length;
+  const stageNote: Record<TruckStage, string> = {
+    entrada: `Chegaram nos ultimos ${ENTRY_WINDOW_MINUTES} min`,
+    carregando: `Espera media hoje: ${formatDuration(averages.carregando)}`,
+    saida: `Tempo medio na pedreira: ${formatDuration(averages.total)}`
+  };
 
   return (
     <section className="truck-stages" aria-labelledby="truck-stages-title">
@@ -291,10 +252,8 @@ export function TruckStages() {
             Caminhoes na pedreira
           </h2>
           <p className="ts-subtitle">
-            {inside.length === 1 ? "1 caminhao agora" : `${inside.length} caminhoes agora`} ·{" "}
-            {finished.length === 1 ? "1 saiu hoje" : `${finished.length} sairam hoje`}
-            {averages.total !== null &&
-              ` · tempo medio na pedreira ${formatDuration(averages.total)}`}
+            {insideCount === 1 ? "1 caminhao agora" : `${insideCount} caminhoes agora`} ·{" "}
+            {groups.saida.length === 1 ? "1 saiu hoje" : `${groups.saida.length} sairam hoje`}
           </p>
         </div>
         <span className={`ts-live ${realtime}`} role="status">
@@ -326,21 +285,13 @@ export function TruckStages() {
               <strong className="ts-count">{count}</strong>
               <span className="ts-count-label">{count === 1 ? "caminhao" : "caminhoes"}</span>
               <span className="ts-avg">
-                <Clock size={13} aria-hidden="true" /> Media hoje:{" "}
-                <strong>{formatDuration(averages[stage])}</strong>
+                <Clock size={13} aria-hidden="true" /> {stageNote[stage]}
               </span>
               <span className="ts-hint">{STAGE_HINTS[stage]}</span>
             </li>
           );
         })}
       </ol>
-
-      {noLoaderMarks && (
-        <p className="ts-note">
-          O carregador ainda nao marcou "Iniciar" e "Concluir" na tela de carregamento: sem essas
-          marcas, todo o tempo do caminhao fica na etapa Entrada.
-        </p>
-      )}
 
       <div className="ts-columns">
         {TRUCK_STAGES.map((stage) => (
@@ -371,7 +322,11 @@ export function TruckStages() {
                     </span>
                     <span className="ts-item-time">
                       <strong>{formatDuration(timeInCurrentStage(truck, now))}</strong>
-                      <span>entrou {clock(truck.entryAt)}</span>
+                      <span>
+                        {truck.exitAt
+                          ? `saiu ${clock(truck.exitAt)}`
+                          : `entrou ${clock(truck.entryAt)}`}
+                      </span>
                     </span>
                   </button>
                 </li>
@@ -385,10 +340,10 @@ export function TruckStages() {
         <div className="ts-column-head">
           <LogOut size={16} aria-hidden="true" />
           <strong>Sairam hoje</strong>
-          <CountBadge>{finished.length}</CountBadge>
+          <CountBadge>{groups.saida.length}</CountBadge>
           <span className="ts-finished-hint">Tempo de cada caminhao em cada etapa</span>
         </div>
-        {finished.length === 0 ? (
+        {groups.saida.length === 0 ? (
           <p className="ts-empty">
             {loaded ? "Nenhum caminhao saiu hoje ainda." : "Carregando..."}
           </p>
@@ -399,15 +354,15 @@ export function TruckStages() {
                 <tr>
                   <th>Placa</th>
                   <th>Cliente / Produto</th>
+                  <th className="num">Entrou</th>
                   <th className="num">Entrada</th>
                   <th className="num">Carregando</th>
-                  <th className="num">Saida</th>
                   <th className="num">Total</th>
                   <th className="num">Saiu</th>
                 </tr>
               </thead>
               <tbody>
-                {finished.map((truck) => {
+                {groups.saida.map((truck) => {
                   const durations = stageDurations(truck, now);
                   return (
                     <tr key={truck.operationId} onClick={() => setDetail(truck)}>
@@ -418,9 +373,9 @@ export function TruckStages() {
                         <strong>{truck.customerName}</strong>
                         <span className="cell-sub">{truck.productDescription}</span>
                       </td>
+                      <td className="num">{clock(truck.entryAt)}</td>
                       <td className="num">{formatDuration(durations.entrada)}</td>
                       <td className="num">{formatDuration(durations.carregando)}</td>
-                      <td className="num">{formatDuration(durations.saida)}</td>
                       <td className="num">
                         <strong>{formatDuration(durations.total)}</strong>
                       </td>
@@ -439,7 +394,7 @@ export function TruckStages() {
   );
 }
 
-/** O caminho de um caminhao: a hora de cada marca e quanto tempo ficou em cada etapa. */
+/** O caminho de um caminhao: a hora de cada passo e quanto tempo ficou em cada etapa. */
 function TruckTimeline({
   truck,
   now,
@@ -450,12 +405,11 @@ function TruckTimeline({
   onClose: () => void;
 }) {
   const durations = stageDurations(truck, now);
-  const current = truck.exitAt ? null : stageOf(truck);
-  const steps: Array<{ stage: TruckStage; startedAt: string | null; label: string }> = [
-    { stage: "entrada", startedAt: truck.entryAt, label: "Pesou a entrada" },
-    { stage: "carregando", startedAt: truck.loadStartedAt, label: "Carregador iniciou" },
-    { stage: "saida", startedAt: truck.loadedAt, label: "Carregador concluiu" }
-  ];
+  const current = stageOf(truck, now);
+  const entryMs = Date.parse(truck.entryAt);
+  const waitingFrom = Number.isFinite(entryMs)
+    ? new Date(entryMs + ENTRY_WINDOW_MINUTES * 60_000).toISOString()
+    : null;
   return (
     <Modal
       title={`${formatPlate(truck.plate)} — ${truck.customerName}`}
@@ -468,40 +422,56 @@ function TruckTimeline({
       }
     >
       <ol className="ts-timeline">
-        {steps.map(({ stage, startedAt, label }) => (
-          <li
-            key={stage}
-            className={`ts-timeline-step ts-${stage}${current === stage ? " current" : ""}`}
-          >
-            <span className="ts-swatch" aria-hidden="true" />
-            <div>
-              <strong>{STAGE_LABELS[stage]}</strong>
-              <span>
-                {label}: {clock(startedAt)}
-              </span>
-            </div>
-            <span className="ts-timeline-duration">
-              {formatDuration(durations[stage])}
-              {current === stage && <small>ate agora</small>}
+        <li className={`ts-timeline-step ts-entrada${current === "entrada" ? " current" : ""}`}>
+          <span className="ts-swatch" aria-hidden="true" />
+          <div>
+            <strong>{STAGE_LABELS.entrada}</strong>
+            <span>Pesou a entrada: {clock(truck.entryAt)}</span>
+          </div>
+          <span className="ts-timeline-duration">
+            {formatDuration(durations.entrada)}
+            {current === "entrada" && <small>ate agora</small>}
+          </span>
+        </li>
+        <li
+          className={`ts-timeline-step ts-carregando${current === "carregando" ? " current" : ""}`}
+        >
+          <span className="ts-swatch" aria-hidden="true" />
+          <div>
+            <strong>{STAGE_LABELS.carregando}</strong>
+            <span>
+              {durations.carregando === null
+                ? "Saiu antes de passar por esta etapa"
+                : `Em aberto, aguardando desde ${clock(waitingFrom)}`}
             </span>
-          </li>
-        ))}
-        <li className="ts-timeline-step ts-exit">
+          </div>
+          <span className="ts-timeline-duration">
+            {formatDuration(durations.carregando)}
+            {current === "carregando" && <small>ate agora</small>}
+          </span>
+        </li>
+        <li className={`ts-timeline-step ts-saida${current === "saida" ? " current" : ""}`}>
           <span className="ts-swatch" aria-hidden="true">
             <ArrowRight size={12} />
           </span>
           <div>
-            <strong>Saiu da pedreira</strong>
-            <span>Pesou a saida: {truck.exitAt ? clock(truck.exitAt) : "ainda nao"}</span>
+            <strong>{STAGE_LABELS.saida}</strong>
+            <span>
+              {truck.exitAt
+                ? `Operacao concluida: pesou a saida as ${clock(truck.exitAt)}`
+                : "Ainda nao pesou a saida"}
+            </span>
           </div>
           <span className="ts-timeline-duration total">
             {formatDuration(durations.total)}
-            <small>no total</small>
+            <small>{truck.exitAt ? "na pedreira" : "ate agora"}</small>
           </span>
         </li>
       </ol>
       <p className="ts-note">
-        Etapa sem marca do carregador aparece como "—": o tempo dela ficou somado na etapa anterior.
+        As etapas saem da pesagem da balanca: a entrada vale nos primeiros {ENTRY_WINDOW_MINUTES}{" "}
+        minutos; depois, enquanto a operacao estiver em aberto, o caminhao esta carregando; ao pesar
+        a saida, a operacao conclui.
       </p>
     </Modal>
   );

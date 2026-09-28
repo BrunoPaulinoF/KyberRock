@@ -1,13 +1,4 @@
-import {
-  CheckCircle2,
-  Download,
-  History,
-  LogOut,
-  Moon,
-  PlayCircle,
-  RotateCcw,
-  Sun
-} from "lucide-react";
+import { CheckCircle2, Download, History, LogOut, Moon, RotateCcw, Sun } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Alert, Modal } from "../components/ui";
@@ -25,21 +16,19 @@ import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 
 const COLUMNS =
-  "id,plate,customer_name,driver_name,product_description,created_at,loader_started_at,loader_completed_at";
+  "id,plate,customer_name,driver_name,product_description,created_at,loader_completed_at";
 
 /**
  * Tela do carregador: a fila de carregamento da unidade dele, e nada mais. Mesmas regras e as
  * mesmas informacoes da tela que existia no KyberRock Portal (`apps/loader-web`), que deixou de
  * receber o carregador. Feita para o celular na mao e para o tablet no patio: botoes grandes,
- * "Iniciar" e "Concluir" lado a lado na largura do cartao, faixa de produtos que rola de lado, e em tablet os cartoes
+ * "Concluir" na largura do cartao, faixa de produtos que rola de lado, e em tablet os cartoes
  * vao para duas colunas. Instala como app (o mesmo "Instalar app" do portal).
  *
- * Unicas escritas diretas do site: marcar o inicio da carga (`loader_started_at`, botao "Iniciar",
- * que so a tela Comercial le — e a etapa CARREGANDO) e marcar/desmarcar `loader_completed_at`.
- * Sao carimbos operacionais da solicitacao (nao cadastro), a politica "loader can mark loading
- * request as completed" so deixa mexer em solicitacao ABERTA da propria unidade, e e o mesmo
- * caminho que o carregador ja usa hoje — a balanca le o fim da carga no pull e mostra
- * "carregado" (o inicio nao vai para a balanca).
+ * Unica escrita direta do site: marcar/desmarcar `loader_completed_at`. E um carimbo
+ * operacional da solicitacao (nao cadastro), a politica "loader can mark loading request as
+ * completed" so deixa mexer em solicitacao ABERTA da propria unidade, e e o mesmo caminho que
+ * o carregador ja usa hoje — a balanca le o carimbo no pull e mostra "carregado".
  */
 export function Loading() {
   const user = useUser();
@@ -80,7 +69,6 @@ export function Loading() {
         driverName: row.driver_name ?? "",
         productDescription: row.product_description ?? "",
         createdAt: row.created_at,
-        loaderStartedAt: row.loader_started_at,
         loaderCompletedAt: row.loader_completed_at
       }))
     );
@@ -144,33 +132,6 @@ export function Loading() {
           ? "Nao foi possivel concluir a carga. Tente de novo."
           : "Nao foi possivel devolver a carga para a fila. Tente de novo."
       );
-    }
-    setBusy((current) => {
-      const next = new Set(current);
-      next.delete(item.id);
-      return next;
-    });
-  }
-
-  /** "Iniciar": marca o comeco da carga, para a etapa CARREGANDO da tela Comercial. */
-  async function start(item: LoadingItem) {
-    if (busy.has(item.id) || item.loaderStartedAt) return;
-    const startedAt = new Date().toISOString();
-    setBusy((current) => new Set(current).add(item.id));
-    setItems((current) =>
-      current.map((row) => (row.id === item.id ? { ...row, loaderStartedAt: startedAt } : row))
-    );
-    const { error: updateError } = await supabase
-      .from("loading_requests")
-      .update({ loader_started_at: startedAt })
-      .eq("id", item.id)
-      .eq("unit_id", user.unitId)
-      .eq("status", "open");
-    if (updateError) {
-      setItems((current) =>
-        current.map((row) => (row.id === item.id ? { ...row, loaderStartedAt: null } : row))
-      );
-      setError("Nao foi possivel marcar o inicio da carga. Tente de novo.");
     }
     setBusy((current) => {
       const next = new Set(current);
@@ -316,35 +277,16 @@ export function Loading() {
                   <span aria-hidden="true">·</span>
                   <span>{item.driverName}</span>
                 </span>
-                <div className="loading-actions">
-                  {item.loaderStartedAt ? (
-                    <span className="loading-started" title="Inicio da carga">
-                      <PlayCircle size={16} aria-hidden="true" />
-                      Carregando desde {formatArrival(item.loaderStartedAt, timeZone, now)}
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      className="loading-start"
-                      disabled={busy.has(item.id)}
-                      onClick={() => void start(item)}
-                      aria-label={`Iniciar carga da placa ${item.plate || "sem placa"}`}
-                    >
-                      <PlayCircle size={20} />
-                      {busy.has(item.id) ? "..." : "Iniciar"}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="loading-done"
-                    disabled={busy.has(item.id)}
-                    onClick={() => void mark(item, new Date().toISOString())}
-                    aria-label={`Concluir carga da placa ${item.plate || "sem placa"}`}
-                  >
-                    <CheckCircle2 size={20} />
-                    {busy.has(item.id) ? "..." : "Concluir"}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  className="loading-done"
+                  disabled={busy.has(item.id)}
+                  onClick={() => void mark(item, new Date().toISOString())}
+                  aria-label={`Concluir carga da placa ${item.plate || "sem placa"}`}
+                >
+                  <CheckCircle2 size={20} />
+                  {busy.has(item.id) ? "..." : "Concluir"}
+                </button>
               </li>
             ))}
           </ol>

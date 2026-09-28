@@ -122,44 +122,6 @@
   border-radius: 8px;
   font-size: 13px;
 }
-.truck-control-table-scroll {
-  overflow: auto;
-  flex: 1;
-  min-height: 0;
-  border: 1px solid var(--kr-border);
-  border-radius: 14px;
-  background: var(--kr-surface);
-  box-shadow: var(--kr-shadow);
-}
-.truck-control-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-  color: var(--kr-text);
-}
-.truck-control-table > thead > tr > th {
-  padding: 9px 12px;
-  text-align: left;
-  color: var(--kr-muted);
-  background: var(--kr-surface-soft);
-  border-bottom: 1px solid var(--kr-border);
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  font-size: 11px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-}
-.truck-control-table > tbody > tr > td {
-  padding: 10px 12px;
-  border-top: 1px solid var(--kr-border);
-  vertical-align: top;
-}
-.truck-control-table .num {
-  text-align: right;
-}
 .truck-control-plate {
   display: inline-block;
   font-weight: 800;
@@ -169,10 +131,6 @@
   border-radius: 8px;
   padding: 2px 8px;
   color: var(--kr-text-strong);
-}
-.truck-control-above {
-  color: var(--kr-warning);
-  font-weight: 800;
 }
 .truck-control-link {
   border: 1px solid var(--kr-border);
@@ -184,11 +142,6 @@
   font-weight: 700;
   font-size: 12px;
   white-space: nowrap;
-}
-.truck-control-table > tbody > tr > td.truck-control-trip-cell {
-  padding: 0 12px 12px;
-  border-top: none;
-  background: var(--kr-surface-soft);
 }
 .truck-control-trip-table {
   width: 100%;
@@ -213,4 +166,220 @@
 }
 .truck-control-trip-table .num {
   text-align: right;
+}
+
+/* ---------- um cartao por caminhao ---------- */
+.truck-control-empty {
+  margin: 0;
+  padding: 28px;
+  border: 1px solid var(--kr-border);
+  border-radius: 14px;
+  background: var(--kr-surface);
+  color: var(--kr-muted);
+  text-align: center;
+}
+.truck-control-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tc-card {
+  border: 1px solid var(--kr-border);
+  border-radius: 14px;
+  background: var(--kr-surface);
+  box-shadow: var(--kr-shadow);
+  overflow: hidden;
+}
+.tc-card.above {
+  border-left: 4px solid var(--kr-warning);
+}
+.tc-card-head {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--kr-border);
+  background: var(--kr-surface-soft);
+}
+.tc-card-id {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.tc-card-id .truck-control-plate {
+  font-size: 15px;
+}
+.tc-card-driver {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--kr-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.tc-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+.tc-stats div {
+  min-width: 0;
+  padding-left: 12px;
+  border-left: 1px solid var(--kr-border);
+}
+.tc-stats dt {
+  color: var(--kr-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.tc-stats dd {
+  margin: 2px 0 0;
+  color: var(--kr-text-strong);
+  font-size: 17px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tc-stats dd small {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+}
+.tc-stat-alert dd {
+  color: var(--kr-warning);
+}
+.tc-card-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+}
+.tc-share {
+  min-width: 0;
+  padding: 12px 16px;
+}
+.tc-share + .tc-share {
+  border-left: 1px solid var(--kr-border);
+}
+.tc-share-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  color: var(--kr-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.tc-share-title span {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--kr-surface-soft);
+  border: 1px solid var(--kr-border);
+  color: var(--kr-text);
+  font-size: 10px;
+}
+.tc-share-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tc-share-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 12px;
+  row-gap: 3px;
+  align-items: baseline;
+}
+.tc-share-name {
+  overflow: hidden;
+  color: var(--kr-text-strong);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tc-share-value {
+  color: var(--kr-text-strong);
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.tc-share-value small {
+  margin-left: 6px;
+  color: var(--kr-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.tc-share-bar {
+  grid-column: 1 / -1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--kr-border);
+}
+.tc-share-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--kr-accent);
+}
+.tc-share-more {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--kr-accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.tc-trips {
+  overflow-x: auto;
+  padding: 0 16px 14px;
+  border-top: 1px solid var(--kr-border);
+  background: var(--kr-surface-soft);
+}
+.tc-trips .truck-control-trip-table {
+  margin-top: 12px;
+  min-width: 620px;
+}
+.truck-control-list .load-more {
+  border: 1px solid var(--kr-border);
+  border-radius: 14px;
+  background: var(--kr-surface);
+}
+@media (max-width: 1000px) {
+  .tc-card-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .tc-stats {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+@media (max-width: 720px) {
+  .tc-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .tc-card-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tc-share + .tc-share {
+    border-left: 0;
+    border-top: 1px solid var(--kr-border);
+  }
 }

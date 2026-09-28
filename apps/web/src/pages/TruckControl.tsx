@@ -1,8 +1,9 @@
 import "./truck-control.css";
 
 import { FileText, Lightbulb, RefreshCw, Table } from "lucide-react";
-import { Fragment, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
+import { LoadMore, useShowMore } from "../components/ui";
 import { useUser } from "../lib/auth";
 import { todayIso } from "../lib/format";
 import { downloadSpreadsheet, printReportHtml } from "../lib/report-output";
@@ -13,7 +14,8 @@ import {
   formatTripDay,
   isoDaysBefore,
   loadTruckControl,
-  truckControlDocument
+  truckControlDocument,
+  type TruckControlRow
 } from "../lib/truck-control";
 import { useAsync } from "../lib/use-async";
 
@@ -56,6 +58,8 @@ export function TruckControl() {
   );
   const filteredTrucks = visible?.trucks ?? [];
   const filtered = Boolean(visible?.search);
+  // 50 caminhoes por vez; "Ver mais" traz os proximos.
+  const page = useShowMore(`${startDate}|${endDate}|${search}`);
 
   // Media do periodo inteiro: e contra ela que se destaca o caminhao demorado.
   const periodAverageMinutes = report?.averageMinutes ?? 0;
@@ -210,129 +214,206 @@ export function TruckControl() {
         </div>
       </div>
 
-      <div className="truck-control-table-scroll">
-        <table className="truck-control-table">
-          <thead>
-            <tr>
-              <th>Placa</th>
-              <th>Motorista</th>
-              <th className="num">Operacoes</th>
-              <th className="num">Tempo medio</th>
-              <th className="num">Tempo total</th>
-              <th className="num">Peso (kg)</th>
-              <th>Clientes atendidos</th>
-              <th>Peso por produto</th>
-              <th>Cargas</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={10}>Carregando...</td>
-              </tr>
-            ) : filteredTrucks.length === 0 ? (
-              <tr>
-                <td colSpan={10}>
-                  {filtered ? "Nenhum caminhao para essa busca." : "Nenhum caminhao no periodo."}
-                </td>
-              </tr>
-            ) : (
-              filteredTrucks.map((truck) => {
-                const aboveAvg =
-                  truck.avgMinutes > periodAverageMinutes && periodAverageMinutes > 0;
-                const open = openPlate === truck.plate;
-                return (
-                  <Fragment key={truck.plate}>
-                    <tr>
-                      <td>
-                        <span className="truck-control-plate">{truck.plate}</span>
-                      </td>
-                      <td>{truck.driverName ?? "-"}</td>
-                      <td className="num">{truck.operations}</td>
-                      <td className={`num${aboveAvg ? " truck-control-above" : ""}`}>
-                        {formatMinutes(truck.avgMinutes)}
-                        {aboveAvg ? " ▲" : ""}
-                      </td>
-                      <td className="num">{formatMinutes(truck.totalMinutes)}</td>
-                      <td className="num">{truck.totalNetWeightKg.toLocaleString("pt-BR")}</td>
-                      <td>
-                        {truck.customers.length === 0
-                          ? "-"
-                          : truck.customers.map((customer) => (
-                              <div key={customer.customerName}>
-                                {customer.customerName}:{" "}
-                                {customer.totalNetWeightKg.toLocaleString("pt-BR")} (
-                                {customer.operations}x)
-                              </div>
-                            ))}
-                      </td>
-                      <td>
-                        {truck.products.length === 0
-                          ? "-"
-                          : truck.products.map((product) => (
-                              <div key={product.productDescription}>
-                                {product.productDescription}:{" "}
-                                {product.totalNetWeightKg.toLocaleString("pt-BR")}
-                              </div>
-                            ))}
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="truck-control-link"
-                          onClick={() => setOpenPlate(open ? null : truck.plate)}
-                        >
-                          {open ? "Ocultar cargas" : `Ver ${truck.trips.length} carga(s)`}
-                        </button>
-                      </td>
-                    </tr>
-                    {open ? (
-                      <tr>
-                        <td className="truck-control-trip-cell" colSpan={10}>
-                          <table className="truck-control-trip-table">
-                            <thead>
-                              <tr>
-                                <th>Data</th>
-                                <th>Cliente</th>
-                                <th>Produto</th>
-                                <th className="num">Peso (kg)</th>
-                                <th className="num">Entrada</th>
-                                <th className="num">Saida</th>
-                                <th className="num">Tempo</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {truck.trips.length === 0 ? (
-                                <tr>
-                                  <td colSpan={7}>Sem cargas no periodo.</td>
-                                </tr>
-                              ) : (
-                                truck.trips.map((trip) => (
-                                  <tr key={trip.operationId}>
-                                    <td>{formatTripDay(trip.entryAt)}</td>
-                                    <td>{trip.customerName}</td>
-                                    <td>{trip.productDescription}</td>
-                                    <td className="num">
-                                      {trip.netWeightKg.toLocaleString("pt-BR")}
-                                    </td>
-                                    <td className="num">{formatClock(trip.entryAt)}</td>
-                                    <td className="num">{formatClock(trip.exitAt)}</td>
-                                    <td className="num">{formatMinutes(trip.minutes)}</td>
-                                  </tr>
-                                ))
-                              )}
-                            </tbody>
-                          </table>
-                        </td>
-                      </tr>
-                    ) : null}
-                  </Fragment>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+      {loading ? (
+        <p className="truck-control-empty">Carregando...</p>
+      ) : filteredTrucks.length === 0 ? (
+        <p className="truck-control-empty">
+          {filtered ? "Nenhum caminhao para essa busca." : "Nenhum caminhao no periodo."}
+        </p>
+      ) : (
+        <div className="truck-control-list">
+          {filteredTrucks.slice(0, page.limit).map((truck) => (
+            <TruckCard
+              key={truck.plate}
+              truck={truck}
+              aboveAverage={truck.avgMinutes > periodAverageMinutes && periodAverageMinutes > 0}
+              open={openPlate === truck.plate}
+              onToggle={() => setOpenPlate(openPlate === truck.plate ? null : truck.plate)}
+            />
+          ))}
+          <LoadMore
+            shown={Math.min(page.limit, filteredTrucks.length)}
+            total={filteredTrucks.length}
+            onMore={page.more}
+          />
+        </div>
+      )}
     </section>
+  );
+}
+
+/** Peso em toneladas, curto: "673,2 t". */
+function tons(kg: number): string {
+  return `${(kg / 1000).toLocaleString("pt-BR", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1
+  })} t`;
+}
+
+/** Quantas linhas cada lista do cartao mostra antes do "+N". */
+const LIST_PREVIEW = 5;
+
+/**
+ * Lista "nome ........ peso" com uma barra da parte de cada um no total do caminhao — clientes
+ * e produtos lado a lado, cada um na sua coluna, em vez de um texto corrido. So as primeiras
+ * `LIST_PREVIEW` linhas aparecem de inicio; o resto abre no "+N".
+ */
+function ShareList({
+  title,
+  items,
+  totalKg
+}: {
+  title: string;
+  items: Array<{ label: string; kg: number; operations?: number }>;
+  totalKg: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? items : items.slice(0, LIST_PREVIEW);
+  const hidden = items.length - shown.length;
+  return (
+    <div className="tc-share">
+      <h3 className="tc-share-title">
+        {title} <span>{items.length}</span>
+      </h3>
+      {items.length === 0 ? (
+        <p className="truck-control-muted">Nenhum.</p>
+      ) : (
+        <ul className="tc-share-list">
+          {shown.map((item) => {
+            const share = totalKg > 0 ? Math.min(100, (item.kg / totalKg) * 100) : 0;
+            return (
+              <li key={item.label} className="tc-share-row">
+                <span className="tc-share-name" title={item.label}>
+                  {item.label}
+                </span>
+                <span className="tc-share-value">
+                  {tons(item.kg)}
+                  {item.operations !== undefined && (
+                    <small>
+                      {item.operations} {item.operations === 1 ? "carga" : "cargas"}
+                    </small>
+                  )}
+                </span>
+                <span className="tc-share-bar" aria-hidden="true">
+                  <span style={{ width: `${share}%` }} />
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {items.length > LIST_PREVIEW && (
+        <button type="button" className="tc-share-more" onClick={() => setExpanded(!expanded)}>
+          {expanded ? "Mostrar menos" : `+${hidden} ${hidden === 1 ? "outro" : "outros"}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Um caminhao: os numeros em destaque em cima, clientes e produtos embaixo, cargas ao abrir. */
+function TruckCard({
+  truck,
+  aboveAverage,
+  open,
+  onToggle
+}: {
+  truck: TruckControlRow;
+  aboveAverage: boolean;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <article className={`tc-card${aboveAverage ? " above" : ""}`}>
+      <header className="tc-card-head">
+        <div className="tc-card-id">
+          <span className="truck-control-plate">{truck.plate}</span>
+          <span className="tc-card-driver">{truck.driverName ?? "Motorista nao informado"}</span>
+        </div>
+        <dl className="tc-stats">
+          <div>
+            <dt>Operacoes</dt>
+            <dd>{truck.operations}</dd>
+          </div>
+          <div className={aboveAverage ? "tc-stat-alert" : undefined}>
+            <dt>Tempo medio</dt>
+            <dd>
+              {formatMinutes(truck.avgMinutes)}
+              {aboveAverage && (
+                <small title="Acima do tempo medio do periodo"> ▲ acima da media</small>
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt>Tempo total</dt>
+            <dd>{formatMinutes(truck.totalMinutes)}</dd>
+          </div>
+          <div>
+            <dt>Peso</dt>
+            <dd>{tons(truck.totalNetWeightKg)}</dd>
+          </div>
+        </dl>
+        <button type="button" className="truck-control-link" onClick={onToggle}>
+          {open ? "Ocultar cargas" : `Ver ${truck.trips.length} carga(s)`}
+        </button>
+      </header>
+
+      <div className="tc-card-body">
+        <ShareList
+          title="Clientes atendidos"
+          totalKg={truck.totalNetWeightKg}
+          items={truck.customers.map((customer) => ({
+            label: customer.customerName,
+            kg: customer.totalNetWeightKg,
+            operations: customer.operations
+          }))}
+        />
+        <ShareList
+          title="Peso por produto"
+          totalKg={truck.totalNetWeightKg}
+          items={truck.products.map((product) => ({
+            label: product.productDescription,
+            kg: product.totalNetWeightKg
+          }))}
+        />
+      </div>
+
+      {open && (
+        <div className="tc-trips">
+          <table className="truck-control-trip-table">
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Cliente</th>
+                <th>Produto</th>
+                <th className="num">Peso (kg)</th>
+                <th className="num">Entrada</th>
+                <th className="num">Saida</th>
+                <th className="num">Tempo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {truck.trips.length === 0 ? (
+                <tr>
+                  <td colSpan={7}>Sem cargas no periodo.</td>
+                </tr>
+              ) : (
+                truck.trips.map((trip) => (
+                  <tr key={trip.operationId}>
+                    <td>{formatTripDay(trip.entryAt)}</td>
+                    <td>{trip.customerName}</td>
+                    <td>{trip.productDescription}</td>
+                    <td className="num">{trip.netWeightKg.toLocaleString("pt-BR")}</td>
+                    <td className="num">{formatClock(trip.entryAt)}</td>
+                    <td className="num">{formatClock(trip.exitAt)}</td>
+                    <td className="num">{formatMinutes(trip.minutes)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </article>
   );
 }
