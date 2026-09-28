@@ -4,8 +4,10 @@
  * a intencao ficar explicita no codigo.
  */
 
+import { customerSearchFilter } from "./customer-search";
 import { OPEN_STATUS, type OperationRequest } from "./operation";
 import { supabase, type Tables } from "./supabase";
+import type { Page } from "./use-paged";
 
 export type Customer = Tables<"customers">;
 export type Product = Tables<"products">;
@@ -47,7 +49,61 @@ async function all<T>(
   return rows;
 }
 
+/** Colunas da lista de clientes e do seletor — o cadastro inteiro so no formulario. */
+export interface CustomerPageFilter {
+  search: string;
+  includeInactive: boolean;
+}
+
 export const q = {
+  /** Uma pagina da lista de clientes, ja filtrada no banco, e o total do filtro. */
+  customersPage: async (
+    companyId: string,
+    filter: CustomerPageFilter,
+    from: number,
+    to: number
+  ): Promise<Page<Customer>> => {
+    let query = supabase
+      .from("customers")
+      .select("*", { count: "exact" })
+      .eq("company_id", companyId)
+      .is("deleted_at", null);
+    if (!filter.includeInactive) query = query.eq("is_active", true);
+    const search = customerSearchFilter(filter.search);
+    if (search) query = query.or(search);
+    const { data, error, count } = await query.order("trade_name").order("id").range(from, to);
+    fail(error);
+    return { rows: data ?? [], total: count ?? data?.length ?? 0 };
+  },
+  /** Quantos clientes ativos a empresa tem (o contador da secao). */
+  activeCustomerCount: async (companyId: string): Promise<number> => {
+    const { count, error } = await supabase
+      .from("customers")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", companyId)
+      .is("deleted_at", null)
+      .eq("is_active", true);
+    fail(error);
+    return count ?? 0;
+  },
+  /** Busca do seletor de cliente: poucas linhas, so as colunas que ele mostra. */
+  searchCustomers: async (
+    companyId: string,
+    search: string,
+    limit = 30
+  ): Promise<Array<Pick<Customer, "id" | "trade_name" | "legal_name" | "document">>> => {
+    let query = supabase
+      .from("customers")
+      .select("id, trade_name, legal_name, document")
+      .eq("company_id", companyId)
+      .is("deleted_at", null)
+      .eq("is_active", true);
+    const filter = customerSearchFilter(search);
+    if (filter) query = query.or(filter);
+    const { data, error } = await query.order("trade_name").limit(limit);
+    fail(error);
+    return data ?? [];
+  },
   customers: (companyId: string) =>
     all<Customer>((from, to) =>
       supabase
@@ -80,7 +136,13 @@ export const q = {
     ),
   drivers: (companyId: string) =>
     all<Driver>((from, to) =>
-      supabase.from("drivers").select("*").eq("company_id", companyId).order("name").range(from, to)
+      supabase
+        .from("drivers")
+        .select("*")
+        .eq("company_id", companyId)
+        .is("deleted_at", null)
+        .order("name")
+        .range(from, to)
     ),
   vehicles: (companyId: string) =>
     all<Vehicle>((from, to) =>
@@ -88,6 +150,7 @@ export const q = {
         .from("vehicles")
         .select("*")
         .eq("company_id", companyId)
+        .is("deleted_at", null)
         .order("plate")
         .range(from, to)
     ),

@@ -1522,6 +1522,7 @@ export type Database = {
           cloud_synced_at: string;
           company_id: string;
           created_at: string;
+          deleted_at: string | null;
           document: string | null;
           id: string;
           is_active: boolean;
@@ -1534,6 +1535,7 @@ export type Database = {
           cloud_synced_at?: string;
           company_id: string;
           created_at?: string;
+          deleted_at?: string | null;
           document?: string | null;
           id: string;
           is_active?: boolean;
@@ -1546,6 +1548,7 @@ export type Database = {
           cloud_synced_at?: string;
           company_id?: string;
           created_at?: string;
+          deleted_at?: string | null;
           document?: string | null;
           id?: string;
           is_active?: boolean;
@@ -1616,6 +1619,7 @@ export type Database = {
           entry_weight_kg: number | null;
           id: string;
           loader_completed_at: string | null;
+          loader_started_at: string | null;
           operation_id: string;
           plate: string;
           product_description: string;
@@ -1633,6 +1637,7 @@ export type Database = {
           entry_weight_kg?: number | null;
           id: string;
           loader_completed_at?: string | null;
+          loader_started_at?: string | null;
           operation_id: string;
           plate: string;
           product_description: string;
@@ -1650,6 +1655,7 @@ export type Database = {
           entry_weight_kg?: number | null;
           id?: string;
           loader_completed_at?: string | null;
+          loader_started_at?: string | null;
           operation_id?: string;
           plate?: string;
           product_description?: string;
@@ -2740,6 +2746,7 @@ export type Database = {
           cloud_synced_at: string;
           company_id: string;
           created_at: string;
+          deleted_at: string | null;
           description: string | null;
           id: string;
           is_active: boolean;
@@ -2751,6 +2758,7 @@ export type Database = {
           cloud_synced_at?: string;
           company_id: string;
           created_at?: string;
+          deleted_at?: string | null;
           description?: string | null;
           id: string;
           is_active?: boolean;
@@ -2762,6 +2770,7 @@ export type Database = {
           cloud_synced_at?: string;
           company_id?: string;
           created_at?: string;
+          deleted_at?: string | null;
           description?: string | null;
           id?: string;
           is_active?: boolean;

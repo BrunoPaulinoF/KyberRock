@@ -2075,3 +2075,72 @@ input[type="radio"] {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- "Ver mais" das listas (50 por vez) ---------- */
+.load-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-top: 1px solid var(--kr-border);
+  color: var(--kr-muted);
+  font-size: 13px;
+}
+.load-more .btn {
+  min-width: 140px;
+}
+.list-foot {
+  border: 1px solid var(--kr-border);
+  border-top: 0;
+  border-radius: 0 0 14px 14px;
+  margin-top: -1px;
+}
+
+/* "Iniciar" + "Concluir" do carregador, lado a lado (o inicio alimenta a etapa CARREGANDO). */
+.loading-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: stretch;
+}
+.loading-actions .loading-done {
+  margin-top: 8px;
+}
+.loading-start {
+  margin-top: 8px;
+  min-height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 2px solid var(--kr-accent);
+  border-radius: 12px;
+  background: var(--kr-surface);
+  color: var(--kr-text-strong);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.loading-start:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.loading-started {
+  margin-top: 8px;
+  min-height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px dashed var(--kr-accent-border);
+  border-radius: 12px;
+  background: var(--kr-accent-soft);
+  color: var(--kr-info-text);
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+}

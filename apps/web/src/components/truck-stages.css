@@ -1,0 +1,416 @@
+/* Etapas do caminhao na pedreira (ENTRADA -> CARREGANDO -> SAIDA), tela Comercial.
+   As tres cores sao as tres primeiras da paleta categorica validada (azul, laranja, verde-agua),
+   com passo proprio no tema escuro. A etapa e sempre dita por escrito tambem: a cor so reforca. */
+
+.truck-stages {
+  --ts-entrada: #2a78d6;
+  --ts-carregando: #eb6834;
+  --ts-saida: #1baf7a;
+  --ts-exit: #78716c;
+  --ts-live: #15803d;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+:root[data-theme="dark"] .truck-stages {
+  --ts-entrada: #3987e5;
+  --ts-carregando: #d95926;
+  --ts-saida: #199e70;
+  --ts-exit: #a8a29e;
+  --ts-live: #4ade80;
+}
+.ts-entrada {
+  --stage: var(--ts-entrada);
+}
+.ts-carregando {
+  --stage: var(--ts-carregando);
+}
+.ts-saida {
+  --stage: var(--ts-saida);
+}
+.ts-exit {
+  --stage: var(--ts-exit);
+}
+
+.ts-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ts-title {
+  margin: 0;
+  color: var(--kr-text-strong);
+  font-size: 20px;
+}
+.ts-subtitle {
+  margin: 4px 0 0;
+  color: var(--kr-muted);
+  font-size: 13px;
+}
+.ts-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border: 1px solid var(--kr-border);
+  border-radius: 999px;
+  color: var(--kr-text);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ts-live > span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--kr-muted);
+}
+.ts-live.live > span {
+  background: var(--ts-live);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ts-live) 25%, transparent);
+}
+.ts-live.down > span {
+  background: var(--kr-warning);
+}
+
+/* ---------- a faixa das etapas (setas) ---------- */
+.ts-flow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ts-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  padding-bottom: 4px;
+  text-align: center;
+}
+.ts-arrow {
+  align-self: stretch;
+  height: 18px;
+  background: var(--stage);
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%, 14px 50%);
+}
+.ts-step:first-child .ts-arrow {
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%);
+  border-radius: 4px 0 0 4px;
+}
+.ts-pin {
+  position: relative;
+  width: 2px;
+  height: 16px;
+  background: var(--stage);
+}
+.ts-pin::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--stage);
+  border: 2px solid var(--kr-surface);
+  transform: translateX(-50%);
+}
+.ts-step-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-top: 8px;
+  border-radius: 50%;
+  border: 2px solid var(--stage);
+  color: var(--stage);
+  background: var(--kr-surface);
+}
+.ts-step-name {
+  margin-top: 2px;
+  color: var(--kr-text-strong);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.ts-count {
+  color: var(--kr-text-strong);
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.ts-count-label {
+  color: var(--kr-muted);
+  font-size: 12px;
+}
+.ts-avg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--kr-muted);
+  font-size: 12px;
+}
+.ts-avg strong {
+  color: var(--kr-text);
+}
+.ts-hint {
+  max-width: 230px;
+  color: var(--kr-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.ts-note {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px dashed var(--kr-border);
+  border-radius: 10px;
+  color: var(--kr-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ---------- as listas embaixo de cada etapa ---------- */
+.ts-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.ts-column,
+.ts-finished {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--kr-border);
+  border-radius: 12px;
+  background: var(--kr-surface-soft);
+  overflow: hidden;
+}
+.ts-column {
+  border-top: 3px solid var(--stage);
+}
+.ts-column-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--kr-border);
+  color: var(--kr-text-strong);
+  font-size: 14px;
+}
+.ts-swatch {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  background: var(--stage);
+  color: var(--kr-surface);
+}
+/* A lista rola por dentro: a pagina nao desce sem fim. */
+.ts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 360px;
+  margin: 0;
+  padding: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+.ts-empty {
+  margin: 0;
+  padding: 16px 12px;
+  color: var(--kr-muted);
+  font-size: 13px;
+  text-align: center;
+}
+.ts-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--kr-border);
+  border-radius: 10px;
+  background: var(--kr-surface);
+  color: var(--kr-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ts-item:hover,
+.ts-item:focus-visible {
+  border-color: var(--stage);
+  outline: none;
+}
+.ts-item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ts-item-text strong,
+.ts-item-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ts-item-text strong {
+  color: var(--kr-text-strong);
+  font-size: 13px;
+}
+.ts-item-text span,
+.ts-item-time span {
+  color: var(--kr-muted);
+  font-size: 11px;
+}
+.ts-item-time {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  white-space: nowrap;
+}
+.ts-item-time strong {
+  color: var(--kr-text-strong);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- quem ja saiu hoje ---------- */
+.ts-finished-hint {
+  margin-left: auto;
+  color: var(--kr-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.ts-finished-scroll {
+  max-height: 320px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.ts-table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+.ts-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--kr-border);
+  background: var(--kr-surface-soft);
+  color: var(--kr-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+}
+.ts-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--kr-border);
+  color: var(--kr-text);
+  vertical-align: middle;
+}
+.ts-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ts-table tbody tr {
+  cursor: pointer;
+}
+.ts-table tbody tr:hover td {
+  background: var(--kr-card-hover);
+}
+
+/* ---------- o caminho de um caminhao (janela) ---------- */
+.ts-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+.ts-timeline-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--kr-border);
+  border-left: 4px solid var(--stage);
+  border-radius: 10px;
+}
+.ts-timeline-step.current {
+  background: var(--kr-surface-soft);
+}
+.ts-timeline-step div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ts-timeline-step div strong {
+  color: var(--kr-text-strong);
+}
+.ts-timeline-step div span {
+  color: var(--kr-muted);
+  font-size: 12px;
+}
+.ts-timeline-duration {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  color: var(--kr-text-strong);
+  font-size: 16px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.ts-timeline-duration small {
+  color: var(--kr-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .ts-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ts-list {
+    max-height: 280px;
+  }
+  .ts-hint {
+    display: none;
+  }
+}
+@media (max-width: 560px) {
+  .ts-count {
+    font-size: 24px;
+  }
+  .ts-step-name {
+    font-size: 11px;
+    letter-spacing: 0.03em;
+  }
+  .ts-avg {
+    flex-direction: column;
+    gap: 0;
+  }
+  .ts-finished-hint {
+    display: none;
+  }
+}

@@ -1,6 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { receiptRowsWithoutLogoImage } from "../_shared/receipt-snapshot.ts";
+import { splitProductsByUnitPrice } from "../_shared/product-price.ts";
 import { isReadUnavailable, isUnknownColumnError } from "../_shared/db-read-error.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 import { scopeRowsToDevice } from "../_shared/device-scope.ts";
@@ -282,9 +283,17 @@ Deno.serve(async (req) => {
       }
     }
     if (body.products?.length) {
-      const { error } = await upsert("products", body.products, "id");
-      if (error) {
-        stepErrors.push(`products: ${error.message} (code=${error.code ?? "n/a"})`);
+      // Preco nulo e ausencia (maquina que nunca puxou o OMIE), nao "sem preco": essa parte do
+      // lote vai sem a coluna para nao apagar o valor do OMIE que outra balanca ja enviou.
+      const { priced, unpriced } = splitProductsByUnitPrice(body.products);
+      let productError: PostgrestLikeError | null = null;
+      for (const batch of [priced, unpriced]) {
+        if (batch.length === 0) continue;
+        const { error } = await upsert("products", batch, "id");
+        productError = productError ?? error;
+      }
+      if (productError) {
+        stepErrors.push(`products: ${productError.message} (code=${productError.code ?? "n/a"})`);
       } else {
         counts.products = body.products.length;
       }

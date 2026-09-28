@@ -28,7 +28,8 @@ export function Picker({
   emptyLabel = "Nenhum",
   autoFocus,
   disabled,
-  loading
+  loading,
+  onSearch
 }: {
   value: string;
   options: PickerOption[];
@@ -39,6 +40,12 @@ export function Picker({
   autoFocus?: boolean;
   disabled?: boolean;
   loading?: boolean;
+  /**
+   * Busca no banco: recebe o texto digitado e quem chama troca `options` pelo resultado. A lista
+   * entao nao filtra de novo aqui (o banco acha o CNPJ com pontuacao que o filtro local nao
+   * acharia).
+   */
+  onSearch?: (text: string) => void;
 }) {
   const listId = useId();
   const selected = options.find((option) => option.value === value) ?? null;
@@ -54,11 +61,11 @@ export function Picker({
 
   const matches = useMemo(() => {
     const search = open && text !== (selected?.label ?? "") ? text : "";
-    const found = options.filter((option) =>
-      matchesSearch(`${option.label} ${option.hint ?? ""}`, search)
-    );
+    const found = onSearch
+      ? options
+      : options.filter((option) => matchesSearch(`${option.label} ${option.hint ?? ""}`, search));
     return found.slice(0, MAX_VISIBLE);
-  }, [options, text, open, selected?.label]);
+  }, [options, text, open, selected?.label, onSearch]);
 
   const items: Array<PickerOption | null> = allowEmpty ? [null, ...matches] : matches;
 
@@ -97,6 +104,7 @@ export function Picker({
           setText(event.target.value);
           setOpen(true);
           setActive(0);
+          onSearch?.(event.target.value);
         }}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown") {

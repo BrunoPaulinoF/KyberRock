@@ -1,11 +1,23 @@
 import { SearchCheck } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { ConditionLegend } from "../components/ConditionLegend";
 import { IconAction, NewButton, Pill, SearchBar, SectionHead } from "../components/desk";
-import { Alert, Badge, DataTable, Field, Modal, Warnings, useToast } from "../components/ui";
+import { DeleteDialog } from "../components/PricePassword";
+import {
+  Alert,
+  Badge,
+  DataTable,
+  Field,
+  LoadMore,
+  Modal,
+  PAGE_SIZE,
+  Warnings,
+  useToast
+} from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
+import { dedupePaymentMethods, representativeIds } from "../lib/dedupe";
 import { conditionTextOf, describePaymentCondition } from "../lib/entry-freight";
 import {
   documentKind,
@@ -22,48 +34,66 @@ import {
   type PaymentTerm
 } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
+import { usePaged } from "../lib/use-paged";
 
-function matches(customer: Customer, search: string): boolean {
-  const needle = search.trim().toLowerCase();
-  if (!needle) return true;
-  const doc = normalizeDocument(needle);
-  return (
-    customer.trade_name.toLowerCase().includes(needle) ||
-    customer.legal_name.toLowerCase().includes(needle) ||
-    (doc.length > 0 && normalizeDocument(customer.document ?? "").includes(doc))
-  );
+/** O texto da busca so vira consulta quando a pessoa para de digitar. */
+export function useDebounced<T>(value: T, delayMs = 300): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [value, delayMs]);
+  return debounced;
 }
 
-/** Aba Clientes da tela Cadastros (a `CustomersView` do desktop). */
+/**
+ * Aba Clientes da tela Cadastros (a `CustomersView` do desktop). A lista vem do banco 50 por
+ * vez, ja filtrada (`q.customersPage`): a pedreira tem mais de 2 mil clientes e trazer todos era
+ * o que pesava. "Ver mais" traz os proximos 50.
+ */
 export function CustomersSection() {
   const user = useUser();
   const toast = useToast();
-  const { data, loading, error, reload } = useAsync(
+  const [search, setSearch] = useState("");
+  const [showInactive, setShowInactive] = useState(false);
+  const debouncedSearch = useDebounced(search);
+  const list = usePaged(
+    (from, to) =>
+      q.customersPage(
+        user.companyId,
+        { search: debouncedSearch, includeInactive: showInactive },
+        from,
+        to
+      ),
+    [user.companyId, debouncedSearch, showInactive],
+    PAGE_SIZE
+  );
+  const aux = useAsync(
     () =>
       Promise.all([
-        q.customers(user.companyId),
         q.paymentTerms(user.companyId),
         q.paymentMethods(user.companyId),
-        q.carriers(user.companyId)
+        q.carriers(user.companyId),
+        q.activeCustomerCount(user.companyId)
       ]),
     [user.companyId]
   );
-  const [search, setSearch] = useState("");
-  const [showInactive, setShowInactive] = useState(false);
   const [editing, setEditing] = useState<Customer | "new" | null>(null);
   const [commercial, setCommercial] = useState<Customer | null>(null);
+  const [removing, setRemoving] = useState<Customer | null>(null);
 
-  const [customers, terms, methods, carriers] = data ?? [[], [], [], []];
-  const rows = useMemo(
-    () => customers.filter((c) => (showInactive || c.is_active) && matches(c, search)),
-    [customers, search, showInactive]
-  );
+  const [terms, methods, carriers, activeCount] = aux.data ?? [[], [], [], 0];
+  const error = list.error ?? aux.error;
+
+  async function refresh() {
+    await Promise.all([list.reload(), aux.reload()]);
+  }
 
   async function toggleActive(customer: Customer) {
     try {
       await callWebApi("set_customer_active", { id: customer.id, isActive: !customer.is_active });
       toast.push(customer.is_active ? "Cliente inativado." : "Cliente reativado.");
-      await reload();
+      await refresh();
     } catch (caught) {
       toast.push(errorMessage(caught), "error");
     }
@@ -73,7 +103,7 @@ export function CustomersSection() {
     <>
       <SectionHead
         title="Clientes"
-        count={customers.filter((c) => c.is_active).length}
+        count={activeCount}
         description="Clientes sincronizados do OMIE ou criados aqui. Clientes novos sao enviados ao OMIE na hora."
         action={
           user.canEditCustomers && (
@@ -86,7 +116,7 @@ export function CustomersSection() {
         value={search}
         onChange={setSearch}
         placeholder="Buscar cliente por nome, fantasia ou CNPJ..."
-        onRefresh={() => void reload()}
+        onRefresh={() => void refresh()}
       >
         <label className="check" style={{ margin: 0, whiteSpace: "nowrap" }}>
           <input
@@ -98,10 +128,19 @@ export function CustomersSection() {
         </label>
       </SearchBar>
       <DataTable
-        rows={rows}
+        rows={list.rows}
         rowKey={(c) => c.id}
         rowClassName={(c) => (c.is_active ? undefined : "inactive")}
-        empty={loading ? "Carregando..." : "Nenhum cliente encontrado."}
+        empty={list.loading ? "Carregando..." : "Nenhum cliente encontrado."}
+        pageSize={0}
+        footer={
+          <LoadMore
+            shown={list.rows.length}
+            total={list.total}
+            loading={list.loading}
+            onMore={() => void list.more()}
+          />
+        }
         columns={[
           {
             key: "name",
@@ -157,6 +196,12 @@ export function CustomersSection() {
                   <button className="btn small" onClick={() => void toggleActive(c)}>
                     {c.is_active ? "Inativar" : "Reativar"}
                   </button>
+                  <IconAction
+                    icon="trash"
+                    label="Excluir cliente"
+                    tone="danger"
+                    onClick={() => setRemoving(c)}
+                  />
                 </span>
               )
           }
@@ -170,7 +215,7 @@ export function CustomersSection() {
           onClose={() => setEditing(null)}
           onSaved={async () => {
             setEditing(null);
-            await reload();
+            await refresh();
           }}
         />
       )}
@@ -182,7 +227,26 @@ export function CustomersSection() {
           onClose={() => setCommercial(null)}
           onSaved={async () => {
             setCommercial(null);
-            await reload();
+            await refresh();
+          }}
+        />
+      )}
+      {removing && (
+        <DeleteDialog
+          title={`Excluir ${removing.trade_name || removing.legal_name}`}
+          description="So sai o cliente sem historico (nenhuma pesagem nem lancamento de credito). Quem ja comprou deve ser inativado."
+          askPassword={user.requiresPricePassword}
+          onClose={() => setRemoving(null)}
+          onConfirm={async (pricePassword) => {
+            try {
+              await callWebApi("delete_customer", { id: removing.id, pricePassword });
+              toast.push("Cliente excluido.");
+              setRemoving(null);
+              await refresh();
+              return null;
+            } catch (caught) {
+              return errorMessage(caught);
+            }
           }}
         />
       )}
@@ -462,8 +526,16 @@ function CommercialForm({
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Cada balanca tem a sua copia de "Dinheiro", "Pix"...: o seletor mostra uma de cada, e a
+  // escolha atual (que pode ser a copia de outra maquina) aparece pela representante.
+  const methodGroups = useMemo(
+    () => dedupePaymentMethods(methods.filter((m) => m.is_active)),
+    [methods]
+  );
+  const methodRepresentative = useMemo(() => representativeIds(methodGroups), [methodGroups]);
+  const currentMethodId = customer.default_payment_method_id ?? "";
   const [form, setForm] = useState({
-    defaultPaymentMethodId: customer.default_payment_method_id ?? "",
+    defaultPaymentMethodId: methodRepresentative.get(currentMethodId) ?? currentMethodId,
     defaultCarrierId: customer.default_carrier_id ?? "",
     nfRequired: customer.nf_required ?? false,
     creditAccountEnabled: customer.credit_account_enabled ?? false,
@@ -529,13 +601,11 @@ function CommercialForm({
               onChange={(e) => setForm((f) => ({ ...f, defaultPaymentMethodId: e.target.value }))}
             >
               <option value="">—</option>
-              {methods
-                .filter((m) => m.is_active)
-                .map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.alias || m.name}
-                  </option>
-                ))}
+              {methodGroups.map(({ row: m }) => (
+                <option key={m.id} value={m.id}>
+                  {m.alias || m.name}
+                </option>
+              ))}
             </select>
           </Field>
           <Field label="Transportadora padrao">

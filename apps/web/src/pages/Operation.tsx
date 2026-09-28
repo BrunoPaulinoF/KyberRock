@@ -22,9 +22,16 @@ import {
   PlateBadge
 } from "../components/desk";
 import { Picker, type PickerOption } from "../components/Picker";
-import { Alert, Badge, Field, Modal, useToast } from "../components/ui";
+import { Alert, Badge, Field, LoadMore, Modal, useShowMore, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
+import {
+  dedupeByNameAndCode,
+  dedupeDrivers,
+  dedupePaymentMethods,
+  dedupeVehicles,
+  representativeIds
+} from "../lib/dedupe";
 import {
   formatDateTime,
   formatDocument,
@@ -80,6 +87,8 @@ export interface Catalog {
   carriers: PickerOption[];
   paymentMethods: PickerOption[];
   paymentTerms: PickerOption[];
+  /** Id de qualquer copia -> id da representante que o seletor mostra (`lib/dedupe.ts`). */
+  representatives: { paymentMethods: Map<string, string>; paymentTerms: Map<string, string> };
   customerDefaults: Map<
     string,
     {
@@ -94,6 +103,11 @@ export interface Catalog {
   >;
 }
 
+export function representativeOf(map: Map<string, string>, id: string | null): string {
+  if (!id) return "";
+  return map.get(id) ?? id;
+}
+
 export function useCatalog(companyId: string) {
   return useAsync(async (): Promise<Catalog> => {
     const [customers, vehicles, drivers, products, carriers, methods, terms] = await Promise.all([
@@ -106,22 +120,31 @@ export function useCatalog(companyId: string) {
       q.paymentTerms(companyId)
     ]);
     const liveCustomers = customers.filter((row) => row.is_active);
+    // Cada balanca subiu a sua copia de placa, motorista, forma e condicao: o seletor mostra
+    // uma de cada, e o padrao do cliente (que pode ser a copia de outra maquina) aponta para a
+    // representante (`lib/dedupe.ts`).
+    const vehicleGroups = dedupeVehicles(vehicles.filter((row) => row.is_active));
+    const driverGroups = dedupeDrivers(drivers.filter((row) => row.is_active));
+    const methodGroups = dedupePaymentMethods(methods.filter((row) => row.is_active));
+    const termGroups = dedupeByNameAndCode(terms);
+    const methodIds = representativeIds(methodGroups);
+    const termIds = representativeIds(termGroups);
     return {
       customers: liveCustomers.map((row) => ({
         value: row.id,
         label: row.trade_name || row.legal_name,
         hint: formatDocument(row.document) || undefined
       })),
-      vehicles: vehicles
-        .filter((row) => row.is_active)
-        .map((row) => ({
-          value: row.id,
-          label: formatPlate(row.plate),
-          hint: row.description ?? undefined
-        })),
-      drivers: drivers
-        .filter((row) => row.is_active)
-        .map((row) => ({ value: row.id, label: row.name, hint: row.document ?? undefined })),
+      vehicles: vehicleGroups.map(({ row }) => ({
+        value: row.id,
+        label: formatPlate(row.plate),
+        hint: row.description ?? undefined
+      })),
+      drivers: driverGroups.map(({ row }) => ({
+        value: row.id,
+        label: row.name,
+        hint: row.document ?? undefined
+      })),
       products: products.map((row) => ({
         value: row.id,
         label: row.description,
@@ -134,16 +157,15 @@ export function useCatalog(companyId: string) {
           label: row.name,
           hint: formatDocument(row.document) || undefined
         })),
-      paymentMethods: methods
-        .filter((row) => row.is_active)
-        .map((row) => ({ value: row.id, label: row.name })),
-      paymentTerms: terms.map((row) => ({ value: row.id, label: row.name })),
+      paymentMethods: methodGroups.map(({ row }) => ({ value: row.id, label: row.name })),
+      paymentTerms: termGroups.map(({ row }) => ({ value: row.id, label: row.name })),
+      representatives: { paymentMethods: methodIds, paymentTerms: termIds },
       customerDefaults: new Map(
         liveCustomers.map((row) => [
           row.id,
           {
-            paymentMethodId: row.default_payment_method_id ?? "",
-            paymentTermId: row.default_payment_term_id ?? "",
+            paymentMethodId: representativeOf(methodIds, row.default_payment_method_id),
+            paymentTermId: representativeOf(termIds, row.default_payment_term_id),
             carrierId: row.default_carrier_id ?? "",
             nfRequired: row.nf_required,
             freightModality: row.default_freight_modality
@@ -490,6 +512,10 @@ export function Operations() {
       )
   );
   const canceledRows = canceled.data ?? [];
+  // 50 por vez em cada aba ("Ver mais" traz outros 50): o dia cheio desenhava centenas de linhas.
+  const openPage = useShowMore(`${tab}|${plateNeedle}`);
+  const canceledPage = useShowMore(tab);
+  const closedPage = useShowMore(`${tab}|${closedProduct}|${closedSearch}`);
 
   const countLabel =
     tab === "abertas"
@@ -649,7 +675,7 @@ export function Operations() {
                   hint="Confira a placa digitada ou limpe a busca para ver a fila inteira."
                 />
               )}
-              {visibleOpen.map((row) => (
+              {visibleOpen.slice(0, openPage.limit).map((row) => (
                 <div
                   key={row.id}
                   className={`op-row open${pendingOps.has(row.id) ? " waiting" : ""}`}
@@ -715,6 +741,11 @@ export function Operations() {
                   )}
                 </div>
               ))}
+              <LoadMore
+                shown={Math.min(openPage.limit, visibleOpen.length)}
+                total={visibleOpen.length}
+                onMore={openPage.more}
+              />
             </div>
           </>
         ))}
@@ -733,7 +764,7 @@ export function Operations() {
               <span>Cancelada em</span>
               <span>Motivo</span>
             </div>
-            {canceledRows.map((row) => (
+            {canceledRows.slice(0, canceledPage.limit).map((row) => (
               <div key={row.id} className="op-row canceled">
                 <PlateBadge plate={formatPlate(row.plate ?? "")} />
                 <span className="op-cell">
@@ -744,6 +775,11 @@ export function Operations() {
                 <span>{row.cancel_reason || "Sem motivo registrado"}</span>
               </div>
             ))}
+            <LoadMore
+              shown={Math.min(canceledPage.limit, canceledRows.length)}
+              total={canceledRows.length}
+              onMore={canceledPage.more}
+            />
           </div>
         ))}
 
@@ -763,7 +799,7 @@ export function Operations() {
               <span>Fiscal OMIE</span>
               <span>Acoes</span>
             </div>
-            {visibleClosed.map((row) => {
+            {visibleClosed.slice(0, closedPage.limit).map((row) => {
               const fiscal = fiscalStatus(row);
               return (
                 <div
@@ -809,6 +845,11 @@ export function Operations() {
                 </div>
               );
             })}
+            <LoadMore
+              shown={Math.min(closedPage.limit, visibleClosed.length)}
+              total={visibleClosed.length}
+              onMore={closedPage.more}
+            />
           </div>
         ))}
 
@@ -990,12 +1031,18 @@ function EditModal({
       vehicleId: "",
       driverId: "",
       carrierId: operation.carrier_id ?? "",
-      paymentMethodId: operation.payment_method_id ?? "",
-      paymentTermId: operation.payment_term_id ?? "",
+      paymentMethodId: representativeOf(
+        catalog.representatives.paymentMethods,
+        operation.payment_method_id
+      ),
+      paymentTermId: representativeOf(
+        catalog.representatives.paymentTerms,
+        operation.payment_term_id
+      ),
       operationType: operation.operation_type,
       unitPriceCents: operation.unit_price_cents
     }),
-    [operation]
+    [operation, catalog]
   );
   const [fields, setFields] = useState<EditableFields>(original);
   const [price, setPrice] = useState(
