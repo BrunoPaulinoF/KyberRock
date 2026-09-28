@@ -14,6 +14,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DeskPanel } from "../components/desk";
+import { PriceHistory } from "../components/PriceHistory";
 import { Alert, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import {
@@ -200,7 +201,7 @@ export function PriceCodePage() {
               <ul className="pc-list">
                 <li>
                   <Tag size={15} aria-hidden="true" /> Mudar preco — padrao, especial do cliente e o
-                  preco da pesagem.
+                  preco da pesagem. Preco especial mudado fica no historico abaixo.
                 </li>
                 <li>
                   <Trash2 size={15} aria-hidden="true" /> Excluir cliente, transportadora, motorista
@@ -244,6 +245,10 @@ export function PriceCodePage() {
             </section>
           </div>
         </div>
+      </div>
+      {/* O que foi feito com a senha: cada alteracao de preco especial, na hora. */}
+      <div className="pc-history">
+        <PriceHistory />
       </div>
     </DeskPanel>
   );

@@ -256,8 +256,8 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:customer-special-prices-list", customerId),
   customerSpecialPricesSet: (input: unknown) =>
     ipcRenderer.invoke("desktop:customer-special-prices-set", input),
-  customerSpecialPricesRemove: (customerId: string, productId: string) =>
-    ipcRenderer.invoke("desktop:customer-special-prices-remove", customerId, productId),
+  customerSpecialPricesRemove: (customerId: string, productId: string, password: string) =>
+    ipcRenderer.invoke("desktop:customer-special-prices-remove", customerId, productId, password),
   omieCategoriesList: () => ipcRenderer.invoke("desktop:omie-categories-list"),
   productOmieCategorySet: (productId: string, categoryCode: string | null) =>
     ipcRenderer.invoke("desktop:product-omie-category-set", productId, categoryCode),

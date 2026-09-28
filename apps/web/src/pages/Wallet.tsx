@@ -105,6 +105,8 @@ export function Wallet() {
     () => loadWalletOperations(user.companyId, walletIds, status, iso),
     [user.companyId, walletIds.join(","), status, iso?.startIso ?? "", iso?.endIso ?? ""]
   );
+  // Pesagem fechada, editada ou cancelada na balanca entra na tela na hora.
+  useOnCadastroChange(ops.refresh, CADASTRO_TABLES.operations);
 
   const report = useMemo(
     () =>

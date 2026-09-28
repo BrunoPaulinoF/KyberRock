@@ -2121,5 +2121,30 @@ ON CONFLICT(key) DO UPDATE SET
 -- ninguem ter escolhido. Daqui em diante, 1 so existe se o operador escolher.
 UPDATE print_profiles SET copies = 2 WHERE copies < 2;
 `
+  },
+  {
+    version: 59,
+    name: "price_change_log",
+    sql: `
+-- Historico das alteracoes de preco especial (adicionar, trocar, excluir), que agora pedem a
+-- senha rotativa do comercial. Nasce aqui no salvamento e sobe para a nuvem
+-- (\`price_change_log\`, migracao \`202609280005\`), onde o comercial ve na tela dele.
+-- E so acrescimo: nenhuma linha e editada depois de gravada.
+CREATE TABLE IF NOT EXISTS price_change_log (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'preco_especial',
+  action TEXT NOT NULL CHECK (action IN ('adicionado', 'alterado', 'removido')),
+  customer_id TEXT,
+  customer_name TEXT,
+  product_id TEXT,
+  product_description TEXT,
+  old_price_cents INTEGER,
+  new_price_cents INTEGER,
+  changed_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_price_change_log_created ON price_change_log(created_at, id);
+`
   }
 ];

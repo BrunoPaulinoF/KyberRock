@@ -1383,7 +1383,13 @@ function registerIpcHandlers(): void {
     "desktop:customer-special-prices-set",
     (
       _event,
-      input: { customerId: string; productId: string; unitPriceCents: number; unit?: string }
+      input: {
+        customerId: string;
+        productId: string;
+        unitPriceCents: number;
+        unit?: string;
+        password?: string;
+      }
     ) => {
       if (!runtime) throw new Error("Desktop runtime is not ready.");
       return runtime.setCustomerSpecialPrice(input);
@@ -1392,9 +1398,9 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "desktop:customer-special-prices-remove",
-    (_event, customerId: string, productId: string) => {
+    (_event, customerId: string, productId: string, password?: string) => {
       if (!runtime) throw new Error("Desktop runtime is not ready.");
-      runtime.removeCustomerSpecialPrice(customerId, productId);
+      runtime.removeCustomerSpecialPrice(customerId, productId, password);
     }
   );
 

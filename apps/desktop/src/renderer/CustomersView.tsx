@@ -1463,18 +1463,15 @@ export function CustomersView({
     if (!desktopApi || !pendingSpecialPriceAction || savingSpecialPrice) return;
     setSavingSpecialPrice(true);
     try {
-      const valid = await desktopApi.verifyPriceChangePassword(password);
-      if (!valid) {
-        setPricePasswordError(PRICE_CODE_REJECTED);
-        return;
-      }
-
+      // A senha vai junto e e conferida no processo principal, no momento de gravar: sem ela
+      // (ou vencida) nada muda. A alteracao entra no historico que o comercial ve no site.
       if (pendingSpecialPriceAction.type === "save") {
         await desktopApi.customerSpecialPricesSet({
           customerId: pendingSpecialPriceAction.customerId,
           productId: pendingSpecialPriceAction.productId,
           unitPriceCents: pendingSpecialPriceAction.unitPriceCents,
-          unit: "ton"
+          unit: "ton",
+          password
         });
         setSpecialProductId("");
         setSpecialPriceReais("");
@@ -1483,7 +1480,8 @@ export function CustomersView({
       } else {
         await desktopApi.customerSpecialPricesRemove(
           pendingSpecialPriceAction.customerId,
-          pendingSpecialPriceAction.productId
+          pendingSpecialPriceAction.productId,
+          password
         );
         await loadSpecialPrices(pendingSpecialPriceAction.customerId);
         showFlash("success", "Preco especial removido.");
@@ -1491,7 +1489,13 @@ export function CustomersView({
       setPendingSpecialPriceAction(null);
       setPricePasswordError(null);
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Erro ao alterar preco especial.");
+      const message = err instanceof Error ? err.message : "";
+      if (message.includes(PRICE_CODE_REJECTED)) {
+        // Senha errada ou vencida: o pedido continua aberto para digitar a atual.
+        setPricePasswordError(PRICE_CODE_REJECTED);
+        return;
+      }
+      setFormError(message || "Erro ao alterar preco especial.");
     } finally {
       setSavingSpecialPrice(false);
     }
@@ -3173,6 +3177,12 @@ export function CustomersView({
 
       {pendingSpecialPriceAction ? (
         <PriceChangePasswordDialog
+          title={
+            pendingSpecialPriceAction.type === "save"
+              ? "Senha para salvar o preco especial"
+              : "Senha para excluir o preco especial"
+          }
+          description="Peca a senha ao comercial. A alteracao fica registrada e aparece para o comercial no KyberRock Web."
           error={pricePasswordError}
           submitting={savingSpecialPrice}
           onCancel={() => {

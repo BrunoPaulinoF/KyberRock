@@ -2,6 +2,8 @@ import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode }
 
 import {
   CADASTRO_PING_TABLE,
+  OPERATION_PING_DEFAULT_SOURCE,
+  OPERATION_PING_TABLE,
   createCadastroChangeGate,
   touches,
   type ChangedTables
@@ -9,8 +11,12 @@ import {
 import { supabase } from "./supabase";
 
 /**
- * A inscricao do site no aviso de cadastro (`cadastro_change_pings`) e a entrega as telas.
- * A regra (juntar, espacar, segurar com a aba escondida) vive em `cadastro-live.ts`.
+ * A inscricao do site nos avisos da nuvem — cadastro (`cadastro_change_pings`) e pesagem
+ * (`operation_change_pings`) — e a entrega as telas. A regra (juntar, espacar, segurar com a
+ * aba escondida) vive em `cadastro-live.ts`.
+ *
+ * Um canal por aviso, e nao os dois no mesmo: se a migracao de um deles faltar no banco, o
+ * erro derruba so aquele canal, e o outro continua entregando.
  *
  * UMA inscricao por aba, montada na casca (`Layout`), e nao uma por tela: trocar de tela nao
  * reconecta, e a tela que abre ja encontra o aviso ligado. A entrega e por assinatura, nao por
@@ -77,6 +83,32 @@ export function CadastroLiveProvider({
         if (subscribedBefore) gate.ping(null);
         subscribedBefore = true;
       });
+    let operationsSubscribedBefore = false;
+    const operationChannel = supabase
+      .channel(`operation-live:${companyId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: OPERATION_PING_TABLE,
+          filter: `company_id=eq.${companyId}`
+        },
+        (payload) => {
+          const row = payload.new as { source?: unknown } | null;
+          const source = typeof row?.source === "string" ? row.source.trim() : "";
+          gate.ping(source || OPERATION_PING_DEFAULT_SOURCE);
+        }
+      )
+      .subscribe((status) => {
+        if (status !== "SUBSCRIBED") return;
+        // Reconexao: o que a balanca gravou enquanto o canal esteve fora nao volta sozinho.
+        if (operationsSubscribedBefore) {
+          gate.ping("weighing_operations");
+          gate.ping("loading_requests");
+        }
+        operationsSubscribedBefore = true;
+      });
     const onVisibility = () => {
       if (isVisible()) gate.wake();
     };
@@ -85,6 +117,7 @@ export function CadastroLiveProvider({
       gate.stop();
       document.removeEventListener("visibilitychange", onVisibility);
       void supabase.removeChannel(channel);
+      void supabase.removeChannel(operationChannel);
     };
   }, [companyId]);
 
@@ -92,7 +125,8 @@ export function CadastroLiveProvider({
 }
 
 /**
- * Rele a tela quando a balanca (ou outra aba, ou o OMIE) mudar uma das `tables`.
+ * Rele a tela quando a balanca (ou outra aba, ou o OMIE) mudar uma das `tables` — cadastro ou
+ * pesagem (`CADASTRO_TABLES.operations`).
  *
  * `refresh` deve ser a releitura SILENCIOSA da tela (`refresh` de `useAsync`/`usePaged`): o
  * que esta na tela fica ate a resposta chegar, sem "Carregando..." piscando e sem voltar a

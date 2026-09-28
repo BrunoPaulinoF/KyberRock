@@ -16,6 +16,8 @@ import { useNavigate } from "react-router-dom";
 
 import { Alert } from "../components/ui";
 import { useUser } from "../lib/auth";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import {
   OMIE_BACKLOG_DAYS,
   activityAt,
@@ -40,7 +42,10 @@ import { q } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
 import { useExecutorStatus } from "./Operation";
 
-/** De quanto em quanto tempo o painel rele a nuvem (o desktop atualiza a cada evento local). */
+/**
+ * Rede de seguranca: de quanto em quanto tempo o painel rele a nuvem mesmo sem aviso. O normal
+ * e reler na hora, pelo aviso de pesagem da balanca (`useOnCadastroChange`).
+ */
 const REFRESH_MS = 30_000;
 
 /**
@@ -91,10 +96,11 @@ export function Dashboard() {
 
   // Um tique so: anda o relogio (tempo no patio, "hoje") e o `requestsSince`, que recarrega os
   // pedidos; as outras leituras recarregam aqui.
-  const reloadOpen = open.reload;
-  const reloadClosed = closedToday.reload;
-  const reloadRecent = recentClosed.reload;
-  const reloadOmie = omieRows.reload;
+  // Releitura silenciosa: o painel nao pisca "Carregando..." a cada tique.
+  const reloadOpen = open.refresh;
+  const reloadClosed = closedToday.refresh;
+  const reloadRecent = recentClosed.refresh;
+  const reloadOmie = omieRows.refresh;
   useEffect(() => {
     const timer = window.setInterval(() => {
       setNow(new Date());
@@ -105,6 +111,12 @@ export function Dashboard() {
     }, REFRESH_MS);
     return () => window.clearInterval(timer);
   }, [reloadOpen, reloadClosed, reloadRecent, reloadOmie]);
+
+  // Pesagem aberta, fechada, editada ou cancelada na balanca aparece no painel na hora.
+  useOnCadastroChange(reloadOpen, CADASTRO_TABLES.operationsAndLoading);
+  useOnCadastroChange(reloadClosed, CADASTRO_TABLES.operations);
+  useOnCadastroChange(reloadRecent, CADASTRO_TABLES.operations);
+  useOnCadastroChange(reloadOmie, CADASTRO_TABLES.operations);
 
   const kpis = useMemo(() => summarizeDay(closedToday.data ?? []), [closedToday.data]);
   const staleOpen = useMemo(() => classifyOpenAge(open.data ?? [], now), [open.data, now]);

@@ -649,6 +649,48 @@ describe("web-api: preco (gestor)", () => {
     });
   });
 
+  it("preco especial mudado no site entra no historico com o nome de quem mudou", async () => {
+    const h = harness({ role: "comercial" });
+    h.store.seed("customers", [
+      { id: "c-1", company_id: COMPANY, trade_name: "Cliente A", legal_name: "Cliente A LTDA" }
+    ]);
+    h.store.seed("products", [{ id: "p-1", company_id: COMPANY, description: "Brita 1" }]);
+
+    await h.call("set_customer_special_price", {
+      customerId: "c-1",
+      productId: "p-1",
+      unitPriceCents: 6500
+    });
+    await h.call("set_customer_special_price", {
+      customerId: "c-1",
+      productId: "p-1",
+      unitPriceCents: 7000
+    });
+    // Mesmo valor de novo: nao e alteracao, nao entra no historico.
+    await h.call("set_customer_special_price", {
+      customerId: "c-1",
+      productId: "p-1",
+      unitPriceCents: 7000
+    });
+    await h.call("remove_customer_special_price", { customerId: "c-1", productId: "p-1" });
+
+    const log = h.store.rows("price_change_log");
+    expect(log.map((row) => [row.action, row.old_price_cents, row.new_price_cents])).toEqual([
+      ["adicionado", null, 6500],
+      ["alterado", 6500, 7000],
+      ["removido", 7000, null]
+    ]);
+    expect(log[0]).toMatchObject({
+      company_id: COMPANY,
+      source: "site",
+      user_id: "user-1",
+      author_name: "Rafaela",
+      customer_name: "Cliente A",
+      product_description: "Brita 1",
+      changed_at: NOW
+    });
+  });
+
   it("preco em reais com virgula e recusado antes de tocar o banco", async () => {
     const h = harness({ role: "gestor" });
     h.store.seed("products", [{ id: "p-1", company_id: COMPANY }]);

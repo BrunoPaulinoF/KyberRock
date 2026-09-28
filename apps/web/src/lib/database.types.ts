@@ -667,6 +667,35 @@ export type Database = {
         };
         Relationships: [];
       };
+      company_price_codes: {
+        Row: {
+          company_id: string;
+          created_at: string;
+          rotated_at: string;
+          secret: string;
+        };
+        Insert: {
+          company_id: string;
+          created_at?: string;
+          rotated_at?: string;
+          secret?: string;
+        };
+        Update: {
+          company_id?: string;
+          created_at?: string;
+          rotated_at?: string;
+          secret?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "company_price_codes_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: true;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
       customer_carriers: {
         Row: {
           carrier_id: string;
@@ -1725,6 +1754,32 @@ export type Database = {
           }
         ];
       };
+      operation_change_pings: {
+        Row: {
+          changed_at: string;
+          company_id: string;
+          source: string | null;
+        };
+        Insert: {
+          changed_at?: string;
+          company_id: string;
+          source?: string | null;
+        };
+        Update: {
+          changed_at?: string;
+          company_id?: string;
+          source?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "operation_change_pings_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: true;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
       operation_request_pings: {
         Row: {
           requested_at: string;
@@ -1948,6 +2003,91 @@ export type Database = {
             columns: ["company_id"];
             isOneToOne: false;
             referencedRelation: "companies";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      price_change_log: {
+        Row: {
+          action: string;
+          author_name: string | null;
+          changed_at: string;
+          company_id: string;
+          created_at: string;
+          customer_id: string | null;
+          customer_name: string | null;
+          device_id: string | null;
+          id: string;
+          kind: string;
+          new_price_cents: number | null;
+          old_price_cents: number | null;
+          product_description: string | null;
+          product_id: string | null;
+          source: string;
+          unit_id: string | null;
+          updated_at: string;
+          user_id: string | null;
+        };
+        Insert: {
+          action: string;
+          author_name?: string | null;
+          changed_at: string;
+          company_id: string;
+          created_at?: string;
+          customer_id?: string | null;
+          customer_name?: string | null;
+          device_id?: string | null;
+          id: string;
+          kind?: string;
+          new_price_cents?: number | null;
+          old_price_cents?: number | null;
+          product_description?: string | null;
+          product_id?: string | null;
+          source: string;
+          unit_id?: string | null;
+          updated_at?: string;
+          user_id?: string | null;
+        };
+        Update: {
+          action?: string;
+          author_name?: string | null;
+          changed_at?: string;
+          company_id?: string;
+          created_at?: string;
+          customer_id?: string | null;
+          customer_name?: string | null;
+          device_id?: string | null;
+          id?: string;
+          kind?: string;
+          new_price_cents?: number | null;
+          old_price_cents?: number | null;
+          product_description?: string | null;
+          product_id?: string | null;
+          source?: string;
+          unit_id?: string | null;
+          updated_at?: string;
+          user_id?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "price_change_log_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "price_change_log_device_id_fkey";
+            columns: ["device_id"];
+            isOneToOne: false;
+            referencedRelation: "device_registrations";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "price_change_log_unit_id_fkey";
+            columns: ["unit_id"];
+            isOneToOne: false;
+            referencedRelation: "units";
             referencedColumns: ["id"];
           }
         ];

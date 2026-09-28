@@ -88,11 +88,39 @@ describe("Envio imediato do cadastro", () => {
       runtime.close();
     }
   });
+
+  it("publica a nota de faturamento futuro na hora, como qualquer cadastro", async () => {
+    const { runtime, internals, pushed } = createRuntime(tempDirectories);
+
+    try {
+      // Antes so subia na varredura completa: o site ficava sem a nota por ate 30 min.
+      runtime.removeCustomerFutureBillingInvoice("invoice-inexistente");
+      await drainPush(internals);
+
+      expect(pushed).toHaveBeenCalledTimes(1);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("publica o que o pull do OMIE gravou nesta maquina", async () => {
+    const { runtime, internals, pushed } = createRuntime(tempDirectories);
+
+    try {
+      internals.cadastroPulledFromOmie("company-1");
+      await drainPush(internals);
+
+      expect(pushed).toHaveBeenCalledTimes(1);
+    } finally {
+      runtime.close();
+    }
+  });
 });
 
 interface RuntimeInternals {
   database: DesktopDatabase;
   cadastroChanged: (entityType: string, companyId: string) => void;
+  cadastroPulledFromOmie: (companyId: string) => void;
   cadastroPushChain: Promise<void>;
   pushCadastroToCloud: () => Promise<void>;
 }

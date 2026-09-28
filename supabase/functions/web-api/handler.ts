@@ -72,6 +72,7 @@ import {
   type OperationRequestPayload,
   type UpdateRequestPayload
 } from "../_shared/operation-requests.ts";
+import { priceChangeAction } from "../_shared/price-change-log.ts";
 import { recipientColumns, validateReportRecipient } from "../_shared/report-recipients.ts";
 
 export type Row = Record<string, unknown>;
@@ -866,9 +867,13 @@ async function setPriceRow(
   if (!parsed.ok) throw new WebApiError(400, parsed.error);
   const price = parsed.value;
 
-  const live = await ctx.store.listRows(table, ctx.session.companyId, "id, is_active", naturalKey, {
-    live: true
-  });
+  const live = await ctx.store.listRows(
+    table,
+    ctx.session.companyId,
+    "id, is_active, unit_price_cents",
+    naturalKey,
+    { live: true }
+  );
   const current = live.find((row) => row.is_active !== false) ?? null;
   const values = {
     unit_price_cents: price.unitPriceCents,
@@ -879,11 +884,13 @@ async function setPriceRow(
   };
 
   if (current) {
+    // O preco de antes vai para o historico: le ANTES de gravar.
+    const previousPriceCents = priceCentsOf(current);
     await ctx.store.updateRow(table, ctx.session.companyId, String(current.id), {
       ...values,
       is_active: true
     });
-    return { id: String(current.id), unitPriceCents: price.unitPriceCents };
+    return { id: String(current.id), unitPriceCents: price.unitPriceCents, previousPriceCents };
   }
 
   const id = ctx.newId();
@@ -895,7 +902,12 @@ async function setPriceRow(
     is_active: true,
     created_at: ctx.nowIso
   });
-  return { id, unitPriceCents: price.unitPriceCents };
+  return { id, unitPriceCents: price.unitPriceCents, previousPriceCents: null };
+}
+
+function priceCentsOf(row: Row | null | undefined): number | null {
+  const value = row?.unit_price_cents;
+  return typeof value === "number" && Number.isInteger(value) ? value : null;
 }
 
 /** Exclusao logica de todas as linhas vivas do par (o desktop le `deleted_at` como tombstone). */
@@ -904,9 +916,15 @@ async function retirePriceRows(
   table: string,
   naturalKey: RowFilter[]
 ): Promise<Row> {
-  const live = await ctx.store.listRows(table, ctx.session.companyId, "id", naturalKey, {
-    live: true
-  });
+  const live = await ctx.store.listRows(
+    table,
+    ctx.session.companyId,
+    "id, is_active, unit_price_cents",
+    naturalKey,
+    { live: true }
+  );
+  const current = live.find((row) => row.is_active !== false) ?? live[0] ?? null;
+  const previousPriceCents = priceCentsOf(current);
   for (const row of live) {
     await ctx.store.updateRow(table, ctx.session.companyId, String(row.id), {
       deleted_at: ctx.nowIso,
@@ -914,7 +932,54 @@ async function retirePriceRows(
       updated_at: ctx.nowIso
     });
   }
-  return { removed: live.length };
+  return { removed: live.length, previousPriceCents };
+}
+
+/**
+ * Uma linha no historico de preco especial (`price_change_log`, migracao `202609280005`), com o
+ * nome de quem esta logado. Falhar aqui nao desfaz o preco ja gravado: vira aviso na resposta
+ * (a tabela pode ainda nao existir, se a migracao estiver pendente).
+ */
+async function logSpecialPriceChange(
+  ctx: ActionContext,
+  input: {
+    customer: Row | null;
+    product: Row | null;
+    customerId: string;
+    productId: string;
+    oldPriceCents: number | null;
+    newPriceCents: number | null;
+  }
+): Promise<void> {
+  const action = priceChangeAction(input.oldPriceCents, input.newPriceCents);
+  if (!action) return;
+  try {
+    await ctx.store.insertRow("price_change_log", {
+      id: ctx.newId(),
+      company_id: ctx.session.companyId,
+      unit_id: ctx.session.unitId || null,
+      device_id: null,
+      user_id: ctx.session.userId,
+      author_name: ctx.session.name || ctx.session.email || null,
+      source: "site",
+      kind: "preco_especial",
+      action,
+      customer_id: input.customerId,
+      customer_name:
+        optionalText(input.customer ?? {}, "trade_name") ??
+        optionalText(input.customer ?? {}, "legal_name") ??
+        null,
+      product_id: input.productId,
+      product_description: optionalText(input.product ?? {}, "description") ?? null,
+      old_price_cents: input.oldPriceCents,
+      new_price_cents: input.newPriceCents,
+      changed_at: ctx.nowIso
+    });
+  } catch (error) {
+    ctx.warnings.push(
+      `O preco foi salvo, mas o historico nao: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 }
 
 async function setProductDefaultPrice(ctx: ActionContext): Promise<Row> {
@@ -928,9 +993,9 @@ async function setProductDefaultPrice(ctx: ActionContext): Promise<Row> {
 async function setCustomerSpecialPrice(ctx: ActionContext): Promise<Row> {
   const customerId = requiredId(ctx.payload, "customerId", "o cliente");
   const productId = requiredId(ctx.payload, "productId", "o produto");
-  await requireRow(ctx, "customers", customerId, "Cliente");
-  await requireRow(ctx, "products", productId, "Produto");
-  return setPriceRow(
+  const customer = await requireRow(ctx, "customers", customerId, "Cliente");
+  const product = await requireRow(ctx, "products", productId, "Produto");
+  const result = await setPriceRow(
     ctx,
     "customer_special_prices",
     [
@@ -939,15 +1004,35 @@ async function setCustomerSpecialPrice(ctx: ActionContext): Promise<Row> {
     ],
     { customer_id: customerId, product_id: productId }
   );
+  await logSpecialPriceChange(ctx, {
+    customer,
+    product,
+    customerId,
+    productId,
+    oldPriceCents: priceCentsOf({ unit_price_cents: result.previousPriceCents }),
+    newPriceCents: priceCentsOf({ unit_price_cents: result.unitPriceCents })
+  });
+  return result;
 }
 
 async function removeCustomerSpecialPrice(ctx: ActionContext): Promise<Row> {
   const customerId = requiredId(ctx.payload, "customerId", "o cliente");
   const productId = requiredId(ctx.payload, "productId", "o produto");
-  return retirePriceRows(ctx, "customer_special_prices", [
+  const result = await retirePriceRows(ctx, "customer_special_prices", [
     { column: "customer_id", value: customerId },
     { column: "product_id", value: productId }
   ]);
+  if (Number(result.removed) > 0) {
+    await logSpecialPriceChange(ctx, {
+      customer: await ctx.store.getRow("customers", ctx.session.companyId, customerId),
+      product: await ctx.store.getRow("products", ctx.session.companyId, productId),
+      customerId,
+      productId,
+      oldPriceCents: priceCentsOf({ unit_price_cents: result.previousPriceCents }),
+      newPriceCents: null
+    });
+  }
+  return result;
 }
 
 async function upsertPriceTable(ctx: ActionContext): Promise<Row> {

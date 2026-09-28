@@ -483,6 +483,13 @@ export function Operations() {
     };
   }, [reloadOpen, reloadLoading]);
 
+  // Aviso da balanca: entrada, saida, cancelamento ou carga do carregador aparecem na hora, sem
+  // esperar o tique acima (que fica de rede de seguranca). Releitura silenciosa.
+  useOnCadastroChange(open.refresh, CADASTRO_TABLES.operationsAndLoading);
+  useOnCadastroChange(loading.refresh, CADASTRO_TABLES.operationsAndLoading);
+  useOnCadastroChange(closed.refresh, CADASTRO_TABLES.operations);
+  useOnCadastroChange(canceled.refresh, CADASTRO_TABLES.operations);
+
   const pendingOps = useMemo(
     () =>
       new Set(

@@ -5,6 +5,7 @@ import { splitProductsByUnitPrice } from "../_shared/product-price.ts";
 import { isReadUnavailable, isUnknownColumnError } from "../_shared/db-read-error.ts";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 import { scopeRowsToDevice } from "../_shared/device-scope.ts";
+import { priceChangeLogRowsFromDevice } from "../_shared/price-change-log.ts";
 import { cancellationReannouncements, isStaleOperationWrite } from "../_shared/operation-writes.ts";
 import {
   MAX_UNKNOWN_COLUMN_ROUNDS,
@@ -47,6 +48,8 @@ type CloudPayload = {
   accounts?: Record<string, unknown>[];
   customerCreditMovements?: Record<string, unknown>[];
   reportRecipients?: Record<string, unknown>[];
+  /** Historico de alteracao de preco especial (`_shared/price-change-log.ts`). */
+  priceChangeLog?: Record<string, unknown>[];
   reportChannelSettings?: Record<string, unknown>;
   avgQuarryMinutes?: number;
 };
@@ -326,6 +329,21 @@ Deno.serve(async (req) => {
         stepErrors.push(`${table}: ${error.message} (code=${error.code ?? "n/a"})`);
       } else {
         counts.cadastro += rows.length;
+      }
+    }
+    if (body.priceChangeLog?.length) {
+      // Historico e imutavel: reenviar o mesmo lote nao reescreve nada, e uma balanca nao
+      // edita a linha de outra reaproveitando o id (`ignoreDuplicates`).
+      const logRows = priceChangeLogRowsFromDevice(body.priceChangeLog, device);
+      if (logRows.length) {
+        const { error } = await supabase
+          .from("price_change_log")
+          .upsert(logRows, { onConflict: "id", ignoreDuplicates: true });
+        if (error) {
+          stepErrors.push(`price_change_log: ${error.message} (code=${error.code ?? "n/a"})`);
+        } else {
+          counts.cadastro += logRows.length;
+        }
       }
     }
     if (body.operations?.length) {
