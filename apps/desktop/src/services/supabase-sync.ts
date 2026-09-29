@@ -1695,8 +1695,8 @@ function upsertCloudCarriers(
   const upsert = database.prepare(`
     INSERT INTO carriers (
       id, company_id, omie_customer_id, name, document, source, is_active,
-      created_at, updated_at, deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      created_at, updated_at, deleted_at, needs_push
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN 0 ELSE 1 END)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       omie_customer_id = COALESCE(excluded.omie_customer_id, carriers.omie_customer_id),
@@ -1704,9 +1704,13 @@ function upsertCloudCarriers(
       document = CASE WHEN carriers.needs_push = 0 THEN excluded.document ELSE carriers.document END,
       is_active = excluded.is_active,
       updated_at = excluded.updated_at,
-      -- Mesma regra do cliente: a exclusao feita em outra balanca chega, e a exclusao daqui
-      -- que ainda nao subiu (needs_push = 1) nao e desfeita pelo espelho.
-      deleted_at = CASE WHEN carriers.needs_push = 0 THEN excluded.deleted_at ELSE carriers.deleted_at END
+      -- Mesma regra do cliente: a exclusao feita no site ou em outra balanca chega SEMPRE,
+      -- mesmo com edicao pendente aqui; o que o espelho nao desfaz e a exclusao daqui que
+      -- ainda nao subiu (needs_push = 1 com a nuvem mandando a linha viva).
+      deleted_at = CASE WHEN carriers.needs_push = 0 OR excluded.deleted_at IS NOT NULL THEN excluded.deleted_at ELSE carriers.deleted_at END,
+      -- Excluida pela nuvem: a marca impede a passada do OMIE de devolve-la (ver
+      -- OMIE_CARRIER_DATA_COLUMNS), como faz a exclusao feita aqui.
+      needs_push = CASE WHEN excluded.deleted_at IS NOT NULL AND carriers.deleted_at IS NULL THEN 1 ELSE carriers.needs_push END
   `);
 
   let count = 0;
@@ -1737,6 +1741,7 @@ function upsertCloudCarriers(
       isoStringValue(row.created_at) || updatedAt,
       updatedAt,
       // Coluna nova na nuvem (migracao `202609220002`): ausente, chega null e nada muda.
+      isoStringValue(row.deleted_at),
       isoStringValue(row.deleted_at)
     );
     count++;
@@ -2107,7 +2112,9 @@ function upsertCloudReportRecipients(
       -- espelhada como esta. Zerar a coluna aqui era o que fazia o destinatario
       -- excluido VOLTAR: o proprio push marcava a linha como sincronizada e o
       -- pull seguinte, ja com needs_push = 0, limpava o deleted_at recem-gravado.
-      deleted_at = CASE WHEN report_recipients.needs_push = 0 THEN excluded.deleted_at ELSE report_recipients.deleted_at END
+      -- Tombstone da nuvem (excluido no site ou em outra balanca) chega mesmo com edicao
+      -- pendente aqui: excluir vale mais que a edicao que ainda nao subiu.
+      deleted_at = CASE WHEN report_recipients.needs_push = 0 OR excluded.deleted_at IS NOT NULL THEN excluded.deleted_at ELSE report_recipients.deleted_at END
   `);
 
   // UNIQUE(company_id, email) e o indice unico de whatsapp: o mesmo destinatario
@@ -2276,7 +2283,7 @@ export function upsertCloudCustomers(
       credit_boleto_days, credit_second_boleto_days, credit_closing_weekday,
       sync_status, is_active,
       created_at, updated_at, deleted_at, last_synced_at, needs_push
-    ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, ?, ?, 0)
+    ) VALUES (?, ?, ?, 'hybrid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN 0 ELSE 1 END)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       -- Nunca apagar o codigo do OMIE que ja temos: sem ele o proximo push tenta um
@@ -2327,10 +2334,19 @@ export function upsertCloudCustomers(
       -- coluna deleted_at em customers, entao "existe la" queria dizer "esta vivo" e todo pull
       -- ressuscitava o que tivesse sido excluido ou unificado aqui -- a limpeza da migracao 39
       -- se desfazia sozinha no ciclo seguinte. O needs_push = 1 continua protegendo a
-      -- exclusao local que ainda nao subiu.
-      deleted_at = CASE WHEN customers.needs_push = 0 THEN excluded.deleted_at ELSE customers.deleted_at END,
+      -- exclusao local que ainda nao subiu (a nuvem mandando a linha VIVA).
+      --
+      -- O tombstone da nuvem, ao contrario, entra mesmo com needs_push = 1. Antes ele era
+      -- barrado pela mesma guarda, e o cliente com envio ao OMIE pendente — o que nao tem
+      -- CPF/CNPJ fica pendente para sempre, porque o OMIE o recusa — nunca saia desta
+      -- balanca quando excluido no site ou em outra maquina. A trava contra apagar cliente
+      -- com pesagem continua em resolveCustomerTombstone.
+      deleted_at = CASE WHEN customers.needs_push = 0 OR excluded.deleted_at IS NOT NULL THEN excluded.deleted_at ELSE customers.deleted_at END,
       last_synced_at = excluded.last_synced_at,
-      needs_push = customers.needs_push
+      -- Excluido pela nuvem agora: fica marcado como a exclusao feita aqui (deleteCustomer),
+      -- e e essa marca que impede a passada do OMIE de devolver o cadastro
+      -- (OMIE_CUSTOMER_DATA_COLUMNS). O envio ao OMIE ignora quem tem deleted_at.
+      needs_push = CASE WHEN excluded.deleted_at IS NOT NULL AND customers.deleted_at IS NULL THEN 1 ELSE customers.needs_push END
   `);
 
   let count = 0;
@@ -2360,6 +2376,7 @@ export function upsertCloudCustomers(
       id,
       updatedAt
     );
+    const tombstone = resolveCustomerTombstone(database, id, row, local);
     upsert.run(
       id,
       companyId,
@@ -2387,8 +2404,9 @@ export function upsertCloudCustomers(
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
       updatedAt,
-      resolveCustomerTombstone(database, id, row, local),
-      updatedAt
+      tombstone,
+      updatedAt,
+      tombstone
     );
     count++;
   }
@@ -6718,10 +6736,19 @@ const OMIE_CUSTOMER_DATA_COLUMNS: readonly OmieUpsertColumn[] = [
     expr: "COALESCE(excluded.default_payment_term_id, customers.default_payment_term_id)"
   },
   omieOwned("is_active"),
-  // `deleted_at` nao viaja no INSERT: o valor novo e o literal NULL, e a comparacao abaixo
-  // e o que faz um cliente que estava apagado localmente e voltou no OMIE contar como
-  // mudanca (e portanto ser republicado para as outras balancas).
-  { column: "deleted_at", expr: "NULL" },
+  // `deleted_at` nao viaja no INSERT: o valor novo e NULL, e a comparacao abaixo e o que faz
+  // um cliente que estava apagado localmente e voltou no OMIE contar como mudanca (e
+  // portanto ser republicado para as outras balancas).
+  //
+  // A excecao e a exclusao feita por GENTE — aqui, no site ou em outra balanca —, que deixa
+  // `needs_push = 1` (deleteCustomer, unificacao, tombstone da nuvem). O cliente continua
+  // existindo no OMIE, e devolve-lo a cada passada era o que fazia o excluido voltar sozinho
+  // em ate 30 min. Quem o OMIE tirou (nao e mais cliente, sumiu da lista) sai com
+  // `needs_push = 0` e continua voltando quando reaparece la.
+  {
+    column: "deleted_at",
+    expr: "CASE WHEN customers.deleted_at IS NOT NULL AND customers.needs_push = 1 THEN customers.deleted_at ELSE NULL END"
+  },
   {
     column: "sync_status",
     expr: "CASE WHEN customers.needs_push = 0 THEN 'synced' ELSE customers.sync_status END"
@@ -7068,7 +7095,12 @@ const OMIE_CARRIER_DATA_COLUMNS: readonly OmieUpsertColumn[] = [
     column: "needs_push",
     expr: "CASE WHEN carriers.needs_push = 0 THEN 0 ELSE carriers.needs_push END"
   },
-  { column: "deleted_at", expr: "NULL" }
+  // Mesma regra do cliente: a exclusao feita por gente (needs_push = 1) nao e desfeita pela
+  // passada do OMIE, onde a transportadora continua cadastrada.
+  {
+    column: "deleted_at",
+    expr: "CASE WHEN carriers.deleted_at IS NOT NULL AND carriers.needs_push = 1 THEN carriers.deleted_at ELSE NULL END"
+  }
 ];
 
 const OMIE_CARRIER_CHANGED_SQL = OMIE_CARRIER_DATA_COLUMNS.map(

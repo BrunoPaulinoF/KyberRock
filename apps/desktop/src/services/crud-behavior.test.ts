@@ -80,8 +80,18 @@ describe("desktop cadastro CRUD behavior", () => {
 
       deleteCarrier(database, carrier.id);
 
+      // A marca fica: e ela que segura a exclusao contra a passada do OMIE. O envio ao OMIE
+      // nao pega a transportadora, porque ignora quem tem deleted_at.
       expect(
         database.prepare("SELECT needs_push FROM carriers WHERE id = ?").pluck().get(carrier.id)
+      ).toBe(1);
+      expect(
+        database
+          .prepare(
+            "SELECT COUNT(*) FROM carriers WHERE id = ? AND deleted_at IS NULL AND needs_push = 1"
+          )
+          .pluck()
+          .get(carrier.id)
       ).toBe(0);
     } finally {
       database.close();

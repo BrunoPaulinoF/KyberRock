@@ -254,7 +254,9 @@ export class OmieSyncService {
         city = CASE WHEN customers.needs_push = 0 THEN excluded.city ELSE customers.city END,
         state = CASE WHEN customers.needs_push = 0 THEN excluded.state ELSE customers.state END,
         is_active = excluded.is_active,
-        deleted_at = NULL,
+        -- Exclusao feita por gente (needs_push = 1) nao volta pela passada do OMIE; ver
+        -- OMIE_CUSTOMER_DATA_COLUMNS em supabase-sync.ts.
+        deleted_at = CASE WHEN customers.deleted_at IS NOT NULL AND customers.needs_push = 1 THEN customers.deleted_at ELSE NULL END,
         last_synced_at = datetime('now'),
         omie_updated_at = datetime('now'),
         updated_at = datetime('now')
@@ -1062,7 +1064,8 @@ export class OmieSyncService {
         city = excluded.city,
         state = excluded.state,
         is_active = excluded.is_active,
-        deleted_at = NULL,
+        -- Exclusao feita por gente (needs_push = 1) nao volta pela passada do OMIE.
+        deleted_at = CASE WHEN carriers.deleted_at IS NOT NULL AND carriers.needs_push = 1 THEN carriers.deleted_at ELSE NULL END,
         updated_at = datetime('now')
     `);
 

@@ -220,9 +220,12 @@ export function deleteCarrier(database: DesktopDatabase, id: string, now: Date =
 
   if (!existing) throw new Error("Transportadora nao encontrada.");
 
+  // needs_push = 1 marca a exclusao feita por gente: e o que impede a passada do OMIE (onde a
+  // transportadora continua cadastrada) e o pull da nuvem, antes de a exclusao subir, de
+  // devolve-la. O envio ao OMIE ignora quem tem deleted_at.
   database
     .prepare(
-      "UPDATE carriers SET deleted_at = ?, needs_push = 0, updated_at = ? WHERE id = ? AND deleted_at IS NULL"
+      "UPDATE carriers SET deleted_at = ?, needs_push = 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL"
     )
     .run(now.toISOString(), now.toISOString(), id);
 }
