@@ -22,13 +22,12 @@ import { periodToIso } from "../lib/format";
 import {
   INVOICE_CLOSING_PERIOD_KINDS,
   INVOICE_CLOSING_PERIOD_KIND_LABEL,
-  defaultInvoiceClosingPeriod,
   formatDayLabel,
-  resolveInvoiceClosingPeriod,
-  type InvoiceClosingPeriodSelection
+  resolveInvoiceClosingPeriod
 } from "../lib/invoice-closing";
 import { q } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
+import { useUrlState } from "../lib/url-state";
 import {
   EMPTY_WALLET_REPORT,
   buildWalletReport,
@@ -38,6 +37,9 @@ import {
   type WalletOperation,
   type WalletStatusFilter
 } from "../lib/wallet";
+import { FilterInput, oneOf, useClosingPeriodParams } from "./url-filters";
+
+const WALLET_STATUSES: readonly WalletStatusFilter[] = ["open", "settled", "all"];
 
 const HELP =
   "Vendas fechadas na forma de pagamento 'Em carteira': elas saem da balança sem forma de recebimento definida e ficam aqui até o fechamento, quando você escolhe como o cliente vai pagar e para quando. Quem pagou adiantado já chega com a compra abatida do depósito: 'A receber' mostra só o que passou do adiantamento. O filtro de período começa em 'Tudo em aberto' para não esconder venda antiga sem receber; escolha a quinzena (ou o mês, a semana, datas livres) quando estiver fechando um período com o cliente. O recorte usa a data da OPERAÇÃO, a mesma do Fechamento de faturas, para as duas telas mostrarem a mesma quinzena.";
@@ -80,14 +82,16 @@ function useDebounced<T>(value: T, delay = 300): T {
 export function Wallet() {
   const user = useUser();
   const toast = useToast();
-  const [status, setStatus] = useState<WalletStatusFilter>("open");
-  const [search, setSearch] = useState("");
-  // O recorte por periodo comeca DESLIGADO: venda em aberto de tres meses atras continua
-  // sendo dinheiro a receber hoje.
-  const [periodEnabled, setPeriodEnabled] = useState(false);
-  const [period, setPeriod] = useState<InvoiceClosingPeriodSelection>(() =>
-    defaultInvoiceClosingPeriod(new Date())
-  );
+  // Situacao, busca e periodo ficam no endereco e voltam quando a pessoa sai e volta pelo menu
+  // (`useUrlState`).
+  const [statusParam, setStatus] = useUrlState("situacao", "open");
+  const status = oneOf(statusParam, WALLET_STATUSES, "open");
+  const [search, setSearch] = useUrlState("busca");
+  // O recorte por periodo comeca DESLIGADO (sem `periodo` no endereco): venda em aberto de tres
+  // meses atras continua sendo dinheiro a receber hoje.
+  const periodParams = useClosingPeriodParams("");
+  const periodEnabled = periodParams.enabled;
+  const period = periodParams.selection;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [settlementMethodId, setSettlementMethodId] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -277,7 +281,7 @@ export function Wallet() {
           <select
             className="wallet-input"
             value={status}
-            onChange={(event) => setStatus(event.target.value as WalletStatusFilter)}
+            onChange={(event) => setStatus(event.target.value)}
           >
             <option value="open">Em aberto</option>
             <option value="settled">Fechadas</option>
@@ -286,11 +290,11 @@ export function Wallet() {
         </label>
         <label className="wallet-field wallet-search">
           Buscar (cliente, placa ou produto)
-          <input
+          <FilterInput
             type="search"
             className="wallet-input"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onValue={setSearch}
             placeholder="Ex: ACME"
           />
         </label>
@@ -300,7 +304,7 @@ export function Wallet() {
             <button
               type="button"
               className={`wallet-chip${periodEnabled ? "" : " active"}`}
-              onClick={() => setPeriodEnabled(false)}
+              onClick={() => periodParams.setKind("")}
             >
               Tudo em aberto
             </button>
@@ -309,10 +313,7 @@ export function Wallet() {
                 key={kind}
                 type="button"
                 className={`wallet-chip${periodEnabled && period.kind === kind ? " active" : ""}`}
-                onClick={() => {
-                  setPeriodEnabled(true);
-                  setPeriod((current) => ({ ...current, kind }));
-                }}
+                onClick={() => periodParams.setKind(kind)}
               >
                 {INVOICE_CLOSING_PERIOD_KIND_LABEL[kind]}
               </button>
@@ -322,14 +323,13 @@ export function Wallet() {
             <>
               <div className="wallet-chip-row">
                 {period.kind === "biweekly" || period.kind === "monthly" ? (
-                  <input
+                  <FilterInput
                     type="month"
                     className="wallet-input"
                     aria-label="Mês do período"
                     value={period.month}
-                    onChange={(event) =>
-                      setPeriod((current) => ({ ...current, month: event.target.value }))
-                    }
+                    onValue={periodParams.setMonth}
+                    keepLastValid
                   />
                 ) : null}
                 {period.kind === "biweekly" ? (
@@ -337,49 +337,46 @@ export function Wallet() {
                     <button
                       type="button"
                       className={`wallet-chip${period.half === 1 ? " active" : ""}`}
-                      onClick={() => setPeriod((current) => ({ ...current, half: 1 }))}
+                      onClick={() => periodParams.setHalf(1)}
                     >
                       1ª
                     </button>
                     <button
                       type="button"
                       className={`wallet-chip${period.half === 2 ? " active" : ""}`}
-                      onClick={() => setPeriod((current) => ({ ...current, half: 2 }))}
+                      onClick={() => periodParams.setHalf(2)}
                     >
                       2ª
                     </button>
                   </>
                 ) : null}
                 {period.kind === "weekly" ? (
-                  <input
+                  <FilterInput
                     type="date"
                     className="wallet-input"
                     aria-label="Qualquer dia da semana"
                     value={period.weekDay}
-                    onChange={(event) =>
-                      setPeriod((current) => ({ ...current, weekDay: event.target.value }))
-                    }
+                    onValue={periodParams.setWeekDay}
+                    keepLastValid
                   />
                 ) : null}
                 {period.kind === "custom" ? (
                   <>
-                    <input
+                    <FilterInput
                       type="date"
                       className="wallet-input"
                       aria-label="Data inicial"
                       value={period.customStart}
-                      onChange={(event) =>
-                        setPeriod((current) => ({ ...current, customStart: event.target.value }))
-                      }
+                      onValue={periodParams.setCustomStart}
+                      keepLastValid
                     />
-                    <input
+                    <FilterInput
                       type="date"
                       className="wallet-input"
                       aria-label="Data final"
                       value={period.customEnd}
-                      onChange={(event) =>
-                        setPeriod((current) => ({ ...current, customEnd: event.target.value }))
-                      }
+                      onValue={periodParams.setCustomEnd}
+                      keepLastValid
                     />
                   </>
                 ) : null}

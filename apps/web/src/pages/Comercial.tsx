@@ -1,6 +1,8 @@
 import "./comercial.css";
 
+import { KeyRound, Tags, UserSearch, Users, type LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { DeskPanel } from "../components/desk";
 import { Picker } from "../components/Picker";
@@ -18,6 +20,7 @@ import {
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
+import { comercialShortcuts, type ComercialShortcutId } from "../lib/comercial-shortcuts";
 import {
   aggregateSalesReport,
   buildSalesReportCsv,
@@ -36,13 +39,22 @@ import { supabase } from "../lib/supabase";
 import { useAsync } from "../lib/use-async";
 
 /**
- * Aba Comercial (perfis comercial e gestor). No topo, as etapas dos caminhoes na pedreira em
- * tempo real (`components/TruckStages.tsx`); embaixo, a tela "Relatorio de vendas" do KyberRock Portal (`apps/loader-web`,
- * `pages/SalesReport.tsx`), que era a tela do comercial, com as mesmas visoes, filtros,
- * disposicao, impressao e CSV. A conta e copia byte a byte da do portal
+ * Aba Comercial (a tela inicial do perfil comercial). No topo, o titulo e uma fileira de atalhos
+ * grandes para o que o comercial mais faz (`lib/comercial-shortcuts.ts`, cada um so para quem ve
+ * a tela de destino); depois, as etapas dos caminhoes na pedreira em tempo real
+ * (`components/TruckStages.tsx`); embaixo, a tela "Relatorio de vendas" do KyberRock Portal
+ * (`apps/loader-web`, `pages/SalesReport.tsx`), que era a tela do comercial, com as mesmas
+ * visoes, filtros, disposicao, impressao e CSV. A conta e copia byte a byte da do portal
  * (`lib/portal/sales-report.ts`, guardada por `portal-copies.test.ts`); aqui muda so a casca,
  * que e a do site.
  */
+
+const SHORTCUT_ICONS: Record<ComercialShortcutId, LucideIcon> = {
+  clientes: Users,
+  precos: Tags,
+  "senha-preco": KeyRound,
+  "relatorio-cliente": UserSearch
+};
 
 type PeriodPreset = "today" | "7d" | "30d" | "month" | "lastMonth" | "custom";
 
@@ -299,8 +311,44 @@ export function Comercial() {
           ? ["Produto"]
           : ["Dia"];
 
+  const shortcuts = comercialShortcuts(user.role);
+
   return (
     <div className="comercial-page">
+      {/* Na impressao sobram so este topo (titulo e periodo) e a tabela do relatorio. */}
+      <PageHeader
+        kicker="Análise"
+        title="Comercial"
+        description={
+          <>
+            Relatório de vendas por produto, cliente e período —{" "}
+            {resolvedPeriod?.label ?? "período inválido"}
+            {freightFilter === SALES_FREIGHT_ALL
+              ? ""
+              : ` · frete ${freightTypeLabel(freightFilter)}`}
+          </>
+        }
+      />
+
+      {shortcuts.length > 0 && (
+        <nav className="comercial-shortcuts comercial-no-print" aria-label="Atalhos do comercial">
+          {shortcuts.map((shortcut) => {
+            const Icon = SHORTCUT_ICONS[shortcut.id];
+            return (
+              <Link key={shortcut.id} to={shortcut.to} className="comercial-shortcut">
+                <span className="comercial-shortcut-icon" aria-hidden="true">
+                  <Icon size={22} />
+                </span>
+                <span className="comercial-shortcut-text">
+                  <strong>{shortcut.label}</strong>
+                  <span>{shortcut.hint}</span>
+                </span>
+              </Link>
+            );
+          })}
+        </nav>
+      )}
+
       <div className="comercial-no-print comercial-stages">
         <DeskPanel>
           <TruckStages />
@@ -308,40 +356,6 @@ export function Comercial() {
       </div>
       <DeskPanel>
         <section className="comercial-panel" aria-label="Relatório de vendas">
-          <PageHeader
-            kicker="Análise"
-            title="Relatório de vendas"
-            description={
-              <>
-                Visões por produto, cliente e período —{" "}
-                {resolvedPeriod?.label ?? "período inválido"}
-                {freightFilter === SALES_FREIGHT_ALL
-                  ? ""
-                  : ` · frete ${freightTypeLabel(freightFilter)}`}
-              </>
-            }
-            actions={
-              <>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => window.print()}
-                  disabled={report.lines.length === 0}
-                >
-                  Imprimir / PDF
-                </button>
-                <button
-                  type="button"
-                  className="btn primary"
-                  onClick={handleExportCsv}
-                  disabled={report.lines.length === 0}
-                >
-                  Exportar CSV
-                </button>
-              </>
-            }
-          />
-
           <div className="comercial-controls comercial-no-print">
             <Tabs<SalesGroupBy>
               label="Visão do relatório"
@@ -434,6 +448,26 @@ export function Comercial() {
                 ))}
               </select>
             </label>
+
+            {/* Os botoes do relatorio ficam junto dele (o topo da tela esta la em cima). */}
+            <div className="comercial-report-actions">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => window.print()}
+                disabled={report.lines.length === 0}
+              >
+                Imprimir / PDF
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={handleExportCsv}
+                disabled={report.lines.length === 0}
+              >
+                Exportar CSV
+              </button>
+            </div>
           </div>
 
           {loadError ? (

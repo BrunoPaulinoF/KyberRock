@@ -34,6 +34,8 @@ import {
 import { formatDateTime, formatDocument, todayIso } from "../lib/format";
 import { deliverReports, spreadsheetFileName } from "../lib/report-output";
 import { useAsync } from "../lib/use-async";
+import { useUrlState } from "../lib/url-state";
+import { FilterInput, listOf, usePeriodParams } from "./url-filters";
 
 const HELP =
   "Lista pesagem a pesagem do período: cliente, data, produto, peso, frete e total de cada carregamento fechado na balança, com a situação dele no OMIE. Use o filtro de situação para isolar o que ainda não foi faturado e conferir contra o relatório do OMIE. O PDF e a planilha saem com as mesmas linhas que estão na tela.";
@@ -47,12 +49,21 @@ const HELP =
  */
 export function BillingConference() {
   const user = useUser();
-  const [customerId, setCustomerId] = useState("");
-  const [period, setPeriod] = useState<BillingPeriod>("month");
-  const [customStart, setCustomStart] = useState(() => todayIso());
-  const [customEnd, setCustomEnd] = useState(() => todayIso());
-  const [situations, setSituations] = useState<BillingSituation[]>([]);
-  const [search, setSearch] = useState("");
+  const today = todayIso();
+  // Periodo, cliente, busca e situacoes ficam no endereco e voltam quando a pessoa sai e volta
+  // pelo menu (`useUrlState`). As situacoes vao juntas: `?situacao=pending,failed`.
+  const { period, setPeriod, customStart, setCustomStart, customEnd, setCustomEnd } =
+    usePeriodParams<BillingPeriod>(
+      BILLING_PERIOD_OPTIONS.map((option) => option.id),
+      "month",
+      today,
+      today
+    );
+  const [customerParam, setCustomerId] = useUrlState("cliente");
+  const [situationsParam, setSituationsParam] = useUrlState("situacao");
+  const situations = useMemo(() => listOf(situationsParam, BILLING_SITUATIONS), [situationsParam]);
+  const setSituations = (next: readonly BillingSituation[]) => setSituationsParam(next.join(","));
+  const [search, setSearch] = useUrlState("busca");
   const [exporting, setExporting] = useState(false);
   // O que a geracao do arquivo respondeu: os nomes gerados (info) ou o que faltou/falhou (erro).
   const [exportMessage, setExportMessage] = useState<{
@@ -85,6 +96,12 @@ export function BillingConference() {
       })),
     [customers.data]
   );
+  // Cliente do endereco que nao esta na lista (apagado, inativo, link velho) vale como "Todos":
+  // o filtro que a tela aplica e o que o seletor mostra.
+  const customerId =
+    !customers.data || customerOptions.some((option) => option.value === customerParam)
+      ? customerParam
+      : "";
 
   // Situacao e busca filtram na tela: a leitura e so empresa + unidade + periodo + cliente.
   const { data, loading, error, reload, refresh } = useAsync(
@@ -114,10 +131,10 @@ export function BillingConference() {
   );
 
   function toggleSituation(situation: BillingSituation) {
-    setSituations((current) =>
-      current.includes(situation)
-        ? current.filter((item) => item !== situation)
-        : [...current, situation]
+    setSituations(
+      situations.includes(situation)
+        ? situations.filter((item) => item !== situation)
+        : [...situations, situation]
     );
   }
 
@@ -202,20 +219,22 @@ export function BillingConference() {
               <div className="billing-conference-dates">
                 <label className="billing-conference-date">
                   De
-                  <input
+                  <FilterInput
                     type="date"
                     className="billing-conference-input"
                     value={customStart}
-                    onChange={(event) => setCustomStart(event.target.value)}
+                    onValue={setCustomStart}
+                    keepLastValid
                   />
                 </label>
                 <label className="billing-conference-date">
                   Até
-                  <input
+                  <FilterInput
                     type="date"
                     className="billing-conference-input"
                     value={customEnd}
-                    onChange={(event) => setCustomEnd(event.target.value)}
+                    onValue={setCustomEnd}
+                    keepLastValid
                   />
                 </label>
               </div>
@@ -236,10 +255,10 @@ export function BillingConference() {
               emptyLabel="Todos os clientes"
             />
             <span className="billing-conference-filter-label">Buscar</span>
-            <input
+            <FilterInput
               className="billing-conference-input"
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onValue={setSearch}
               placeholder="Cliente, produto, placa ou número da operação"
             />
           </div>

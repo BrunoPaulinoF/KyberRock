@@ -16,6 +16,7 @@ import {
   Pill,
   Tabs,
   Warnings,
+  useConfirm,
   useToast
 } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
@@ -39,7 +40,7 @@ import { FREIGHT_MODALITIES } from "../lib/desktop/freight";
 import { conditionTextOf, describePaymentCondition } from "../lib/entry-freight";
 import { formatDate, formatMoney, formatPlate, parseMoneyToCents } from "../lib/format";
 import { matchesSearch } from "../lib/operation";
-import { q, type Customer, type Product } from "../lib/queries";
+import { q, type Carrier, type Customer, type Product, type Vehicle } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
 
 /**
@@ -151,6 +152,7 @@ function reais(cents: number | null | undefined): string {
 function SpecialPricesTab({ customer }: { customer: Customer }) {
   const user = useUser();
   const toast = useToast();
+  const confirm = useConfirm();
   const canEdit = user.canEditPrices;
   const askPassword = user.requiresPricePassword;
   const { products, defaultByProduct, loading, error, reload } = useProducts();
@@ -171,6 +173,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
   const [search, setSearch] = useState("");
   const [onlySpecial, setOnlySpecial] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ product?: string; value?: string }>({});
   const [busy, setBusy] = useState(false);
 
   const rows = products.filter(
@@ -183,6 +186,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
     setProductId(product.id);
     setValue(reais(specialByProduct.get(product.id) ?? defaultByProduct.get(product.id)));
     setFormError(null);
+    setFieldErrors({});
   }
 
   function passwordOrError(): string | undefined | false {
@@ -196,14 +200,15 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
 
   async function save() {
     if (!productId) {
-      setFormError("Escolha o produto.");
+      setFieldErrors({ product: "Escolha o produto." });
       return;
     }
     const cents = parseMoneyToCents(value);
     if (cents == null || cents <= 0) {
-      setFormError("Informe um preço válido, ex.: 65,00");
+      setFieldErrors({ value: "Informe um preço válido, ex.: 65,00" });
       return;
     }
+    setFieldErrors({});
     const pricePassword = passwordOrError();
     if (pricePassword === false) return;
     setBusy(true);
@@ -230,6 +235,18 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
   async function remove(product: Product) {
     const pricePassword = passwordOrError();
     if (pricePassword === false) return;
+    const ok = await confirm({
+      title: "Remover preço especial?",
+      message: (
+        <>
+          <strong>{customer.trade_name || customer.legal_name}</strong> volta a pagar o preço padrão
+          de <strong>{product.description}</strong>.
+        </>
+      ),
+      confirmLabel: "Remover",
+      tone: "danger"
+    });
+    if (!ok) return;
     setFormError(null);
     try {
       await callWebApi("remove_customer_special_price", {
@@ -260,7 +277,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
         <div className="file-form">
           {formError && <Alert kind="error">{formError}</Alert>}
           <div className="grid-2">
-            <Field label="Produto">
+            <Field label="Produto" error={fieldErrors.product} required>
               <Picker
                 value={productId}
                 options={productOptions(products)}
@@ -280,13 +297,18 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
                   ? `Preço padrão: ${formatMoney(defaultByProduct.get(productId))}/ton`
                   : undefined
               }
+              error={fieldErrors.value}
             >
               <input
                 className="input"
                 value={value}
-                onChange={(e) => setValue(e.target.value)}
+                onChange={(e) => {
+                  setValue(e.target.value);
+                  setFieldErrors((current) => ({ ...current, value: undefined }));
+                }}
                 placeholder="65,00"
                 inputMode="decimal"
+                required
               />
             </Field>
           </div>
@@ -317,6 +339,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
           {
             key: "desc",
             header: "Produto",
+            sortValue: (p) => p.description,
             render: (p) => (
               <>
                 <strong>{p.description}</strong>
@@ -328,6 +351,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
             key: "default",
             header: "Padrão",
             numeric: true,
+            sortValue: (p) => defaultByProduct.get(p.id) ?? null,
             render: (p) =>
               defaultByProduct.has(p.id) ? formatMoney(defaultByProduct.get(p.id)) : "—"
           },
@@ -335,6 +359,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
             key: "special",
             header: "Especial",
             numeric: true,
+            sortValue: (p) => specialByProduct.get(p.id) ?? null,
             render: (p) =>
               specialByProduct.has(p.id) ? (
                 <strong>{formatMoney(specialByProduct.get(p.id))}</strong>
@@ -382,6 +407,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
 function FreightTab({ customer }: { customer: Customer }) {
   const user = useUser();
   const toast = useToast();
+  const confirm = useConfirm();
   const canEdit = user.canEditPrices;
   const askPassword = user.requiresPricePassword;
   const { products, loading } = useProducts();
@@ -404,6 +430,7 @@ function FreightTab({ customer }: { customer: Customer }) {
   const [value, setValue] = useState("");
   const [password, setPassword] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const [valueError, setValueError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   function passwordOrError(): string | undefined | false {
@@ -418,9 +445,10 @@ function FreightTab({ customer }: { customer: Customer }) {
   async function save() {
     const cents = parseMoneyToCents(value);
     if (cents == null || cents <= 0) {
-      setFormError("Informe o frete por tonelada, ex.: 15,00");
+      setValueError("Informe o frete por tonelada, ex.: 15,00");
       return;
     }
+    setValueError(null);
     const pricePassword = passwordOrError();
     if (pricePassword === false) return;
     setBusy(true);
@@ -446,6 +474,18 @@ function FreightTab({ customer }: { customer: Customer }) {
   async function remove(entry: CustomerFreightEntry) {
     const pricePassword = passwordOrError();
     if (pricePassword === false) return;
+    const ok = await confirm({
+      title: "Remover frete?",
+      message: (
+        <>
+          Sai o frete de <strong>{formatMoney(entry.baseValueCents)}/ton</strong> (
+          {entry.scopeLabel}, {entry.modalityLabel}) deste cliente.
+        </>
+      ),
+      confirmLabel: "Remover",
+      tone: "danger"
+    });
+    if (!ok) return;
     setFormError(null);
     try {
       await callWebApi("remove_customer_freight_value", {
@@ -480,13 +520,17 @@ function FreightTab({ customer }: { customer: Customer }) {
                 loading={loading}
               />
             </Field>
-            <Field label="Frete (R$ / ton)">
+            <Field label="Frete (R$ / ton)" error={valueError}>
               <input
                 className="input"
                 value={value}
-                onChange={(e) => setValue(e.target.value)}
+                onChange={(e) => {
+                  setValue(e.target.value);
+                  setValueError(null);
+                }}
                 placeholder="15,00"
                 inputMode="decimal"
+                required
               />
             </Field>
           </div>
@@ -510,6 +554,7 @@ function FreightTab({ customer }: { customer: Customer }) {
           {
             key: "scope",
             header: "Vale para",
+            sortValue: (entry) => entry.scopeLabel,
             render: (entry) => <strong>{entry.scopeLabel}</strong>
           },
           {
@@ -528,6 +573,7 @@ function FreightTab({ customer }: { customer: Customer }) {
             key: "value",
             header: "R$ / ton",
             numeric: true,
+            sortValue: (entry) => entry.baseValueCents,
             render: (entry) => <strong>{formatMoney(entry.baseValueCents)}</strong>
           },
           {
@@ -559,6 +605,7 @@ function FreightTab({ customer }: { customer: Customer }) {
 function TransportTab({ customer }: { customer: Customer }) {
   const user = useUser();
   const toast = useToast();
+  const confirm = useConfirm();
   const canEdit = user.canEditCustomers;
   const data = useAsync(
     () =>
@@ -628,6 +675,36 @@ function TransportTab({ customer }: { customer: Customer }) {
       isActive ? "Placa vinculada." : "Placa desvinculada."
     );
 
+  // Desvincular pergunta antes: nao ha "Desfazer" (voltar e vincular de novo pelo seletor).
+  async function unlinkCarrier(carrier: Carrier) {
+    const ok = await confirm({
+      title: "Remover transportadora do cliente?",
+      message: (
+        <>
+          <strong>{carrier.name}</strong> deixa de ser oferecida na nova entrada deste cliente.
+        </>
+      ),
+      confirmLabel: "Remover",
+      tone: "danger"
+    });
+    if (ok) await linkCarrier(carrier.id, false);
+  }
+
+  async function unlinkVehicle(vehicle: Vehicle) {
+    const ok = await confirm({
+      title: "Remover placa do cliente?",
+      message: (
+        <>
+          A placa <strong>{formatPlate(vehicle.plate)}</strong> deixa de abrir junto com este
+          cliente na nova entrada.
+        </>
+      ),
+      confirmLabel: "Remover",
+      tone: "danger"
+    });
+    if (ok) await linkVehicle(vehicle.id, false);
+  }
+
   return (
     <>
       {data.error && <ErrorState message={data.error} onRetry={() => void data.reload()} />}
@@ -689,7 +766,7 @@ function TransportTab({ customer }: { customer: Customer }) {
                 <button
                   className="btn small ghost-danger"
                   disabled={busy}
-                  onClick={() => void linkCarrier(carrier.id, false)}
+                  onClick={() => void unlinkCarrier(carrier)}
                 >
                   Remover
                 </button>
@@ -738,7 +815,7 @@ function TransportTab({ customer }: { customer: Customer }) {
                 <button
                   className="btn small ghost-danger"
                   disabled={busy}
-                  onClick={() => void linkVehicle(vehicle.id, false)}
+                  onClick={() => void unlinkVehicle(vehicle)}
                 >
                   Remover
                 </button>
@@ -760,6 +837,7 @@ const ANY_PRODUCT = "__any__";
 function FutureBillingTab({ customer }: { customer: Customer }) {
   const user = useUser();
   const toast = useToast();
+  const confirm = useConfirm();
   const canEdit = user.canEditCustomers;
   const { products, loading } = useProducts();
   const invoices = useAsync(
@@ -779,6 +857,7 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
   const [nfeNumber, setNfeNumber] = useState("");
   const [totalKg, setTotalKg] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ nfe?: string; product?: string }>({});
   const [busy, setBusy] = useState(false);
   // O que o OMIE disse da nota digitada: produto e volume vem da propria NF-e.
   const [lookup, setLookup] = useState<{ invoices: FutureInvoice[]; warnings: string[] } | null>(
@@ -797,11 +876,12 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
   async function lookupInvoice() {
     const number = normalizeNfeNumber(nfeNumber);
     if (!number) {
-      setFormError("Digite o número da NF-e para buscar no OMIE.");
+      setFieldErrors({ nfe: "Digite o número da NF-e para buscar no OMIE." });
       return;
     }
     setLookupBusy(true);
     setFormError(null);
+    setFieldErrors({});
     setFillNotes([]);
     setLookup(null);
     try {
@@ -822,14 +902,12 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
   }
 
   async function save() {
-    if (!productId) {
-      setFormError('Escolha o produto da nota (ou "Qualquer produto do cliente").');
-      return;
-    }
-    if (!normalizeNfeNumber(nfeNumber)) {
-      setFormError("Informe o número da NF-e.");
-      return;
-    }
+    const errors: { nfe?: string; product?: string } = {};
+    if (!normalizeNfeNumber(nfeNumber)) errors.nfe = "Informe o número da NF-e.";
+    if (!productId)
+      errors.product = 'Escolha o produto da nota (ou "Qualquer produto do cliente").';
+    setFieldErrors(errors);
+    if (errors.nfe || errors.product) return;
     setBusy(true);
     setFormError(null);
     try {
@@ -853,9 +931,22 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
     }
   }
 
-  async function remove(id: string) {
+  async function remove(invoice: { id: string; nfe_number: string | null }) {
+    const ok = await confirm({
+      title: "Remover nota de entrega futura?",
+      message: (
+        <>
+          As próximas pesagens deste cliente deixam de sair com a referência da NF-e{" "}
+          <strong>{invoice.nfe_number}</strong>.
+        </>
+      ),
+      confirmLabel: "Remover",
+      tone: "danger",
+      irreversible: true
+    });
+    if (!ok) return;
     try {
-      await callWebApi("remove_customer_future_billing_invoice", { id });
+      await callWebApi("remove_customer_future_billing_invoice", { id: invoice.id });
       toast.push("Nota removida.");
       await invoices.reload();
     } catch (caught) {
@@ -874,12 +965,19 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
           <Field
             label="Número da NF-e"
             hint="Número da nota já emitida. Buscar no OMIE traz o produto e o total da própria nota."
+            error={fieldErrors.nfe}
+            required
           >
             <div className="input-with-action">
               <input
                 className="input"
                 value={nfeNumber}
-                onChange={(e) => setNfeNumber(e.target.value)}
+                aria-label="Número da NF-e"
+                aria-invalid={fieldErrors.nfe ? true : undefined}
+                onChange={(e) => {
+                  setNfeNumber(e.target.value);
+                  setFieldErrors((current) => ({ ...current, nfe: undefined }));
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
@@ -915,14 +1013,17 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
             </Alert>
           )}
           <div className="grid-2">
-            <Field label="Produto da nota">
+            <Field label="Produto da nota" error={fieldErrors.product} required>
               <Picker
                 value={productId}
                 options={[
                   { value: ANY_PRODUCT, label: "Qualquer produto do cliente" },
                   ...productOptions(products)
                 ]}
-                onChange={setProductId}
+                onChange={(id) => {
+                  setProductId(id);
+                  setFieldErrors((current) => ({ ...current, product: undefined }));
+                }}
                 placeholder="Buscar produto da nota..."
                 loading={loading}
               />
@@ -958,11 +1059,16 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
           {
             key: "nfe",
             header: "NF-e",
+            sortValue: (invoice) => invoice.nfe_number,
             render: (invoice) => <strong>{invoice.nfe_number}</strong>
           },
           {
             key: "product",
             header: "Produto",
+            sortValue: (invoice) =>
+              invoice.product_id
+                ? (productNames.get(invoice.product_id) ?? "Produto")
+                : "Qualquer produto",
             render: (invoice) =>
               invoice.product_id
                 ? (productNames.get(invoice.product_id) ?? "Produto")
@@ -972,6 +1078,8 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
             key: "total",
             header: "Total da nota",
             numeric: true,
+            sortValue: (invoice) =>
+              invoice.total_weight_kg != null ? Number(invoice.total_weight_kg) : null,
             render: (invoice) =>
               invoice.total_weight_kg != null
                 ? `${Number(invoice.total_weight_kg).toLocaleString("pt-BR")} kg`
@@ -988,7 +1096,7 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
                     icon="trash"
                     label="Remover nota"
                     tone="danger"
-                    onClick={() => void remove(invoice.id)}
+                    onClick={() => void remove(invoice)}
                   />
                 </span>
               )
@@ -1101,6 +1209,7 @@ function CommercialTab({ customer }: { customer: Customer }) {
   const [methods, carriers, terms] = lists.data ?? [[], [], []];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conditionError, setConditionError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   // A condicao padrao fica aqui, ao lado da forma de pagamento (o combinado com o cliente e um
   // par). Como no cadastro, e TEXTO ("30", "7 14 21"): a web-api reusa a condicao com a mesma
@@ -1142,11 +1251,14 @@ function CommercialTab({ customer }: { customer: Customer }) {
     // So confere o que foi digitado: a condicao guardada pode ter um nome antigo do OMIE que o
     // leitor nao reconhece, e isso nao pode travar o resto do bloco comercial.
     if (conditionChanged && describePaymentCondition(condition).status === "invalid") {
-      setError('Condição de pagamento padrão inválida. Veja os formatos em "Como escrever".');
+      setConditionError(
+        'Condição de pagamento padrão inválida. Veja os formatos em "Como escrever".'
+      );
       return;
     }
     setBusy(true);
     setError(null);
+    setConditionError(null);
     setWarnings([]);
     try {
       if (conditionChanged) {
@@ -1174,7 +1286,10 @@ function CommercialTab({ customer }: { customer: Customer }) {
       });
       toast.push("Bloco comercial publicado para as balanças.");
     } catch (caught) {
-      setError(errorMessage(caught));
+      const message = errorMessage(caught);
+      // A recusa da condicao aparece embaixo dela; o resto, no alto do bloco.
+      if (/condi[cç][aã]o de pagamento/i.test(message)) setConditionError(message);
+      else setError(message);
     } finally {
       setBusy(false);
     }
@@ -1213,11 +1328,15 @@ function CommercialTab({ customer }: { customer: Customer }) {
           <Field
             label="Condição de pagamento padrão"
             hint="Vazio = sem padrão. Se não existir no OMIE, é criada no envio."
+            error={conditionError}
           >
             <input
               className="input"
               value={condition}
-              onChange={(e) => setConditionText(e.target.value)}
+              onChange={(e) => {
+                setConditionText(e.target.value);
+                setConditionError(null);
+              }}
               placeholder='Ex.: "30", "7 14 21", "3 parcelas" ou "s+20"'
               disabled={!canEdit}
             />

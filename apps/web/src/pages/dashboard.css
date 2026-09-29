@@ -87,12 +87,64 @@
   line-height: 1.2;
 }
 
-/* ---------- Resumo do turno e Atencao ---------- */
-.dash-columns {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
-  gap: 10px;
+/* ---------- Atencao (com pendencia: primeiro e na largura toda) ---------- */
+.dash-attention {
+  border-left: 4px solid var(--kr-warning-border);
 }
+.dash-attention.danger {
+  border-left-color: var(--kr-danger-border);
+}
+/* tela larga: as secoes lado a lado, em vez de uma coluna comprida */
+.dash-attention-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  align-items: start;
+  gap: 8px;
+}
+
+/* ---------- sem pendencia: uma linha discreta embaixo dos numeros ---------- */
+.dash-ok {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface);
+  color: var(--kr-muted);
+  font-size: 13px;
+}
+.dash-ok > svg {
+  flex-shrink: 0;
+  color: var(--kr-success);
+}
+.dash-ok > strong {
+  color: var(--kr-success);
+  font-weight: 800;
+}
+.dash-ok-detail {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.dash-ok-action {
+  flex-shrink: 0;
+  border: 1px solid var(--kr-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--kr-surface);
+  color: var(--kr-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dash-ok-action:hover {
+  background: var(--kr-card-hover);
+  color: var(--kr-text-strong);
+}
+
+/* ---------- Resumo do turno ---------- */
 .dash-card-head {
   display: flex;
   align-items: center;
@@ -104,9 +156,10 @@
   font-size: 16px;
   color: var(--kr-text-strong);
 }
+/* o cartao vai de ponta a ponta: quatro numeros numa linha no computador, dois no celular */
 .dash-kpis {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
   gap: 8px;
 }
 .dash-kpi {
@@ -294,8 +347,11 @@
   min-width: 0;
 }
 @media (max-width: 640px) {
-  .dash-columns {
-    grid-template-columns: 1fr;
+  .dash-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .dash-attention-list {
+    grid-template-columns: minmax(0, 1fr);
   }
   .dash-pending-row {
     flex-wrap: wrap;

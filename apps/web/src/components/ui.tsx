@@ -1,9 +1,13 @@
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   CheckCircle2,
   CircleHelp,
   Inbox,
   Info,
+  MoreHorizontal,
   RefreshCw,
   X,
   XCircle,
@@ -17,6 +21,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -465,6 +470,46 @@ export interface Column<T> {
   header: string;
   render: (row: T) => ReactNode;
   numeric?: boolean;
+  /**
+   * Valor pelo qual a coluna ordena quando a pessoa clica no titulo. Sem ele a coluna nao ordena
+   * (acoes, etiquetas). Nulo vai para o fim nos dois sentidos.
+   */
+  sortValue?: (row: T) => string | number | null | undefined;
+}
+
+type SortState = { key: string; dir: "asc" | "desc" } | null;
+
+/** Compara dois valores de ordenacao: numero como numero, texto pelo alfabeto do portugues. */
+export function compareSortValues(
+  a: string | number | null | undefined,
+  b: string | number | null | undefined
+): number {
+  const aEmpty = a === null || a === undefined || a === "";
+  const bEmpty = b === null || b === undefined || b === "";
+  if (aEmpty || bEmpty) return aEmpty === bEmpty ? 0 : aEmpty ? 1 : -1;
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  return String(a).localeCompare(String(b), "pt-BR", { numeric: true, sensitivity: "base" });
+}
+
+/** Ordena a lista pela coluna escolhida, sem mexer na lista original (nulos sempre no fim). */
+export function sortRows<T>(rows: T[], columns: Column<T>[], sort: SortState): T[] {
+  if (!sort) return rows;
+  const column = columns.find((item) => item.key === sort.key);
+  const value = column?.sortValue;
+  if (!value) return rows;
+  const factor = sort.dir === "asc" ? 1 : -1;
+  return rows
+    .map((row, index) => ({ row, index, value: value(row) }))
+    .sort((left, right) => {
+      const leftEmpty = left.value === null || left.value === undefined || left.value === "";
+      const rightEmpty = right.value === null || right.value === undefined || right.value === "";
+      if (leftEmpty || rightEmpty) {
+        if (leftEmpty !== rightEmpty) return leftEmpty ? 1 : -1;
+        return left.index - right.index;
+      }
+      return compareSortValues(left.value, right.value) * factor || left.index - right.index;
+    })
+    .map((item) => item.row);
 }
 
 /** Quantas linhas as listas mostram de cada vez; "Ver mais" traz outras tantas. */
@@ -538,6 +583,8 @@ function isControl(target: EventTarget): boolean {
  * linhas de uma vez era o que deixava as telas pesadas. `pageKey` volta para a primeira pagina
  * quando muda (a busca, o filtro); `pageSize={0}` desliga (lista que ja vem paginada do banco).
  * Com `loading` e nada ainda na lista, mostra o esqueleto das linhas no lugar de "Carregando...".
+ * Coluna com `sortValue` ordena no clique do titulo. No celular cada linha vira um cartao com
+ * "titulo da coluna: valor" (`cards={false}` desliga, para tabela que ja cabe na tela).
  */
 export function DataTable<T>({
   columns,
@@ -550,7 +597,8 @@ export function DataTable<T>({
   pageSize = PAGE_SIZE,
   pageKey,
   footer,
-  onRowDoubleClick
+  onRowDoubleClick,
+  cards = true
 }: {
   columns: Column<T>[];
   rows: T[];
@@ -570,8 +618,12 @@ export function DataTable<T>({
    * ou link da linha continua sendo daquele botao.
    */
   onRowDoubleClick?: (row: T) => void;
+  /** No celular, cada linha vira um cartao (padrao). */
+  cards?: boolean;
 }) {
   const page = useShowMore(pageKey ?? "", pageSize);
+  const [sort, setSort] = useState<SortState>(null);
+  const sorted = useMemo(() => sortRows(rows, columns, sort), [rows, columns, sort]);
   if (rows.length === 0) {
     if (loading) {
       return (
@@ -582,17 +634,51 @@ export function DataTable<T>({
     }
     return <EmptyState title={empty} hint={emptyHint} />;
   }
-  const visible = pageSize > 0 ? rows.slice(0, page.limit) : rows;
+  const visible = pageSize > 0 ? sorted.slice(0, page.limit) : sorted;
+  function toggleSort(key: string) {
+    setSort((current) => {
+      if (!current || current.key !== key) return { key, dir: "asc" };
+      if (current.dir === "asc") return { key, dir: "desc" };
+      return null;
+    });
+  }
   return (
     <div className="table-wrap">
-      <table className="data">
+      <table className={`data${cards ? " cards" : ""}`}>
         <thead>
           <tr>
-            {columns.map((column) => (
-              <th key={column.key} className={column.numeric ? "num" : undefined}>
-                {column.header}
-              </th>
-            ))}
+            {columns.map((column) => {
+              const active = sort?.key === column.key ? sort.dir : null;
+              return (
+                <th
+                  key={column.key}
+                  className={column.numeric ? "num" : undefined}
+                  aria-sort={
+                    active === "asc" ? "ascending" : active === "desc" ? "descending" : undefined
+                  }
+                >
+                  {column.sortValue ? (
+                    <button
+                      type="button"
+                      className={`th-sort${active ? " active" : ""}`}
+                      onClick={() => toggleSort(column.key)}
+                      title={`Ordenar por ${column.header.toLowerCase()}`}
+                    >
+                      {column.header}
+                      {active === "asc" ? (
+                        <ArrowUp size={13} aria-hidden="true" />
+                      ) : active === "desc" ? (
+                        <ArrowDown size={13} aria-hidden="true" />
+                      ) : (
+                        <ArrowUpDown size={13} aria-hidden="true" className="th-sort-idle" />
+                      )}
+                    </button>
+                  ) : (
+                    column.header
+                  )}
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
@@ -614,7 +700,11 @@ export function DataTable<T>({
               }
             >
               {columns.map((column) => (
-                <td key={column.key} className={column.numeric ? "num" : undefined}>
+                <td
+                  key={column.key}
+                  className={column.numeric ? "num" : undefined}
+                  data-label={column.header}
+                >
                   {column.render(row)}
                 </td>
               ))}
@@ -622,7 +712,7 @@ export function DataTable<T>({
           ))}
         </tbody>
       </table>
-      {pageSize > 0 && rows.length > pageSize && (
+      {pageSize > 0 && sorted.length > pageSize && (
         <LoadMore shown={visible.length} total={rows.length} step={pageSize} onMore={page.more} />
       )}
       {footer}
@@ -658,6 +748,7 @@ export function Modal({
   onClose,
   footer,
   wide,
+  dirty,
   children
 }: {
   title: string;
@@ -665,12 +756,30 @@ export function Modal({
   onClose: () => void;
   footer?: ReactNode;
   wide?: boolean;
+  /**
+   * Formulario com alteracao ainda nao salva: fechar pelo X, pelo Esc ou pelo clique fora pede
+   * confirmacao, e fechar a aba do navegador tambem avisa. O "Cancelar" do rodape passa pelo
+   * mesmo aviso com `useDiscardGuard`.
+   */
+  dirty?: boolean;
   children: ReactNode;
 }) {
   const id = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  const guard = useDiscardGuard(dirty);
+  const requestClose = useCallback(() => void guard(onClose), [guard, onClose]);
+  const onCloseRef = useRef(requestClose);
+  onCloseRef.current = requestClose;
+
+  useEffect(() => {
+    if (!dirty) return undefined;
+    function onBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [dirty]);
 
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -721,7 +830,10 @@ export function Modal({
   }, [id]);
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div
+      className="modal-backdrop"
+      onMouseDown={(e) => e.target === e.currentTarget && requestClose()}
+    >
       <div
         ref={dialogRef}
         className={`modal ${wide ? "wide" : ""}`}
@@ -736,7 +848,7 @@ export function Modal({
             <h2 id={`${id}-title`}>{title}</h2>
             {description && <p id={`${id}-description`}>{description}</p>}
           </div>
-          <button type="button" className="modal-close" aria-label="Fechar" onClick={onClose}>
+          <button type="button" className="modal-close" aria-label="Fechar" onClick={requestClose}>
             <X size={18} />
           </button>
         </div>
@@ -823,6 +935,177 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
 
 export function useConfirm(): ConfirmFn {
   return useContext(ConfirmContext);
+}
+
+/**
+ * Fechar um formulario com alteracao nao salva pergunta antes. Use no "Cancelar" do rodape da
+ * janela: `onClick={() => void guard(onClose)}` (o X, o Esc e o clique fora ja passam por ele
+ * quando o `Modal` recebe `dirty`).
+ */
+export function useDiscardGuard(dirty: boolean | undefined) {
+  const confirm = useConfirm();
+  return useCallback(
+    async (close: () => void) => {
+      if (!dirty) {
+        close();
+        return;
+      }
+      const ok = await confirm({
+        title: "Descartar alterações?",
+        message: "O que você digitou nesta janela ainda não foi salvo.",
+        confirmLabel: "Descartar",
+        cancelLabel: "Continuar editando",
+        tone: "danger"
+      });
+      if (ok) close();
+    },
+    [dirty, confirm]
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Menu de acoes da linha ("⋯")
+// ---------------------------------------------------------------------------
+
+export interface MenuAction {
+  label: string;
+  icon?: LucideIcon;
+  onClick: () => void;
+  tone?: "danger";
+  disabled?: boolean;
+  /** Explicacao curta embaixo do nome (por que esta desligada, o que acontece). */
+  hint?: string;
+}
+
+/**
+ * O "⋯" da linha: as acoes que nao sao a principal ficam num menu, com o NOME escrito, em vez de
+ * seis icones pequenos lado a lado. Abre no clique, anda com as setas, fecha no Esc, no clique
+ * fora e ao escolher. Fica por cima da tabela (posicao fixa), para nao ser cortado pela moldura
+ * que rola de lado.
+ */
+export function ActionMenu({
+  actions,
+  label = "Mais ações"
+}: {
+  actions: MenuAction[];
+  label?: string;
+}) {
+  const [position, setPosition] = useState<{ top?: number; bottom?: number; right: number } | null>(
+    null
+  );
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const id = useId();
+  const open = position !== null;
+
+  function openMenu() {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const right = Math.max(8, window.innerWidth - rect.right);
+    // Perto do rodape da tela o menu abre para cima.
+    if (window.innerHeight - rect.bottom < 48 * actions.length + 24) {
+      setPosition({ bottom: window.innerHeight - rect.top + 4, right });
+    } else {
+      setPosition({ top: rect.bottom + 4, right });
+    }
+  }
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const items = () =>
+      Array.from(
+        menuRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []
+      );
+    items()[0]?.focus();
+    function close() {
+      setPosition(null);
+    }
+    function onPointer(event: PointerEvent) {
+      const target = event.target as Node;
+      if (!menuRef.current?.contains(target) && !buttonRef.current?.contains(target)) close();
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        close();
+        buttonRef.current?.focus();
+        return;
+      }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      event.preventDefault();
+      const list = items();
+      const index = list.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === "ArrowDown" ? index + 1 : index - 1;
+      list[(next + list.length) % list.length]?.focus();
+    }
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey, true);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open]);
+
+  if (actions.length === 0) return null;
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        className={`icon-action${open ? " active" : ""}`}
+        aria-label={label}
+        title={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? id : undefined}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (open) setPosition(null);
+          else openMenu();
+        }}
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {position && (
+        <div
+          ref={menuRef}
+          id={id}
+          role="menu"
+          aria-label={label}
+          className="action-menu"
+          style={{ top: position.top, bottom: position.bottom, right: position.right }}
+        >
+          {actions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <button
+                key={action.label}
+                type="button"
+                role="menuitem"
+                className={action.tone === "danger" ? "danger" : undefined}
+                disabled={action.disabled}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setPosition(null);
+                  action.onClick();
+                }}
+              >
+                {Icon && <Icon size={15} aria-hidden="true" />}
+                <span>
+                  {action.label}
+                  {action.hint && <small>{action.hint}</small>}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
 }
 
 // ---------------------------------------------------------------------------

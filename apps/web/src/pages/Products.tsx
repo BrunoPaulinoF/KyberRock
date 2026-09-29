@@ -11,6 +11,8 @@ import {
   Field,
   Modal,
   Pill,
+  useConfirm,
+  useDiscardGuard,
   useToast
 } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
@@ -34,6 +36,7 @@ import { useAsync } from "../lib/use-async";
 export function ProductsSection() {
   const user = useUser();
   const toast = useToast();
+  const confirm = useConfirm();
   const canEdit = user.canEditPrices;
   const askPassword = user.requiresPricePassword;
   // A mesma leitura (e a mesma chave de memoria) da ficha do cliente (`CustomerFile.tsx`).
@@ -105,6 +108,21 @@ export function ProductsSection() {
     }
   }
 
+  // Sem senha, tirar o preco especial pergunta antes (com senha, a janela da senha ja pergunta).
+  async function confirmRemoveSpecial(product: Product) {
+    const ok = await confirm({
+      title: "Remover preço especial?",
+      message: (
+        <>
+          O cliente volta a pagar o preço padrão de <strong>{product.description}</strong>.
+        </>
+      ),
+      confirmLabel: "Remover",
+      tone: "danger"
+    });
+    if (ok) await removeSpecial(product);
+  }
+
   async function removeSpecial(product: Product, pricePassword?: string): Promise<boolean> {
     if (!customerId) return false;
     try {
@@ -148,12 +166,23 @@ export function ProductsSection() {
           loading={loading}
           empty="Nenhum produto encontrado."
           columns={[
-            { key: "desc", header: "Produto", render: (p) => <strong>{p.description}</strong> },
-            { key: "code", header: "Código", render: (p) => p.code || "-" },
+            {
+              key: "desc",
+              header: "Produto",
+              sortValue: (p) => p.description,
+              render: (p) => <strong>{p.description}</strong>
+            },
+            {
+              key: "code",
+              header: "Código",
+              sortValue: (p) => p.code,
+              render: (p) => p.code || "-"
+            },
             {
               key: "price",
               header: "Preço padrão",
               numeric: true,
+              sortValue: (p) => defaultByProduct.get(p.id) ?? null,
               render: (p) =>
                 defaultByProduct.has(p.id) ? (
                   <>
@@ -204,11 +233,17 @@ export function ProductsSection() {
           loading={loading || special.loading}
           empty="Nenhum produto."
           columns={[
-            { key: "desc", header: "Produto", render: (p) => <strong>{p.description}</strong> },
+            {
+              key: "desc",
+              header: "Produto",
+              sortValue: (p) => p.description,
+              render: (p) => <strong>{p.description}</strong>
+            },
             {
               key: "default",
               header: "Padrão",
               numeric: true,
+              sortValue: (p) => defaultByProduct.get(p.id) ?? null,
               render: (p) =>
                 defaultByProduct.has(p.id) ? formatMoney(defaultByProduct.get(p.id)) : "—"
             },
@@ -216,6 +251,7 @@ export function ProductsSection() {
               key: "special",
               header: "Especial",
               numeric: true,
+              sortValue: (p) => specialByProduct.get(p.id) ?? null,
               render: (p) =>
                 specialByProduct.has(p.id) ? (
                   <strong>{formatMoney(specialByProduct.get(p.id))}</strong>
@@ -246,7 +282,9 @@ export function ProductsSection() {
                         icon="trash"
                         label="Remover preço especial"
                         tone="danger"
-                        onClick={() => (askPassword ? setRemoving(p) : void removeSpecial(p))}
+                        onClick={() =>
+                          askPassword ? setRemoving(p) : void confirmRemoveSpecial(p)
+                        }
                       />
                     )}
                   </span>
@@ -294,20 +332,24 @@ function PriceModal({
   onClose: () => void;
   onSave: (cents: number, pricePassword?: string) => Promise<void>;
 }) {
-  const [value, setValue] = useState(
+  const [initialValue] = useState(() =>
     current != null ? (current / 100).toFixed(2).replace(".", ",") : ""
   );
+  const [value, setValue] = useState(initialValue);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [valueError, setValueError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const guard = useDiscardGuard(value !== initialValue);
   return (
     <Modal
       title={`${special ? "Preço especial" : "Preço padrão"} — ${product.description}`}
       description="Valor por tonelada, em reais."
       onClose={onClose}
+      dirty={value !== initialValue}
       footer={
         <>
-          <button className="btn" onClick={onClose}>
+          <button type="button" className="btn" onClick={() => void guard(onClose)}>
             Cancelar
           </button>
           <button
@@ -316,7 +358,7 @@ function PriceModal({
             onClick={async () => {
               const cents = parseMoneyToCents(value);
               if (cents == null) {
-                setError("Informe um valor válido, ex.: 65,00");
+                setValueError("Informe um valor válido, ex.: 65,00");
                 return;
               }
               if (askPassword && !password) {
@@ -334,12 +376,17 @@ function PriceModal({
       }
     >
       {error && <Alert kind="error">{error}</Alert>}
-      <Field label="Preço (R$ / ton)">
+      <Field label="Preço (R$ / ton)" error={valueError}>
         <input
           className="input"
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => {
+            setValue(e.target.value);
+            setValueError(null);
+          }}
           autoFocus
+          required
+          inputMode="decimal"
           placeholder="65,00"
         />
       </Field>

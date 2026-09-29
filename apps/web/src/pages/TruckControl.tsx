@@ -28,6 +28,8 @@ import {
   type TruckControlRow
 } from "../lib/truck-control";
 import { useAsync } from "../lib/use-async";
+import { useUrlState } from "../lib/url-state";
+import { FilterInput, isoDayOr } from "./url-filters";
 
 const HELP =
   "Tempo dentro da pedreira, número de operações, clientes atendidos e peso por produto de cada caminhão no período. Em 'Cargas' você vê carga a carga: data, cliente, produto, peso e horários. Caminhões acima do tempo médio do período ficam destacados. O PDF e o Excel saem com os caminhões que estão na lista (e com as mesmas cargas e clientes): com a busca preenchida, o arquivo traz só eles.";
@@ -43,9 +45,14 @@ export function TruckControl() {
   const user = useUser();
   const toast = useToast();
   const today = todayIso();
-  const [startDate, setStartDate] = useState(() => isoDaysBefore(today, 30));
-  const [endDate, setEndDate] = useState(today);
-  const [search, setSearch] = useState("");
+  const defaultStart = isoDaysBefore(today, 30);
+  // Datas e busca ficam no endereco e voltam quando a pessoa sai e volta pelo menu
+  // (`useUrlState`).
+  const [startParam, setStartDate] = useUrlState("de", defaultStart);
+  const [endParam, setEndDate] = useUrlState("ate", today);
+  const startDate = isoDayOr(startParam, defaultStart);
+  const endDate = isoDayOr(endParam, today);
+  const [search, setSearch] = useUrlState("busca");
   // Uma placa aberta por vez, como no desktop.
   const [openPlate, setOpenPlate] = useState<string | null>(null);
   const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
@@ -139,31 +146,33 @@ export function TruckControl() {
       <div className="truck-control-filters">
         <label className="truck-control-field">
           De
-          <input
+          <FilterInput
             type="date"
             className="truck-control-input"
             value={startDate}
             max={endDate}
-            onChange={(event) => setStartDate(event.target.value)}
+            onValue={setStartDate}
+            keepLastValid
           />
         </label>
         <label className="truck-control-field">
           Até
-          <input
+          <FilterInput
             type="date"
             className="truck-control-input"
             value={endDate}
             min={startDate}
-            onChange={(event) => setEndDate(event.target.value)}
+            onValue={setEndDate}
+            keepLastValid
           />
         </label>
         <label className="truck-control-field truck-control-search">
           Buscar caminhão (placa ou motorista) — vale para o PDF e o Excel
-          <input
+          <FilterInput
             type="search"
             className="truck-control-input"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onValue={setSearch}
             placeholder="Ex: ABC1D23"
           />
         </label>

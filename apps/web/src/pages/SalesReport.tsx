@@ -12,8 +12,7 @@ import {
   Users
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CustomerInfoModal, CustomerWeighingsModal } from "../components/CustomerPanels";
 import { DeskPanel, SectionHead } from "../components/desk";
@@ -56,12 +55,15 @@ import {
   sumSeries,
   type ReportLine,
   type ReportOperation,
+  type PeriodPreset,
   type ReportTotals,
   type SalesFreightFilter,
   type SalesPivotGroupBy
 } from "../lib/reports";
 import { useAsync } from "../lib/use-async";
+import { useUrlState } from "../lib/url-state";
 import { ReportRecipients } from "./ReportRecipients";
+import { FilterInput, isoDayOr, isoMonthOr, usePeriodParams } from "./url-filters";
 
 type ReportTab = "daily" | "period" | "pivot" | "monthly" | "recipients";
 
@@ -150,13 +152,32 @@ function downloadCsv(content: string, fileName: string): void {
   URL.revokeObjectURL(url);
 }
 
-/** `?aba=vendas` abre direto a tabela dinamica (a entrada do comercial, que vinha do portal). */
-function initialTab(param: string | null): ReportTab {
+/**
+ * O `?aba=` de cada aba; o fechamento diario e a padrao (sem `aba`). `?aba=vendas` abre direto a
+ * tabela dinamica (a entrada do comercial, que vinha do portal).
+ */
+const TAB_PARAM: Record<ReportTab, string> = {
+  daily: "",
+  period: "periodo",
+  pivot: "vendas",
+  monthly: "mensal",
+  recipients: "destinatarios"
+};
+
+function tabFromParam(param: string, canSeeRecipients: boolean): ReportTab {
   if (param === "vendas" || param === "pivot") return "pivot";
   if (param === "periodo") return "period";
   if (param === "mensal") return "monthly";
+  if (param === "destinatarios" && canSeeRecipients) return "recipients";
   return "daily";
 }
+
+/** Os atalhos de periodo e o "custom" (datas digitadas em De/Ate), no `?periodo=`. */
+type SalesPeriod = PeriodPreset | "custom";
+const SALES_PERIODS: readonly SalesPeriod[] = [
+  ...PERIOD_PRESETS.map((preset) => preset.id),
+  "custom"
+];
 
 /**
  * Relatorios e fechamento diario: as contas de `services/reports.ts` do desktop, sobre a nuvem.
@@ -166,18 +187,40 @@ function initialTab(param: string | null): ReportTab {
 export function SalesReport() {
   const user = useUser();
   const today = todayIso();
-  const [searchParams] = useSearchParams();
-  const [tab, setTab] = useState<ReportTab>(() => initialTab(searchParams.get("aba")));
+  // Aba, dia, mes, periodo, cliente e produto ficam no endereco e voltam quando a pessoa sai e
+  // volta pelo menu (`useUrlState`).
+  const [tabParam, setTabParam] = useUrlState("aba");
+  const tab = tabFromParam(tabParam, user.canManagePrices);
+  const setTab = (next: ReportTab) => setTabParam(TAB_PARAM[next]);
   const [freight, setFreight] = useState<SalesFreightFilter>("all");
-  const [day, setDay] = useState(today);
-  const [start, setStart] = useState(firstDayOfMonth(today));
-  const [end, setEnd] = useState(today);
-  const [month, setMonth] = useState(today.slice(0, 7));
+  const [dayParam, setDay] = useUrlState("dia", today);
+  const day = isoDayOr(dayParam, today);
+  const periodParams = usePeriodParams(SALES_PERIODS, "month", firstDayOfMonth(today), today);
+  const preset = periodParams.period;
+  const presetDates = preset === "custom" ? null : presetRange(preset, today);
+  const start = presetDates?.start ?? periodParams.customStart;
+  const end = presetDates?.end ?? periodParams.customEnd;
+  const [monthParam, setMonth] = useUrlState("mes", today.slice(0, 7));
+  const month = isoMonthOr(monthParam, today.slice(0, 7));
   const [unitId, setUnitId] = useState("");
   const [groupBy, setGroupBy] = useState<SalesPivotGroupBy>("customer");
-  const [customerId, setCustomerId] = useState("");
-  const [productId, setProductId] = useState("");
+  const [customerId, setCustomerId] = useUrlState("cliente");
+  const [productId, setProductId] = useUrlState("produto");
   const [panel, setPanel] = useState<CustomerPanel | null>(null);
+
+  /** Digitar uma data sai do atalho: vira "personalizado", a partir das datas que estavam na tela. */
+  function changeStart(next: string): void {
+    if (preset !== "custom" && periodParams.customEnd !== end) periodParams.setCustomEnd(end);
+    periodParams.setCustomStart(next);
+    if (preset !== "custom") periodParams.setPeriod("custom");
+  }
+  function changeEnd(next: string): void {
+    if (preset !== "custom" && periodParams.customStart !== start) {
+      periodParams.setCustomStart(start);
+    }
+    periodParams.setCustomEnd(next);
+    if (preset !== "custom") periodParams.setPeriod("custom");
+  }
 
   const range = useMemo(() => {
     if (tab === "daily") return { start: day, end: day };
@@ -207,11 +250,16 @@ export function SalesReport() {
   useOnCadastroChange(ops.refresh, CADASTRO_TABLES.operations);
   const operations = useMemo(() => filterByUnit(ops.data ?? [], unitId), [ops.data, unitId]);
 
-  // Trocar de periodo pode invalidar os filtros escolhidos (como no desktop).
+  // Trocar de periodo pode invalidar os filtros escolhidos (como no desktop). Na abertura da tela
+  // nao: o cliente e o produto que vieram no endereco (ou lembrados) continuam valendo.
+  const rangeKey = `${range.start}|${range.end}`;
+  const previousRange = useRef(rangeKey);
   useEffect(() => {
-    setCustomerId("");
-    setProductId("");
-  }, [range.start, range.end]);
+    if (previousRange.current === rangeKey) return;
+    previousRange.current = rangeKey;
+    if (customerId) setCustomerId("");
+    if (productId) setProductId("");
+  }, [rangeKey]);
 
   const lines = useMemo(
     () => (tab === "daily" ? dailyLines(operations, day) : reportLines(operations)),
@@ -261,7 +309,8 @@ export function SalesReport() {
       <div className="reports-page">
         <PageHeader
           kicker="Análise"
-          title="Relatórios e fechamento diário"
+          title="Relatórios"
+          description="Fechamento diário, carregamentos do período, vendas por cliente e produto e o relatório mensal."
           actions={
             tab === "recipients" ? undefined : (
               <>
@@ -305,52 +354,51 @@ export function SalesReport() {
               {tab === "daily" && (
                 <label className="op-filter">
                   Data
-                  <input
+                  <FilterInput
                     className="input"
                     type="date"
                     value={day}
-                    onChange={(event) => setDay(event.target.value)}
+                    onValue={setDay}
+                    keepLastValid
                   />
                 </label>
               )}
               {(tab === "period" || tab === "pivot") && (
                 <>
                   <div className="reports-presets" role="group" aria-label="Atalhos de período">
-                    {PERIOD_PRESETS.map((preset) => {
-                      const range = presetRange(preset.id, today);
-                      const active = range.start === start && range.end === end;
+                    {PERIOD_PRESETS.map((option) => {
+                      const active = preset === option.id;
                       return (
                         <button
-                          key={preset.id}
+                          key={option.id}
                           type="button"
                           className={`reports-preset${active ? " active" : ""}`}
                           aria-pressed={active}
-                          onClick={() => {
-                            setStart(range.start);
-                            setEnd(range.end);
-                          }}
+                          onClick={() => periodParams.setPeriod(option.id)}
                         >
-                          {preset.label}
+                          {option.label}
                         </button>
                       );
                     })}
                   </div>
                   <label className="op-filter">
                     De
-                    <input
+                    <FilterInput
                       className="input"
                       type="date"
                       value={start}
-                      onChange={(event) => setStart(event.target.value)}
+                      onValue={changeStart}
+                      keepLastValid
                     />
                   </label>
                   <label className="op-filter">
                     Até
-                    <input
+                    <FilterInput
                       className="input"
                       type="date"
                       value={end}
-                      onChange={(event) => setEnd(event.target.value)}
+                      onValue={changeEnd}
+                      keepLastValid
                     />
                   </label>
                 </>
@@ -358,11 +406,12 @@ export function SalesReport() {
               {tab === "monthly" && (
                 <label className="op-filter">
                   Mês
-                  <input
+                  <FilterInput
                     className="input"
                     type="month"
                     value={month}
-                    onChange={(event) => setMonth(event.target.value || today.slice(0, 7))}
+                    onValue={setMonth}
+                    keepLastValid
                   />
                 </label>
               )}

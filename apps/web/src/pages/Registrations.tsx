@@ -142,6 +142,7 @@ function PaymentSection() {
           {
             key: "name",
             header: "Forma",
+            sortValue: (row) => row.alias || row.name,
             render: (row) => (
               <>
                 <strong>{row.alias || row.name}</strong>
@@ -157,7 +158,12 @@ function PaymentSection() {
               </>
             )
           },
-          { key: "omie", header: "Cód. OMIE", render: (row) => row.omie_code || "-" },
+          {
+            key: "omie",
+            header: "Cód. OMIE",
+            sortValue: (row) => row.omie_code,
+            render: (row) => row.omie_code || "-"
+          },
           { key: "status", header: "Status", render: (row) => status(row.is_active) }
         ]}
       />
@@ -173,8 +179,18 @@ function PaymentSection() {
         loading={loading}
         empty="Nenhuma conta."
         columns={[
-          { key: "name", header: "Conta", render: (row) => <strong>{row.name}</strong> },
-          { key: "omie", header: "Cód. OMIE", render: (row) => row.omie_code || "-" },
+          {
+            key: "name",
+            header: "Conta",
+            sortValue: (row) => row.name,
+            render: (row) => <strong>{row.name}</strong>
+          },
+          {
+            key: "omie",
+            header: "Cód. OMIE",
+            sortValue: (row) => row.omie_code,
+            render: (row) => row.omie_code || "-"
+          },
           { key: "status", header: "Status", render: (row) => status(row.is_active) }
         ]}
       />
@@ -189,8 +205,18 @@ function PaymentSection() {
         loading={loading}
         empty="Nenhuma condição."
         columns={[
-          { key: "name", header: "Condição", render: (row) => <strong>{row.name}</strong> },
-          { key: "omie", header: "Cód. OMIE", render: (row) => row.omie_code || "-" },
+          {
+            key: "name",
+            header: "Condição",
+            sortValue: (row) => row.name,
+            render: (row) => <strong>{row.name}</strong>
+          },
+          {
+            key: "omie",
+            header: "Cód. OMIE",
+            sortValue: (row) => row.omie_code,
+            render: (row) => row.omie_code || "-"
+          },
           { key: "status", header: "Status", render: (row) => status(row.is_active) }
         ]}
       />

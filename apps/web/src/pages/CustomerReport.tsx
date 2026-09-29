@@ -37,12 +37,16 @@ import {
 import { formatDocument, todayIso } from "../lib/format";
 import { deliverReports, spreadsheetFileName } from "../lib/report-output";
 import { useAsync } from "../lib/use-async";
+import { useUrlState } from "../lib/url-state";
+import { FilterInput, usePeriodParams } from "./url-filters";
 
 /**
  * Valor de `customerId` que pede o resumo comparativo do periodo inteiro em vez do relatorio
  * de um cliente. Nao colide com id nenhum: os ids sao UUID.
  */
 const ALL_CUSTOMERS = "__all__";
+/** "Todos os clientes" no endereco (`?cliente=todos`): o valor interno fica fora do link. */
+const ALL_CUSTOMERS_PARAM = "todos";
 
 /**
  * O nome do periodo na tela. O `range.label` fica como o do desktop porque sai no cabecalho do
@@ -79,10 +83,20 @@ const HELP =
  */
 export function CustomerReport() {
   const user = useUser();
-  const [customerId, setCustomerId] = useState("");
-  const [period, setPeriod] = useState<PeriodPreset>("month");
-  const [customStart, setCustomStart] = useState(() => todayIso());
-  const [customEnd, setCustomEnd] = useState(() => todayIso());
+  const today = todayIso();
+  // Cliente e periodo ficam no endereco e voltam quando a pessoa sai e volta pelo menu
+  // (`useUrlState`); `?cliente=<id>` abre direto o relatorio daquele cliente.
+  const [customerParam, setCustomerParam] = useUrlState("cliente");
+  const requestedCustomerId = customerParam === ALL_CUSTOMERS_PARAM ? ALL_CUSTOMERS : customerParam;
+  const setCustomerId = (next: string) =>
+    setCustomerParam(next === ALL_CUSTOMERS ? ALL_CUSTOMERS_PARAM : next);
+  const { period, setPeriod, customStart, setCustomStart, customEnd, setCustomEnd } =
+    usePeriodParams<PeriodPreset>(
+      PERIOD_OPTIONS.map((option) => option.id),
+      "month",
+      today,
+      today
+    );
   const [exporting, setExporting] = useState(false);
   // O que a geracao do arquivo respondeu: os nomes gerados (info) ou o que faltou/falhou (erro).
   const [exportMessage, setExportMessage] = useState<{
@@ -102,7 +116,6 @@ export function CustomerReport() {
     () => resolveRange(period, customStart, customEnd, todayIso()),
     [period, customStart, customEnd]
   );
-  const allCustomers = customerId === ALL_CUSTOMERS;
 
   const selectedVariants = (Object.keys(variants) as CustomerReportVariant[]).filter(
     (variant) => variants[variant]
@@ -112,6 +125,14 @@ export function CustomerReport() {
   const lookups = useAsync(() => loadReportLookups(user.companyId), [user.companyId], {
     key: `relatorio-cliente:cadastros:${user.companyId}`
   });
+  // Cliente do endereco que nao existe mais (apagado, link velho) vale como nenhum escolhido.
+  const customerId =
+    requestedCustomerId === ALL_CUSTOMERS ||
+    !lookups.data ||
+    lookups.data.customers.some((customer) => customer.id === requestedCustomerId)
+      ? requestedCustomerId
+      : "";
+  const allCustomers = customerId === ALL_CUSTOMERS;
   const customers = useMemo(
     () => buildCustomerOptions(lookups.data?.customers ?? []),
     [lookups.data]
@@ -304,20 +325,22 @@ export function CustomerReport() {
               <div className="cr-custom-dates">
                 <label className="cr-date-field">
                   De
-                  <input
+                  <FilterInput
                     className="input"
                     type="date"
                     value={customStart}
-                    onChange={(event) => setCustomStart(event.target.value)}
+                    onValue={setCustomStart}
+                    keepLastValid
                   />
                 </label>
                 <label className="cr-date-field">
                   Até
-                  <input
+                  <FilterInput
                     className="input"
                     type="date"
                     value={customEnd}
-                    onChange={(event) => setCustomEnd(event.target.value)}
+                    onValue={setCustomEnd}
+                    keepLastValid
                   />
                 </label>
               </div>

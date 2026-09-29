@@ -150,6 +150,7 @@ function ScaleSettings() {
               {
                 key: "name",
                 header: "Balança",
+                sortValue: (row) => row.name,
                 render: (row) => (
                   <>
                     <strong>{row.name}</strong>
@@ -164,6 +165,7 @@ function ScaleSettings() {
               {
                 key: "status",
                 header: "Situação",
+                sortValue: (row) => (row.online ? "Ligada" : "Fora do ar"),
                 render: (row) =>
                   row.online ? (
                     <Pill tone="success">Ligada</Pill>
@@ -174,6 +176,7 @@ function ScaleSettings() {
               {
                 key: "seen",
                 header: "Último sinal",
+                sortValue: (row) => row.lastSeenAt,
                 render: (row) =>
                   row.lastSeenAt ? (
                     <span title={formatDateTime(row.lastSeenAt)}>
@@ -289,6 +292,7 @@ function PrintingSettings() {
               {
                 key: "when",
                 header: "Quando",
+                sortValue: (row) => row.processed_at ?? row.requested_at,
                 render: (row) => formatDateTime(row.processed_at ?? row.requested_at)
               },
               {
@@ -310,6 +314,7 @@ function PrintingSettings() {
               {
                 key: "status",
                 header: "Cupom",
+                sortValue: (row) => row.print_status,
                 render: (row) =>
                   row.print_status === "printed" ? (
                     <Pill tone="success">Impresso</Pill>
@@ -327,6 +332,7 @@ function PrintingSettings() {
               {
                 key: "by",
                 header: "Pedido por",
+                sortValue: (row) => row.requested_by_name,
                 render: (row) => row.requested_by_name ?? "—"
               },
               {
@@ -421,6 +427,7 @@ function CloudSettings() {
                 {
                   key: "op",
                   header: "Pesagem",
+                  sortValue: ({ row }) => formatPlate(row.plate ?? ""),
                   render: ({ row }) => (
                     <>
                       <strong>{formatPlate(row.plate ?? "")}</strong>
@@ -431,17 +438,20 @@ function CloudSettings() {
                 {
                   key: "when",
                   header: "Fechada em",
+                  sortValue: ({ row }) => row.closed_at ?? row.created_at,
                   render: ({ row }) => formatDateTime(row.closed_at ?? row.created_at)
                 },
                 {
                   key: "total",
                   header: "Total",
                   numeric: true,
+                  sortValue: ({ row }) => row.total_cents,
                   render: ({ row }) => formatMoney(row.total_cents)
                 },
                 {
                   key: "status",
                   header: "Situação",
+                  sortValue: ({ fiscal }) => fiscal.label,
                   render: ({ fiscal }) => (
                     <>
                       <Pill tone={fiscal.tone}>{fiscal.label}</Pill>

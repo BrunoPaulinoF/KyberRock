@@ -7,6 +7,8 @@ import {
   withCanonicalPayments,
   DEFAULT_YARD_ATTENTION_MIN,
   DEFAULT_YARD_LATE_MIN,
+  MONITOR_AUTO_SWAP_MS,
+  MONITOR_AUTO_SWAP_STORAGE_KEY,
   MONITOR_FILTERS_STORAGE_KEY,
   NO_PAYMENT_KEY,
   OTHER_KEY,
@@ -39,6 +41,7 @@ import {
   liveState,
   matchesFilters,
   normalizeText,
+  otherMetric,
   parseMonitorFilters,
   paymentBreakdown,
   paymentOptions,
@@ -590,6 +593,18 @@ describe("filtros guardados", () => {
     expect(parsed.payments).toEqual(["pm-pix"]);
     expect(parsed.metric).toBe("tons");
     expect(parsed.widgets).toEqual({ ...defaults.widgets, feed: false });
+  });
+
+  it("o Trocar sozinho fica em chave propria, fora dos filtros, e alterna a cada 30 s", () => {
+    expect(MONITOR_AUTO_SWAP_STORAGE_KEY).toBe("kr-monitor-auto-swap-v1");
+    expect(MONITOR_AUTO_SWAP_STORAGE_KEY).not.toBe(MONITOR_FILTERS_STORAGE_KEY);
+    expect(MONITOR_AUTO_SWAP_MS).toBe(30_000);
+    expect(otherMetric("tons")).toBe("revenue");
+    expect(otherMetric("revenue")).toBe("tons");
+    // Nao entra no que os filtros guardam.
+    expect(JSON.parse(serializeMonitorFilters(defaultMonitorFilters()))).not.toHaveProperty(
+      "autoSwap"
+    );
   });
 
   it("limita o tamanho das listas guardadas", () => {

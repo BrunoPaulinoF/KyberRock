@@ -137,6 +137,27 @@
 .mon-top-btn:hover {
   background: var(--kr-card-hover);
 }
+/* botao ligado (Modo TV) */
+.mon-top-btn.is-on {
+  border-color: var(--kr-accent-border);
+  background: var(--kr-accent-soft);
+  color: var(--kr-info-text);
+}
+/* "Trocar sozinho" ligado: a setinha ao lado de Toneladas | Faturamento */
+.mon-autoswap {
+  flex-shrink: 0;
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--kr-muted);
+}
+.mon-autoswap + .mon-filterbar-metric {
+  margin-left: 0;
+}
 .mon-count {
   min-width: 20px;
   height: 20px;
@@ -1565,6 +1586,10 @@ label.mon-fieldset .mon-legend-text {
     top: -6px;
     right: -6px;
   }
+  /* celular nao e TV: o botao sairia apertando o titulo */
+  .mon-top-btn.mon-tv-btn:not(.is-on) {
+    display: none;
+  }
   /* o "Ao vivo" desce para uma linha so dele, embaixo do titulo */
   .mon-live {
     flex-basis: 100%;
@@ -2043,6 +2068,64 @@ label.mon-fieldset .mon-legend-text {
   }
   .mon.is-fit .mon-pay-legend {
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  }
+}
+
+/* ======================================================================================
+ * Modo TV (botao "Modo TV", classe `.is-tv` na raiz): tela cheia e numeros maiores, para ler
+ * do outro lado da expedicao. Vem depois de tudo de proposito: com a mesma especificidade das
+ * regras de cima, e a ordem que faz estas valerem. O numero grande segue a largura do cartao
+ * (cqi) — por isso, com altura sobrando, os indicadores vao para 3 por linha: o cartao dobra de
+ * largura e o valor cresce sem ser cortado.
+ * ==================================================================================== */
+.mon.is-tv .mon-kpi-label {
+  font-size: 15px;
+}
+.mon.is-tv .mon-kpi-value {
+  font-size: clamp(24px, 13cqi, 56px);
+}
+.mon.is-tv .mon-kpi.is-hero .mon-kpi-value {
+  font-size: clamp(28px, 14cqi, 64px);
+}
+.mon.is-tv .mon-kpi-foot {
+  font-size: 14px;
+}
+.mon.is-tv .mon-card-title h2 {
+  font-size: 19px;
+}
+.mon.is-tv .mon-ticket-time {
+  font-size: 22px;
+}
+.mon.is-tv .mon-plate {
+  font-size: 14px;
+}
+.mon.is-tv .mon-ticket-customer {
+  font-size: 17px;
+}
+.mon.is-tv .mon-ticket-money,
+.mon.is-tv .mon-ticket-bottom {
+  font-size: 16px;
+}
+.mon.is-tv .mon-yard-elapsed {
+  font-size: 30px;
+}
+.mon.is-tv .mon-bar-line,
+.mon.is-tv .mon-pay-legend li {
+  font-size: 16px;
+}
+.mon.is-tv .mon-axis-text text,
+.mon.is-tv .mon-peak {
+  font-size: 14px;
+}
+@media (min-height: 900px) {
+  .mon.is-tv.is-fit .mon-kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .mon.is-tv.is-fit .mon-kpi-value {
+    font-size: clamp(28px, 10cqi, 72px);
+  }
+  .mon.is-tv.is-fit .mon-kpi.is-hero .mon-kpi-value {
+    font-size: clamp(32px, 11cqi, 84px);
   }
 }
 

@@ -11,6 +11,7 @@ import {
   Modal,
   Pill,
   Warnings,
+  useDiscardGuard,
   useToast
 } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
@@ -19,8 +20,16 @@ import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { dedupeBy, dedupeDrivers, dedupeVehicles, type DedupedGroup } from "../lib/dedupe";
 import { formatDocument, formatPlate, isValidDocument, normalizeDocument } from "../lib/format";
+import { maskDocument, maskPhone, maskPlate } from "../lib/masks";
 import { q, type Carrier, type Driver, type Vehicle } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
+import {
+  documentToSave,
+  fieldOfError,
+  maskPhoneInput,
+  maskStored,
+  phoneToSave
+} from "./cadastro-form";
 
 /*
  * A aba Transporte da tela Cadastros: Motoristas, Transportadoras e Placas, cada um com a
@@ -47,21 +56,35 @@ function InactiveToggle({
   );
 }
 
+type ActiveAction = "set_vehicle_active" | "set_driver_active" | "set_carrier_active";
+
+const ACTIVE_TEXT: Record<ActiveAction, { off: string; on: string }> = {
+  set_driver_active: { off: "Motorista inativado.", on: "Motorista reativado." },
+  set_vehicle_active: { off: "Veículo inativado.", on: "Veículo reativado." },
+  set_carrier_active: { off: "Transportadora inativada.", on: "Transportadora reativada." }
+};
+
+/**
+ * Inativar/reativar (todas as copias do grupo). Inativar tem volta: faz na hora e o "Desfazer"
+ * da mensagem reativa pela mesma chamada do botao Reativar — em vez de perguntar antes.
+ */
 function useToggleActive(reload: () => Promise<void>) {
   const toast = useToast();
-  return async (
-    action: "set_vehicle_active" | "set_driver_active" | "set_carrier_active",
-    ids: string[],
-    isActive: boolean
-  ) => {
+  const toggle = async (action: ActiveAction, ids: string[], isActive: boolean) => {
     try {
       for (const id of ids) await callWebApi(action, { id, isActive });
-      toast.push(isActive ? "Reativado." : "Inativado.");
+      if (isActive) toast.push(ACTIVE_TEXT[action].on);
+      else {
+        toast.push(ACTIVE_TEXT[action].off, "ok", {
+          action: { label: "Desfazer", onClick: () => void toggle(action, ids, true) }
+        });
+      }
       await reload();
     } catch (caught) {
       toast.push(errorMessage(caught), "error");
     }
   };
+  return toggle;
 }
 
 type DeleteAction = "delete_driver" | "delete_vehicle" | "delete_carrier";
@@ -163,7 +186,12 @@ export function DriversSection() {
         empty="Nenhum motorista."
         pageKey={`${needle}|${showInactive}`}
         columns={[
-          { key: "name", header: "Nome", render: ({ row: d }) => <strong>{d.name}</strong> },
+          {
+            key: "name",
+            header: "Nome",
+            sortValue: ({ row: d }) => d.name,
+            render: ({ row: d }) => <strong>{d.name}</strong>
+          },
           {
             key: "details",
             header: "Detalhes",
@@ -294,12 +322,20 @@ export function VehiclesSection() {
           {
             key: "plate",
             header: "Placa",
+            sortValue: ({ row: v }) => v.plate.toUpperCase().replace(/[\s-]/g, ""),
             render: ({ row: v }) => <PlateBadge plate={formatPlate(v.plate)} />
           },
-          { key: "desc", header: "Descrição", render: ({ row: v }) => v.description || "—" },
+          {
+            key: "desc",
+            header: "Descrição",
+            sortValue: ({ row: v }) => v.description,
+            render: ({ row: v }) => v.description || "—"
+          },
           {
             key: "carrier",
             header: "Transportadora",
+            sortValue: ({ row: v }) =>
+              v.carrier_id ? (carrierNames.get(v.carrier_id) ?? null) : null,
             render: ({ row: v }) => (
               <>
                 {carrierName(v.carrier_id)}
@@ -376,14 +412,27 @@ function VehicleForm({
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [plate, setPlate] = useState(vehicle?.plate ?? "");
-  const [description, setDescription] = useState(vehicle?.description ?? "");
-  const [carrierId, setCarrierId] = useState(vehicle?.carrier_id ?? "");
+  const [plateError, setPlateError] = useState<string | null>(null);
+  // A web-api normaliza a placa (sem traco, maiuscula): a mascara nao muda o que e gravado.
+  const [initial] = useState(() => ({
+    plate: maskStored(vehicle?.plate, maskPlate),
+    description: vehicle?.description ?? "",
+    carrierId: vehicle?.carrier_id ?? ""
+  }));
+  const [plate, setPlate] = useState(initial.plate);
+  const [description, setDescription] = useState(initial.description);
+  const [carrierId, setCarrierId] = useState(initial.carrierId);
+  const dirty =
+    plate !== initial.plate ||
+    description !== initial.description ||
+    carrierId !== initial.carrierId;
+  const guard = useDiscardGuard(dirty);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError(null);
+    setPlateError(null);
     try {
       await callWebApi("upsert_vehicle", {
         ...(vehicle ? { id: vehicle.id } : {}),
@@ -394,7 +443,9 @@ function VehicleForm({
       toast.push("Veículo salvo.");
       await onSaved();
     } catch (caught) {
-      setError(errorMessage(caught));
+      const message = errorMessage(caught);
+      if (fieldOfError(message, [["plate", /placa/i]])) setPlateError(message);
+      else setError(message);
     } finally {
       setBusy(false);
     }
@@ -404,9 +455,10 @@ function VehicleForm({
     <Modal
       title={vehicle ? `Editar ${formatPlate(vehicle.plate)}` : "Novo veículo"}
       onClose={onClose}
+      dirty={dirty}
       footer={
         <>
-          <button className="btn" onClick={onClose}>
+          <button type="button" className="btn" onClick={() => void guard(onClose)}>
             Cancelar
           </button>
           <button className="btn primary" type="submit" form={formId} disabled={busy}>
@@ -417,13 +469,17 @@ function VehicleForm({
     >
       {error && <Alert kind="error">{error}</Alert>}
       <form id={formId} onSubmit={(e) => void onSubmit(e)}>
-        <Field label="Placa">
+        <Field label="Placa" error={plateError}>
           <input
             className="input"
             value={plate}
-            onChange={(e) => setPlate(e.target.value)}
+            onChange={(e) => {
+              setPlate(maskPlate(e.target.value));
+              setPlateError(null);
+            }}
             required
             autoFocus
+            autoComplete="off"
             placeholder="ABC1D23"
           />
         </Field>
@@ -463,27 +519,45 @@ function DriverForm({
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [name, setName] = useState(driver?.name ?? "");
-  const [document, setDocument] = useState(driver?.document ?? "");
-  const [phone, setPhone] = useState(driver?.phone ?? "");
-  const [isIndependent, setIsIndependent] = useState(driver?.is_independent ?? false);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [initial] = useState(() => ({
+    name: driver?.name ?? "",
+    document: maskStored(driver?.document, maskDocument),
+    phone: maskStored(driver?.phone, maskPhone),
+    isIndependent: driver?.is_independent ?? false
+  }));
+  const [name, setName] = useState(initial.name);
+  const [document, setDocument] = useState(initial.document);
+  const [phone, setPhone] = useState(initial.phone);
+  const [isIndependent, setIsIndependent] = useState(initial.isIndependent);
+  const dirty =
+    name !== initial.name ||
+    document !== initial.document ||
+    phone !== initial.phone ||
+    isIndependent !== initial.isIndependent;
+  const guard = useDiscardGuard(dirty);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError(null);
+    setNameError(null);
     try {
       await callWebApi("upsert_driver", {
         ...(driver ? { id: driver.id } : {}),
         name,
-        document: document.trim() || null,
-        phone: phone.trim() || null,
+        // O gravado sobe como estava se ninguem mexeu; o digitado com a mascara sobe sem a
+        // pontuacao, como a balanca grava.
+        document: documentToSave(document, initial.document, driver?.document),
+        phone: phoneToSave(phone, initial.phone, driver?.phone),
         isIndependent
       });
       toast.push("Motorista salvo.");
       await onSaved();
     } catch (caught) {
-      setError(errorMessage(caught));
+      const message = errorMessage(caught);
+      if (fieldOfError(message, [["name", /nome/i]])) setNameError(message);
+      else setError(message);
     } finally {
       setBusy(false);
     }
@@ -493,9 +567,10 @@ function DriverForm({
     <Modal
       title={driver ? `Editar ${driver.name}` : "Novo motorista"}
       onClose={onClose}
+      dirty={dirty}
       footer={
         <>
-          <button className="btn" onClick={onClose}>
+          <button type="button" className="btn" onClick={() => void guard(onClose)}>
             Cancelar
           </button>
           <button className="btn primary" type="submit" form={formId} disabled={busy}>
@@ -506,11 +581,14 @@ function DriverForm({
     >
       {error && <Alert kind="error">{error}</Alert>}
       <form id={formId} onSubmit={(e) => void onSubmit(e)}>
-        <Field label="Nome">
+        <Field label="Nome" error={nameError}>
           <input
             className="input"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              setNameError(null);
+            }}
             required
             autoFocus
           />
@@ -520,11 +598,19 @@ function DriverForm({
             <input
               className="input"
               value={document}
-              onChange={(e) => setDocument(e.target.value)}
+              onChange={(e) => setDocument(maskDocument(e.target.value))}
+              autoComplete="off"
             />
           </Field>
           <Field label="Telefone">
-            <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <input
+              className="input"
+              type="tel"
+              inputMode="tel"
+              value={phone}
+              onChange={(e) => setPhone(maskPhoneInput(e.target.value))}
+              placeholder="(15) 99999-9999"
+            />
           </Field>
         </div>
         <label className="check">
@@ -604,11 +690,13 @@ export function CarriersSection() {
           {
             key: "name",
             header: "Transportadora",
+            sortValue: ({ row: c }) => c.name,
             render: ({ row: c }) => <strong>{c.name}</strong>
           },
           {
             key: "doc",
             header: "Documento",
+            sortValue: ({ row: c }) => normalizeDocument(c.document ?? ""),
             render: ({ row: c }) => formatDocument(c.document) || "—"
           },
           {
@@ -691,29 +779,46 @@ function CarrierForm({
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ name?: string; document?: string }>({});
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [name, setName] = useState(carrier?.name ?? "");
-  const [document, setDocument] = useState(formatDocument(carrier?.document));
+  const [saved, setSaved] = useState(false);
+  // O documento sobe como esta no campo: a web-api tira a pontuacao (sem perder letra).
+  const [initial] = useState(() => ({
+    name: carrier?.name ?? "",
+    document: formatDocument(carrier?.document)
+  }));
+  const [name, setName] = useState(initial.name);
+  const [document, setDocument] = useState(initial.document);
+  const dirty = !saved && (name !== initial.name || document !== initial.document);
+  const guard = useDiscardGuard(dirty);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
+    setError(null);
     if (document.trim() && !isValidDocument(document)) {
-      setError("CNPJ/CPF inválido.");
+      setFieldErrors({ document: "CNPJ/CPF inválido." });
       return;
     }
+    setFieldErrors({});
     setBusy(true);
-    setError(null);
     try {
       const result = await callWebApi("upsert_carrier", {
         ...(carrier ? { id: carrier.id } : {}),
         name,
         document: document.trim() || null
       });
+      setSaved(true);
       setWarnings(result.warnings);
       toast.push("Transportadora salva.");
       if (result.warnings.length === 0) await onSaved();
     } catch (caught) {
-      setError(errorMessage(caught));
+      const message = errorMessage(caught);
+      const field = fieldOfError(message, [
+        ["document", /CNPJ\/CPF/i],
+        ["name", /nome/i]
+      ] as const);
+      if (field) setFieldErrors({ [field]: message });
+      else setError(message);
     } finally {
       setBusy(false);
     }
@@ -723,14 +828,15 @@ function CarrierForm({
     <Modal
       title={carrier ? `Editar ${carrier.name}` : "Nova transportadora"}
       onClose={onClose}
+      dirty={dirty}
       footer={
         warnings.length > 0 ? (
-          <button className="btn primary" onClick={() => void onSaved()}>
+          <button type="button" className="btn primary" onClick={() => void onSaved()}>
             Entendi
           </button>
         ) : (
           <>
-            <button className="btn" onClick={onClose}>
+            <button type="button" className="btn" onClick={() => void guard(onClose)}>
               Cancelar
             </button>
             <button className="btn primary" type="submit" form={formId} disabled={busy}>
@@ -743,11 +849,14 @@ function CarrierForm({
       {error && <Alert kind="error">{error}</Alert>}
       <Warnings items={warnings} />
       <form id={formId} onSubmit={(e) => void onSubmit(e)}>
-        <Field label="Nome">
+        <Field label="Nome" error={fieldErrors.name}>
           <input
             className="input"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              setFieldErrors((current) => ({ ...current, name: undefined }));
+            }}
             required
             autoFocus
           />
@@ -755,8 +864,17 @@ function CarrierForm({
         <Field
           label="CNPJ/CPF"
           hint="Sem documento a transportadora fica só aqui; com ele vai ao OMIE."
+          error={fieldErrors.document}
         >
-          <input className="input" value={document} onChange={(e) => setDocument(e.target.value)} />
+          <input
+            className="input"
+            value={document}
+            onChange={(e) => {
+              setDocument(maskDocument(e.target.value));
+              setFieldErrors((current) => ({ ...current, document: undefined }));
+            }}
+            autoComplete="off"
+          />
         </Field>
       </form>
     </Modal>

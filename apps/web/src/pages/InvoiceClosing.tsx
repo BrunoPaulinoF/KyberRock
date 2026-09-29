@@ -28,7 +28,6 @@ import {
   buildInvoiceClosingFiles,
   buildInvoiceClosingReport,
   customerIdentityKey,
-  defaultInvoiceClosingPeriod,
   formatBRL,
   formatCount,
   formatCouponNumber,
@@ -48,7 +47,6 @@ import {
   type InvoiceClosingCycle,
   type InvoiceClosingInvoice,
   type InvoiceClosingLine,
-  type InvoiceClosingPeriodSelection,
   type InvoiceClosingReport,
   type InvoiceClosingTotals
 } from "../lib/invoice-closing";
@@ -56,6 +54,8 @@ import { matchesSearch } from "../lib/operation";
 import { q, type BillingRequest } from "../lib/queries";
 import { deliverReports, spreadsheetFileName } from "../lib/report-output";
 import { useAsync } from "../lib/use-async";
+import { useUrlState } from "../lib/url-state";
+import { FilterInput, useClosingPeriodParams } from "./url-filters";
 
 const HELP =
   "Puxa de uma vez a fatura de todos os clientes de um período. Escolha o período (quinzena, mês, semana ou datas livres) e a tela monta uma fatura por cliente com tudo o que ele carregou nele — inclusive as vendas EM CARTEIRA e as de cliente sem crédito no cadastro. Em 'Base do fechamento' você troca para 'Cadastro do cliente' se preferir a periodicidade cadastrada em cada um; aí o cliente sem crédito fica fora das faturas e aparece na lista 'Clientes fora do fechamento'. O botão 'Fazer fechamento' pede o faturamento no OMIE, de uma vez, das cargas do período que ainda não têm nota — quem fatura é a balança da unidade, que recebe o pedido e emite a nota de cada cliente; carga já faturada nunca é reenviada. Marcando placas no filtro de Placa, o fechamento sai separado por placa — uma fatura por caminhão dentro de cada cliente. No fim da tela, a lista pesagem a pesagem traz TODAS as cargas do período numa tabela só, com a operação inteira em cada linha. O Excel e o PDF saem com as mesmas faturas que estão na tela.";
@@ -89,16 +89,17 @@ interface RunResult {
 export function InvoiceClosing() {
   const user = useUser();
   const confirm = useConfirm();
-  const [customerId, setCustomerId] = useState("");
-  // Comeca na quinzena corrente: e o fechamento que a atendente abre a tela para fazer.
-  const [period, setPeriod] = useState<InvoiceClosingPeriodSelection>(() =>
-    defaultInvoiceClosingPeriod(new Date())
-  );
+  // Periodo, cliente e busca ficam no endereco e voltam quando a pessoa sai e volta pelo menu
+  // (`useUrlState`). Comeca na quinzena corrente: e o fechamento que a atendente abre a tela
+  // para fazer.
+  const periodParams = useClosingPeriodParams("biweekly");
+  const period = periodParams.selection;
+  const [customerParam, setCustomerId] = useUrlState("cliente");
   const [basis, setBasis] = useState<InvoiceClosingBasis>("period");
   const [cycles, setCycles] = useState<InvoiceClosingCycle[]>([]);
   const [plates, setPlates] = useState<string[]>([]);
   const [plateSearch, setPlateSearch] = useState("");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useUrlState("busca");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [runResult, setRunResult] = useState<RunResult | null>(null);
@@ -173,6 +174,29 @@ export function InvoiceClosing() {
     { key: `fechamento:pedidos:${user.companyId}:${invoiceIdsKey}` }
   );
 
+  const customerOptions = useMemo<PickerOption[]>(() => {
+    // Um cliente por cadastro REAL: o do OMIE e o da balanca com o mesmo CNPJ sao um so.
+    const seen = new Set<string>();
+    const options: PickerOption[] = [];
+    for (const customer of customers.data ?? []) {
+      const key = customerIdentityKey(customer);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      options.push({
+        value: customer.id,
+        label: customer.trade_name || customer.legal_name,
+        hint: customer.document ? formatDocument(customer.document) : undefined
+      });
+    }
+    return options.sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+  }, [customers.data]);
+  // Cliente do endereco que nao esta na lista (apagado, link velho) vale como "Todos os
+  // clientes": o filtro que a tela aplica e o que o seletor mostra.
+  const customerId =
+    !customers.data || customerOptions.some((option) => option.value === customerParam)
+      ? customerParam
+      : "";
+
   const report = useMemo<InvoiceClosingReport | null>(() => {
     if (!ops.data) return null;
     return buildInvoiceClosingReport(
@@ -241,23 +265,6 @@ export function InvoiceClosing() {
     }
   }
 
-  const customerOptions = useMemo<PickerOption[]>(() => {
-    // Um cliente por cadastro REAL: o do OMIE e o da balanca com o mesmo CNPJ sao um so.
-    const seen = new Set<string>();
-    const options: PickerOption[] = [];
-    for (const customer of customers.data ?? []) {
-      const key = customerIdentityKey(customer);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      options.push({
-        value: customer.id,
-        label: customer.trade_name || customer.legal_name,
-        hint: customer.document ? formatDocument(customer.document) : undefined
-      });
-    }
-    return options.sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
-  }, [customers.data]);
-
   const billable = useMemo(() => (report?.rows ?? []).filter(isBillable), [report]);
   const selectedFormats = (["pdf", "excel"] as const).filter((format) => formats[format]);
   const totals = report?.totals ?? null;
@@ -282,13 +289,6 @@ export function InvoiceClosing() {
           Number(!b.replace(/[\s-]/g, "").startsWith(needle))
       );
   }, [plateOptions, plateSearch]);
-
-  function setPeriodField<K extends keyof InvoiceClosingPeriodSelection>(
-    field: K,
-    value: InvoiceClosingPeriodSelection[K]
-  ): void {
-    setPeriod((current) => ({ ...current, [field]: value }));
-  }
 
   function toggleCycle(cycle: InvoiceClosingCycle): void {
     setCycles((current) =>
@@ -449,7 +449,7 @@ export function InvoiceClosing() {
                   key={kind}
                   type="button"
                   className={`closing-chip${period.kind === kind ? " active" : ""}`}
-                  onClick={() => setPeriodField("kind", kind)}
+                  onClick={() => periodParams.setKind(kind)}
                 >
                   {INVOICE_CLOSING_PERIOD_KIND_LABEL[kind]}
                 </button>
@@ -458,11 +458,12 @@ export function InvoiceClosing() {
             {period.kind === "biweekly" || period.kind === "monthly" ? (
               <label className="closing-date-field">
                 Mês
-                <input
+                <FilterInput
                   type="month"
                   className="closing-input"
                   value={period.month}
-                  onChange={(event) => setPeriodField("month", event.target.value)}
+                  onValue={periodParams.setMonth}
+                  keepLastValid
                 />
               </label>
             ) : null}
@@ -471,14 +472,14 @@ export function InvoiceClosing() {
                 <button
                   type="button"
                   className={`closing-chip${period.half === 1 ? " active" : ""}`}
-                  onClick={() => setPeriodField("half", 1)}
+                  onClick={() => periodParams.setHalf(1)}
                 >
                   1ª quinzena (01 a 15)
                 </button>
                 <button
                   type="button"
                   className={`closing-chip${period.half === 2 ? " active" : ""}`}
-                  onClick={() => setPeriodField("half", 2)}
+                  onClick={() => periodParams.setHalf(2)}
                 >
                   2ª quinzena (16 ao fim)
                 </button>
@@ -487,11 +488,12 @@ export function InvoiceClosing() {
             {period.kind === "weekly" ? (
               <label className="closing-date-field">
                 Qualquer dia da semana
-                <input
+                <FilterInput
                   type="date"
                   className="closing-input"
                   value={period.weekDay}
-                  onChange={(event) => setPeriodField("weekDay", event.target.value)}
+                  onValue={periodParams.setWeekDay}
+                  keepLastValid
                 />
               </label>
             ) : null}
@@ -499,20 +501,22 @@ export function InvoiceClosing() {
               <div className="closing-custom-dates">
                 <label className="closing-date-field">
                   De
-                  <input
+                  <FilterInput
                     type="date"
                     className="closing-input"
                     value={period.customStart}
-                    onChange={(event) => setPeriodField("customStart", event.target.value)}
+                    onValue={periodParams.setCustomStart}
+                    keepLastValid
                   />
                 </label>
                 <label className="closing-date-field">
                   Até
-                  <input
+                  <FilterInput
                     type="date"
                     className="closing-input"
                     value={period.customEnd}
-                    onChange={(event) => setPeriodField("customEnd", event.target.value)}
+                    onValue={periodParams.setCustomEnd}
+                    keepLastValid
                   />
                 </label>
               </div>
@@ -586,10 +590,10 @@ export function InvoiceClosing() {
               emptyLabel="Todos os clientes"
             />
             <span className="closing-filter-label">Buscar</span>
-            <input
+            <FilterInput
               className="closing-input"
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onValue={setSearch}
               placeholder="Cliente, placa, transportador, nota ou vale"
             />
           </div>

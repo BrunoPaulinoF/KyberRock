@@ -1,15 +1,105 @@
-/* Aba Comercial: a mesma disposicao do "Relatorio de vendas" do KyberRock Portal
-   (`apps/loader-web/src/loader-ui.css`, secao "Relatorio de vendas"), com as cores do site. */
+/* Aba Comercial: titulo e atalhos no topo, depois a mesma disposicao do "Relatorio de vendas"
+   do KyberRock Portal (`apps/loader-web/src/loader-ui.css`, secao "Relatorio de vendas"), com as
+   cores do site. */
 
+/* ---------- atalhos do topo: o que o comercial mais abre ---------- */
+.comercial-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.comercial-shortcut {
+  min-width: 0;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface);
+  box-shadow: var(--kr-shadow);
+  color: var(--kr-text-strong);
+  text-decoration: none;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.comercial-shortcut:hover {
+  border-color: var(--kr-accent-border);
+  background: var(--kr-card-hover);
+}
+
+.comercial-shortcut:focus-visible {
+  outline: 2px solid var(--kr-focus-ring);
+  outline-offset: 2px;
+}
+
+.comercial-shortcut-icon {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: var(--kr-accent-soft);
+  color: var(--kr-link);
+}
+
+.comercial-shortcut-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.comercial-shortcut-text strong {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.comercial-shortcut-text span {
+  color: var(--kr-muted);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+/* celular: dois por linha, icone em cima do nome */
+@media (max-width: 520px) {
+  .comercial-shortcuts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .comercial-shortcut {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .comercial-shortcut-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .comercial-shortcut {
+    transition: none;
+  }
+}
+
+/* ---------- relatorio de vendas ---------- */
 .comercial-panel {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-/* O topo (`PageHeader`) esta dentro do cartao; o espaco ate os filtros e o `gap`. */
-.comercial-panel > .page-header {
-  margin-bottom: 0;
 }
 
 .comercial-controls {
@@ -17,6 +107,14 @@
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 14px;
+}
+
+/* Imprimir / Exportar ficam na ponta da linha dos filtros, junto do relatorio. */
+.comercial-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .comercial-field {

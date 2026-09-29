@@ -270,6 +270,17 @@ export const q = {
           : query.not("wallet_settled_at", "is", null);
       return query.order("created_at", { ascending: false }).range(from, to);
     }),
+  /** Quantas pesagens estao abertas na unidade (o numero ao lado de "Operacoes" no menu). */
+  openOperationCount: async (companyId: string, unitId: string): Promise<number> => {
+    const { count, error } = await supabase
+      .from("weighing_operations")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", companyId)
+      .eq("unit_id", unitId)
+      .eq("status", OPEN_STATUS);
+    fail(error);
+    return count ?? 0;
+  },
   /** Caminhoes no patio da unidade: pesagem com entrada e sem saida. */
   openOperations: (companyId: string, unitId: string) =>
     all<Operation>((from, to) =>

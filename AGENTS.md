@@ -619,6 +619,18 @@ dev`, `pages/KitShowcase.tsx`) mostra todas nos dois temas. Cor sempre por token
   no arquivo inicial: a pagina de apresentacao aparece sem esperar por eles, e sem sessao
   guardada (`hasStoredSession` em `lib/auth.tsx`) o site nem espera a nuvem para decidir "nao
   logado".
+- **Mais facil de usar** (etapa 4): **busca rapida** Ctrl+K (`components/CommandPalette.tsx`,
+  regra em `lib/command-search.ts`) acha tela, cliente, placa e cupom so entre o que o perfil ve;
+  a lista de telas do menu mora em `lib/navigation.ts` (menu, busca e titulo usam o MESMO nome —
+  o `title` do `PageHeader` e o nome do menu). Os links diretos que ela usa sao contrato das
+  telas: `/operacoes?placa=`, `/cadastros/clientes?cliente=<id>`, `/cupons?codigo=`. Filtro de
+  tela fica no endereco e e lembrado ao voltar pelo menu (`useUrlState`, `lib/url-state.ts`).
+  `DataTable` ordena pela coluna com `sortValue` e vira cartao no celular sozinho; acao de linha
+  e UM botao principal + `ActionMenu` ("⋯") com verbo escrito. Formulario: mascaras em
+  `lib/masks.ts` (o CNPJ alfanumerico nunca perde a letra), CEP em `lib/cep.ts` (ViaCEP; falha
+  nunca bloqueia), `Modal dirty` + `useDiscardGuard` para "alteracoes nao salvas". Acao com volta
+  (inativar) nao pergunta: faz e oferece "Desfazer"; acao sem volta pede `useConfirm`. O menu
+  mostra quantas pesagens estao abertas (`q.openOperationCount`, aviso ao vivo).
 - **Listas de 50 em 50.** Desenhar os 2 mil clientes de uma vez era o que deixava o site
   pesado. `DataTable` mostra 50 linhas e o "Ver mais" (`LoadMore`, `useShowMore` em
   `components/ui.tsx`); a lista de clientes vai alem e pagina NO BANCO (`q.customersPage` +

@@ -178,6 +178,42 @@ export function requestBacklog(requests: Pick<OperationRequest, "status">[]): Re
   return { waiting, failed };
 }
 
+// ---------- Atencao: ha pendencia? (a ordem da "central do dia") ----------
+
+/**
+ * `pending`: algo pede alguem agora — o cartao "Atencao" vem PRIMEIRO, largo, antes dos numeros.
+ * `clear`: tudo conferido e em dia — os numeros vem primeiro e o "em dia" fica discreto.
+ * `checking`: ainda perguntando e nada de errado a vista — tambem discreto, sem afirmar nada.
+ */
+export type AttentionState = "pending" | "clear" | "checking";
+
+export interface AttentionInput {
+  /** Todas as leituras do cartao ja responderam (abertas, OMIE, pedidos, balanca executora). */
+  ready: boolean;
+  /** O tom de cada pesagem aberta (`classifyOpenAge`). */
+  openTones: readonly DashboardTone[];
+  omie: OmieBacklog | null;
+  requests: RequestBacklog | null;
+  executorDown: boolean;
+}
+
+/**
+ * Pesagem aberta DENTRO do tempo normal nao e pendencia (e o patio trabalhando); a que passou de
+ * 2 h e. Envio ao OMIE ou pedido do site esperando, e a balanca executora fora do ar, tambem sao.
+ * O que ja chegou e pendente conta mesmo com outra leitura atrasada: a pendencia nao espera.
+ */
+export function attentionState(input: AttentionInput): AttentionState {
+  const pending =
+    input.executorDown ||
+    input.openTones.some((tone) => tone !== "neutral") ||
+    (input.omie?.pending ?? 0) > 0 ||
+    (input.omie?.failed ?? 0) > 0 ||
+    (input.requests?.waiting ?? 0) > 0 ||
+    (input.requests?.failed ?? 0) > 0;
+  if (pending) return "pending";
+  return input.ready ? "clear" : "checking";
+}
+
 // ---------- Ultimas pesagens ----------
 
 type RecentRow = Pick<Operation, "id" | "status" | "created_at" | "updated_at" | "closed_at">;

@@ -13,6 +13,7 @@ import {
   Minus,
   Moon,
   RefreshCw,
+  Repeat,
   Scale,
   Search,
   SlidersHorizontal,
@@ -21,6 +22,7 @@ import {
   Timer,
   TriangleAlert,
   Truck,
+  Tv,
   Weight,
   WifiOff,
   X,
@@ -43,9 +45,12 @@ import { Link } from "react-router-dom";
 import { EmptyState, HelpTip } from "../components/ui";
 import { useAuth, useUser } from "../lib/auth";
 import { CLOSED_STATUSES } from "../lib/dashboard";
+import { readDeviceFlag, writeDeviceFlag } from "../lib/device-prefs";
 import { formatMoney, formatPlate } from "../lib/format";
 import { tickIndexes } from "../lib/insights";
 import {
+  MONITOR_AUTO_SWAP_MS,
+  MONITOR_AUTO_SWAP_STORAGE_KEY,
   MONITOR_COLUMNS,
   MONITOR_FILTERS_STORAGE_KEY,
   MONITOR_FIT_QUERY,
@@ -80,6 +85,7 @@ import {
   formatTonnes,
   liveState,
   metricValue,
+  otherMetric,
   parseMonitorFilters,
   paymentBreakdown,
   mergePaymentMethods,
@@ -132,6 +138,10 @@ import { useMediaQuery } from "../lib/use-media-query";
  * cabe inteira no `100dvh` e nada rola. Cada painel tem a altura que a grade da; as listas medem
  * quantos cartoes cabem (`fitCount`) e fecham com "+N", os rankings viram "Outros" na ultima linha
  * que cabe e o grafico desenha na altura do painel. No celular a pagina rola, com listas curtas.
+ *
+ * Para a TV da parede: o botao "Modo TV" (`useTvMode`: tela cheia, tela sempre acesa, numeros
+ * maiores) e o "Trocar sozinho" da gaveta, que alterna Toneladas <-> Faturamento a cada 30 s e
+ * fica guardado no aparelho.
  *
  * Carga no banco (o projeto ja estourou cota): a leitura e so a janela do periodo (+ o anterior,
  * para a comparacao) com as colunas que a tela usa. Quem avisa que mudou algo e o Realtime de
@@ -610,9 +620,21 @@ export function MonitorView(props: MonitorViewProps) {
     defaultUnitId
   } = props;
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Estavel de proposito: a gaveta refaz o foco quando `onClose` muda, e uma funcao nova a cada
+  // tique do relogio tiraria o cursor da busca de cliente no meio da digitacao.
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
   // Painel de parede (notebook, TV, tablet deitado): tudo cabe no `100dvh` e cada lista mostra o
   // que cabe no proprio painel. Fora dele (celular), a pagina rola uma vez e as listas sao curtas.
   const fit = useMediaQuery(MONITOR_FIT_QUERY);
+  // Com a gaveta aberta o Esc e dela (fecha a gaveta), nao do modo TV.
+  const tv = useTvMode(drawerOpen);
+  const [autoSwap, setAutoSwap] = useState(() =>
+    readDeviceFlag(MONITOR_AUTO_SWAP_STORAGE_KEY, false)
+  );
+  const changeAutoSwap = (next: boolean) => {
+    setAutoSwap(next);
+    writeDeviceFlag(MONITOR_AUTO_SWAP_STORAGE_KEY, next);
+  };
 
   // Formas de mesmo nome (uma copia por balanca) viram uma so em toda a tela.
   const mergedPayments = useMemo(() => mergePaymentMethods(rawPaymentMethods), [rawPaymentMethods]);
@@ -672,6 +694,21 @@ export function MonitorView(props: MonitorViewProps) {
   const clearFilters = () => onFiltersChange(clearDimensionFilters(filters));
   const setMetric = (metric: MonitorMetric) => onFiltersChange({ ...filters, metric });
 
+  // "Trocar sozinho": 30 s depois da ultima troca (sozinha ou no botao), passa para a outra
+  // medida. O relogio recomeca a cada troca, entao escolher na mao nao e desfeito na hora.
+  const swapRef = useRef({ filters, onFiltersChange });
+  useEffect(() => {
+    swapRef.current = { filters, onFiltersChange };
+  });
+  useEffect(() => {
+    if (!autoSwap) return undefined;
+    const timer = window.setTimeout(() => {
+      const latest = swapRef.current;
+      latest.onFiltersChange({ ...latest.filters, metric: otherMetric(latest.filters.metric) });
+    }, MONITOR_AUTO_SWAP_MS);
+    return () => window.clearTimeout(timer);
+  }, [autoSwap, filters.metric]);
+
   // Tres zonas na tela larga (vendas | graficos | patio); as que estao desligadas saem da grade.
   const zones = [
     widgets.feed ? "minmax(0, 1fr)" : null,
@@ -690,7 +727,7 @@ export function MonitorView(props: MonitorViewProps) {
     .join(" ");
 
   return (
-    <div className={`mon${fit ? " is-fit" : ""}`}>
+    <div className={`mon${fit ? " is-fit" : ""}${tv.active ? " is-tv" : ""}`}>
       <header className="mon-top">
         <img src={publicAsset("logo-128.webp")} alt="" className="mon-logo" />
         <div className="mon-title">
@@ -745,6 +782,16 @@ export function MonitorView(props: MonitorViewProps) {
               Limpar
             </button>
           )}
+          {autoSwap && (
+            <span
+              className="mon-autoswap"
+              role="img"
+              aria-label="Trocando sozinho a cada 30 s"
+              title="Trocando sozinho entre Toneladas e Faturamento a cada 30 s"
+            >
+              <Repeat size={14} aria-hidden="true" />
+            </span>
+          )}
           <Segmented
             className="mon-filterbar-metric"
             label="Medida dos gráficos"
@@ -758,6 +805,21 @@ export function MonitorView(props: MonitorViewProps) {
         </div>
         <LiveIndicator status={status} now={now} />
         <div className="mon-top-actions">
+          <button
+            type="button"
+            className={`mon-top-btn mon-tv-btn${tv.active ? " is-on" : ""}`}
+            onClick={tv.active ? tv.exit : tv.enter}
+            aria-pressed={tv.active}
+            aria-label="Modo TV"
+            title={
+              tv.active
+                ? "Sair do modo TV (ou aperte Esc)"
+                : "Modo TV: tela cheia, tela sempre acesa e números maiores"
+            }
+          >
+            <Tv size={18} aria-hidden="true" />
+            <span className="mon-top-label">Modo TV</span>
+          </button>
           <button
             type="button"
             className="mon-top-btn"
@@ -930,7 +992,9 @@ export function MonitorView(props: MonitorViewProps) {
         <FiltersDrawer
           filters={filters}
           onChange={onFiltersChange}
-          onClose={() => setDrawerOpen(false)}
+          autoSwap={autoSwap}
+          onAutoSwapChange={changeAutoSwap}
+          onClose={closeDrawer}
           units={units}
           unitId={props.unitId}
           defaultUnitId={defaultUnitId}
@@ -944,6 +1008,131 @@ export function MonitorView(props: MonitorViewProps) {
       )}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Modo TV (tela cheia + tela acesa + numeros maiores)
+// ---------------------------------------------------------------------------
+
+type FullscreenRoot = HTMLElement & { webkitRequestFullscreen?: () => void };
+type FullscreenDocument = Document & {
+  webkitFullscreenElement?: Element | null;
+  webkitExitFullscreen?: () => void;
+};
+
+function fullscreenElement(): Element | null {
+  const doc = document as FullscreenDocument;
+  return doc.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+}
+
+/** Chamada de API que pode faltar, lancar ou devolver promessa recusada: tudo vira silencio. */
+function quietly(run: () => unknown): void {
+  try {
+    void Promise.resolve(run()).catch(() => undefined);
+  } catch {
+    // Navegador sem a API (iPhone nao tem tela cheia de pagina): o modo TV segue sem ela.
+  }
+}
+
+/**
+ * "Modo TV": pede tela cheia (se o navegador recusar, segue sem), mantem a tela acesa
+ * (`navigator.wakeLock`, pedido de novo ao voltar para a aba — o navegador solta a trava quando a
+ * aba some) e liga a classe `is-tv`, que aumenta os numeros. Sai pelo mesmo botao, pelo Esc e
+ * quando a pessoa sai da tela cheia pelo proprio navegador.
+ */
+function useTvMode(escapeBusy: boolean) {
+  const [active, setActive] = useState(false);
+  const activeRef = useRef(false);
+  const wakeRef = useRef<WakeLockSentinel | null>(null);
+
+  const keepAwake = useCallback(async () => {
+    if (!("wakeLock" in navigator)) return;
+    if (wakeRef.current && !wakeRef.current.released) return;
+    try {
+      const sentinel = await navigator.wakeLock.request("screen");
+      // Saiu do modo TV enquanto o pedido andava: a trava chegou tarde e ja nao serve.
+      if (!activeRef.current) {
+        quietly(() => sentinel.release());
+        return;
+      }
+      wakeRef.current = sentinel;
+    } catch {
+      // Recusado (economia de bateria, aba escondida): a tela so fica sem a trava.
+      wakeRef.current = null;
+    }
+  }, []);
+
+  const releaseAwake = useCallback(() => {
+    const sentinel = wakeRef.current;
+    wakeRef.current = null;
+    if (sentinel && !sentinel.released) quietly(() => sentinel.release());
+  }, []);
+
+  const enter = useCallback(() => {
+    activeRef.current = true;
+    setActive(true);
+    // Dentro do clique: e o toque da pessoa que deixa o navegador abrir a tela cheia.
+    if (!fullscreenElement()) {
+      const root = document.documentElement as FullscreenRoot;
+      quietly(() =>
+        typeof root.requestFullscreen === "function"
+          ? root.requestFullscreen()
+          : root.webkitRequestFullscreen?.()
+      );
+    }
+    void keepAwake();
+  }, [keepAwake]);
+
+  const exit = useCallback(() => {
+    activeRef.current = false;
+    setActive(false);
+    releaseAwake();
+    if (fullscreenElement()) {
+      const doc = document as FullscreenDocument;
+      quietly(() =>
+        typeof doc.exitFullscreen === "function"
+          ? doc.exitFullscreen()
+          : doc.webkitExitFullscreen?.()
+      );
+    }
+  }, [releaseAwake]);
+
+  useEffect(() => {
+    if (!active) return undefined;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      // O grafico usa o Esc para fechar a dica (e marca `preventDefault`); a gaveta, para fechar.
+      if (event.key !== "Escape" || event.defaultPrevented || escapeBusy) return;
+      exit();
+    };
+    // Saiu da tela cheia pelo navegador (Esc la em cima, gesto, F11): sai do modo TV junto.
+    const onFullscreen = () => {
+      if (!fullscreenElement()) exit();
+    };
+    // O navegador solta a trava da tela quando a aba some; volta a pedir quando ela reaparece.
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void keepAwake();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("fullscreenchange", onFullscreen);
+    document.addEventListener("webkitfullscreenchange", onFullscreen);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("fullscreenchange", onFullscreen);
+      document.removeEventListener("webkitfullscreenchange", onFullscreen);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [active, escapeBusy, exit, keepAwake]);
+
+  // Saiu da tela (voltou ao sistema) com o modo TV ligado: devolve a tela e a trava.
+  useEffect(
+    () => () => {
+      if (activeRef.current) exit();
+    },
+    [exit]
+  );
+
+  return { active, enter, exit };
 }
 
 // ---------------------------------------------------------------------------
@@ -2013,6 +2202,8 @@ function PaymentsPanel({
 function FiltersDrawer({
   filters,
   onChange,
+  autoSwap,
+  onAutoSwapChange,
   onClose,
   units,
   unitId,
@@ -2022,6 +2213,9 @@ function FiltersDrawer({
 }: {
   filters: MonitorFilters;
   onChange: (next: MonitorFilters) => void;
+  /** "Trocar sozinho" (escolha deste aparelho, fora dos filtros). */
+  autoSwap: boolean;
+  onAutoSwapChange: (next: boolean) => void;
   onClose: () => void;
   units: MonitorUnit[];
   unitId: string;
@@ -2203,6 +2397,18 @@ function FiltersDrawer({
               ]}
               onChange={(metric) => set({ metric })}
             />
+            <label className="mon-switch">
+              <input
+                type="checkbox"
+                checked={autoSwap}
+                onChange={(event) => onAutoSwapChange(event.target.checked)}
+              />
+              <span className="mon-switch-track" aria-hidden="true" />
+              <span>Trocar sozinho a cada 30 s</span>
+            </label>
+            <p className="mon-hint">
+              Para a TV da parede: alterna Toneladas e Faturamento. Fica guardado neste aparelho.
+            </p>
           </fieldset>
 
           <fieldset className="mon-fieldset">
