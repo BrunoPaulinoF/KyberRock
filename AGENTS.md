@@ -1042,6 +1042,32 @@ falta: com o banco fora do ar, retentar qualquer erro multiplicava a carga sobre
 Recuperacao: assim que a nuvem volta, o ping de acesso (a cada 30 s) responde `approved` e as
 balancas se liberam sozinhas — nao ha nada a fazer maquina a maquina.
 
+## Sem internet: telas travadas e cadastro que espera conferencia
+
+**Deteccao.** `navigator.onLine` so fica falso quando TODAS as placas de rede caem — com VPN,
+adaptador virtual ou roteador sem internet ele segue "online", e a primeira versao da trava nao
+disparava. `renderer/internet-status.ts` pergunta ao processo principal (`desktop:probe-internet`:
+Cloudflare e, de reserva, o Supabase da empresa) a cada 10 s (5 s offline); 2 falhas seguidas
+travam, 1 sucesso libera, e o evento `offline` da placa trava na hora.
+
+**Telas.** Sem internet so ficam Nova entrada, Insights e Configuracoes (`renderer/offline-lock.ts`).
+Toda troca de tela passa por `setActiveView`, que recusa as outras; quem estava numa bloqueada
+volta para a Nova entrada. O estado vai ao processo principal (`desktop:set-internet-online`).
+
+**Cadastro.** Sem internet a balanca CADASTRA, mas nao EDITA o que ja existia
+(`assertCadastroEditable` no runtime, nao so na tela): a nuvem grava por id sem comparar hora, e a
+edicao daqui apagaria a do site (ou o contrario). O que nasce sem internet vem com
+`offline_pending = 1` (migracao local 60) e continua editavel. Enquanto houver linha marcada,
+**nada sobe** — nem cadastro nem pesagem: a pesagem que aponta para o cliente novo cairia na chave
+estrangeira da nuvem. Na volta, `prepareOfflineCadastroForPublish` puxa a nuvem e
+`reconcileOfflineCadastros` (`services/offline-cadastro.ts`) junta cada marcado ao gemeo que ja
+existia — cliente e transportadora por `documentKey`, placa por placa, motorista por NOME (o CPF
+dele nao e obrigatorio). Quem fica e SEMPRE o que ja existia: o marcado nunca saiu desta maquina,
+entao ninguem mais aponta para ele. O pull deixa de esconder o gemeo da nuvem quando o local e
+marcado (`findLocalCadastroWithDocument`), senao nao haveria com quem juntar. Pull que falha
+segura o envio (a nuvem esta fora de alcance, o envio falharia igual); erro na juncao libera sem
+juntar, para nunca prender o envio para sempre.
+
 ## Cadastro de uma maquina chega nas outras
 
 O cadastro que o comercial fazia no computador dele podia **nunca** aparecer no computador da

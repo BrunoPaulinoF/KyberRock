@@ -210,6 +210,11 @@ These recur across the codebase and are easy to violate accidentally:
   pesagem viva. E **excluir cliente** passou a exigir cadastro sem historico nenhum
   (`historyCount`): quem tem carga ou credito usa Inativar ou Unificar, porque excluir nunca
   apagou pesagem — so escondia o caminho ate ela.
+- **Sem internet** (AGENTS.md "Sem internet: telas travadas e cadastro que espera conferencia"):
+  a internet e o teste REAL (`renderer/internet-status.ts`), nao o `navigator.onLine`. Sem ela so
+  ficam Nova entrada, Insights e Configuracoes; o runtime recusa editar cadastro que ja existia
+  e marca o novo (`offline_pending`). Nada sobe enquanto houver marcado: na volta ele puxa a
+  nuvem e junta o gemeo (`services/offline-cadastro.ts`) — sempre ficando o que ja existia.
 - **Queda de conexao nao condena o envio** (AGENTS.md "Queda longa nao para a fila"): a fila
   desistia do job depois de 10 tentativas e o mandava para `dead_letter`, fora da rotacao
   automatica — com o backoff ate 15 min isso e ~2h de queda, e dali so um clique do operador

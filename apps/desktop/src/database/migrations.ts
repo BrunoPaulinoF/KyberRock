@@ -2146,5 +2146,19 @@ CREATE TABLE IF NOT EXISTS price_change_log (
 );
 CREATE INDEX IF NOT EXISTS idx_price_change_log_created ON price_change_log(created_at, id);
 `
+  },
+  {
+    version: 60,
+    name: "offline_pending_cadastro",
+    sql: `
+-- Cadastro feito sem internet (\`services/offline-cadastro.ts\`): nasce marcado e so sobe
+-- depois que a volta da internet procurou o gemeo dele na nuvem (mesmo CPF/CNPJ, placa ou
+-- nome de motorista) — e, achando, juntou os dois. Sem a marca, o cliente cadastrado aqui e
+-- no site durante a queda virava dois cadastros para sempre.
+ALTER TABLE customers ADD COLUMN offline_pending INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE carriers ADD COLUMN offline_pending INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE vehicles ADD COLUMN offline_pending INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE drivers ADD COLUMN offline_pending INTEGER NOT NULL DEFAULT 0;
+`
   }
 ];

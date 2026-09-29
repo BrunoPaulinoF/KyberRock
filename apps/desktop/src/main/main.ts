@@ -2144,6 +2144,16 @@ function registerIpcHandlers(): void {
     }
   );
 
+  ipcMain.handle("desktop:set-internet-online", (_event, online: boolean) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    runtime.setInternetOnline(online === true);
+  });
+
+  ipcMain.handle("desktop:list-offline-pending-cadastro", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.listOfflinePendingCadastro();
+  });
+
   ipcMain.handle("desktop:probe-internet", async () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.probeInternetReachable();

@@ -875,6 +875,15 @@ export interface KyberRockDesktopApi {
   }>;
   /** Teste leve de internet (sem OMIE) usado pela trava de telas sem conexao. */
   probeInternet: () => Promise<boolean>;
+  /** Avisa o processo principal da queda/volta da internet (trava de edicao e conferencia). */
+  setInternetOnline: (online: boolean) => Promise<void>;
+  /** Cadastros feitos sem internet ainda nao conferidos — esses continuam editaveis. */
+  listOfflinePendingCadastro: () => Promise<{
+    customers: string[];
+    carriers: string[];
+    vehicles: string[];
+    drivers: string[];
+  }>;
   lookupCep: (cep: string) => Promise<{
     zipcode: string;
     street: string;
