@@ -22,7 +22,16 @@ import {
   PlateBadge
 } from "../components/desk";
 import { Picker, type PickerOption } from "../components/Picker";
-import { Alert, Badge, Field, LoadMore, Modal, useShowMore, useToast } from "../components/ui";
+import {
+  Alert,
+  Badge,
+  Field,
+  LoadMore,
+  Modal,
+  PAGE_SIZE,
+  useShowMore,
+  useToast
+} from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
@@ -39,9 +48,7 @@ import {
   formatDocument,
   formatMoney,
   formatPlate,
-  formatTons,
-  periodToIso,
-  todayIso
+  formatTons
 } from "../lib/format";
 import {
   CLOSED_EDITABLE,
@@ -54,7 +61,6 @@ import {
   formatElapsedSince,
   formatWeightNumber,
   isFinished,
-  matchesSearch,
   parsePriceCents,
   parseWeight,
   printWarning,
@@ -66,7 +72,10 @@ import {
 import { PRICE_CODE_HINT } from "../lib/price-code";
 import { q, type Operation } from "../lib/queries";
 import { supabase } from "../lib/supabase";
+import { closedPeriodBounds } from "../lib/closed-operations";
 import { useAsync } from "../lib/use-async";
+import { usePaged } from "../lib/use-paged";
+import { useDebounced } from "./Customers";
 
 /**
  * Pesagem pelo site, nas mesmas telas do desktop. O site PEDE (web-api `request_operation`) e a balanca executora da
@@ -428,7 +437,9 @@ export function Operations() {
   const [now, setNow] = useState(() => Date.now());
   const [plateSearch, setPlateSearch] = useState("");
   const [canceledPeriod, setCanceledPeriod] = useState<CanceledPeriod>("day");
-  const [closedDay, setClosedDay] = useState(todayIso());
+  // Periodo opcional: sem data, a lista traz todas as concluidas, da mais nova para a mais antiga.
+  const [closedStart, setClosedStart] = useState("");
+  const [closedEnd, setClosedEnd] = useState("");
   const [closedProduct, setClosedProduct] = useState("all");
   const [closedSearch, setClosedSearch] = useState("");
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -450,13 +461,39 @@ export function Operations() {
         : Promise.resolve([] as Operation[]),
     [tab, user.companyId, user.unitId, canceledFrom]
   );
-  const closedPeriod = useMemo(() => periodToIso(closedDay, closedDay), [closedDay]);
-  const closed = useAsync(
-    () =>
+  const closedPeriod = useMemo(
+    () => closedPeriodBounds(closedStart, closedEnd),
+    [closedStart, closedEnd]
+  );
+  const closedSearchText = useDebounced(closedSearch);
+  // 50 por vez, ja filtradas no banco ("Ver mais" traz as proximas): o historico inteiro da
+  // unidade nao cabe numa leitura so.
+  const closed = usePaged(
+    (from, to) =>
       tab === "concluidas"
-        ? q.closedOperations(user.companyId, closedPeriod.startIso, closedPeriod.endIso)
-        : Promise.resolve([] as Operation[]),
-    [tab, user.companyId, closedPeriod.startIso, closedPeriod.endIso]
+        ? q.closedOperationsPage(
+            user.companyId,
+            user.unitId,
+            {
+              startIso: closedPeriod.startIso,
+              endIso: closedPeriod.endIso,
+              product: closedProduct === "all" ? null : closedProduct,
+              search: closedSearchText
+            },
+            from,
+            to
+          )
+        : Promise.resolve({ rows: [] as Operation[], total: 0 }),
+    [
+      tab,
+      user.companyId,
+      user.unitId,
+      closedPeriod.startIso,
+      closedPeriod.endIso,
+      closedProduct,
+      closedSearchText
+    ],
+    PAGE_SIZE
   );
 
   const reloadOpen = open.reload;
@@ -511,33 +548,18 @@ export function Operations() {
     : openRows;
   const productCounts = useMemo(() => countByProduct(openRows), [openRows]);
 
-  const closedRows = useMemo(
-    () =>
-      (closed.data ?? [])
-        .filter((row) => row.status !== "cancelled" && row.unit_id === user.unitId)
-        .sort((a, b) => (b.closed_at ?? b.created_at).localeCompare(a.closed_at ?? a.created_at)),
-    [closed.data, user.unitId]
-  );
+  const visibleClosed = closed.rows;
   const closedProducts = useMemo(
     () =>
-      [...new Set(closedRows.map((row) => row.product_description ?? "").filter(Boolean))].sort(
-        (a, b) => a.localeCompare(b, "pt-BR")
+      [...new Set((catalog.data?.products ?? []).map((product) => product.label))].sort((a, b) =>
+        a.localeCompare(b, "pt-BR")
       ),
-    [closedRows]
-  );
-  const visibleClosed = closedRows.filter(
-    (row) =>
-      (closedProduct === "all" || row.product_description === closedProduct) &&
-      matchesSearch(
-        `${row.customer_name ?? ""} ${row.product_description ?? ""} ${row.plate ?? ""}`,
-        closedSearch
-      )
+    [catalog.data]
   );
   const canceledRows = canceled.data ?? [];
   // 50 por vez em cada aba ("Ver mais" traz outros 50): o dia cheio desenhava centenas de linhas.
   const openPage = useShowMore(`${tab}|${plateNeedle}`);
   const canceledPage = useShowMore(tab);
-  const closedPage = useShowMore(`${tab}|${closedProduct}|${closedSearch}`);
 
   const countLabel =
     tab === "abertas"
@@ -546,7 +568,7 @@ export function Operations() {
         : `${openRows.length} abertas`
       : tab === "canceladas"
         ? `${canceledRows.length} canceladas`
-        : `${visibleClosed.length} concluidas`;
+        : `${closed.total.toLocaleString("pt-BR")} concluidas`;
 
   async function reprint(operation: Operation) {
     await sendRequest(toast, "reprint", { operationId: operation.id });
@@ -622,14 +644,38 @@ export function Operations() {
         {tab === "concluidas" && (
           <div className="op-filters">
             <label className="op-filter">
-              Dia
+              De
               <input
                 className="input"
                 type="date"
-                value={closedDay}
-                onChange={(event) => setClosedDay(event.target.value || todayIso())}
+                value={closedStart}
+                aria-label="Data inicial (opcional)"
+                onChange={(event) => setClosedStart(event.target.value)}
               />
             </label>
+            <label className="op-filter">
+              Ate
+              <input
+                className="input"
+                type="date"
+                value={closedEnd}
+                aria-label="Data final (opcional)"
+                onChange={(event) => setClosedEnd(event.target.value)}
+              />
+            </label>
+            {(closedStart || closedEnd) && (
+              <button
+                type="button"
+                className="btn"
+                style={{ alignSelf: "flex-end" }}
+                onClick={() => {
+                  setClosedStart("");
+                  setClosedEnd("");
+                }}
+              >
+                Todas as datas
+              </button>
+            )}
             <div className="op-filter" style={{ minWidth: 220 }}>
               Produto
               <Picker
@@ -804,7 +850,11 @@ export function Operations() {
         (visibleClosed.length === 0 ? (
           <EmptyState
             title={closed.loading ? "Carregando..." : "Nenhuma operacao concluida"}
-            hint="As operacoes fechadas no dia escolhido aparecem aqui."
+            hint={
+              closedStart || closedEnd
+                ? "Nenhuma operacao fechada no periodo escolhido."
+                : "As operacoes fechadas aparecem aqui, da mais nova para a mais antiga."
+            }
           />
         ) : (
           <div className="op-table">
@@ -816,7 +866,7 @@ export function Operations() {
               <span>Fiscal OMIE</span>
               <span>Acoes</span>
             </div>
-            {visibleClosed.slice(0, closedPage.limit).map((row) => {
+            {visibleClosed.map((row) => {
               const fiscal = fiscalStatus(row);
               return (
                 <div
@@ -863,9 +913,10 @@ export function Operations() {
               );
             })}
             <LoadMore
-              shown={Math.min(closedPage.limit, visibleClosed.length)}
-              total={visibleClosed.length}
-              onMore={closedPage.more}
+              shown={visibleClosed.length}
+              total={closed.total}
+              loading={closed.loading}
+              onMore={() => void closed.more()}
             />
           </div>
         ))}

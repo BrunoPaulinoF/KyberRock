@@ -4,6 +4,7 @@
  * a intencao ficar explicita no codigo.
  */
 
+import { closedPeriodFilter, closedSearchFilter } from "./closed-operations";
 import { customerSearchFilter } from "./customer-search";
 import { OPEN_STATUS, type OperationRequest } from "./operation";
 import { supabase, type Tables } from "./supabase";
@@ -217,6 +218,42 @@ export const q = {
         .order("created_at", { ascending: true })
         .range(from, to)
     ),
+  /**
+   * A aba "Operacoes concluidas": as pesagens concluidas da unidade, mais nova primeiro, uma
+   * pagina por vez e ja filtradas no banco. Periodo, produto e busca sao opcionais — sem nenhum,
+   * vem o historico inteiro, 50 por vez (`lib/closed-operations.ts`).
+   */
+  closedOperationsPage: async (
+    companyId: string,
+    unitId: string,
+    filter: {
+      startIso: string | null;
+      endIso: string | null;
+      product: string | null;
+      search: string;
+    },
+    from: number,
+    to: number
+  ): Promise<Page<Operation>> => {
+    let query = supabase
+      .from("weighing_operations")
+      .select("*", { count: "exact" })
+      .eq("company_id", companyId)
+      .eq("unit_id", unitId)
+      .in("status", ["closed_local", "pending_cloud", "pending_omie", "synced", "sync_error"]);
+    const period = closedPeriodFilter(filter);
+    if (period) query = query.or(period);
+    if (filter.product) query = query.eq("product_description", filter.product);
+    const search = closedSearchFilter(filter.search);
+    if (search) query = query.or(search);
+    const { data, error, count } = await query
+      .order("closed_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .order("id")
+      .range(from, to);
+    fail(error);
+    return { rows: data ?? [], total: count ?? data?.length ?? 0 };
+  },
   /** Vendas em carteira: forma de pagamento `is_wallet`. `open` = ainda sem fechamento. */
   walletOperations: (companyId: string, walletMethodIds: string[], status: "open" | "settled") =>
     all<Operation>((from, to) => {
@@ -290,6 +327,45 @@ export const q = {
         .eq("company_id", companyId)
         .eq("customer_id", customerId)
         .is("deleted_at", null)
+        .range(from, to)
+    ),
+  /**
+   * Transportadoras vinculadas ao cliente (a aba Transporte da ficha na balanca). Sem filtro de
+   * empresa de proposito: vinculo antigo tem `company_id` nulo, e a RLS da tabela ja recorta pela
+   * empresa do CLIENTE.
+   */
+  customerCarrierLinks: async (customerId: string) => {
+    const { data, error } = await supabase
+      .from("customer_carriers")
+      .select("id, carrier_id")
+      .eq("customer_id", customerId)
+      .eq("is_active", true);
+    fail(error);
+    return data ?? [];
+  },
+  /** Placas vinculadas ao cliente: a nova entrada abre o campo Placa ja com elas. */
+  customerVehicleLinks: async (companyId: string, customerId: string) => {
+    const { data, error } = await supabase
+      .from("customer_vehicles")
+      .select("id, vehicle_id")
+      .eq("company_id", companyId)
+      .eq("customer_id", customerId)
+      .is("deleted_at", null)
+      .eq("is_active", true);
+    fail(error);
+    return data ?? [];
+  },
+  /** Notas de venda para entrega futura do cliente, mais antiga primeiro (a ordem de consumo). */
+  customerFutureBillingInvoices: (companyId: string, customerId: string) =>
+    all<Tables<"customer_future_billing_invoices">>((from, to) =>
+      supabase
+        .from("customer_future_billing_invoices")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("customer_id", customerId)
+        .is("deleted_at", null)
+        .eq("is_active", true)
+        .order("created_at", { ascending: true })
         .range(from, to)
     ),
   accounts: (companyId: string) =>

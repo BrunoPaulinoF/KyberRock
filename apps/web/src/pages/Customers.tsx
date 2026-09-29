@@ -38,6 +38,7 @@ import {
 } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
 import { usePaged } from "../lib/use-paged";
+import { CustomerFileModal, type CustomerFileTab } from "./CustomerFile";
 
 /** O texto da busca so vira consulta quando a pessoa para de digitar. */
 export function useDebounced<T>(value: T, delayMs = 300): T {
@@ -90,6 +91,7 @@ export function CustomersSection() {
   ]);
   const [editing, setEditing] = useState<Customer | "new" | null>(null);
   const [commercial, setCommercial] = useState<Customer | null>(null);
+  const [file, setFile] = useState<{ customer: Customer; tab: CustomerFileTab } | null>(null);
   const [removing, setRemoving] = useState<Customer | null>(null);
 
   const [terms, methods, carriers, activeCount] = aux.data ?? [[], [], [], 0];
@@ -203,6 +205,16 @@ export function CustomersSection() {
                     label="Comercial e credito"
                     onClick={() => setCommercial(c)}
                   />
+                  <IconAction
+                    icon="tag"
+                    label="Precos especiais"
+                    onClick={() => setFile({ customer: c, tab: "precos" })}
+                  />
+                  <IconAction
+                    icon="truck"
+                    label="Frete, transporte e entrega futura"
+                    onClick={() => setFile({ customer: c, tab: "frete" })}
+                  />
                   <button className="btn small" onClick={() => void toggleActive(c)}>
                     {c.is_active ? "Inativar" : "Reativar"}
                   </button>
@@ -238,6 +250,16 @@ export function CustomersSection() {
           onSaved={async () => {
             setCommercial(null);
             await refresh();
+          }}
+        />
+      )}
+      {file && (
+        <CustomerFileModal
+          customer={file.customer}
+          initialTab={file.tab}
+          onClose={() => {
+            setFile(null);
+            void refresh();
           }}
         />
       )}
@@ -287,6 +309,7 @@ function CustomerForm({
     document: formatDocument(customer?.document) ?? "",
     email: customer?.email ?? "",
     phone: customer?.phone ?? "",
+    phoneSecondary: customer?.phone_secondary ?? "",
     contactName: customer?.contact_name ?? "",
     zipcode: customer?.zipcode ?? "",
     addressStreet: customer?.address_street ?? "",
@@ -460,6 +483,14 @@ function CustomerForm({
               placeholder="(15) 99999-9999"
             />
           </Field>
+          <Field label="Telefone 2">
+            <input
+              className="input"
+              value={form.phoneSecondary}
+              onChange={set("phoneSecondary")}
+              placeholder="(15) 3333-3333"
+            />
+          </Field>
           <Field label="Contato">
             <input className="input" value={form.contactName} onChange={set("contactName")} />
           </Field>
@@ -520,6 +551,8 @@ function CustomerForm({
 
 // ---------------------------------------------------------------------------
 
+const WEEKDAYS = ["Domingo", "Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado"];
+
 function CommercialForm({
   customer,
   methods,
@@ -554,6 +587,7 @@ function CommercialForm({
     creditClosingDay: customer.credit_closing_day?.toString() ?? "",
     creditSecondClosingDay: customer.credit_second_closing_day?.toString() ?? "",
     creditBoletoDays: customer.credit_boleto_days?.toString() ?? "",
+    creditSecondBoletoDays: customer.credit_second_boleto_days?.toString() ?? "",
     creditClosingWeekday: customer.credit_closing_weekday?.toString() ?? ""
   });
 
@@ -573,6 +607,7 @@ function CommercialForm({
         creditClosingDay: form.creditClosingDay || null,
         creditSecondClosingDay: form.creditSecondClosingDay || null,
         creditBoletoDays: form.creditBoletoDays || null,
+        creditSecondBoletoDays: form.creditSecondBoletoDays || null,
         creditClosingWeekday: form.creditClosingWeekday || null
       });
       toast.push("Bloco comercial publicado para as balancas.");
@@ -706,16 +741,37 @@ function CommercialForm({
                 />
               </Field>
             </div>
-            <Field label="Dia da semana (semanal)" hint="0 = domingo ... 6 = sabado">
-              <input
-                className="input"
-                type="number"
-                min={0}
-                max={6}
-                value={form.creditClosingWeekday}
-                onChange={(e) => setForm((f) => ({ ...f, creditClosingWeekday: e.target.value }))}
-              />
-            </Field>
+            <div className="grid-2">
+              <Field
+                label="Dias p/ vencimento (2o fechamento)"
+                hint="Quinzenal: prazo do 2o boleto"
+              >
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  max={365}
+                  value={form.creditSecondBoletoDays}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, creditSecondBoletoDays: e.target.value }))
+                  }
+                />
+              </Field>
+              <Field label="Dia da semana (semanal)">
+                <select
+                  className="select"
+                  value={form.creditClosingWeekday}
+                  onChange={(e) => setForm((f) => ({ ...f, creditClosingWeekday: e.target.value }))}
+                >
+                  <option value="">—</option>
+                  {WEEKDAYS.map((label, index) => (
+                    <option key={label} value={String(index)}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
           </>
         )}
         {customer.credit_limit_cents != null && (
