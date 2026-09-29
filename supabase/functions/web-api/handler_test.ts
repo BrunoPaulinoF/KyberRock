@@ -983,6 +983,19 @@ describe("web-api: consultas ao OMIE da ficha do cliente", () => {
             overdueCents: 100000,
             overdueTitles: 1,
             nextDueDate: "2026-10-15",
+            byInvoice: [
+              {
+                invoiceNumber: "4101",
+                issueDate: "2026-09-01",
+                openCents: 100000,
+                openTitles: 1,
+                overdueCents: 100000,
+                overdueTitles: 1,
+                nextDueDate: null
+              },
+              { invoiceNumber: null, openCents: "50000", openTitles: 1 },
+              "lixo"
+            ],
             truncated: false
           };
         }
@@ -1000,7 +1013,27 @@ describe("web-api: consultas ao OMIE da ficha do cliente", () => {
       openCents: 150000,
       overdueCents: 100000,
       nextDueDate: "2026-10-15",
-      checkedAt: NOW
+      checkedAt: NOW,
+      byInvoice: [
+        {
+          invoiceNumber: "4101",
+          issueDate: "2026-09-01",
+          openCents: 100000,
+          openTitles: 1,
+          overdueCents: 100000,
+          overdueTitles: 1,
+          nextDueDate: null
+        },
+        {
+          invoiceNumber: null,
+          issueDate: null,
+          openCents: 50000,
+          openTitles: 1,
+          overdueCents: 0,
+          overdueTitles: 0,
+          nextDueDate: null
+        }
+      ]
     });
     expect(queries).toEqual([
       { action: "customer_open_receivables", payload: { customerOmieCode: 777 } }

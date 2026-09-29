@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatDate,
   documentKind,
   formatDocument,
   formatMoney,
@@ -60,5 +61,18 @@ describe("periodo", () => {
     // 21h30 de 23/09 em Brasilia ja e 24/09 em UTC.
     expect(localDay("2026-09-24T00:30:00.000Z")).toBe("2026-09-23");
     expect(localDay("2026-09-24T03:00:00.000Z")).toBe("2026-09-24");
+  });
+});
+
+describe("formatDate", () => {
+  it("data sem hora e o proprio dia, sem voltar um dia pelo fuso", () => {
+    expect(formatDate("2026-09-29")).toBe("29/09/2026");
+    expect(formatDate("2026-01-01")).toBe("01/01/2026");
+  });
+
+  it("instante e mostrado no fuso da pedreira", () => {
+    // 01:30 UTC do dia 30 ainda e dia 29 em Sao Paulo.
+    expect(formatDate("2026-09-30T01:30:00Z")).toBe("29/09/2026");
+    expect(formatDate(null)).toBe("—");
   });
 });

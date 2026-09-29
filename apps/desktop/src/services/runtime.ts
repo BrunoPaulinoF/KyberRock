@@ -225,6 +225,7 @@ import {
   pushOmieCustomersToCloud,
   processOmieSyncQueue,
   processFiscalBillingNow,
+  enqueueOmieBillingCloudBackfill,
   reconcileOmieBillingFromOmie,
   type OmieBillingReconcileResult,
   rearmOmieBillingForCustomer,
@@ -2571,6 +2572,24 @@ export class DesktopRuntime {
       } catch (error) {
         errors.push(
           `Rearme da fila: ${error instanceof Error ? error.message : "erro desconhecido"}`
+        );
+      }
+
+      // Uma vez so: o faturamento que a conferencia ja tinha achado (nota, numero da NF) e
+      // nunca subiu. Ver `enqueueOmieBillingCloudBackfill`.
+      try {
+        const backfill = enqueueOmieBillingCloudBackfill(this.database, identity);
+        if (backfill > 0) {
+          this.recordTechnicalLog(
+            "info",
+            "cloud-sync",
+            `Faturamento: ${backfill} pesagem(ns) com nota conferida no OMIE vao subir para a nuvem.`,
+            { backfill }
+          );
+        }
+      } catch (error) {
+        errors.push(
+          `Reenvio do faturamento: ${error instanceof Error ? error.message : "erro desconhecido"}`
         );
       }
 

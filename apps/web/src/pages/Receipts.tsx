@@ -18,6 +18,7 @@ import { errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { operationStatusLabel } from "../lib/customer-report";
 import { getFreightModalityInfo } from "../lib/desktop/freight";
+import { invoiceNumberText } from "../lib/desktop/invoice-number-label";
 import { formatDateTime, formatDocument, formatMoney, formatPlate } from "../lib/format";
 import {
   copyLabel,
@@ -354,10 +355,25 @@ function ReceiptView({
 
         <InfoCard title="Nota e OMIE">
           <Item
-            label="Pedido OMIE"
+            label="Nota fiscal"
+            value={
+              invoiceNumber
+                ? `NF ${invoiceNumber}`
+                : invoiceNumberText(
+                    null,
+                    operation.operation_type === "internal" ? "internal" : "invoice"
+                  )
+            }
+            strong
+          />
+          {/*
+            O codigo INTERNO do pedido no OMIE (11 digitos), nao o numero que aparece la nem o
+            pedido do cliente: com o nome "Pedido OMIE" ele era lido como numero de pedido.
+          */}
+          <Item
+            label="Código interno no OMIE"
             value={operation.omie_sales_order_id ? String(operation.omie_sales_order_id) : null}
           />
-          <Item label="Nota fiscal" value={operation.omie_invoice_number} />
           <Item label="Faturamento" value={operation.omie_billing_status} />
           <Item label="NF de entrega futura" value={operation.future_billing_nfe_number} />
           <Item label="Mensagem" value={operation.omie_billing_message} wide />

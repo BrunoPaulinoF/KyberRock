@@ -57,6 +57,18 @@ export async function loadCreditBalance(
   return creditBalance(rows);
 }
 
+/** O saldo de UMA nota fiscal; `invoiceNumber` nulo = os titulos sem nota. */
+export interface OmieInvoiceBalance {
+  invoiceNumber: string | null;
+  /** Emissao da nota (aaaa-mm-dd). */
+  issueDate: string | null;
+  openCents: number;
+  openTitles: number;
+  overdueCents: number;
+  overdueTitles: number;
+  nextDueDate: string | null;
+}
+
 /** O que o OMIE respondeu sobre os titulos a receber do cliente. */
 export type OmieBalance =
   | {
@@ -69,6 +81,11 @@ export type OmieBalance =
       overdueTitles: number;
       /** Proximo vencimento em aberto a partir de hoje (aaaa-mm-dd). */
       nextDueDate: string | null;
+      /**
+       * O mesmo saldo separado por nota fiscal — "emitimos uma nota de um milhao e duas de
+       * quinhentos, e estava tudo junto". Maior saldo primeiro; os sem nota no fim.
+       */
+      byInvoice: OmieInvoiceBalance[];
       /** Cliente com mais titulos do que a consulta le: o total e parcial. */
       truncated: boolean;
       checkedAt: string;
@@ -80,6 +97,29 @@ export type OmieBalance =
 function whole(value: unknown): number {
   const number = Number(value);
   return Number.isFinite(number) ? Math.round(number) : 0;
+}
+
+function text(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function invoiceBalances(value: unknown): OmieInvoiceBalance[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw): OmieInvoiceBalance[] => {
+    if (!raw || typeof raw !== "object") return [];
+    const group = raw as Record<string, unknown>;
+    return [
+      {
+        invoiceNumber: text(group.invoiceNumber),
+        issueDate: text(group.issueDate),
+        openCents: whole(group.openCents),
+        openTitles: whole(group.openTitles),
+        overdueCents: whole(group.overdueCents),
+        overdueTitles: whole(group.overdueTitles),
+        nextDueDate: text(group.nextDueDate)
+      }
+    ];
+  });
 }
 
 /** A resposta da `web-api`, conferida campo a campo (a tela nao confia no formato). */
@@ -94,6 +134,7 @@ export function parseOmieBalance(result: Record<string, unknown>): OmieBalance {
       overdueCents: whole(result.overdueCents),
       overdueTitles: whole(result.overdueTitles),
       nextDueDate: typeof result.nextDueDate === "string" ? result.nextDueDate : null,
+      byInvoice: invoiceBalances(result.byInvoice),
       truncated: result.truncated === true,
       checkedAt: typeof result.checkedAt === "string" ? result.checkedAt : new Date().toISOString()
     };

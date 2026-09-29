@@ -209,16 +209,18 @@ baixado pela balança, pelas pesagens. Remover é lápide.
 **Consultas ao OMIE da ficha do cliente** (não gravam nada; mesmos perfis do cadastro de cliente,
 porque gastam chamada da chave OMIE da pedreira):
 
-| Ação                            | Payload                   | Devolve                                                                                                                                                                                         |
-| ------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `customer_balance`              | `customerId`              | `status: "ok"` com `openCents`, `openTitles`, `overdueCents`, `overdueTitles`, `nextDueDate`, `truncated`, `checkedAt`; ou `status: "not_linked"` / `"unavailable"` + `message`                 |
-| `lookup_future_billing_invoice` | `customerId`, `nfeNumber` | `invoices[]`: `invoiceNumber`, `series`, `issueDate`, `customerName`, `otherCustomer`, `items[]` (`productId`, `productDescription`, `invoiceDescription`, `quantity`, `unit`, `totalWeightKg`) |
+| Ação                            | Payload                   | Devolve                                                                                                                                                                                                                  |
+| ------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `customer_balance`              | `customerId`              | `status: "ok"` com `openCents`, `openTitles`, `overdueCents`, `overdueTitles`, `nextDueDate`, `byInvoice[]` (o mesmo por nota fiscal), `truncated`, `checkedAt`; ou `status: "not_linked"` / `"unavailable"` + `message` |
+| `lookup_future_billing_invoice` | `customerId`, `nfeNumber` | `invoices[]`: `invoiceNumber`, `series`, `issueDate`, `customerName`, `otherCustomer`, `items[]` (`productId`, `productDescription`, `invoiceDescription`, `quantity`, `unit`, `totalWeightKg`)                          |
 
 - `customer_balance` é o **saldo do cliente** no cartão Info e na ficha (aba Comercial e crédito):
   os títulos a receber **em aberto** no OMIE (`ListarContasReceber` com
   `filtrar_apenas_titulos_em_aberto` e `filtrar_cliente`, via `customer_open_receivables` da
-  `omie-sync`; a soma é `_shared/omie-open-receivables.ts`). É perguntado na hora e **não é
-  gravado**: `customers.open_receivables_cents` desce para as balanças e entra na conta do limite
+  `omie-sync`; a soma é `_shared/omie-open-receivables.ts`), no total e **separado por nota
+  fiscal** (`numero_documento_fiscal` do título, ou a chave da NF-e; título sem nota fica numa linha
+  própria). Lê 500 títulos por chamada (cai para 100 se o OMIE recusar) até 5 mil. É perguntado na
+  hora e **não é gravado**: `customers.open_receivables_cents` desce para as balanças e entra na conta do limite
   de crédito, e o site não mexe nisso. OMIE fora do ar volta `unavailable` (200), não erro.
 - `lookup_future_billing_invoice` é o botão **Buscar no OMIE** da aba Entrega futura: lista a nota
   pelo número (`ListarNF` com `nNFInicial`/`nNFFinal` e `filtrar_por_status: "N"`, via

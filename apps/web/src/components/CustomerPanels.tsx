@@ -4,7 +4,12 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { useUser } from "../lib/auth";
-import { loadCreditBalance, loadOmieBalance, type OmieBalance } from "../lib/customer-balance";
+import {
+  loadCreditBalance,
+  loadOmieBalance,
+  type OmieBalance,
+  type OmieInvoiceBalance
+} from "../lib/customer-balance";
 import {
   creditLabel,
   customerAddress,
@@ -583,13 +588,67 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
           />
         )}
       </dl>
+      {omieData?.status === "ok" && omieData.byInvoice.length > 0 && (
+        <InvoiceBalances groups={omieData.byInvoice} />
+      )}
       {omieData?.status === "ok" && (
         <p className="cp-muted">
           Consultado no OMIE em {formatDateTime(omieData.checkedAt)}.
-          {omieData.truncated && " O cliente tem mais de mil títulos em aberto: o total é parcial."}
+          {omieData.truncated &&
+            " O cliente tem mais de cinco mil títulos em aberto: o total é parcial."}
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * O saldo em aberto separado por nota fiscal — o comercial precisa saber QUAL nota o cliente
+ * ainda deve, nao so o total. Titulo sem nota (lancamento avulso, adiantamento) fica na ultima
+ * linha.
+ */
+function InvoiceBalances({ groups }: { groups: OmieInvoiceBalance[] }) {
+  return (
+    <div className="table-wrap cp-table">
+      <table className="data">
+        <thead>
+          <tr>
+            <th>Nota fiscal</th>
+            <th>Emissão</th>
+            <th className="num">Títulos</th>
+            <th className="num">Vencido</th>
+            <th className="num">Em aberto</th>
+            <th>Próximo vencimento</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((group) => (
+            <tr key={group.invoiceNumber ?? "sem-nota"}>
+              <td>
+                {group.invoiceNumber ? (
+                  <strong>NF {group.invoiceNumber}</strong>
+                ) : (
+                  <span className="cp-muted">Sem nota fiscal</span>
+                )}
+              </td>
+              <td>{group.issueDate ? formatDate(group.issueDate) : "—"}</td>
+              <td className="num">{group.openTitles.toLocaleString("pt-BR")}</td>
+              <td className="num">
+                {group.overdueCents > 0 ? (
+                  <span className="cp-danger">{formatMoney(group.overdueCents)}</span>
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td className="num">
+                <strong>{formatMoney(group.openCents)}</strong>
+              </td>
+              <td>{group.nextDueDate ? formatDate(group.nextDueDate) : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

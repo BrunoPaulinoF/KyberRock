@@ -31,7 +31,11 @@ import {
   type OmieReceivableRaw
 } from "../_shared/omie-customer-advances.ts";
 import { invoicesWithNumber, normalizeInvoiceNumber } from "../_shared/omie-invoice-items.ts";
-import { quarryToday, summarizeOpenReceivables } from "../_shared/omie-open-receivables.ts";
+import {
+  quarryToday,
+  summarizeOpenReceivables,
+  type OmieReceivableInvoiceRaw
+} from "../_shared/omie-open-receivables.ts";
 
 const PAGE_SIZE = 100;
 const PUSH_PAGE_SIZE = 25;
@@ -5483,49 +5487,75 @@ async function listOmieInvoicesByNumber(
   return invoicesWithNumber(response, invoiceNumber);
 }
 
-/** Paginas lidas, no maximo, para somar o que o cliente deve (100 titulos por pagina). */
-const OPEN_RECEIVABLES_MAX_PAGES = 10;
+/**
+ * Titulos por pagina no saldo do cliente. Cada chamada espera a vez na fila do OMIE (3 s entre
+ * uma e outra), e cliente grande tem mais de mil titulos em aberto: de 100 em 100 isso passava
+ * de meio minuto. Pede 500; se o OMIE recusar o tamanho, cai para 100.
+ */
+const OPEN_RECEIVABLES_PAGE_SIZE = 500;
+
+/** Titulos lidos, no maximo. Acima disso o saldo sai com `truncated` e a tela avisa. */
+const OPEN_RECEIVABLES_MAX_TITLES = 5000;
+
+/** O OMIE recusou o tamanho da pagina (e nao a pergunta)? */
+function isPageSizeFault(error: unknown): boolean {
+  return /registros_por_pagina|registros por p[aá]gina/i.test(getErrorMessage(error));
+}
+
+type ReceivablesPage = {
+  total_de_paginas?: number;
+  conta_receber_cadastro?: OmieReceivableInvoiceRaw[];
+  contaReceberCadastro?: OmieReceivableInvoiceRaw[];
+} | null;
 
 /**
- * Os titulos a receber EM ABERTO do cliente, somados (`summarizeOpenReceivables`). Cliente com
- * mais de mil titulos abertos sai com `truncated`, e a tela avisa que o total e parcial.
+ * Os titulos a receber EM ABERTO do cliente, somados no total e por nota fiscal
+ * (`summarizeOpenReceivables`).
  */
 async function listCustomerOpenReceivables(
   credentials: OmieCredentials,
   customerOmieCode: number
 ): Promise<ReturnType<typeof summarizeOpenReceivables> & { truncated: boolean }> {
-  const rows: OmieReceivableRaw[] = [];
+  const rows: OmieReceivableInvoiceRaw[] = [];
+  let pageSize = OPEN_RECEIVABLES_PAGE_SIZE;
   let truncated = false;
-  for (let page = 1; page <= OPEN_RECEIVABLES_MAX_PAGES; page++) {
-    let response: {
-      total_de_paginas?: number;
-      conta_receber_cadastro?: OmieReceivableRaw[];
-      contaReceberCadastro?: OmieReceivableRaw[];
-    } | null;
+  for (let page = 1; ; page++) {
+    let response: ReceivablesPage;
     try {
-      response = await callOmie<
-        Record<string, unknown>,
+      response = await callOmie<Record<string, unknown>, ReceivablesPage>(
+        credentials,
+        "/financas/contareceber/",
+        "ListarContasReceber",
         {
-          total_de_paginas?: number;
-          conta_receber_cadastro?: OmieReceivableRaw[];
-          contaReceberCadastro?: OmieReceivableRaw[];
-        } | null
-      >(credentials, "/financas/contareceber/", "ListarContasReceber", {
-        pagina: page,
-        registros_por_pagina: PAGE_SIZE,
-        apenas_importado_api: "N",
-        filtrar_apenas_titulos_em_aberto: "S",
-        filtrar_cliente: customerOmieCode
-      });
+          pagina: page,
+          registros_por_pagina: pageSize,
+          apenas_importado_api: "N",
+          filtrar_apenas_titulos_em_aberto: "S",
+          filtrar_cliente: customerOmieCode
+        }
+      );
     } catch (error) {
+      if (page === 1 && pageSize !== PAGE_SIZE && isPageSizeFault(error)) {
+        // Recusou o tamanho: recomeca da primeira pagina, de 100 em 100.
+        pageSize = PAGE_SIZE;
+        page = 0;
+        continue;
+      }
       // Cliente sem titulo em aberto: o OMIE responde com faultstring em vez de lista vazia.
       if (!isEmptyReceivablesError(error)) throw error;
       response = null;
     }
     const items = response?.conta_receber_cadastro ?? response?.contaReceberCadastro ?? [];
     rows.push(...items);
-    if (computeFinished(page, items.length, toIntOrNull(response?.total_de_paginas))) break;
-    if (page === OPEN_RECEIVABLES_MAX_PAGES) truncated = true;
+    const totalPages = toIntOrNull(response?.total_de_paginas);
+    const finished =
+      items.length === 0 ||
+      (totalPages !== null && totalPages > 0 ? page >= totalPages : items.length < pageSize);
+    if (finished) break;
+    if (page * pageSize >= OPEN_RECEIVABLES_MAX_TITLES) {
+      truncated = true;
+      break;
+    }
   }
   return { ...summarizeOpenReceivables(rows, quarryToday(new Date())), truncated };
 }
