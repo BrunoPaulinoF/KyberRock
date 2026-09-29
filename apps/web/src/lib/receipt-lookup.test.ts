@@ -46,7 +46,7 @@ describe("parseReceiptQuery", () => {
 describe("rotulos", () => {
   it("formata como o cupom impresso", () => {
     expect(operationCodeLabel(3249)).toBe("COD 003249");
-    expect(operationCodeLabel(null)).toBe("Sem codigo");
+    expect(operationCodeLabel(null)).toBe("Sem código");
     expect(receiptNumberLabel(4038, 4)).toBe("000004038-4");
     expect(receiptNumberLabel(4038, null)).toBe("000004038");
   });

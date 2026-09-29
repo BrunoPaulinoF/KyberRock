@@ -4,7 +4,6 @@ import {
   Ban,
   CheckCircle2,
   Copy,
-  KeyRound,
   ListChecks,
   ShieldCheck,
   Tag,
@@ -15,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DeskPanel } from "../components/desk";
 import { PriceHistory } from "../components/PriceHistory";
-import { Alert, useToast } from "../components/ui";
+import { ErrorState, PageHeader, Pill, Skeleton, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import {
   formatPriceCode,
@@ -30,6 +29,8 @@ const RETRY_MS = 5_000;
 /** Raio do anel de contagem (SVG de 132 px). */
 const RING_RADIUS = 58;
 const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
+/** Os seis quadrados cinzas no lugar dos numeros enquanto a senha chega (3 + espaco + 3). */
+const DIGIT_SKELETON = ["d0", "d1", "d2", "gap", "d3", "d4", "d5"];
 
 /**
  * Tela "Senha de preco" (comercial e administrador): o codigo de 6 digitos que libera mudar
@@ -55,7 +56,7 @@ export function PriceCodePage() {
       setState(next);
       setError(null);
     } catch (loadError) {
-      setError(errorMessage(loadError, "Nao foi possivel buscar a senha."));
+      setError(errorMessage(loadError, "Não foi possível buscar a senha."));
       retryAt.current = Date.now() + RETRY_MS;
     } finally {
       fetching.current = false;
@@ -87,27 +88,19 @@ export function PriceCodePage() {
       await navigator.clipboard.writeText(state.code);
       toast.push("Senha copiada.");
     } catch {
-      toast.push("Nao foi possivel copiar. Leia os numeros na tela.", "error");
+      toast.push("Não foi possível copiar. Leia os números na tela.", "error");
     }
   }
 
   return (
     <DeskPanel>
+      <PageHeader
+        kicker="Operacional"
+        title="Senha de preço"
+        description={`O código que libera mudar preço e excluir cadastro para quem não é do comercial. Ele troca sozinho a cada ${period} segundos.`}
+      />
       <div className="pc">
-        <header className="pc-head">
-          <span className="pc-head-icon" aria-hidden="true">
-            <KeyRound size={20} />
-          </span>
-          <div>
-            <h1 className="desk-title">Senha de preco</h1>
-            <p className="pc-head-text">
-              O codigo que libera mudar preco e excluir cadastro para quem nao e do comercial. Ele
-              troca sozinho a cada {period} segundos.
-            </p>
-          </div>
-        </header>
-
-        {error && <Alert kind="error">{error}</Alert>}
+        {error && <ErrorState message={error} onRetry={() => void load()} />}
 
         <div className="pc-grid">
           <section className={`pc-code-card${ending ? " ending" : ""}`} aria-live="polite">
@@ -128,9 +121,22 @@ export function PriceCodePage() {
                   )
                 )}
               </span>
+            ) : error ? (
+              <span className="pc-loading">Sem senha no momento</span>
             ) : (
-              <span className="pc-loading">
-                {error ? "Sem senha no momento" : "Buscando a senha..."}
+              <span className="pc-code" role="status" aria-label="Buscando a senha">
+                {DIGIT_SKELETON.map((key) =>
+                  key === "gap" ? (
+                    <span key={key} className="pc-code-gap" aria-hidden="true" />
+                  ) : (
+                    <Skeleton
+                      key={key}
+                      width="clamp(40px, 9vw, 64px)"
+                      height="clamp(54px, 12vw, 80px)"
+                      radius={12}
+                    />
+                  )
+                )}
               </span>
             )}
 
@@ -142,7 +148,7 @@ export function PriceCodePage() {
                 aria-valuemin={0}
                 aria-valuemax={period}
                 aria-valuenow={left}
-                aria-label="Tempo ate a senha trocar"
+                aria-label="Tempo até a senha trocar"
               >
                 <circle className="pc-ring-track" cx="66" cy="66" r={RING_RADIUS} />
                 <circle
@@ -166,8 +172,8 @@ export function PriceCodePage() {
                 </strong>
                 <span>
                   {ending
-                    ? "Se for ditar agora, espere a proxima senha aparecer."
-                    : "Passe os 6 numeros para quem pediu. A senha vencida nao funciona mais."}
+                    ? "Se for ditar agora, espere a próxima senha aparecer."
+                    : "Passe os 6 números para quem pediu. A senha vencida não funciona mais."}
                 </span>
                 <button
                   type="button"
@@ -188,8 +194,8 @@ export function PriceCodePage() {
                 <ListChecks size={16} aria-hidden="true" /> Como usar
               </h2>
               <ol className="pc-steps">
-                <li>A pessoa pede a senha na balanca ou no site.</li>
-                <li>Voce le os 6 numeros desta tela para ela.</li>
+                <li>A pessoa pede a senha na balança ou no site.</li>
+                <li>Você lê os 6 números desta tela para ela.</li>
                 <li>Ela digita antes do anel acabar. Trocou? Passe a nova.</li>
               </ol>
             </section>
@@ -200,16 +206,16 @@ export function PriceCodePage() {
               </h2>
               <ul className="pc-list">
                 <li>
-                  <Tag size={15} aria-hidden="true" /> Mudar preco — padrao, especial do cliente e o
-                  preco da pesagem. Preco especial mudado fica no historico abaixo.
+                  <Tag size={15} aria-hidden="true" /> Mudar preço — padrão, especial do cliente e o
+                  preço da pesagem. Preço especial mudado fica no histórico abaixo.
                 </li>
                 <li>
                   <Trash2 size={15} aria-hidden="true" /> Excluir cliente, transportadora, motorista
                   e placa no site.
                 </li>
                 <li>
-                  <Ban size={15} aria-hidden="true" /> Na balanca: limpar operacoes e liberar o
-                  relatorio financeiro.
+                  <Ban size={15} aria-hidden="true" /> Na balança: limpar operações e liberar o
+                  relatório financeiro.
                 </li>
               </ul>
             </section>
@@ -220,27 +226,27 @@ export function PriceCodePage() {
               </h2>
               <ul className="pc-roles">
                 <li>
-                  <span>Operacao</span>
-                  <strong className="pc-tag ask">Sempre pede</strong>
+                  <span>Operação</span>
+                  <Pill tone="warning">Sempre pede</Pill>
                 </li>
                 <li>
                   <span>Gestor</span>
-                  <strong className="pc-tag maybe">Se marcado no painel</strong>
+                  <Pill>Se marcado no painel</Pill>
                 </li>
                 <li>
                   <span>Comercial e Administrador</span>
-                  <strong className="pc-tag free">Nao precisam</strong>
+                  <Pill tone="success">Não precisam</Pill>
                 </li>
               </ul>
             </section>
 
             <section className="pc-card pc-safety">
               <h2>
-                <ShieldCheck size={16} aria-hidden="true" /> Seguranca
+                <ShieldCheck size={16} aria-hidden="true" /> Segurança
               </h2>
               <p>
-                So vale a senha que esta na tela agora. Cinco tentativas erradas travam quem digitou
-                por 15 minutos. Nao precisa anotar nem mandar por mensagem: ela muda sozinha.
+                Só vale a senha que está na tela agora. Cinco tentativas erradas travam quem digitou
+                por 15 minutos. Não precisa anotar nem mandar por mensagem: ela muda sozinha.
               </p>
             </section>
           </div>

@@ -118,27 +118,27 @@ export const SITE_ROLE_OPTIONS: ReadonlyArray<{ value: UserRole; label: string; 
   {
     value: "monitoramento",
     label: "Monitoramento",
-    hint: "So a tela de vendas em tempo real. Sem configuracoes."
+    hint: "Só a tela de vendas em tempo real. Sem configurações."
   },
   {
     value: "comercial",
     label: "Comercial",
-    hint: "Insights, conferencia de faturamento, relatorios, controle de caminhoes, relatorio por cliente e cadastros. Cadastra tudo e muda preco sem senha. Sem configuracoes."
+    hint: "Insights, conferência de faturamento, relatórios, controle de caminhões, relatório por cliente e cadastros. Cadastra tudo e muda preço sem senha. Sem configurações."
   },
   {
     value: "gestor",
     label: "Gestor",
-    hint: "Tudo. Com configuracoes."
+    hint: "Tudo. Com configurações."
   },
   {
     value: "operacao",
-    label: "Operacao",
-    hint: "Tudo. Mudar preco sempre pede a senha de preco da pedreira. Com configuracoes."
+    label: "Operação",
+    hint: "Tudo. Mudar preço sempre pede a senha de preço da pedreira. Com configurações."
   },
   {
     value: "administrador",
     label: "Administrador",
-    hint: "Tudo, sem pedir senha, mais os logs de suporte. Com configuracoes."
+    hint: "Tudo, sem pedir senha, mais os logs de suporte. Com configurações."
   }
 ];
 
@@ -147,7 +147,7 @@ export const USER_ROLE_LABELS: Record<UserRole, string> = {
   monitoramento: "Monitoramento",
   comercial: "Comercial",
   gestor: "Gestor",
-  operacao: "Operacao",
+  operacao: "Operação",
   administrador: "Administrador"
 };
 
@@ -178,7 +178,7 @@ export type DeviceFilter = "all" | "attention" | "no-login" | "blocked";
 
 export const DEVICE_FILTER_LABELS: Record<DeviceFilter, string> = {
   all: "Todas",
-  attention: "Precisam de atencao",
+  attention: "Precisam de atenção",
   "no-login": "Sem login do site",
   blocked: "Bloqueadas"
 };
@@ -295,16 +295,16 @@ export interface DeleteTarget {
  */
 export function buildDeleteConfirmationMessage(target: DeleteTarget): string {
   if (target.type === "company") {
-    return `Tem certeza que deseja excluir a pedreira "${target.name}"? Todas as unidades, usuarios e dispositivos vinculados serao excluidos tambem.`;
+    return `Tem certeza que deseja excluir a pedreira "${target.name}"? Todas as unidades, usuários e dispositivos vinculados serão excluídos também.`;
   }
   if (target.type === "unit") {
-    return `Tem certeza que deseja excluir a unidade "${target.name}"? Os usuarios e dispositivos vinculados a ela serao excluidos tambem.`;
+    return `Tem certeza que deseja excluir a unidade "${target.name}"? Os usuários e dispositivos vinculados a ela serão excluídos também.`;
   }
   if (target.type === "device") {
-    return `Tem certeza que deseja excluir o desktop "${target.name}"? A ativacao dele e perdida e a balanca precisara ser ativada de novo com o codigo da pedreira.`;
+    return `Tem certeza que deseja excluir o desktop "${target.name}"? A ativação dele é perdida e a balança precisará ser ativada de novo com o código da pedreira.`;
   }
   const role = target.roleLabel ? `${target.roleLabel.toLowerCase()} ` : "";
-  return `Tem certeza que deseja excluir o usuario ${role}"${target.name}"? O acesso dele ao sistema sera removido.`;
+  return `Tem certeza que deseja excluir o usuário ${role}"${target.name}"? O acesso dele ao sistema será removido.`;
 }
 
 /** Acao/payload do admin-api correspondente ao alvo. */
@@ -567,7 +567,7 @@ export function AdminDashboard() {
           }))
         );
       } catch (error) {
-        if (!options.silent) handleError(error, "Nao foi possivel carregar os cadastros.");
+        if (!options.silent) handleError(error, "Não foi possível carregar os cadastros.");
       } finally {
         if (!options.silent) setIsLoading(false);
       }
@@ -606,7 +606,7 @@ export function AdminDashboard() {
         setFeedback({ tone: "ok", text: successMessage });
         return true;
       } catch (error) {
-        handleError(error, "A acao falhou.");
+        handleError(error, "A ação falhou.");
         return false;
       }
     },
@@ -633,7 +633,7 @@ export function AdminDashboard() {
         setFeedback({ tone: "ok", text: successMessage });
         return true;
       } catch (error) {
-        handleError(error, "A alteracao falhou.");
+        handleError(error, "A alteração falhou.");
         await loadData({ silent: true });
         return false;
       }
@@ -737,8 +737,8 @@ export function AdminDashboard() {
   const sections: NavSection[] = [
     {
       id: "overview",
-      label: "Visao geral",
-      group: "Inicio",
+      label: "Visão geral",
+      group: "Início",
       icon: <LayoutDashboard size={16} />
     },
     {
@@ -757,7 +757,7 @@ export function AdminDashboard() {
     },
     {
       id: "devices",
-      label: "Balancas",
+      label: "Balanças",
       group: "Acessos",
       count: devices.filter((device) => !isVirtualWebDevice(device.id)).length,
       alert: devicesNeedingAttention,
@@ -765,7 +765,7 @@ export function AdminDashboard() {
     },
     {
       id: "comercial",
-      label: "Usuarios do site",
+      label: "Usuários do site",
       group: "Acessos",
       count: users.filter((user) => user.role !== "loader").length,
       icon: <Users size={16} />
@@ -779,7 +779,7 @@ export function AdminDashboard() {
     },
     {
       id: "updates",
-      label: "Atualizacoes",
+      label: "Atualizações",
       group: "Plataforma",
       icon: <Download size={16} />
     },
@@ -860,8 +860,8 @@ export function AdminDashboard() {
             </span>
             <p className="adm-cell-sub">
               {companyDevices.length === 0
-                ? "Nenhuma balanca ativada"
-                : `${online} de ${companyDevices.length} balanca${companyDevices.length === 1 ? "" : "s"} online`}
+                ? "Nenhuma balança ativada"
+                : `${online} de ${companyDevices.length} balança${companyDevices.length === 1 ? "" : "s"} online`}
             </p>
           </>
         );
@@ -883,7 +883,7 @@ export function AdminDashboard() {
     },
     {
       key: "status",
-      header: "Situacao",
+      header: "Situação",
       render: (company) => (
         <>
           {company.isActive ? (
@@ -909,9 +909,9 @@ export function AdminDashboard() {
             Editar
           </Button>
           <RowMenu
-            label={`Mais acoes de ${company.name}`}
+            label={`Mais ações de ${company.name}`}
             items={[
-              { label: "Ver balancas", onClick: () => navigateTo("devices", company.id) },
+              { label: "Ver balanças", onClick: () => navigateTo("devices", company.id) },
               {
                 label: "Ver credenciais",
                 onClick: () => void handleRevealCredentials({ type: "company", id: company.id })
@@ -953,7 +953,7 @@ export function AdminDashboard() {
     },
     {
       key: "devices",
-      header: "Balancas",
+      header: "Balanças",
       numeric: true,
       render: (unit) =>
         devices.filter((device) => device.unitId === unit.id && !isVirtualWebDevice(device.id))
@@ -967,7 +967,7 @@ export function AdminDashboard() {
     },
     {
       key: "status",
-      header: "Situacao",
+      header: "Situação",
       render: (unit) =>
         unit.isActive ? (
           <Badge tone="ok" dot>
@@ -989,7 +989,7 @@ export function AdminDashboard() {
             Editar
           </Button>
           <RowMenu
-            label={`Mais acoes de ${unit.name}`}
+            label={`Mais ações de ${unit.name}`}
             items={[
               {
                 label: "Ver credenciais da pedreira",
@@ -1046,7 +1046,7 @@ export function AdminDashboard() {
     return [
       {
         key: "name",
-        header: "Usuario",
+        header: "Usuário",
         render: (user) => (
           <>
             <span className="adm-cell-primary">{user.name}</span>
@@ -1067,7 +1067,7 @@ export function AdminDashboard() {
                   <>
                     <Badge tone="info">{USER_ROLE_LABELS[user.role]}</Badge>
                     <p className="adm-cell-sub">
-                      {asksPrice ? "Pede senha de preco" : "Muda preco sem senha"}
+                      {asksPrice ? "Pede senha de preço" : "Muda preço sem senha"}
                     </p>
                   </>
                 );
@@ -1095,7 +1095,7 @@ export function AdminDashboard() {
       },
       {
         key: "status",
-        header: "Situacao",
+        header: "Situação",
         render: (user) =>
           user.isActive ? (
             <Badge tone="ok" dot>
@@ -1116,7 +1116,7 @@ export function AdminDashboard() {
             <Button size="sm" onClick={() => setEditingUser(user)}>
               Editar
             </Button>
-            <RowMenu label={`Mais acoes de ${user.name}`} items={userMenuItems(user, roleLabel)} />
+            <RowMenu label={`Mais ações de ${user.name}`} items={userMenuItems(user, roleLabel)} />
           </ButtonGroup>
         )
       }
@@ -1126,7 +1126,7 @@ export function AdminDashboard() {
   const deviceColumns: Array<Column<Device>> = [
     {
       key: "name",
-      header: "Balanca",
+      header: "Balança",
       render: (device) => {
         const virtual = isVirtualWebDevice(device.id);
         return (
@@ -1140,8 +1140,8 @@ export function AdminDashboard() {
             <div className="adm-tags">
               {virtual && <span className="adm-tag">Dispositivo virtual do site</span>}
               {!virtual && device.isPriceMaster && (
-                <span className="adm-tag adm-tag-accent" title="Define os precos da pedreira">
-                  Principal de precos
+                <span className="adm-tag adm-tag-accent" title="Define os preços da pedreira">
+                  Principal de preços
                 </span>
               )}
               {!virtual && device.executesWebOperations && (
@@ -1150,7 +1150,7 @@ export function AdminDashboard() {
                 </span>
               )}
               {!virtual && device.updateChannel === "beta" && (
-                <span className="adm-tag adm-tag-warn" title="Recebe versoes em avaliacao">
+                <span className="adm-tag adm-tag-warn" title="Recebe versões em avaliação">
                   Anel de teste
                 </span>
               )}
@@ -1161,7 +1161,7 @@ export function AdminDashboard() {
     },
     {
       key: "health",
-      header: "Saude",
+      header: "Saúde",
       /**
        * O que esta balanca esta ENTREGANDO — a pergunta que "ultimo contato" e "versao" nunca
        * responderam. A classificacao inteira vive em `lib/device-health.ts`, pura e testada.
@@ -1246,12 +1246,12 @@ export function AdminDashboard() {
             onClick: () => void handleRevealCredentials({ type: "device", id: device.id })
           },
           {
-            label: device.isActive ? "Bloquear balanca" : "Liberar balanca",
+            label: device.isActive ? "Bloquear balança" : "Liberar balança",
             onClick: () =>
               void run(
                 "toggle_device",
                 { deviceId: device.id, isActive: !device.isActive },
-                device.isActive ? "Balanca bloqueada." : "Balanca liberada."
+                device.isActive ? "Balança bloqueada." : "Balança liberada."
               )
           },
           {
@@ -1267,7 +1267,7 @@ export function AdminDashboard() {
                 Configurar
               </Button>
             )}
-            <RowMenu label={`Mais acoes de ${device.name}`} items={items} />
+            <RowMenu label={`Mais ações de ${device.name}`} items={items} />
           </ButtonGroup>
         );
       }
@@ -1282,7 +1282,7 @@ export function AdminDashboard() {
     },
     {
       key: "code",
-      header: "Codigo ativo",
+      header: "Código ativo",
       render: (company) =>
         company.desktopActivationCode ? (
           <span className="adm-mono adm-activation-code">{company.desktopActivationCode}</span>
@@ -1331,7 +1331,7 @@ export function AdminDashboard() {
       setGeneratedCode(result.code);
       await loadData();
     } catch (error) {
-      handleError(error, "Nao foi possivel gerar o codigo de ativacao.");
+      handleError(error, "Não foi possível gerar o código de ativação.");
     }
   }
 
@@ -1350,7 +1350,7 @@ export function AdminDashboard() {
       });
       setCredentials(response.bundle);
     } catch (error) {
-      handleError(error, "Nao foi possivel carregar as credenciais.");
+      handleError(error, "Não foi possível carregar as credenciais.");
     } finally {
       setCredentialsLoading(false);
     }
@@ -1360,7 +1360,7 @@ export function AdminDashboard() {
     if (!confirmDelete || isDeleting) return;
     setIsDeleting(true);
     const { action, payload } = buildDeleteRequest(confirmDelete);
-    const ok = await run(action, payload, "Registro excluido.");
+    const ok = await run(action, payload, "Registro excluído.");
     setIsDeleting(false);
     if (ok) setConfirmDelete(null);
   }
@@ -1435,7 +1435,7 @@ export function AdminDashboard() {
             <>
               <PageHead
                 title="Unidades"
-                description="Cada pedreira pode ter mais de uma unidade. A fila do carregador e por unidade."
+                description="Cada pedreira pode ter mais de uma unidade. A fila do carregador é por unidade."
                 actions={
                   <Button variant="primary" onClick={() => setCreating("unit")}>
                     Nova unidade
@@ -1461,18 +1461,18 @@ export function AdminDashboard() {
           {(section === "loaders" || section === "comercial") && (
             <>
               <PageHead
-                title={section === "comercial" ? "Usuarios do site" : "Carregadores"}
+                title={section === "comercial" ? "Usuários do site" : "Carregadores"}
                 description={
                   section === "comercial"
-                    ? "Logins do KyberRock Web e o perfil de cada um. Em Editar voce troca perfil, unidade e senha de preco."
-                    : "Entram no KyberRock Web e veem so a fila de carregamento da unidade deles."
+                    ? "Logins do KyberRock Web e o perfil de cada um. Em Editar você troca perfil, unidade e senha de preço."
+                    : "Entram no KyberRock Web e veem só a fila de carregamento da unidade deles."
                 }
                 actions={
                   <Button
                     variant="primary"
                     onClick={() => setCreating(section === "comercial" ? "comercial" : "loader")}
                   >
-                    {section === "comercial" ? "Novo usuario do site" : "Novo carregador"}
+                    {section === "comercial" ? "Novo usuário do site" : "Novo carregador"}
                   </Button>
                 }
               />
@@ -1482,7 +1482,7 @@ export function AdminDashboard() {
                   rows={usersByRole(section === "comercial" ? "comercial" : "loader")}
                   rowKey={(user) => user.id}
                   rowClassName={inactiveRow}
-                  empty="Nenhum usuario encontrado."
+                  empty="Nenhum usuário encontrado."
                 />
               </Panel>
             </>
@@ -1491,13 +1491,13 @@ export function AdminDashboard() {
           {section === "devices" && (
             <>
               <PageHead
-                title="Balancas e acessos"
-                description="Os computadores das pedreiras, a saude de cada um e o login do site de quem usa. Em Configurar ficam unidade, precos, atualizacao e pesagens do site."
+                title="Balanças e acessos"
+                description="Os computadores das pedreiras, a saúde de cada um e o login do site de quem usa. Em Configurar ficam unidade, preços, atualização e pesagens do site."
               />
               {generatedCode && (
                 <Note tone="ok">
-                  Codigo gerado: <strong className="adm-mono">{generatedCode}</strong>. Envie ao
-                  operador do desktop — ele vale apenas para a ativacao inicial.{" "}
+                  Código gerado: <strong className="adm-mono">{generatedCode}</strong>. Envie ao
+                  operador do desktop — ele vale apenas para a ativação inicial.{" "}
                   <Button size="sm" onClick={() => setGeneratedCode(null)}>
                     Fechar
                   </Button>
@@ -1508,7 +1508,7 @@ export function AdminDashboard() {
                 flush
                 toolbar={
                   <>
-                    <div className="adm-chips" role="group" aria-label="Filtrar balancas">
+                    <div className="adm-chips" role="group" aria-label="Filtrar balanças">
                       {(Object.keys(DEVICE_FILTER_LABELS) as DeviceFilter[]).map((key) => (
                         <button
                           key={key}
@@ -1537,14 +1537,14 @@ export function AdminDashboard() {
                     devices.length === 0
                       ? "Nenhum desktop ativado ainda."
                       : deviceFilter === "attention"
-                        ? "Nenhuma balanca precisando de atencao."
+                        ? "Nenhuma balança precisando de atenção."
                         : "Nenhum desktop encontrado com os filtros atuais."
                   }
                 />
               </Panel>
               <Panel
-                title="Codigos de ativacao"
-                description="Um codigo por pedreira, para ativar um computador novo. Gerar outro invalida o anterior."
+                title="Códigos de ativação"
+                description="Um código por pedreira, para ativar um computador novo. Gerar outro invalida o anterior."
                 flush
               >
                 <DataTable
@@ -1679,7 +1679,7 @@ export function AdminDashboard() {
             const ok = await run(
               "update_device_name",
               { deviceId: renamingDevice.id, name },
-              `Balanca renomeada para "${name}". Os computadores da pedreira ja estao exibindo o novo nome.`
+              `Balança renomeada para "${name}". Os computadores da pedreira já estão exibindo o novo nome.`
             );
             if (ok) setRenamingDevice(null);
           }}
@@ -1693,7 +1693,7 @@ export function AdminDashboard() {
           companies={companies}
           onClose={() => setCreating(null)}
           onSubmit={async (payload) => {
-            const ok = await run("create_loader", payload, "Usuario criado.");
+            const ok = await run("create_loader", payload, "Usuário criado.");
             if (ok) setCreating(null);
           }}
         />
@@ -1741,7 +1741,7 @@ export function AdminDashboard() {
 
       {confirmDelete && (
         <ConfirmDialog
-          title="Confirmar exclusao"
+          title="Confirmar exclusão"
           message={buildDeleteConfirmationMessage(confirmDelete)}
           confirmLabel="Excluir"
           busy={isDeleting}
@@ -1779,7 +1779,7 @@ function CredentialsModal({ bundle, onClose }: { bundle: CredentialBundle; onClo
     >
       {hasSecret && (
         <Note tone="warn">
-          Credenciais em texto. Confira quem esta olhando a tela antes de continuar.
+          Credenciais em texto. Confira quem está olhando a tela antes de continuar.
         </Note>
       )}
       <div style={{ marginTop: hasSecret ? "16px" : 0 }}>
@@ -1886,7 +1886,7 @@ function CompanyFormModal({
   return (
     <Modal
       title={title}
-      description="Valor acertado, datas do ciclo e dados do boleto ficam na secao Financeiro."
+      description="Valor acertado, datas do ciclo e dados do boleto ficam na seção Financeiro."
       onClose={onClose}
       footer={
         <>
@@ -1898,12 +1898,12 @@ function CompanyFormModal({
       }
     >
       <form id={formId} className="adm-form" onSubmit={handleSubmit}>
-        <Fieldset legend="Identificacao">
+        <Fieldset legend="Identificação">
           <div className="adm-grid">
             <Field label="Nome fantasia">
               <input className="adm-input" name="name" defaultValue={company?.name} required />
             </Field>
-            <Field label="Razao social">
+            <Field label="Razão social">
               <input
                 className="adm-input"
                 name="legalName"
@@ -1913,7 +1913,7 @@ function CompanyFormModal({
             </Field>
             <Field
               label="CNPJ"
-              hint="Serve de padrao para o boleto quando o cadastro de cobranca nao tiver documento proprio."
+              hint="Serve de padrão para o boleto quando o cadastro de cobrança não tiver documento próprio."
             >
               <input
                 className="adm-input adm-input-mono"
@@ -1924,12 +1924,12 @@ function CompanyFormModal({
           </div>
         </Fieldset>
 
-        <Fieldset legend="Integracao OMIE">
+        <Fieldset legend="Integração OMIE">
           {company && (
             <p className="adm-field-hint">
               {company.omieAppKeyMasked
                 ? `Configurado (App Key ${company.omieAppKeyMasked}). Deixe vazio para manter.`
-                : "Nao configurado. Os desktops desta pedreira nao conectam ao OMIE."}
+                : "Não configurado. Os desktops desta pedreira não conectam ao OMIE."}
             </p>
           )}
           <div className="adm-grid">
@@ -1938,7 +1938,7 @@ function CompanyFormModal({
             </Field>
             <Field
               label="App Secret"
-              hint={company ? "Vazio mantem; salve os dois vazios para limpar." : undefined}
+              hint={company ? "Vazio mantém; salve os dois vazios para limpar." : undefined}
             >
               <input
                 className="adm-input"
@@ -2008,7 +2008,7 @@ function DeviceNameModal({
       >
         <Field
           label="Nome do computador"
-          hint={`Como esta balanca aparece para todos. Ate ${DEVICE_NAME_MAX_LENGTH} caracteres.`}
+          hint={`Como esta balança aparece para todos. Até ${DEVICE_NAME_MAX_LENGTH} caracteres.`}
           error={parsed.ok ? null : parsed.error}
         >
           <input
@@ -2021,8 +2021,8 @@ function DeviceNameModal({
         </Field>
         <Note tone="info">
           Ao salvar, os computadores da unidade {unitLabel} passam a exibir o novo nome em segundos
-          — na legenda de cores e no responsavel de cada operacao. Nenhuma balanca precisa ser
-          reativada, e as operacoes ja registradas continuam as mesmas.
+          — na legenda de cores e no responsável de cada operação. Nenhuma balança precisa ser
+          reativada, e as operações já registradas continuam as mesmas.
         </Note>
       </form>
     </Modal>
@@ -2110,10 +2110,10 @@ function UserFormModal({
   const formId = "user-form";
   return (
     <Modal
-      title={role === "comercial" ? "Novo usuario do site" : "Novo carregador"}
+      title={role === "comercial" ? "Novo usuário do site" : "Novo carregador"}
       description={
         role === "comercial"
-          ? "Acessa os relatorios de venda da pedreira."
+          ? "Acessa os relatórios de venda da pedreira."
           : "Acessa a fila de carregamento da unidade."
       }
       onClose={onClose}
@@ -2149,7 +2149,7 @@ function UserFormModal({
         <Field label="E-mail">
           <input className="adm-input" name="email" type="email" required />
         </Field>
-        <Field label="Senha" hint="Minimo de 6 caracteres. Anote antes de repassar ao usuario.">
+        <Field label="Senha" hint="Mínimo de 6 caracteres. Anote antes de repassar ao usuário.">
           <PasswordInput name="password" required minLength={6} />
         </Field>
         <Field label="Unidade">
@@ -2218,10 +2218,10 @@ function PricePasswordCheck({
       />
       <span>
         {rule === "always"
-          ? "Sempre pede a senha de preco (regra do perfil Operacao)"
+          ? "Sempre pede a senha de preço (regra do perfil Operação)"
           : rule === "never"
-            ? "Muda preco sem senha (regra do perfil)"
-            : "Pede a senha de preco para mudar preco"}
+            ? "Muda preço sem senha (regra do perfil)"
+            : "Pede a senha de preço para mudar preço"}
       </span>
     </label>
   );
@@ -2239,7 +2239,7 @@ function RolePicker({
 }) {
   const hint =
     value === "loader"
-      ? "So a fila de carregamento da unidade."
+      ? "Só a fila de carregamento da unidade."
       : SITE_ROLE_OPTIONS.find((option) => option.value === value)?.hint;
   return (
     <Field label="Perfil" hint={hint}>
@@ -2350,11 +2350,11 @@ function DeviceSettingsModal({
 
   const masterHint = isMaster
     ? otherPriceMasters.length > 0
-      ? `Define os precos junto com ${otherPriceMasters.join(", ")}.`
-      : "So esta balanca define os precos; as outras da pedreira espelham."
+      ? `Define os preços junto com ${otherPriceMasters.join(", ")}.`
+      : "Só esta balança define os preços; as outras da pedreira espelham."
     : otherPriceMasters.length > 0
-      ? `Espelha os precos de ${otherPriceMasters.join(", ")}.`
-      : "Nenhuma balanca principal: cada uma publica o proprio cadastro de preco.";
+      ? `Espelha os preços de ${otherPriceMasters.join(", ")}.`
+      : "Nenhuma balança principal: cada uma publica o próprio cadastro de preço.";
 
   return (
     <Modal
@@ -2365,8 +2365,8 @@ function DeviceSettingsModal({
         <>
           <span className="adm-modal-foot-note">
             {steps.length === 0
-              ? "Nenhuma alteracao"
-              : `${steps.length} ${steps.length > 1 ? "alteracoes" : "alteracao"} para salvar`}
+              ? "Nenhuma alteração"
+              : `${steps.length} ${steps.length > 1 ? "alterações" : "alteração"} para salvar`}
           </span>
           <Button onClick={onClose}>Cancelar</Button>
           <Button
@@ -2385,7 +2385,7 @@ function DeviceSettingsModal({
       <div className="adm-settings">
         <SettingRow
           title="Unidade"
-          description="Onde esta balanca opera. A fila do carregador e os relatorios sao por unidade."
+          description="Onde esta balança opera. A fila do carregador e os relatórios são por unidade."
         >
           <select
             className="adm-select"
@@ -2403,15 +2403,15 @@ function DeviceSettingsModal({
           </select>
         </SettingRow>
 
-        <SettingRow title="Precos" description={masterHint}>
-          <div className="adm-segment" role="radiogroup" aria-label="Precos">
+        <SettingRow title="Preços" description={masterHint}>
+          <div className="adm-segment" role="radiogroup" aria-label="Preços">
             <button
               type="button"
               role="radio"
               aria-checked={isMaster}
               onClick={() => setIsMaster(true)}
             >
-              Define os precos
+              Define os preços
             </button>
             <button
               type="button"
@@ -2426,7 +2426,7 @@ function DeviceSettingsModal({
 
         <SettingRow
           title="Pesagens pedidas pelo site"
-          description="A balanca executora registra as pesagens pedidas pelo KyberRock Web e imprime o cupom. Uma por unidade: marcar esta desmarca a anterior."
+          description="A balança executora registra as pesagens pedidas pelo KyberRock Web e imprime o cupom. Uma por unidade: marcar esta desmarca a anterior."
         >
           <label className="adm-switch">
             <input
@@ -2434,26 +2434,26 @@ function DeviceSettingsModal({
               checked={executes}
               onChange={(event) => setExecutes(event.target.checked)}
             />
-            <span>{executes ? "Executa" : "Nao executa"}</span>
+            <span>{executes ? "Executa" : "Não executa"}</span>
           </label>
         </SettingRow>
 
         <SettingRow
-          title="Atualizacao do desktop"
+          title="Atualização do desktop"
           description={
             channel === "beta"
-              ? "Recebe as versoes em avaliacao antes da frota."
-              : "So recebe versao ja liberada para producao."
+              ? "Recebe as versões em avaliação antes da frota."
+              : "Só recebe versão já liberada para produção."
           }
         >
-          <div className="adm-segment" role="radiogroup" aria-label="Atualizacao">
+          <div className="adm-segment" role="radiogroup" aria-label="Atualização">
             <button
               type="button"
               role="radio"
               aria-checked={channel === "latest"}
               onClick={() => setChannel("latest")}
             >
-              Producao
+              Produção
             </button>
             <button
               type="button"
@@ -2489,7 +2489,7 @@ function DeviceSettingsModal({
         ) : (
           <div className="adm-login-summary">
             <p className="adm-cell-sub">
-              Este computador ainda nao tem login. Com ele, a pessoa entra no KyberRock Web.
+              Este computador ainda não tem login. Com ele, a pessoa entra no KyberRock Web.
             </p>
             <Button size="sm" variant="primary" onClick={onCreateLogin}>
               Criar login
@@ -2582,7 +2582,7 @@ function UserEditModal({
           <PricePasswordCheck role={role} checked={asksPrice} onChange={setAsksPrice} />
         )}
         <div className="adm-login-summary">
-          <p className="adm-cell-sub">A senha atual nao pode ser exibida, so trocada.</p>
+          <p className="adm-cell-sub">A senha atual não pode ser exibida, só trocada.</p>
           <Button size="sm" onClick={onChangePassword}>
             Trocar senha
           </Button>
@@ -2609,7 +2609,7 @@ function DeviceLoginModal({
   return (
     <Modal
       title={`Login do site — ${device.name}`}
-      description="E com este e-mail e senha que a pessoa deste computador entra no KyberRock Web."
+      description="É com este e-mail e senha que a pessoa deste computador entra no KyberRock Web."
       onClose={onClose}
       footer={
         <>
@@ -2634,14 +2634,14 @@ function DeviceLoginModal({
           });
         }}
       >
-        <Field label="Nome" hint="Quem usa este computador. Aparece no rodape do site.">
+        <Field label="Nome" hint="Quem usa este computador. Aparece no rodapé do site.">
           <input className="adm-input" name="name" required defaultValue={device.name} />
         </Field>
         <RoleField defaultValue="monitoramento" />
         <Field label="E-mail">
           <input className="adm-input" name="email" type="email" required autoFocus />
         </Field>
-        <Field label="Senha" hint="Minimo de 6 caracteres. Anote antes de repassar.">
+        <Field label="Senha" hint="Mínimo de 6 caracteres. Anote antes de repassar.">
           <PasswordInput name="password" required minLength={6} />
         </Field>
       </form>
@@ -2684,8 +2684,8 @@ function PasswordModal({
         }}
       >
         <Note>
-          A senha atual nao pode ser exibida — o Supabase Auth guarda apenas o hash dela. Defina uma
-          nova aqui e repasse ao usuario.
+          A senha atual não pode ser exibida — o Supabase Auth guarda apenas o hash dela. Defina uma
+          nova aqui e repasse ao usuário.
         </Note>
         <Field label="Nova senha">
           <PasswordInput name="password" required minLength={6} autoFocus />

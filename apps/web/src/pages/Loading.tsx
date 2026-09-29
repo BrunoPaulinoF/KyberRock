@@ -1,7 +1,7 @@
 import { CheckCircle2, Download, History, LogOut, Moon, RotateCcw, Sun } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { Alert, Modal } from "../components/ui";
+import { EmptyState, ErrorState, Modal, Pill, Skeleton, useToast } from "../components/ui";
 import { useAuth, useUser } from "../lib/auth";
 import {
   countByProduct,
@@ -34,6 +34,7 @@ export function Loading() {
   const user = useUser();
   const { logout } = useAuth();
   const { theme, toggle } = useTheme();
+  const toast = useToast();
   const [items, setItems] = useState<LoadingItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +58,7 @@ export function Loading() {
       .eq("status", "open")
       .order("created_at", { ascending: true });
     if (loadError) {
-      setError("Nao foi possivel carregar a fila. Confira a internet e tente de novo.");
+      setError("Não foi possível carregar a fila. Confira a internet e tente de novo.");
       setLoading(false);
       return;
     }
@@ -129,8 +130,8 @@ export function Loading() {
       );
       setError(
         completedAt
-          ? "Nao foi possivel concluir a carga. Tente de novo."
-          : "Nao foi possivel devolver a carga para a fila. Tente de novo."
+          ? "Não foi possível concluir a carga. Tente de novo."
+          : "Não foi possível devolver a carga para a fila. Tente de novo."
       );
     }
     setBusy((current) => {
@@ -138,6 +139,14 @@ export function Loading() {
       next.delete(item.id);
       return next;
     });
+    if (!updateError && completedAt) {
+      // Concluiu sem querer: o "Desfazer" e o mesmo "Cancelar carga" da lista "Concluídas há
+      // pouco" (a carga volta para a fila), sem precisar abrir a lista.
+      const done = { ...item, loaderCompletedAt: completedAt };
+      toast.push("Carga concluída.", "ok", {
+        action: { label: "Desfazer", onClick: () => void mark(done, null) }
+      });
+    }
   }
 
   const queue = useMemo(() => inProgress(items), [items]);
@@ -196,7 +205,7 @@ export function Loading() {
           </div>
           <button type="button" className="loading-history" onClick={() => setShowCompleted(true)}>
             <History size={18} />
-            Concluidas ha pouco
+            Concluídas há pouco
             <span className="loading-history-count">{completed.length}</span>
           </button>
         </section>
@@ -217,18 +226,11 @@ export function Loading() {
           </div>
         )}
 
-        {error && (
-          <Alert kind="error">
-            {error}{" "}
-            <button type="button" className="btn link" onClick={() => void load()}>
-              Tentar de novo
-            </button>
-          </Alert>
-        )}
+        {error && <ErrorState message={error} onRetry={() => void load()} />}
 
         {late.length > 0 && (
           <div className="loading-late" role="alert">
-            <strong>Acima do tempo medio ({Math.round(avgMinutes ?? 0)} min):</strong>
+            <strong>Acima do tempo médio ({Math.round(avgMinutes ?? 0)} min):</strong>
             <span>
               {late.map((item) => (
                 <span key={item.id} className="loading-plate small">
@@ -248,15 +250,12 @@ export function Loading() {
         </div>
 
         {loading ? (
-          <div className="loading-empty">
-            <strong>Carregando fila...</strong>
-            <span>Buscando cargas em aberto da unidade.</span>
-          </div>
+          <QueueSkeleton />
         ) : queue.length === 0 ? (
-          <div className="loading-empty">
-            <strong>Nenhuma carga aguardando</strong>
-            <span>Quando uma operacao entrar na fila, ela aparecera aqui.</span>
-          </div>
+          <EmptyState
+            title="Nenhuma carga aguardando"
+            hint="Quando uma operação entrar na fila, ela aparecerá aqui."
+          />
         ) : (
           <ol className="loading-list">
             {queue.map((item, index) => (
@@ -267,7 +266,7 @@ export function Loading() {
                   <span className="loading-time" title="Chegada">
                     {formatArrival(item.createdAt, timeZone, now)}
                   </span>
-                  {lateIds.has(item.id) && <span className="badge warn">Acima da media</span>}
+                  {lateIds.has(item.id) && <Pill tone="warning">Acima da média</Pill>}
                 </div>
                 <strong className="loading-customer" title={item.customerName}>
                   {item.customerName}
@@ -295,7 +294,7 @@ export function Loading() {
 
       {showCompleted && (
         <Modal
-          title="Concluidas nos ultimos 30 min"
+          title="Concluídas nos últimos 30 min"
           description="Concluiu sem querer? Cancele e a carga volta para a fila em andamento."
           onClose={() => setShowCompleted(false)}
           footer={
@@ -305,10 +304,10 @@ export function Loading() {
           }
         >
           {completed.length === 0 ? (
-            <div className="empty">
-              Nenhuma carga concluida nos ultimos 30 minutos. As cargas que voce concluir aparecem
-              aqui por meia hora.
-            </div>
+            <EmptyState
+              title="Nenhuma carga concluída nos últimos 30 minutos"
+              hint="As cargas que você concluir aparecem aqui por meia hora."
+            />
           ) : (
             <ul className="loading-completed">
               {completed.map((item) => (
@@ -316,7 +315,7 @@ export function Loading() {
                   <div className="loading-completed-info">
                     <div className="loading-card-top">
                       <span className="loading-plate">{item.plate || "SEM PLACA"}</span>
-                      <span className="loading-time" title="Concluida em">
+                      <span className="loading-time" title="Concluída em">
                         {formatArrival(item.loaderCompletedAt, timeZone, now)}
                       </span>
                     </div>
@@ -355,14 +354,14 @@ export function Loading() {
           {isIosDevice() ? (
             <ol className="loading-install-steps">
               <li>
-                Toque no botao <strong>Compartilhar</strong> do Safari (quadrado com seta para
+                Toque no botão <strong>Compartilhar</strong> do Safari (quadrado com seta para
                 cima).
               </li>
               <li>
-                Role a lista e toque em <strong>Adicionar a Tela de Inicio</strong>.
+                Role a lista e toque em <strong>Adicionar à Tela de Início</strong>.
               </li>
               <li>
-                Confirme em <strong>Adicionar</strong>. O KyberRock vira um icone na tela inicial.
+                Confirme em <strong>Adicionar</strong>. O KyberRock vira um ícone na tela inicial.
               </li>
             </ol>
           ) : (
@@ -372,13 +371,37 @@ export function Loading() {
               </li>
               <li>
                 Toque em <strong>Instalar aplicativo</strong> (ou{" "}
-                <strong>Adicionar a tela inicial</strong>).
+                <strong>Adicionar à tela inicial</strong>).
               </li>
               <li>Confirme. O KyberRock abre em tela cheia, como um app.</li>
             </ol>
           )}
         </Modal>
       )}
+    </div>
+  );
+}
+
+/** A fila enquanto a primeira leitura chega: cartoes cinzas no formato dos de verdade. */
+function QueueSkeleton() {
+  return (
+    <div role="status" aria-label="Carregando a fila">
+      <ol className="loading-list" aria-hidden="true">
+        {Array.from({ length: 3 }, (_, index) => (
+          <li key={index} className="loading-card">
+            <div className="loading-card-top">
+              <Skeleton width={26} height={18} />
+              <Skeleton width={104} height={28} radius={6} />
+              <span className="loading-time">
+                <Skeleton width={44} height={14} />
+              </span>
+            </div>
+            <Skeleton width="65%" height={16} />
+            <Skeleton width="45%" height={12} />
+            <Skeleton height={52} radius={12} />
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

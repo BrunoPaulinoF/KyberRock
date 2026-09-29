@@ -30,7 +30,7 @@ export function AdminLogin() {
       await loginAdmin(username, password);
       navigate(ADMIN_HOME_PATH, { replace: true });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Nao foi possivel entrar.");
+      setError(caught instanceof Error ? caught.message : "Não foi possível entrar.");
       setBusy(false);
     }
   }
@@ -39,22 +39,22 @@ export function AdminLogin() {
     <main className="adm adm-login">
       <section className="adm-login-card" aria-labelledby="adm-login-title">
         <div className="adm-login-brand">
-          <img src={publicAsset("logo.png")} alt="" />
+          <img src={publicAsset("logo-128.webp")} alt="" />
           <div>
             <h1 id="adm-login-title">KyberRock Console</h1>
-            <p>Administracao da plataforma</p>
+            <p>Administração da plataforma</p>
           </div>
         </div>
 
         <Note>
-          <strong>Acesso restrito a equipe Kybernan.</strong> Use o mesmo usuario e a mesma senha do
+          <strong>Acesso restrito à equipe Kybernan.</strong> Use o mesmo usuário e a mesma senha do
           painel administrativo de sempre.
         </Note>
 
         {error && <Note tone="danger">{error}</Note>}
 
         <form className="adm-form adm-login-form" onSubmit={(event) => void onSubmit(event)}>
-          <Field label="Usuario">
+          <Field label="Usuário">
             <input
               className="adm-input"
               name="username"
@@ -82,7 +82,7 @@ export function AdminLogin() {
         </form>
 
         <p className="adm-login-foot">
-          <Link to="/login">Entrar como usuario da pedreira</Link>
+          <Link to="/login">Entrar como usuário da pedreira</Link>
           <Link to="/">Voltar para o site</Link>
         </p>
       </section>

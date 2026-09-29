@@ -8,36 +8,6 @@
   gap: 10px;
   min-width: 0;
 }
-.billing-conference-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-.billing-conference-title-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.billing-conference-title {
-  margin: 0;
-  color: var(--kr-text-strong);
-  font-size: 18px;
-}
-.billing-conference-help {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  cursor: help;
-  opacity: 0.42;
-  color: var(--kr-muted);
-}
-.billing-conference-help:hover {
-  opacity: 0.9;
-}
 .billing-conference-card {
   background: var(--kr-card-bg);
   border: 1px solid var(--kr-card-border);
@@ -64,7 +34,7 @@
   min-width: 0;
 }
 .billing-conference-filter-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -138,28 +108,13 @@
   white-space: pre-line;
 }
 .billing-conference-foot-note {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
   font-style: italic;
   margin: 8px 0 0;
 }
-.billing-conference-error {
-  color: var(--kr-danger);
-  font-size: 13px;
-  background: var(--kr-danger-soft);
-  border: 1px solid var(--kr-danger-border);
-  border-radius: 8px;
-  padding: 8px 12px;
-  margin: 0;
-}
-.billing-conference-info {
-  color: var(--kr-info-text);
-  background: var(--kr-info-bg);
-  border: 1px solid var(--kr-info-border);
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 13px;
-  margin: 0;
+/* A lista de arquivos gerados, um por linha, dentro do aviso. */
+.billing-conference-pre-line {
   white-space: pre-line;
 }
 .billing-conference-kpis {
@@ -168,7 +123,7 @@
   gap: 10px;
 }
 .billing-conference-kpi-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--kr-muted);
   text-transform: uppercase;
@@ -205,7 +160,7 @@
   padding: 7px 10px;
   border-bottom: 2px solid var(--kr-card-border);
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   position: sticky;
@@ -242,31 +197,6 @@
 }
 .billing-conference-table td.strong {
   font-weight: 700;
-}
-.billing-conference-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-.billing-conference-pill.success {
-  background: var(--kr-success-soft);
-  color: var(--kr-success);
-}
-.billing-conference-pill.danger {
-  background: var(--kr-danger-soft);
-  color: var(--kr-danger);
-}
-.billing-conference-pill.warning {
-  background: var(--kr-warning-soft);
-  color: var(--kr-warning);
-}
-.billing-conference-pill.info {
-  background: var(--kr-info-bg);
-  color: var(--kr-info-text);
 }
 .billing-conference-invoice.number {
   font-weight: 700;

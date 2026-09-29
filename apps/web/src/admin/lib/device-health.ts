@@ -64,7 +64,7 @@ export function classifyDeviceHealth(
     return {
       level: "unknown",
       label: "—",
-      detail: "Balanca bloqueada pelo administrador: ela nao sincroniza nada."
+      detail: "Balança bloqueada pelo administrador: ela não sincroniza nada."
     };
   }
 
@@ -76,7 +76,7 @@ export function classifyDeviceHealth(
       level: "unknown",
       label: "Sem dados",
       detail: silenceSuffix(
-        "Esta balanca ainda nao reportou a fila de envio (versao anterior a este relatorio ou nunca ligada desde ele).",
+        "Esta balança ainda não reportou a fila de envio (versão anterior a este relatório ou nunca ligada desde ele).",
         input.lastSeenAt,
         now
       )
@@ -94,7 +94,9 @@ export function classifyDeviceHealth(
       level: "down",
       label: `${input.queueBlocked} parado${input.queueBlocked > 1 ? "s" : ""}`,
       detail: joinSentences([
-        `${input.queueBlocked} envio(s) pararam e esperam alguem: ou esgotaram as tentativas, ou dependem de um cadastro que falta.`,
+        input.queueBlocked === 1
+          ? "1 envio parou e espera alguém: ou esgotou as tentativas, ou depende de um cadastro que falta."
+          : `${input.queueBlocked} envios pararam e esperam alguém: ou esgotaram as tentativas, ou dependem de um cadastro que falta.`,
         errorSentence(input.lastError),
         oldestSentence(input.oldestPendingAt, now),
         stale
@@ -107,7 +109,7 @@ export function classifyDeviceHealth(
       level: "warn",
       label: "Sem contato",
       detail: joinSentences([
-        silenceSuffix("A balanca parou de responder.", input.lastSeenAt, now),
+        silenceSuffix("A balança parou de responder.", input.lastSeenAt, now),
         pendingSentence(input.queuePending)
       ])
     };
@@ -118,7 +120,7 @@ export function classifyDeviceHealth(
       level: "warn",
       label: `${input.queuePending} atrasado${input.queuePending > 1 ? "s" : ""}`,
       detail: joinSentences([
-        `${input.queuePending} envio(s) na fila ha mais tempo do que uma varredura normal levaria.`,
+        `${input.queuePending} ${input.queuePending === 1 ? "envio" : "envios"} na fila há mais tempo do que uma varredura normal levaria.`,
         oldestSentence(input.oldestPendingAt, now),
         errorSentence(input.lastError),
         stale
@@ -131,7 +133,7 @@ export function classifyDeviceHealth(
       level: "ok",
       label: `${input.queuePending} na fila`,
       detail: joinSentences([
-        `${input.queuePending} envio(s) aguardando a proxima sincronizacao. Ritmo normal.`,
+        `${input.queuePending} ${input.queuePending === 1 ? "envio" : "envios"} aguardando a próxima sincronização. Ritmo normal.`,
         stale
       ])
     };
@@ -140,7 +142,7 @@ export function classifyDeviceHealth(
   return {
     level: "ok",
     label: "Em dia",
-    detail: joinSentences(["Nada pendente na fila de envio desta balanca.", stale])
+    detail: joinSentences(["Nada pendente na fila de envio desta balança.", stale])
   };
 }
 
@@ -173,28 +175,28 @@ export function formatElapsed(value: string | null, now: Date = new Date()): str
   if (elapsed === null) return null;
 
   const minutes = Math.floor(elapsed / 60_000);
-  if (minutes < 1) return "agora ha pouco";
-  if (minutes < 60) return `ha ${minutes} min`;
+  if (minutes < 1) return "agora há pouco";
+  if (minutes < 60) return `há ${minutes} min`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `ha ${hours} h`;
+  if (hours < 24) return `há ${hours} h`;
   const days = Math.floor(hours / 24);
-  return `ha ${days} dia${days > 1 ? "s" : ""}`;
+  return `há ${days} dia${days > 1 ? "s" : ""}`;
 }
 
 function silenceSuffix(prefix: string, lastSeenAt: string | null, now: Date): string {
   const elapsed = formatElapsed(lastSeenAt, now);
   const silence =
     elapsed === null
-      ? "Nunca houve contato com esta balanca."
+      ? "Nunca houve contato com esta balança."
       : isOffline(lastSeenAt, now)
-        ? `Ultimo contato ${elapsed}.`
+        ? `Último contato ${elapsed}.`
         : "";
   return joinSentences([prefix, silence]);
 }
 
 function pendingSentence(queuePending: number): string {
-  if (queuePending <= 0) return "Nao havia nada pendente no ultimo relato.";
-  return `Havia ${queuePending} envio(s) pendentes no ultimo relato.`;
+  if (queuePending <= 0) return "Não havia nada pendente no último relato.";
+  return `Havia ${queuePending} ${queuePending === 1 ? "envio pendente" : "envios pendentes"} no último relato.`;
 }
 
 function oldestSentence(oldestPendingAt: string | null, now: Date): string {
@@ -204,7 +206,7 @@ function oldestSentence(oldestPendingAt: string | null, now: Date): string {
 
 function errorSentence(lastError: string | null): string {
   const trimmed = lastError?.trim();
-  return trimmed ? `Ultima recusa: ${trimmed}` : "";
+  return trimmed ? `Última recusa: ${trimmed}` : "";
 }
 
 function joinSentences(parts: string[]): string {

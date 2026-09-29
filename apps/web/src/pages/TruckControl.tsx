@@ -1,9 +1,17 @@
 import "./truck-control.css";
 
-import { FileText, Lightbulb, RefreshCw, Table } from "lucide-react";
+import { FileText, RefreshCw, Table } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { LoadMore, useShowMore } from "../components/ui";
+import {
+  EmptyState,
+  ErrorState,
+  LoadMore,
+  PageHeader,
+  SkeletonRows,
+  useShowMore,
+  useToast
+} from "../components/ui";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
@@ -22,7 +30,7 @@ import {
 import { useAsync } from "../lib/use-async";
 
 const HELP =
-  "Tempo dentro da pedreira, numero de operacoes, clientes atendidos e peso por produto de cada caminhao no periodo. Em 'Cargas' voce ve carga a carga: data, cliente, produto, peso e horarios. Caminhoes acima do tempo medio do periodo ficam destacados. O PDF e o Excel saem com os caminhoes que estao na lista (e com as mesmas cargas e clientes): com a busca preenchida, o arquivo traz so eles.";
+  "Tempo dentro da pedreira, número de operações, clientes atendidos e peso por produto de cada caminhão no período. Em 'Cargas' você vê carga a carga: data, cliente, produto, peso e horários. Caminhões acima do tempo médio do período ficam destacados. O PDF e o Excel saem com os caminhões que estão na lista (e com as mesmas cargas e clientes): com a busca preenchida, o arquivo traz só eles.";
 
 /**
  * Controle de caminhoes — a tela `TruckControlView` do desktop, lendo a nuvem. O periodo e
@@ -33,6 +41,7 @@ const HELP =
  */
 export function TruckControl() {
   const user = useUser();
+  const toast = useToast();
   const today = todayIso();
   const [startDate, setStartDate] = useState(() => isoDaysBefore(today, 30));
   const [endDate, setEndDate] = useState(today);
@@ -40,8 +49,6 @@ export function TruckControl() {
   // Uma placa aberta por vez, como no desktop.
   const [openPlate, setOpenPlate] = useState<string | null>(null);
   const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
-  const [exportError, setExportError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   const {
     data: report,
@@ -51,7 +58,9 @@ export function TruckControl() {
     refresh
   } = useAsync(
     () => loadTruckControl(user.companyId, user.unitId, startDate, endDate),
-    [user.companyId, user.unitId, startDate, endDate]
+    [user.companyId, user.unitId, startDate, endDate],
+    // Memoria entre telas: empresa, unidade e o periodo. A busca filtra na tela, fora da chave.
+    { key: `controle-caminhoes:${user.companyId}:${user.unitId}:${startDate}:${endDate}` }
   );
   // Pesagem fechada, editada ou cancelada na balanca entra na tela na hora.
   useOnCadastroChange(refresh, CADASTRO_TABLES.operationsAndLoading);
@@ -75,21 +84,20 @@ export function TruckControl() {
   async function handleExport(format: "pdf" | "excel"): Promise<void> {
     if (!visible) return;
     setExporting(format);
-    setNotice(null);
-    setExportError(null);
     try {
       const file = truckControlDocument(format, visible);
       if (format === "pdf") {
         await printReportHtml(file.html, file.filename);
       } else {
         downloadSpreadsheet(file);
-        setNotice(`Excel salvo em: ${spreadsheetFileName(file.filename)}`);
+        toast.push(`Excel salvo em: ${spreadsheetFileName(file.filename)}`);
       }
     } catch (err) {
-      setExportError(
+      toast.push(
         err instanceof Error
           ? err.message
-          : `Falha ao gerar o ${format === "pdf" ? "PDF" : "Excel"}.`
+          : `Falha ao gerar o ${format === "pdf" ? "PDF" : "Excel"}.`,
+        "error"
       );
     } finally {
       setExporting(null);
@@ -98,48 +106,35 @@ export function TruckControl() {
 
   return (
     <section className="truck-control">
-      <header className="truck-control-header">
-        <div className="truck-control-title-row">
-          <h2 className="truck-control-title">Controle de caminhoes</h2>
-          <span className="truck-control-help" role="img" aria-label="Dica" title={HELP}>
-            <Lightbulb size={14} />
-          </span>
-        </div>
-        <div className="truck-control-actions">
-          <button
-            type="button"
-            className="icon-action primary"
-            aria-label="Gerar PDF"
-            title={
-              exporting === "pdf"
-                ? "Gerando PDF..."
-                : filtered
-                  ? "Gerar PDF so com os caminhoes da busca"
-                  : "Gerar PDF"
-            }
-            disabled={exporting !== null || loading || !visible}
-            onClick={() => void handleExport("pdf")}
-          >
-            <FileText size={16} />
-          </button>
-          <button
-            type="button"
-            className="icon-action primary"
-            aria-label="Baixar Excel"
-            title={
-              exporting === "excel"
-                ? "Gerando Excel..."
-                : filtered
-                  ? "Baixar Excel so com os caminhoes da busca"
-                  : "Baixar Excel"
-            }
-            disabled={exporting !== null || loading || !visible}
-            onClick={() => void handleExport("excel")}
-          >
-            <Table size={16} />
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        kicker="Análise"
+        title="Controle de caminhões"
+        help={HELP}
+        actions={
+          <>
+            <button
+              type="button"
+              className="btn"
+              title={filtered ? "Gerar PDF só com os caminhões da busca" : undefined}
+              disabled={exporting !== null || loading || !visible}
+              onClick={() => void handleExport("pdf")}
+            >
+              <FileText size={16} />
+              {exporting === "pdf" ? "Gerando PDF..." : "Gerar PDF"}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              title={filtered ? "Baixar Excel só com os caminhões da busca" : undefined}
+              disabled={exporting !== null || loading || !visible}
+              onClick={() => void handleExport("excel")}
+            >
+              <Table size={16} />
+              {exporting === "excel" ? "Gerando Excel..." : "Baixar Excel"}
+            </button>
+          </>
+        }
+      />
 
       <div className="truck-control-filters">
         <label className="truck-control-field">
@@ -153,7 +148,7 @@ export function TruckControl() {
           />
         </label>
         <label className="truck-control-field">
-          Ate
+          Até
           <input
             type="date"
             className="truck-control-input"
@@ -163,7 +158,7 @@ export function TruckControl() {
           />
         </label>
         <label className="truck-control-field truck-control-search">
-          Buscar caminhao (placa ou motorista) — vale para o PDF e o Excel
+          Buscar caminhão (placa ou motorista) — vale para o PDF e o Excel
           <input
             type="search"
             className="truck-control-input"
@@ -183,29 +178,27 @@ export function TruckControl() {
         </button>
       </div>
 
-      {error ? <p className="truck-control-error">{error}</p> : null}
-      {exportError ? <p className="truck-control-error">{exportError}</p> : null}
-      {notice ? <p className="truck-control-muted">{notice}</p> : null}
+      {error ? <ErrorState message={error} onRetry={() => void reload()} /> : null}
       {filtered ? (
         <p className="truck-control-muted">
           Busca &quot;{visible?.search}&quot;: {filteredTrucks.length} de{" "}
-          {report?.trucks.length ?? 0} caminhoes. Os cartoes e os arquivos (PDF/Excel) usam so
-          esses. Tempo medio do periodo, com todos os caminhoes:{" "}
+          {report?.trucks.length ?? 0} caminhões. Os cartões e os arquivos (PDF/Excel) usam só
+          esses. Tempo médio do período, com todos os caminhões:{" "}
           {formatMinutes(periodAverageMinutes)}.
         </p>
       ) : null}
 
       <div className="truck-control-summary">
         <div className="truck-control-card">
-          <span className="truck-control-card-label">Caminhoes</span>
+          <span className="truck-control-card-label">Caminhões</span>
           <span className="truck-control-card-value">{filteredTrucks.length}</span>
         </div>
         <div className="truck-control-card">
-          <span className="truck-control-card-label">Operacoes</span>
+          <span className="truck-control-card-label">Operações</span>
           <span className="truck-control-card-value">{visible?.totalOperations ?? 0}</span>
         </div>
         <div className="truck-control-card">
-          <span className="truck-control-card-label">Tempo medio na pedreira</span>
+          <span className="truck-control-card-label">Tempo médio na pedreira</span>
           <span className="truck-control-card-value">{formatMinutes(averageMinutes)}</span>
         </div>
         <div className="truck-control-card">
@@ -220,11 +213,13 @@ export function TruckControl() {
       </div>
 
       {loading ? (
-        <p className="truck-control-empty">Carregando...</p>
+        <div className="truck-control-loading">
+          <SkeletonRows rows={4} columns={5} />
+        </div>
       ) : filteredTrucks.length === 0 ? (
-        <p className="truck-control-empty">
-          {filtered ? "Nenhum caminhao para essa busca." : "Nenhum caminhao no periodo."}
-        </p>
+        <EmptyState
+          title={filtered ? "Nenhum caminhão para essa busca." : "Nenhum caminhão no período."}
+        />
       ) : (
         <div className="truck-control-list">
           {filteredTrucks.slice(0, page.limit).map((truck) => (
@@ -333,19 +328,19 @@ function TruckCard({
       <header className="tc-card-head">
         <div className="tc-card-id">
           <span className="truck-control-plate">{truck.plate}</span>
-          <span className="tc-card-driver">{truck.driverName ?? "Motorista nao informado"}</span>
+          <span className="tc-card-driver">{truck.driverName ?? "Motorista não informado"}</span>
         </div>
         <dl className="tc-stats">
           <div>
-            <dt>Operacoes</dt>
+            <dt>Operações</dt>
             <dd>{truck.operations}</dd>
           </div>
           <div className={aboveAverage ? "tc-stat-alert" : undefined}>
-            <dt>Tempo medio</dt>
+            <dt>Tempo médio</dt>
             <dd>
               {formatMinutes(truck.avgMinutes)}
               {aboveAverage && (
-                <small title="Acima do tempo medio do periodo"> ▲ acima da media</small>
+                <small title="Acima do tempo médio do período"> ▲ acima da média</small>
               )}
             </dd>
           </div>
@@ -359,7 +354,9 @@ function TruckCard({
           </div>
         </dl>
         <button type="button" className="truck-control-link" onClick={onToggle}>
-          {open ? "Ocultar cargas" : `Ver ${truck.trips.length} carga(s)`}
+          {open
+            ? "Ocultar cargas"
+            : `Ver ${truck.trips.length} ${truck.trips.length === 1 ? "carga" : "cargas"}`}
         </button>
       </header>
 
@@ -393,14 +390,14 @@ function TruckCard({
                 <th>Produto</th>
                 <th className="num">Peso (kg)</th>
                 <th className="num">Entrada</th>
-                <th className="num">Saida</th>
+                <th className="num">Saída</th>
                 <th className="num">Tempo</th>
               </tr>
             </thead>
             <tbody>
               {truck.trips.length === 0 ? (
                 <tr>
-                  <td colSpan={7}>Sem cargas no periodo.</td>
+                  <td colSpan={7}>Sem cargas no período.</td>
                 </tr>
               ) : (
                 truck.trips.map((trip) => (

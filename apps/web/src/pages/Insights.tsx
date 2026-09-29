@@ -1,10 +1,19 @@
 import "./insights.css";
 
-import { FileText, Lightbulb, RefreshCw, Table2 } from "lucide-react";
+import { FileText, RefreshCw, Table2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Picker } from "../components/Picker";
-import { Alert } from "../components/ui";
+import {
+  EmptyState,
+  ErrorState,
+  HelpTip,
+  PageHeader,
+  Skeleton,
+  SkeletonRows,
+  Tabs,
+  useToast
+} from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
@@ -39,27 +48,30 @@ import { q } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
 import { downloadSpreadsheet, printReportHtml } from "../lib/report-output";
 
+/** As cores dos graficos do site (`--kr-chart-*` em `styles.css`), as mesmas nos dois temas. */
 const CHART_PALETTE = [
   "var(--kr-chart-1)",
   "var(--kr-chart-2)",
   "var(--kr-chart-3)",
   "var(--kr-chart-4)",
   "var(--kr-chart-5)",
-  "var(--kr-chart-6)",
-  "var(--kr-chart-7)"
+  "var(--kr-chart-6)"
 ] as const;
+/** Cancelada fica no vermelho de erro do tema, como no desktop — nao numa cor da paleta. */
+const CANCELLED_COLOR = "var(--kr-danger)";
 
 const TIPS = {
-  title: "Acompanhe o andamento da operacao com KPIs, graficos e status de sincronizacao.",
+  title: "Acompanhe o andamento da operação com KPIs, gráficos e status de sincronização.",
   period:
-    "Muda o periodo dos KPIs, graficos e relatorios exportados. Em 'Personalizado', escolha a data inicial e a final.",
-  exportPdf: "Exporta um relatorio em PDF para o periodo selecionado.",
-  exportExcel: "Exporta a planilha detalhada em Excel para o periodo selecionado."
+    "Muda o período dos KPIs, gráficos e relatórios exportados. Em 'Personalizado', escolha a data inicial e a final.",
+  exportPdf: "Exporta um relatório em PDF para o período selecionado.",
+  exportExcel: "Exporta a planilha detalhada em Excel para o período selecionado."
 };
 
 /** Tela Insights do desktop (`InsightsView.tsx`), com as contas feitas sobre a nuvem. */
 export function Insights() {
   const user = useUser();
+  const toast = useToast();
   const [period, setPeriod] = useState<InsightsPeriod>("7d");
   const [customStart, setCustomStart] = useState(() => todayIso());
   const [customEnd, setCustomEnd] = useState(() => todayIso());
@@ -67,7 +79,6 @@ export function Insights() {
   const [pivotCustomerId, setPivotCustomerId] = useState("");
   const [pivotProductId, setPivotProductId] = useState("");
   const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
-  const [exportMessage, setExportMessage] = useState<string | null>(null);
 
   const range = useMemo(
     () => resolveInsightsRange(period, customStart, customEnd, new Date()),
@@ -75,13 +86,16 @@ export function Insights() {
   );
   const iso = useMemo(() => periodToIso(range.start, range.end), [range.start, range.end]);
 
+  // Memoria entre telas: a chave leva empresa, unidade e o periodo (inicio e fim).
   const operations = useAsync(
     () => loadInsightsOperations(user.companyId, user.unitId, iso.startIso, iso.endIso),
-    [user.companyId, user.unitId, iso.startIso, iso.endIso]
+    [user.companyId, user.unitId, iso.startIso, iso.endIso],
+    { key: `insights:${user.companyId}:${user.unitId}:${iso.startIso}:${iso.endIso}` }
   );
   const openOperations = useAsync(
     () => q.openOperations(user.companyId, user.unitId),
-    [user.companyId, user.unitId]
+    [user.companyId, user.unitId],
+    { key: `insights:abertas:${user.companyId}:${user.unitId}` }
   );
   // Pesagem fechada, editada ou cancelada na balanca entra na tela na hora.
   useOnCadastroChange(operations.refresh, CADASTRO_TABLES.operations);
@@ -111,7 +125,7 @@ export function Insights() {
   const mixData = [
     { name: "Com nota", value: mix.invoice.count, color: CHART_PALETTE[1] },
     { name: "Interna", value: mix.internal.count, color: CHART_PALETTE[2] },
-    { name: "Cancelada", value: mix.cancelled.count, color: CHART_PALETTE[3] }
+    { name: "Cancelada", value: mix.cancelled.count, color: CANCELLED_COLOR }
   ].filter((item) => item.value > 0);
   const mixTotal = mixData.reduce((sum, item) => sum + item.value, 0);
 
@@ -125,7 +139,6 @@ export function Insights() {
 
   async function exportReport(kind: "pdf" | "excel") {
     setExporting(kind);
-    setExportMessage(null);
     try {
       if (kind === "pdf") {
         const codes = await loadProductCodes(user.companyId).catch(() => new Map());
@@ -141,7 +154,7 @@ export function Insights() {
         });
       }
     } catch (caught) {
-      setExportMessage(errorMessage(caught, "Falha ao exportar relatorio."));
+      toast.push(errorMessage(caught, "Falha ao exportar relatório."), "error");
     } finally {
       setExporting(null);
     }
@@ -152,98 +165,96 @@ export function Insights() {
 
   return (
     <section className="insights">
-      <header className="insights-header">
-        <div className="insights-title-row">
-          <h2 className="insights-title">Insights</h2>
-          <Tip text={TIPS.title} />
-        </div>
-        <div className="insights-period-col">
-          <div className="insights-period-row">
-            {INSIGHTS_PERIOD_OPTIONS.map((opt) => (
-              <button
-                key={opt.id}
-                type="button"
-                className={`insights-chip${period === opt.id ? " active" : ""}`}
-                onClick={() => setPeriod(opt.id)}
-              >
-                {opt.label}
-              </button>
-            ))}
-            <Tip text={TIPS.period} />
+      <PageHeader
+        kicker="Análise"
+        title="Insights"
+        help={TIPS.title}
+        description={`${formatDayLabel(range.start)} a ${formatDayLabel(range.end)}`}
+        actions={
+          <>
             <button
               type="button"
-              className="icon-action primary"
-              aria-label="Exportar PDF"
-              title={exporting === "pdf" ? "Gerando PDF..." : TIPS.exportPdf}
+              className="btn"
+              title={TIPS.exportPdf}
               disabled={exporting !== null || loading}
               onClick={() => void exportReport("pdf")}
             >
               <FileText size={16} strokeWidth={2} />
+              {exporting === "pdf" ? "Gerando PDF..." : "Exportar PDF"}
             </button>
             <button
               type="button"
-              className="icon-action primary"
-              aria-label="Exportar Excel"
-              title={exporting === "excel" ? "Gerando Excel..." : TIPS.exportExcel}
+              className="btn"
+              title={TIPS.exportExcel}
               disabled={exporting !== null || loading}
               onClick={() => void exportReport("excel")}
             >
               <Table2 size={16} strokeWidth={2} />
+              {exporting === "excel" ? "Gerando Excel..." : "Exportar Excel"}
             </button>
-          </div>
-          {period === "custom" && (
-            <div className="insights-custom-dates">
-              <label>
-                De
-                <input
-                  type="date"
-                  className="input"
-                  value={customStart}
-                  max={customEnd || undefined}
-                  onChange={(event) => setCustomStart(event.target.value)}
-                />
-              </label>
-              <label>
-                Ate
-                <input
-                  type="date"
-                  className="input"
-                  value={customEnd}
-                  min={customStart || undefined}
-                  onChange={(event) => setCustomEnd(event.target.value)}
-                />
-              </label>
-            </div>
-          )}
-          <p className="insights-period-hint">
-            {formatDayLabel(range.start)} a {formatDayLabel(range.end)}
-          </p>
-        </div>
-      </header>
+          </>
+        }
+      />
 
-      {operations.error && <Alert kind="error">{operations.error}</Alert>}
-      {exportMessage && <Alert kind="info">{exportMessage}</Alert>}
+      <div className="insights-period">
+        <Tabs<InsightsPeriod>
+          label="Período"
+          variant="pill"
+          active={period}
+          onChange={setPeriod}
+          tabs={INSIGHTS_PERIOD_OPTIONS.map((opt) => ({ id: opt.id, label: opt.label }))}
+        />
+        <HelpTip text={TIPS.period} label="Sobre o período" />
+        {period === "custom" && (
+          <div className="insights-custom-dates">
+            <label>
+              De
+              <input
+                type="date"
+                className="input"
+                value={customStart}
+                max={customEnd || undefined}
+                onChange={(event) => setCustomStart(event.target.value)}
+              />
+            </label>
+            <label>
+              Até
+              <input
+                type="date"
+                className="input"
+                value={customEnd}
+                min={customStart || undefined}
+                onChange={(event) => setCustomEnd(event.target.value)}
+              />
+            </label>
+          </div>
+        )}
+      </div>
+
+      {operations.error && (
+        <ErrorState message={operations.error} onRetry={() => void operations.reload()} />
+      )}
 
       <div className="insights-kpis">
         <KpiCard
-          label="Operacoes"
+          label="Operações"
           value={loading ? "-" : totals.operations.toLocaleString("pt-BR")}
           hint={range.label}
         />
         <KpiCard
-          label="Peso liquido"
+          label="Peso líquido"
           value={loading ? "-" : formatTonsShort(totals.weightKg)}
           hint={formatKg(totals.weightKg)}
         />
         <KpiCard
           label="Faturamento"
           value={loading ? "-" : formatBRL(totals.totalCents)}
-          hint="Operacoes fechadas"
+          hint="Operações fechadas"
         />
         <KpiCard
-          label="Ticket medio"
+          label="Ticket médio"
           value={loading ? "-" : formatBRL(totals.ticketCents)}
-          hint="Por operacao fechada"
+          hint="Por operação fechada"
         />
         <KpiCard
           label="Em aberto"
@@ -253,23 +264,29 @@ export function Insights() {
       </div>
 
       <div className="insights-charts">
-        <ChartCard title="Peso liquido por dia" hint={range.label}>
-          {series.length === 0 ? (
-            <p className="insights-muted">Sem dados no periodo.</p>
+        <ChartCard title="Peso líquido por dia" hint={range.label}>
+          {loading ? (
+            <ChartSkeleton />
+          ) : series.length === 0 ? (
+            <EmptyState title="Sem dados no período." />
           ) : (
             <WeightAreaChart series={series} />
           )}
         </ChartCard>
         <ChartCard title="Top 5 produtos por peso" hint={range.label}>
-          {topProducts.length === 0 ? (
-            <p className="insights-muted">Sem produtos vendidos no periodo.</p>
+          {loading ? (
+            <ChartSkeleton />
+          ) : topProducts.length === 0 ? (
+            <EmptyState title="Sem produtos vendidos no período." />
           ) : (
             <ProductBarChart products={topProducts} />
           )}
         </ChartCard>
-        <ChartCard title="Mix de operacoes" hint={range.label}>
-          {mixData.length === 0 || mixTotal === 0 ? (
-            <p className="insights-muted">Sem operacoes no periodo.</p>
+        <ChartCard title="Mix de operações" hint={range.label}>
+          {loading ? (
+            <ChartSkeleton />
+          ) : mixData.length === 0 || mixTotal === 0 ? (
+            <EmptyState title="Sem operações no período." />
           ) : (
             <MixDonut data={mixData} total={mixTotal} />
           )}
@@ -284,13 +301,13 @@ export function Insights() {
           </header>
           <div className="insights-sync-row">
             <div>
-              <p className="insights-sync-label">Operacoes em aberto na balanca</p>
+              <p className="insights-sync-label">Operações em aberto na balança</p>
               <p className="insights-sync-value">
                 {openOperations.loading
                   ? "-"
                   : openCount === 0
                     ? "Nenhuma em aberto"
-                    : `${openCount} aguardando saida`}
+                    : `${openCount} aguardando saída`}
               </p>
             </div>
             <button
@@ -307,13 +324,16 @@ export function Insights() {
             </button>
           </div>
           {openOperations.error && (
-            <p className="insights-sync-hint">Falha ao ler as abertas: {openOperations.error}</p>
+            <ErrorState
+              message={`Falha ao ler as abertas: ${openOperations.error}`}
+              onRetry={() => void openOperations.reload()}
+            />
           )}
         </article>
 
         <article className="insights-card insights-pivot">
           <header className="insights-card-head">
-            <h3>Tabela dinamica de vendas</h3>
+            <h3>Tabela dinâmica de vendas</h3>
             <span>{range.label}</span>
           </header>
           <div className="insights-pivot-controls">
@@ -353,30 +373,28 @@ export function Insights() {
               />
             </label>
           </div>
-          <div className="insights-pivot-scroll">
-            <table className="insights-pivot-table">
-              <thead>
-                <tr>
-                  {pivotGroupBy === "day" && <th>Dia</th>}
-                  {showCustomer && <th>Cliente</th>}
-                  {showProduct && <th>Produto</th>}
-                  <th className="num">Operacoes</th>
-                  <th className="num">Quantidade</th>
-                  <th className="num">Preco medio</th>
-                  <th className="num">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pivot.rows.length === 0 ? (
+          {pivot.rows.length === 0 ? (
+            loading ? (
+              <SkeletonRows rows={4} columns={4} />
+            ) : (
+              <EmptyState title="Sem vendas no período com os filtros selecionados." />
+            )
+          ) : (
+            <div className="insights-pivot-scroll">
+              <table className="insights-pivot-table">
+                <thead>
                   <tr>
-                    <td colSpan={6} className="insights-pivot-empty">
-                      {loading
-                        ? "Carregando..."
-                        : "Sem vendas no periodo com os filtros selecionados."}
-                    </td>
+                    {pivotGroupBy === "day" && <th>Dia</th>}
+                    {showCustomer && <th>Cliente</th>}
+                    {showProduct && <th>Produto</th>}
+                    <th className="num">Operações</th>
+                    <th className="num">Quantidade</th>
+                    <th className="num">Preço médio</th>
+                    <th className="num">Total</th>
                   </tr>
-                ) : (
-                  pivot.rows.map((row) => (
+                </thead>
+                <tbody>
+                  {pivot.rows.map((row) => (
                     <tr key={row.key}>
                       {pivotGroupBy === "day" && (
                         <td>{row.date ? formatShortDate(row.date) : "-"}</td>
@@ -388,10 +406,8 @@ export function Insights() {
                       <td className="num">{formatBRL(row.avgPriceCentsPerTon)}/t</td>
                       <td className="num">{formatBRL(row.totalValueCents)}</td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-              {pivot.rows.length > 0 && (
+                  ))}
+                </tbody>
                 <tfoot>
                   <tr>
                     <td colSpan={pivotGroupBy === "customer_product" ? 2 : 1}>TOTAL</td>
@@ -401,20 +417,21 @@ export function Insights() {
                     <td className="num">{formatBRL(pivot.totals.totalValueCents)}</td>
                   </tr>
                 </tfoot>
-              )}
-            </table>
-          </div>
+              </table>
+            </div>
+          )}
         </article>
       </div>
     </section>
   );
 }
 
-function Tip({ text }: { text: string }) {
+/** O grafico a caminho: um bloco do tamanho dele, no lugar de "Sem dados" antes da resposta. */
+function ChartSkeleton() {
   return (
-    <span className="insights-tip" role="img" aria-label="Dica" title={text}>
-      <Lightbulb size={14} />
-    </span>
+    <div role="status" aria-label="Carregando o gráfico">
+      <Skeleton height={CHART_HEIGHT} radius={10} />
+    </div>
   );
 }
 
@@ -606,7 +623,7 @@ function WeightAreaChart({ series }: { series: DailySeriesPoint[] }) {
                 label: `Dia ${formatShortDate(point.date)}`,
                 lines: [
                   {
-                    text: `Peso liquido : ${formatKg(point.totalNetWeightKg)}`,
+                    text: `Peso líquido : ${formatKg(point.totalNetWeightKg)}`,
                     color: "var(--kr-chart-1)"
                   }
                 ]

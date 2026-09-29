@@ -350,6 +350,6 @@ export function customerCityLine(
 export function creditLabel(
   customer: Pick<CustomerRow, "credit_account_enabled" | "credit_mode">
 ): string {
-  if (!customer.credit_account_enabled) return "Nao usa";
-  return customer.credit_mode === "prepaid" ? "Pre-pago" : "Fiado";
+  if (!customer.credit_account_enabled) return "Não usa";
+  return customer.credit_mode === "prepaid" ? "Pré-pago" : "Fiado";
 }

@@ -1,9 +1,18 @@
 import { useMemo, useState, type FormEvent } from "react";
 
-import { IconAction, NewButton, Pill, SearchBar, SectionHead } from "../components/desk";
+import { IconAction, NewButton, PlateBadge, SearchBar, SectionHead } from "../components/desk";
 import { Picker } from "../components/Picker";
 import { DeleteDialog } from "../components/PricePassword";
-import { Alert, DataTable, Field, Modal, Warnings, useToast } from "../components/ui";
+import {
+  Alert,
+  DataTable,
+  ErrorState,
+  Field,
+  Modal,
+  Pill,
+  Warnings,
+  useToast
+} from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
@@ -78,15 +87,15 @@ function DeleteGroup({
       title={`Excluir ${label}`}
       description={
         ids.length > 1
-          ? `Este cadastro esta repetido em ${ids.length} balancas: todas as copias saem. As pesagens antigas continuam com o nome/placa gravados.`
-          : "O cadastro sai das telas do site e das balancas. As pesagens antigas continuam com o nome/placa gravados."
+          ? `Este cadastro está repetido em ${ids.length} balanças: todas as cópias saem. As pesagens antigas continuam com o nome/placa gravados.`
+          : "O cadastro sai das telas do site e das balanças. As pesagens antigas continuam com o nome/placa gravados."
       }
       askPassword={user.requiresPricePassword}
       onClose={onClose}
       onConfirm={async (pricePassword) => {
         try {
           for (const id of ids) await callWebApi(action, { id, pricePassword });
-          toast.push("Cadastro excluido.");
+          toast.push("Cadastro excluído.");
           onClose();
           await onDeleted();
           return null;
@@ -102,7 +111,8 @@ export function DriversSection() {
   const user = useUser();
   const { data, loading, error, reload, refresh } = useAsync(
     () => q.drivers(user.companyId),
-    [user.companyId]
+    [user.companyId],
+    { key: `cadastros:motoristas:${user.companyId}` }
   );
   useOnCadastroChange(refresh, CADASTRO_TABLES.drivers);
   const toggle = useToggleActive(reload);
@@ -129,14 +139,14 @@ export function DriversSection() {
       <SectionHead
         title="Motoristas"
         count={groups.filter((g) => g.row.is_active).length}
-        description="Motoristas usados na identificacao do caminhao e impressos no cupom."
+        description="Motoristas usados na identificação do caminhão e impressos no cupom."
         action={
           user.canEditFleet && (
             <NewButton onClick={() => setDriver("new")}>Novo motorista</NewButton>
           )
         }
       />
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <ErrorState message={error} onRetry={() => void reload()} />}
       <SearchBar
         value={search}
         onChange={setSearch}
@@ -149,7 +159,8 @@ export function DriversSection() {
         rows={rows}
         rowKey={(g) => g.row.id}
         rowClassName={(g) => (g.row.is_active ? undefined : "inactive")}
-        empty={loading ? "Carregando..." : "Nenhum motorista."}
+        loading={loading}
+        empty="Nenhum motorista."
         pageKey={`${needle}|${showInactive}`}
         columns={[
           { key: "name", header: "Nome", render: ({ row: d }) => <strong>{d.name}</strong> },
@@ -160,7 +171,7 @@ export function DriversSection() {
               [
                 d.document ? `CPF: ${d.document}` : null,
                 d.phone ? `Tel: ${d.phone}` : null,
-                d.is_independent ? "Autonomo" : null,
+                d.is_independent ? "Autônomo" : null,
                 d.is_active ? null : "Inativo"
               ]
                 .filter(Boolean)
@@ -168,7 +179,7 @@ export function DriversSection() {
           },
           {
             key: "actions",
-            header: "Acoes",
+            header: "Ações",
             numeric: true,
             render: (group) =>
               user.canEditFleet && (
@@ -224,7 +235,8 @@ export function VehiclesSection() {
   const user = useUser();
   const { data, loading, error, reload, refresh } = useAsync(
     () => Promise.all([q.vehicles(user.companyId), q.carriers(user.companyId)]),
-    [user.companyId]
+    [user.companyId],
+    { key: `cadastros:placas:${user.companyId}` }
   );
   useOnCadastroChange(refresh, [...CADASTRO_TABLES.vehicles, ...CADASTRO_TABLES.carriers]);
   const toggle = useToggleActive(reload);
@@ -257,12 +269,12 @@ export function VehiclesSection() {
       <SectionHead
         title="Placas"
         count={groups.filter((g) => g.row.is_active).length}
-        description="Caminhoes identificados pela placa. A mesma placa pode atender varios clientes e transportadoras."
+        description="Caminhões identificados pela placa. A mesma placa pode atender vários clientes e transportadoras."
         action={
-          user.canEditFleet && <NewButton onClick={() => setVehicle("new")}>Novo veiculo</NewButton>
+          user.canEditFleet && <NewButton onClick={() => setVehicle("new")}>Novo veículo</NewButton>
         }
       />
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <ErrorState message={error} onRetry={() => void reload()} />}
       <SearchBar
         value={search}
         onChange={setSearch}
@@ -275,15 +287,16 @@ export function VehiclesSection() {
         rows={rows}
         rowKey={(g) => g.row.id}
         rowClassName={(g) => (g.row.is_active ? undefined : "inactive")}
-        empty={loading ? "Carregando..." : "Nenhum veiculo."}
+        loading={loading}
+        empty="Nenhum veículo."
         pageKey={`${needle}|${showInactive}`}
         columns={[
           {
             key: "plate",
             header: "Placa",
-            render: ({ row: v }) => <strong className="plate-badge">{formatPlate(v.plate)}</strong>
+            render: ({ row: v }) => <PlateBadge plate={formatPlate(v.plate)} />
           },
-          { key: "desc", header: "Descricao", render: ({ row: v }) => v.description || "—" },
+          { key: "desc", header: "Descrição", render: ({ row: v }) => v.description || "—" },
           {
             key: "carrier",
             header: "Transportadora",
@@ -296,14 +309,14 @@ export function VehiclesSection() {
           },
           {
             key: "actions",
-            header: "Acoes",
+            header: "Ações",
             numeric: true,
             render: (group) =>
               user.canEditFleet && (
                 <span className="row-actions">
                   <IconAction
                     icon="edit"
-                    label="Editar veiculo"
+                    label="Editar veículo"
                     onClick={() => setVehicle(group.row)}
                   />
                   <IconAction
@@ -316,7 +329,7 @@ export function VehiclesSection() {
                   />
                   <IconAction
                     icon="trash"
-                    label="Excluir veiculo"
+                    label="Excluir veículo"
                     tone="danger"
                     onClick={() => setRemoving(group)}
                   />
@@ -378,7 +391,7 @@ function VehicleForm({
         description: description.trim() || null,
         carrierId: carrierId || null
       });
-      toast.push("Veiculo salvo.");
+      toast.push("Veículo salvo.");
       await onSaved();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -389,7 +402,7 @@ function VehicleForm({
   const formId = "vehicle-form";
   return (
     <Modal
-      title={vehicle ? `Editar ${formatPlate(vehicle.plate)}` : "Novo veiculo"}
+      title={vehicle ? `Editar ${formatPlate(vehicle.plate)}` : "Novo veículo"}
       onClose={onClose}
       footer={
         <>
@@ -414,7 +427,7 @@ function VehicleForm({
             placeholder="ABC1D23"
           />
         </Field>
-        <Field label="Descricao" hint="Ex.: Truck, Carreta, Toco">
+        <Field label="Descrição" hint="Ex.: Truck, Carreta, Toco">
           <input
             className="input"
             value={description}
@@ -520,7 +533,7 @@ function DriverForm({
             checked={isIndependent}
             onChange={(e) => setIsIndependent(e.target.checked)}
           />
-          Motorista autonomo
+          Motorista autônomo
         </label>
       </form>
     </Modal>
@@ -533,7 +546,8 @@ export function CarriersSection() {
   const user = useUser();
   const { data, loading, error, reload, refresh } = useAsync(
     () => q.carriers(user.companyId),
-    [user.companyId]
+    [user.companyId],
+    { key: `cadastros:transportadoras:${user.companyId}` }
   );
   useOnCadastroChange(refresh, CADASTRO_TABLES.carriers);
   const toggle = useToggleActive(reload);
@@ -570,7 +584,7 @@ export function CarriersSection() {
           )
         }
       />
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <ErrorState message={error} onRetry={() => void reload()} />}
       <SearchBar
         value={search}
         onChange={setSearch}
@@ -583,7 +597,8 @@ export function CarriersSection() {
         rows={rows}
         rowKey={(g) => g.row.id}
         rowClassName={(g) => (g.row.is_active ? undefined : "inactive")}
-        empty={loading ? "Carregando..." : "Nenhuma transportadora."}
+        loading={loading}
+        empty="Nenhuma transportadora."
         pageKey={`${needle}|${showInactive}`}
         columns={[
           {
@@ -612,7 +627,7 @@ export function CarriersSection() {
           },
           {
             key: "actions",
-            header: "Acoes",
+            header: "Ações",
             numeric: true,
             render: (group) =>
               user.canEditFleet && (
@@ -683,7 +698,7 @@ function CarrierForm({
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (document.trim() && !isValidDocument(document)) {
-      setError("CNPJ/CPF invalido.");
+      setError("CNPJ/CPF inválido.");
       return;
     }
     setBusy(true);
@@ -739,7 +754,7 @@ function CarrierForm({
         </Field>
         <Field
           label="CNPJ/CPF"
-          hint="Sem documento a transportadora fica so aqui; com ele vai ao OMIE."
+          hint="Sem documento a transportadora fica só aqui; com ele vai ao OMIE."
         >
           <input className="input" value={document} onChange={(e) => setDocument(e.target.value)} />
         </Field>

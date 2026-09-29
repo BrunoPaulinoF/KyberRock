@@ -6,29 +6,6 @@
   gap: 16px;
   min-width: 0;
 }
-.pc-head {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-.pc-head-icon {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  background: var(--kr-accent-soft);
-  color: var(--kr-info-text);
-  border: 1px solid var(--kr-accent-border);
-}
-.pc-head-text {
-  margin: 0;
-  color: var(--kr-muted);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
 .pc-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
@@ -248,26 +225,9 @@
   border-bottom: 0;
   padding-bottom: 0;
 }
-.pc-tag {
-  padding: 3px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--kr-border);
-  font-size: 11px;
-  font-weight: 800;
-  white-space: nowrap;
-}
-.pc-tag.ask {
-  border-color: var(--kr-warning-border);
-  background: var(--kr-warning-soft);
-  color: var(--kr-warning);
-}
-.pc-tag.maybe {
-  color: var(--kr-muted);
-}
-.pc-tag.free {
-  border-color: var(--kr-success-border);
-  background: var(--kr-success-soft);
-  color: var(--kr-success);
+/* A etiqueta do kit sobe para o topo da linha (align-self); aqui ela fica no meio, como o nome. */
+.pc-roles .pill {
+  align-self: center;
 }
 .pc-safety {
   background: var(--kr-surface-soft);

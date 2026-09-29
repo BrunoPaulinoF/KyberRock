@@ -97,7 +97,7 @@ export function toWalletOperation(
     operationDate: localDay(soldAt),
     customerId: op.customer_id,
     customerName:
-      customer?.trade_name?.trim() || op.customer_name?.trim() || "Cliente nao informado",
+      customer?.trade_name?.trim() || op.customer_name?.trim() || "Cliente não informado",
     plate: op.plate ?? "-",
     productDescription: op.product_description ?? "-",
     netWeightKg: op.net_weight_kg,

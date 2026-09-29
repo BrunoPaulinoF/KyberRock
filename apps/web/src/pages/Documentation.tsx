@@ -24,6 +24,8 @@ import {
   X
 } from "lucide-react";
 
+import { DeskPanel } from "../components/desk";
+import { EmptyState, PageHeader, Pill, Tabs, type TabItem } from "../components/ui";
 import {
   buildSupportClipboardText,
   documentationFaqCategories,
@@ -105,20 +107,23 @@ function storeJson(key: string, value: unknown): void {
 // Componente principal
 // ---------------------------------------------------------------------------
 
-const documentationTabs: Array<{ id: DocumentationTabId; label: string; icon: LucideIcon }> = [
-  { id: "start", label: "Comecar", icon: Rocket },
+/** Com a busca aberta nenhuma area fica marcada: os resultados tomam o lugar delas. */
+type DocumentationTabValue = DocumentationTabId | "busca";
+
+const documentationTabs: Array<TabItem<DocumentationTabId>> = [
+  { id: "start", label: "Começar", icon: Rocket },
   { id: "guides", label: "Guias", icon: BookOpen },
-  { id: "faq", label: "Duvidas", icon: HelpCircle },
-  { id: "troubleshoot", label: "Diagnostico", icon: Wrench },
-  { id: "glossary", label: "Glossario", icon: BookMarked },
+  { id: "faq", label: "Dúvidas", icon: HelpCircle },
+  { id: "troubleshoot", label: "Diagnóstico", icon: Wrench },
+  { id: "glossary", label: "Glossário", icon: BookMarked },
   { id: "support", label: "Suporte", icon: LifeBuoy }
 ];
 
 const RESULT_KIND_LABEL: Record<DocumentationSearchResult["kind"], string> = {
   section: "Guia",
-  faq: "Duvida",
-  flow: "Diagnostico",
-  glossary: "Glossario"
+  faq: "Dúvida",
+  flow: "Diagnóstico",
+  glossary: "Glossário"
 };
 
 const RESULT_KIND_ICON: Record<DocumentationSearchResult["kind"], LucideIcon> = {
@@ -215,69 +220,64 @@ export function Documentation() {
 
   return (
     <section className="krdoc-page" aria-labelledby="documentation-title">
-      <div className="krdoc-search-bar">
-        <label className="krdoc-search-label" htmlFor="documentation-search">
-          <Search size={15} />
-          <span id="documentation-title">Buscar na documentacao</span>
-        </label>
-        <input
-          id="documentation-search"
-          ref={searchInputRef}
-          className="krdoc-input"
-          type="search"
-          value={searchQuery}
-          placeholder='Digite sua duvida: "como emitir nota fiscal", "a balanca nao conecta"...'
-          autoComplete="off"
-          onChange={(event) => setSearchQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape" && searchQuery) {
-              event.stopPropagation();
-              setSearchQuery("");
-            }
+      <DeskPanel>
+        <PageHeader
+          kicker="Análise"
+          title="Documentação"
+          description="A central de ajuda do KyberRock: primeiros passos, guias, dúvidas comuns, diagnóstico guiado e glossário. Busque pela dúvida ou escolha uma área."
+        />
+        <div className="krdoc-search-bar">
+          <label className="krdoc-search-label" htmlFor="documentation-search">
+            <Search size={15} />
+            <span id="documentation-title">Buscar na documentação</span>
+          </label>
+          <input
+            id="documentation-search"
+            ref={searchInputRef}
+            className="krdoc-input"
+            type="search"
+            value={searchQuery}
+            placeholder='Digite sua dúvida: "como emitir nota fiscal", "a balança não conecta"...'
+            autoComplete="off"
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && searchQuery) {
+                event.stopPropagation();
+                setSearchQuery("");
+              }
+            }}
+          />
+          {searching ? (
+            <>
+              <span className="krdoc-search-count">
+                {searchResults.length} {searchResults.length === 1 ? "resultado" : "resultados"}
+              </span>
+              <button
+                type="button"
+                className="krdoc-ghost-btn"
+                onClick={() => {
+                  setSearchQuery("");
+                  searchInputRef.current?.focus();
+                }}
+              >
+                <X size={13} />
+                Limpar
+              </button>
+            </>
+          ) : null}
+        </div>
+
+        <Tabs<DocumentationTabValue>
+          label="Áreas da documentação"
+          tabs={documentationTabs}
+          active={searching ? "busca" : activeTab}
+          onChange={(tab) => {
+            if (tab === "busca") return;
+            setSearchQuery("");
+            setActiveTab(tab);
           }}
         />
-        {searching ? (
-          <>
-            <span className="krdoc-search-count">
-              {searchResults.length} {searchResults.length === 1 ? "resultado" : "resultados"}
-            </span>
-            <button
-              type="button"
-              className="krdoc-ghost-btn"
-              onClick={() => {
-                setSearchQuery("");
-                searchInputRef.current?.focus();
-              }}
-            >
-              <X size={13} />
-              Limpar
-            </button>
-          </>
-        ) : null}
-      </div>
-
-      <nav aria-label="Areas da documentacao" className="krdoc-tab-bar" role="tablist">
-        {documentationTabs.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = !searching && activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={isActive}
-              className={isActive ? "krdoc-tab krdoc-tab-active" : "krdoc-tab"}
-              onClick={() => {
-                setSearchQuery("");
-                setActiveTab(tab.id);
-              }}
-            >
-              <Icon size={15} />
-              {tab.label}
-            </button>
-          );
-        })}
-      </nav>
+      </DeskPanel>
 
       {searching ? (
         <SearchResultsPanel
@@ -353,20 +353,24 @@ function SearchResultsPanel({
 }) {
   if (results.length === 0) {
     return (
-      <section className="krdoc-empty-state" aria-live="polite">
-        <Search size={22} />
-        <strong className="krdoc-empty-title">
-          Nada encontrado para &ldquo;{query.trim()}&rdquo;
-        </strong>
-        {/* O desktop ainda sugere o assistente do canto da tela, que o site nao tem. */}
-        <span>
-          Tente outras palavras (por exemplo &ldquo;nota&rdquo; em vez de &ldquo;NF&rdquo;), ou abra
-          a aba Suporte para saber o que enviar ao suporte.
-        </span>
-        <button type="button" className="krdoc-ghost-btn" onClick={onClear}>
-          <X size={13} />
-          Limpar busca
-        </button>
+      <section className="krdoc-panel" aria-live="polite">
+        <EmptyState
+          icon={Search}
+          title={`Nada encontrado para “${query.trim()}”`}
+          hint={
+            /* O desktop ainda sugere o assistente do canto da tela, que o site nao tem. */
+            <>
+              Tente outras palavras (por exemplo &ldquo;nota&rdquo; em vez de &ldquo;NF&rdquo;), ou
+              abra a aba Suporte para saber o que enviar ao suporte.
+            </>
+          }
+          action={
+            <button type="button" className="krdoc-ghost-btn" onClick={onClear}>
+              <X size={13} />
+              Limpar busca
+            </button>
+          }
+        />
       </section>
     );
   }
@@ -462,12 +466,12 @@ function StartTab({
         <PanelHeader
           icon={Rocket}
           titleId="quickstart-title"
-          title="Preparacao da unidade"
-          description="Marque cada etapa concluida. O progresso fica salvo neste computador."
+          title="Preparação da unidade"
+          description="Marque cada etapa concluída. O progresso fica salvo neste computador."
         >
-          <span className="krdoc-progress-badge">
+          <Pill tone="info">
             {doneCount}/{quickStartTasks.length}
-          </span>
+          </Pill>
         </PanelHeader>
         <div
           className="krdoc-progress-track"
@@ -475,7 +479,7 @@ function StartTab({
           aria-valuenow={progressPercent}
           aria-valuemin={0}
           aria-valuemax={100}
-          aria-label="Progresso da preparacao"
+          aria-label="Progresso da preparação"
         >
           <div className="krdoc-progress-fill" style={{ width: `${progressPercent}%` }} />
         </div>
@@ -517,7 +521,7 @@ function StartTab({
           icon={Truck}
           titleId="flow-title"
           title="Ciclo de uma pesagem"
-          description="Toda operacao passa por estas etapas. Clique em uma etapa para abrir o guia."
+          description="Toda operação passa por estas etapas. Clique em uma etapa para abrir o guia."
         />
         <ol className="krdoc-flow-list">
           {operationFlowStages.map((stage, index) => {
@@ -548,7 +552,7 @@ function StartTab({
         <div className="krdoc-hint-card">
           <CheckCircle2 size={16} />
           <span>
-            Com problema agora? Abra a aba <strong>Diagnostico</strong> e siga as verificacoes
+            Com problema agora? Abra a aba <strong>Diagnóstico</strong> e siga as verificações
             guiadas antes de chamar o suporte.
           </span>
         </div>
@@ -586,7 +590,7 @@ function GuidesTab({
 
   return (
     <div className="krdoc-guides-grid">
-      <nav aria-label="Guias disponiveis" className="krdoc-guide-nav">
+      <nav aria-label="Guias disponíveis" className="krdoc-guide-nav">
         {documentationSections.map((section) => {
           const SectionIcon = section.icon;
           const isActive = section.id === activeSection.id;
@@ -725,23 +729,17 @@ function FaqTab({
       <PanelHeader
         icon={HelpCircle}
         titleId="faq-title"
-        title="Duvidas comuns"
-        description="Clique em uma pergunta para ver a resposta. Filtre por assunto, ou use a busca la em cima para procurar pela frase inteira."
+        title="Dúvidas comuns"
+        description="Clique em uma pergunta para ver a resposta. Filtre por assunto, ou use a busca lá em cima para procurar pela frase inteira."
       />
 
-      <div className="krdoc-category-row" role="group" aria-label="Filtrar duvidas por assunto">
-        {documentationFaqCategories.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            className={option.id === category ? "krdoc-chip krdoc-chip-active" : "krdoc-chip"}
-            aria-pressed={option.id === category}
-            onClick={() => onSelectCategory(option.id)}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        label="Filtrar dúvidas por assunto"
+        variant="pill"
+        tabs={documentationFaqCategories}
+        active={category}
+        onChange={onSelectCategory}
+      />
 
       <div className="krdoc-faq-list">
         {faqs.map((faq) => {
@@ -805,8 +803,8 @@ function TroubleshootTab({
         <PanelHeader
           icon={Wrench}
           titleId="troubleshoot-title"
-          title="Diagnostico guiado"
-          description="Escolha o problema que esta acontecendo para seguir as verificacoes na ordem certa."
+          title="Diagnóstico guiado"
+          description="Escolha o problema que está acontecendo para seguir as verificações na ordem certa."
         />
         <div className="krdoc-flow-grid">
           {troubleshootingFlows.map((flow) => {
@@ -863,7 +861,7 @@ function TroubleshootTab({
       />
 
       <p className="krdoc-troubleshoot-hint">
-        Siga as verificacoes na ordem e marque as que ja fez. Teste o sistema apos cada passo.
+        Siga as verificações na ordem e marque as que já fez. Teste o sistema após cada passo.
       </p>
 
       <ol className="krdoc-step-list">
@@ -889,7 +887,7 @@ function TroubleshootTab({
       <div className="krdoc-escalation-box">
         <AlertTriangle size={16} className="krdoc-escalation-icon" />
         <div className="krdoc-panel-header-text">
-          <strong className="krdoc-escalation-title">Nao resolveu?</strong>
+          <strong className="krdoc-escalation-title">Não resolveu?</strong>
           <p className="krdoc-escalation-text">{activeFlow.escalation}</p>
           <button type="button" className="krdoc-ghost-btn" onClick={onOpenSupport}>
             <LifeBuoy size={14} />
@@ -911,7 +909,7 @@ function GlossaryTab({ onOpenGuide }: { onOpenGuide: (sectionId: string) => void
       <PanelHeader
         icon={BookMarked}
         titleId="glossary-title"
-        title="Glossario"
+        title="Glossário"
         description="O que cada termo do sistema quer dizer, na linguagem da pedreira."
       />
       <div className="krdoc-glossary-grid">
@@ -977,7 +975,7 @@ function SupportTab() {
           icon={LifeBuoy}
           titleId="support-title"
           title="Antes de chamar o suporte"
-          description="Colete estas informacoes para acelerar o diagnostico do problema."
+          description="Colete estas informações para acelerar o diagnóstico do problema."
         >
           <button type="button" className="krdoc-ghost-btn" onClick={() => void copyChecklist()}>
             {copied ? <CheckCircle2 size={14} /> : <Copy size={14} />}
@@ -993,7 +991,7 @@ function SupportTab() {
           ))}
         </div>
         <p className="krdoc-support-footnote">
-          O botao Copiar modelo gera um texto pronto para preencher e enviar ao suporte por e-mail
+          O botão Copiar modelo gera um texto pronto para preencher e enviar ao suporte por e-mail
           ou mensagem.
         </p>
       </section>
@@ -1007,19 +1005,19 @@ function SupportTab() {
         />
         <ul className="krdoc-detail-list">
           <li>
-            <strong>Erros recentes:</strong> use o botao de logs no menu da engrenagem (F10) para
-            ver falhas de sincronizacao, balanca e impressao.
+            <strong>Erros recentes:</strong> use o botão de logs no menu da engrenagem (F10) para
+            ver falhas de sincronização, balança e impressão.
           </li>
           <li>
-            <strong>Desktop nao abre:</strong> consulte o arquivo startup.log em AppData Local, na
+            <strong>Desktop não abre:</strong> consulte o arquivo startup.log em AppData Local, na
             pasta do KyberRock Desktop.
           </li>
           <li>
-            <strong>Faturamento recusado:</strong> copie tambem a mensagem exibida pelo OMIE — e ela
+            <strong>Faturamento recusado:</strong> copie também a mensagem exibida pelo OMIE — é ela
             que nomeia o campo que faltou no cadastro.
           </li>
           <li>
-            <strong>Antes de reinstalar:</strong> sempre faca backup do banco local. A operacao
+            <strong>Antes de reinstalar:</strong> sempre faça backup do banco local. A operação
             fechada nunca deve ser perdida.
           </li>
         </ul>

@@ -1,9 +1,18 @@
 import { useMemo, useState } from "react";
 
 import { CustomerPicker } from "../components/CustomerPicker";
-import { EmptyState, IconAction, SearchBar, SectionHead } from "../components/desk";
+import { IconAction, SearchBar, SectionHead } from "../components/desk";
 import { PricePasswordField } from "../components/PricePassword";
-import { Alert, DataTable, Field, Modal, useToast } from "../components/ui";
+import {
+  Alert,
+  DataTable,
+  EmptyState,
+  ErrorState,
+  Field,
+  Modal,
+  Pill,
+  useToast
+} from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
@@ -27,9 +36,11 @@ export function ProductsSection() {
   const toast = useToast();
   const canEdit = user.canEditPrices;
   const askPassword = user.requiresPricePassword;
+  // A mesma leitura (e a mesma chave de memoria) da ficha do cliente (`CustomerFile.tsx`).
   const { data, loading, error, reload, refresh } = useAsync(
     () => Promise.all([q.products(user.companyId), q.productDefaultPrices(user.companyId)]),
-    [user.companyId]
+    [user.companyId],
+    { key: `produtos:${user.companyId}` }
   );
   useOnCadastroChange(refresh, CADASTRO_TABLES.products);
   const [products, defaults] = data ?? [[], []];
@@ -59,7 +70,8 @@ export function ProductsSection() {
 
   const special = useAsync(
     () => (customerId ? q.customerSpecialPrices(user.companyId, customerId) : Promise.resolve([])),
-    [user.companyId, customerId]
+    [user.companyId, customerId],
+    { key: customerId ? `produtos:especial:${user.companyId}:${customerId}` : null }
   );
   useOnCadastroChange(special.refresh, CADASTRO_TABLES.specialPrices);
   const specialByProduct = useMemo(
@@ -86,7 +98,7 @@ export function ProductsSection() {
         });
         await reload();
       }
-      toast.push("Preco publicado para as balancas.");
+      toast.push("Preço publicado para as balanças.");
       setEditing(null);
     } catch (caught) {
       toast.push(errorMessage(caught), "error");
@@ -101,7 +113,7 @@ export function ProductsSection() {
         productId: product.id,
         pricePassword
       });
-      toast.push("Preco especial removido; volta a valer o padrao.");
+      toast.push("Preço especial removido; volta a valer o padrão.");
       await special.reload();
       return true;
     } catch (caught) {
@@ -115,31 +127,32 @@ export function ProductsSection() {
       <SectionHead
         title="Produtos"
         count={products.length}
-        description="Produtos sincronizados do OMIE com o preco padrao usado na pesagem. Preco especial do cliente tem prioridade sobre o preco padrao."
+        description="Produtos sincronizados do OMIE com o preço padrão usado na pesagem. Preço especial do cliente tem prioridade sobre o preço padrão."
       />
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <ErrorState message={error} onRetry={() => void reload()} />}
       <SearchBar
         value={search}
         onChange={setSearch}
-        placeholder="Buscar produto por nome ou codigo..."
+        placeholder="Buscar produto por nome ou código..."
         onRefresh={() => void reload()}
       />
       {products.length === 0 && !loading ? (
         <EmptyState
           title="Nenhum produto sincronizado."
-          hint="Os produtos vem do OMIE pela balanca principal."
+          hint="Os produtos vêm do OMIE pela balança principal."
         />
       ) : (
         <DataTable
           rows={visibleProducts}
           rowKey={(p) => p.id}
-          empty={loading ? "Carregando..." : "Nenhum produto encontrado."}
+          loading={loading}
+          empty="Nenhum produto encontrado."
           columns={[
             { key: "desc", header: "Produto", render: (p) => <strong>{p.description}</strong> },
-            { key: "code", header: "Codigo", render: (p) => p.code || "-" },
+            { key: "code", header: "Código", render: (p) => p.code || "-" },
             {
               key: "price",
-              header: "Preco padrao",
+              header: "Preço padrão",
               numeric: true,
               render: (p) =>
                 defaultByProduct.has(p.id) ? (
@@ -148,19 +161,19 @@ export function ProductsSection() {
                     {fromOmie(p) && <span className="cell-sub">Valor do OMIE</span>}
                   </>
                 ) : (
-                  <span style={{ color: "var(--kr-warning)", fontWeight: 700 }}>Sem preco</span>
+                  <Pill tone="warning">Sem preço</Pill>
                 )
             },
             {
               key: "actions",
-              header: "Acoes",
+              header: "Ações",
               numeric: true,
               render: (p) =>
                 canEdit && (
                   <span className="row-actions">
                     <IconAction
                       icon="edit"
-                      label={defaultByProduct.has(p.id) ? "Editar preco" : "Definir preco"}
+                      label={defaultByProduct.has(p.id) ? "Editar preço" : "Definir preço"}
                       onClick={() =>
                         setEditing({ product: p, current: defaultByProduct.get(p.id) ?? null })
                       }
@@ -173,24 +186,28 @@ export function ProductsSection() {
       )}
 
       <SectionHead
-        title="Preco especial por cliente"
-        description="Escolha o cliente para ver o preco dele em cada produto. Sem preco especial, vale o padrao. Tambem da para abrir pela aba Clientes, no botao de ajustes do cliente."
+        title="Preço especial por cliente"
+        description="Escolha o cliente para ver o preço dele em cada produto. Sem preço especial, vale o padrão. Também dá para abrir pela aba Clientes, no botão de ajustes do cliente."
       />
       <div style={{ maxWidth: 420, marginBottom: 10 }}>
         <CustomerPicker companyId={user.companyId} value={customerId} onChange={setCustomerId} />
       </div>
+      {customerId && special.error && (
+        <ErrorState message={special.error} onRetry={() => void special.reload()} />
+      )}
       {!customerId ? (
         <EmptyState title="Nenhum cliente escolhido." hint="Busque o cliente no campo acima." />
       ) : (
         <DataTable
           rows={products}
           rowKey={(p) => p.id}
-          empty={special.loading ? "Carregando..." : "Nenhum produto."}
+          loading={loading || special.loading}
+          empty="Nenhum produto."
           columns={[
             { key: "desc", header: "Produto", render: (p) => <strong>{p.description}</strong> },
             {
               key: "default",
-              header: "Padrao",
+              header: "Padrão",
               numeric: true,
               render: (p) =>
                 defaultByProduct.has(p.id) ? formatMoney(defaultByProduct.get(p.id)) : "—"
@@ -208,14 +225,14 @@ export function ProductsSection() {
             },
             {
               key: "actions",
-              header: "Acoes",
+              header: "Ações",
               numeric: true,
               render: (p) =>
                 canEdit && (
                   <span className="row-actions">
                     <IconAction
                       icon="edit"
-                      label="Definir preco especial"
+                      label="Definir preço especial"
                       onClick={() =>
                         setEditing({
                           product: p,
@@ -227,7 +244,7 @@ export function ProductsSection() {
                     {specialByProduct.has(p.id) && (
                       <IconAction
                         icon="trash"
-                        label="Remover preco especial"
+                        label="Remover preço especial"
                         tone="danger"
                         onClick={() => (askPassword ? setRemoving(p) : void removeSpecial(p))}
                       />
@@ -285,7 +302,7 @@ function PriceModal({
   const [busy, setBusy] = useState(false);
   return (
     <Modal
-      title={`${special ? "Preco especial" : "Preco padrao"} — ${product.description}`}
+      title={`${special ? "Preço especial" : "Preço padrão"} — ${product.description}`}
       description="Valor por tonelada, em reais."
       onClose={onClose}
       footer={
@@ -299,11 +316,11 @@ function PriceModal({
             onClick={async () => {
               const cents = parseMoneyToCents(value);
               if (cents == null) {
-                setError("Informe um valor valido, ex.: 65,00");
+                setError("Informe um valor válido, ex.: 65,00");
                 return;
               }
               if (askPassword && !password) {
-                setError("Digite a senha de alteracao de preco.");
+                setError("Digite a senha de alteração de preço.");
                 return;
               }
               setBusy(true);
@@ -317,7 +334,7 @@ function PriceModal({
       }
     >
       {error && <Alert kind="error">{error}</Alert>}
-      <Field label="Preco (R$ / ton)">
+      <Field label="Preço (R$ / ton)">
         <input
           className="input"
           value={value}
@@ -346,8 +363,8 @@ function RemovePriceModal({
   const [busy, setBusy] = useState(false);
   return (
     <Modal
-      title={`Remover preco especial — ${product.description}`}
-      description="O cliente volta a pagar o preco padrao deste produto."
+      title={`Remover preço especial — ${product.description}`}
+      description="O cliente volta a pagar o preço padrão deste produto."
       onClose={onClose}
       footer={
         <>
@@ -359,7 +376,7 @@ function RemovePriceModal({
             disabled={busy}
             onClick={async () => {
               if (!password) {
-                setError("Digite a senha de alteracao de preco.");
+                setError("Digite a senha de alteração de preço.");
                 return;
               }
               setBusy(true);

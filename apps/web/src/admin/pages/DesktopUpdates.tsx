@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 
+import { useConfirm } from "../../components/ui";
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
 import {
   arrangeReleases,
@@ -88,7 +90,7 @@ import {
 // Voltar uma versao nunca mexe na frota de primeira: a versao antiga vai para o
 // anel de TESTE (onde a balanca de teste roda com `allowDowngrade` e realmente
 // desce para ela), e so depois a tela oferece regredir a producao. O botao e
-// laranja porque e o unico gesto da tela que anda para tras.
+// ambar de alerta porque e o unico gesto da tela que anda para tras.
 //
 // E producao NAO desce sozinha: `allowDowngrade` fica desligado ali de
 // proposito (`apps/desktop/src/services/update-channel.ts`) — balanca de
@@ -193,20 +195,20 @@ export const PROMOTION_ACTIONS: Record<PromotionIntent, ActionCopy> = {
     busyLabel: "Enviando…",
     variant: "default",
     confirm: null,
-    dispatched: (v) => `Enviando a versao ${v} para o anel de teste…`,
+    dispatched: (v) => `Enviando a versão ${v} para o anel de teste…`,
     done: (v) =>
-      `Versao ${v} enviada para o anel de teste. As balancas marcadas como teste recebem na proxima verificacao.`
+      `Versão ${v} enviada para o anel de teste. As balanças marcadas como teste recebem na próxima verificação.`
   },
   latest: {
     target: "latest",
     force: false,
-    label: "Liberar para producao",
+    label: "Liberar para produção",
     busyLabel: "Liberando…",
     variant: "primary",
     confirm: null,
-    dispatched: (v) => `Liberando a versao ${v} para producao…`,
+    dispatched: (v) => `Liberando a versão ${v} para produção…`,
     done: (v) =>
-      `Versao ${v} liberada para producao. As balancas recebem na proxima verificacao e instalam quando o operador fechar o app.`
+      `Versão ${v} liberada para produção. As balanças recebem na próxima verificação e instalam quando o operador fechar o app.`
   },
   /**
    * Tira a versao do anel de teste sem condenar a release.
@@ -227,12 +229,12 @@ export const PROMOTION_ACTIONS: Record<PromotionIntent, ActionCopy> = {
     busyLabel: "Cancelando…",
     variant: "warn",
     confirm: (version) =>
-      `Cancelar o teste da versao ${version}?\n\n` +
-      "Ela sai do anel de teste e volta para parada — as balancas de teste voltam para a ultima versao aprovada na proxima verificacao.\n\n" +
-      "Nao e reprovar: a versao continua podendo ir para teste de novo depois.",
-    dispatched: (v) => `Cancelando o teste da versao ${v}…`,
+      `Cancelar o teste da versão ${version}?\n\n` +
+      "Ela sai do anel de teste e volta para parada — as balanças de teste voltam para a última versão aprovada na próxima verificação.\n\n" +
+      "Não é reprovar: a versão continua podendo ir para teste de novo depois.",
+    dispatched: (v) => `Cancelando o teste da versão ${v}…`,
     done: (v) =>
-      `Teste da versao ${v} cancelado. Ela voltou para parada e as balancas de teste voltam para a ultima aprovada na proxima verificacao.`
+      `Teste da versão ${v} cancelado. Ela voltou para parada e as balanças de teste voltam para a última aprovada na próxima verificação.`
   },
   reprovar: {
     target: "reprovar",
@@ -241,57 +243,57 @@ export const PROMOTION_ACTIONS: Record<PromotionIntent, ActionCopy> = {
     busyLabel: "Reprovando…",
     variant: "danger",
     confirm: (version) =>
-      `Reprovar a versao ${version}?\n\n` +
-      "Ela sai do ar e NUNCA mais podera ir para teste ou producao. " +
-      "A balanca de teste volta sozinha para a ultima versao aprovada.",
-    dispatched: (v) => `Reprovando a versao ${v}…`,
+      `Reprovar a versão ${version}?\n\n` +
+      "Ela sai do ar e NUNCA mais poderá ir para teste ou produção. " +
+      "A balança de teste volta sozinha para a última versão aprovada.",
+    dispatched: (v) => `Reprovando a versão ${v}…`,
     done: (v) =>
-      `Versao ${v} reprovada. Ela saiu do ar e nao pode mais ser distribuida; a balanca de teste volta para a ultima aprovada na proxima verificacao.`
+      `Versão ${v} reprovada. Ela saiu do ar e não pode mais ser distribuída; a balança de teste volta para a última aprovada na próxima verificação.`
   },
   "rollback-test": {
     target: "beta",
     force: false,
-    label: "Voltar para esta versao",
+    label: "Voltar para esta versão",
     busyLabel: "Voltando…",
     variant: "warn",
     confirm: (version, current) =>
-      `Voltar para a versao ${version}?\n\n` +
-      "Ela vai primeiro para o anel de TESTE: a balanca de teste desce para esta versao sozinha na proxima verificacao, e voce confere antes de mexer na frota.\n\n" +
-      `A producao continua ${current ? `na ${current}` : "onde esta"}. Depois de conferir, esta mesma linha oferece regredir a producao.`,
-    dispatched: (v) => `Voltando para a versao ${v} no anel de teste…`,
+      `Voltar para a versão ${version}?\n\n` +
+      "Ela vai primeiro para o anel de TESTE: a balança de teste desce para esta versão sozinha na próxima verificação, e você confere antes de mexer na frota.\n\n" +
+      `A produção continua ${current ? `na ${current}` : "onde está"}. Depois de conferir, esta mesma linha oferece regredir a produção.`,
+    dispatched: (v) => `Voltando para a versão ${v} no anel de teste…`,
     done: (v) =>
-      `Versao ${v} publicada no anel de teste. A balanca de teste desce para ela na proxima verificacao; a producao continua onde estava.`
+      `Versão ${v} publicada no anel de teste. A balança de teste desce para ela na próxima verificação; a produção continua onde estava.`
   },
   "rollback-production": {
     target: "latest",
     force: true,
-    label: "Regredir producao para esta versao",
+    label: "Regredir produção para esta versão",
     busyLabel: "Regredindo…",
     variant: "warn",
     confirm: (version, current) =>
-      `Regredir a producao para a versao ${version}?\n\n` +
-      `A frota passa a receber a ${version} no lugar da ${current ?? "versao atual"}.\n\n` +
-      "ATENCAO: quem JA instalou a versao mais nova continua nela — a balanca de producao nao volta sozinha. Na pratica essas maquinas param onde estao ate sair uma versao mais nova com a correcao.",
-    dispatched: (v) => `Regredindo a producao para a versao ${v}…`,
+      `Regredir a produção para a versão ${version}?\n\n` +
+      `A frota passa a receber a ${version} no lugar da ${current ?? "versão atual"}.\n\n` +
+      "ATENÇÃO: quem JÁ instalou a versão mais nova continua nela — a balança de produção não volta sozinha. Na prática essas máquinas param onde estão até sair uma versão mais nova com a correção.",
+    dispatched: (v) => `Regredindo a produção para a versão ${v}…`,
     done: (v) =>
-      `Producao regredida para a versao ${v}. Quem ainda nao atualizou passa a receber esta versao; quem ja instalou a mais nova permanece nela ate sair uma versao maior.`
+      `Produção regredida para a versão ${v}. Quem ainda não atualizou passa a receber esta versão; quem já instalou a mais nova permanece nela até sair uma versão maior.`
   },
   resume: {
     target: "latest",
     force: true,
-    label: "Retomar producao nesta versao",
+    label: "Retomar produção nesta versão",
     busyLabel: "Retomando…",
     variant: "primary",
     confirm: (version, current) =>
-      `Retomar a producao na versao ${version}?\n\n` +
-      `Desfaz a regressao: a frota volta a receber a ${version} no lugar da ${current ?? "versao atual"}.`,
-    dispatched: (v) => `Retomando a producao na versao ${v}…`,
-    done: (v) => `Producao de volta na versao ${v}. As balancas recebem na proxima verificacao.`
+      `Retomar a produção na versão ${version}?\n\n` +
+      `Desfaz a regressão: a frota volta a receber a ${version} no lugar da ${current ?? "versão atual"}.`,
+    dispatched: (v) => `Retomando a produção na versão ${v}…`,
+    done: (v) => `Produção de volta na versão ${v}. As balanças recebem na próxima verificação.`
   }
 };
 
 const STATE_LABEL: Record<string, { text: string; tone: Tone }> = {
-  producao: { text: "Producao", tone: "ok" },
+  producao: { text: "Produção", tone: "ok" },
   teste: { text: "Em teste", tone: "info" },
   parado: { text: "Parado", tone: "neutral" },
   compilando: { text: "Compilando", tone: "info" },
@@ -301,10 +303,10 @@ const STATE_LABEL: Record<string, { text: string; tone: Tone }> = {
 
 /** Selo das tres linhas que sobem para o topo. */
 const HIGHLIGHT_LABEL: Record<ReleaseHighlight, { text: string; tone: Tone }> = {
-  atual: { text: "Versao atual", tone: "ok" },
+  atual: { text: "Versão atual", tone: "ok" },
   teste: { text: "Em teste agora", tone: "info" },
-  ultima: { text: "Ultima gerada", tone: "info" },
-  anterior: { text: "Versao anterior", tone: "warn" }
+  ultima: { text: "Última gerada", tone: "info" },
+  anterior: { text: "Versão anterior", tone: "warn" }
 };
 
 /**
@@ -316,6 +318,24 @@ const HIGHLIGHT_LABEL: Record<ReleaseHighlight, { text: string; tone: Tone }> = 
  * derruba a aba inteira com TypeError. Uma situacao desconhecida tem que virar
  * um rotulo feio, nunca uma tela em branco.
  */
+/**
+ * Pergunta de confirmacao escrita como um texto so ("Pergunta?\n\nexplicacao"), o formato que
+ * os textos de `PROMOTION_ACTIONS` ja tinham para o `window.confirm`: a primeira frase vira o
+ * titulo da confirmacao do kit (`useConfirm`) e cada bloco seguinte, um paragrafo da mensagem.
+ */
+export function confirmCopy(text: string): { title: string; message?: ReactNode } {
+  const [title = "", ...paragraphs] = text.split("\n\n");
+  if (paragraphs.length === 0) return { title };
+  return {
+    title,
+    message: paragraphs.map((paragraph, index) => (
+      <p key={index} className="adm-confirm-paragraph">
+        {paragraph}
+      </p>
+    ))
+  };
+}
+
 function stateLabel(state: string): { text: string; tone: Tone } {
   return STATE_LABEL[state] ?? { text: state, tone: "neutral" };
 }
@@ -553,7 +573,7 @@ function ReleaseNoteCard({
       {entry.body ? (
         <NoteBody markdown={entry.body} />
       ) : bodiesUnavailable ? null : (
-        <p className="adm-cell-sub">Mesclado sem texto de descricao.</p>
+        <p className="adm-cell-sub">Mesclado sem texto de descrição.</p>
       )}
     </article>
   );
@@ -574,42 +594,42 @@ export function ReleaseNotesModal({
 }) {
   return (
     <Modal
-      title={`O que mudou na versao ${version}`}
+      title={`O que mudou na versão ${version}`}
       description={
         notes?.baseVersion
-          ? `Tudo o que foi mesclado depois da versao ${notes.baseVersion}.`
-          : "Os PRs que entraram nesta versao."
+          ? `Tudo o que foi mesclado depois da versão ${notes.baseVersion}.`
+          : "Os PRs que entraram nesta versão."
       }
       onClose={onClose}
       footer={
         notes?.compareUrl ? (
           <LinkButton href={notes.compareUrl} size="sm">
-            Ver a comparacao no GitHub
+            Ver a comparação no GitHub
           </LinkButton>
         ) : notes?.releaseUrl ? (
           <LinkButton href={notes.releaseUrl} size="sm">
-            Ver a versao no GitHub
+            Ver a versão no GitHub
           </LinkButton>
         ) : undefined
       }
     >
-      {isLoading && <p className="adm-cell-sub">Lendo os PRs desta versao no GitHub…</p>}
+      {isLoading && <p className="adm-cell-sub">Lendo os PRs desta versão no GitHub…</p>}
 
       {error && <Note tone="danger">{error}</Note>}
 
       {notes && notes.bodiesUnavailable && (
         <Note tone="warn">
-          Da para ver <strong>quais</strong> PRs entraram, mas nao o texto deles: o PAT{" "}
-          <strong className="adm-mono">GH_ACTIONS_TOKEN</strong> precisa tambem de{" "}
-          <strong>Pull requests: read</strong>. Enquanto isso, cada PR abre no GitHub pelo botao ao
-          lado do titulo.
+          Dá para ver <strong>quais</strong> PRs entraram, mas não o texto deles: o PAT{" "}
+          <strong className="adm-mono">GH_ACTIONS_TOKEN</strong> precisa também de{" "}
+          <strong>Pull requests: read</strong>. Enquanto isso, cada PR abre no GitHub pelo botão ao
+          lado do título.
         </Note>
       )}
 
       {notes && notes.entries.length === 0 && !isLoading && (
         <Note tone="neutral">
-          Nenhum PR entre esta versao e a anterior. Costuma ser um build refeito da mesma base — o
-          instalador muda, o codigo nao.
+          Nenhum PR entre esta versão e a anterior. Costuma ser um build refeito da mesma base — o
+          instalador muda, o código não.
         </Note>
       )}
 
@@ -623,8 +643,8 @@ export function ReleaseNotesModal({
 
       {notes && notes.omitted > 0 && (
         <p className="adm-cell-sub">
-          E mais {notes.omitted} {notes.omitted === 1 ? "PR" : "PRs"} nesta versao — a lista
-          completa esta na comparacao no GitHub.
+          E mais {notes.omitted} {notes.omitted === 1 ? "PR" : "PRs"} nesta versão — a lista
+          completa está na comparação no GitHub.
         </p>
       )}
     </Modal>
@@ -651,10 +671,10 @@ export function ReleaseNotesModal({
 // ---------------------------------------------------------------------------
 
 const FLEET_ROLE_LABEL: Record<FleetVersionGroup["role"], { text: string; tone: Tone }> = {
-  producao: { text: "Producao", tone: "ok" },
+  producao: { text: "Produção", tone: "ok" },
   teste: { text: "Teste", tone: "info" },
-  outra: { text: "Fora dos aneis", tone: "warn" },
-  desconhecida: { text: "Sem informacao", tone: "neutral" }
+  outra: { text: "Fora dos anéis", tone: "warn" },
+  desconhecida: { text: "Sem informação", tone: "neutral" }
 };
 
 export function FleetVersionBars({
@@ -671,10 +691,10 @@ export function FleetVersionBars({
         return (
           <div className="adm-fleet-row" key={group.version ?? "sem-informacao"}>
             <div className="adm-fleet-head">
-              <span className="adm-cell-primary adm-mono">{group.version ?? "Sem informacao"}</span>
+              <span className="adm-cell-primary adm-mono">{group.version ?? "Sem informação"}</span>
               <Badge tone={role.tone}>{role.text}</Badge>
               <span className="adm-fleet-count">
-                {group.count} de {total} {total === 1 ? "balanca" : "balancas"}
+                {group.count} de {total} {total === 1 ? "balança" : "balanças"}
               </span>
             </div>
             <div className="adm-fleet-bar">
@@ -690,7 +710,7 @@ export function FleetVersionBars({
                   className={`adm-fleet-chip${device.isActive === false ? " adm-fleet-chip-off" : ""}`}
                   title={
                     device.isActive === false
-                      ? "Balanca bloqueada: nao recebe atualizacao."
+                      ? "Balança bloqueada: não recebe atualização."
                       : undefined
                   }
                 >
@@ -722,6 +742,7 @@ interface PendingAction extends PendingPromotion {
 }
 
 export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => void }) {
+  const confirm = useConfirm();
   const [data, setData] = useState<ReleasesResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   /** Verificacao de fundo em curso: informa, mas nunca esvazia a tela. */
@@ -794,7 +815,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
         // segundos. So o pedido explicito (abrir a aba, clicar em Atualizar)
         // vira mensagem de erro.
         if (!options.silent) {
-          handleError(error, "Nao foi possivel carregar as versoes.");
+          handleError(error, "Não foi possível carregar as versões.");
         }
       } finally {
         setIsLoading(false);
@@ -826,7 +847,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
         // Erro aqui fica DENTRO do modal: nao ler o texto de uma versao nao e
         // motivo para pintar de vermelho a tela que distribui as versoes.
         setNotesError(
-          error instanceof Error ? error.message : "Nao foi possivel ler o que mudou nesta versao."
+          error instanceof Error ? error.message : "Não foi possível ler o que mudou nesta versão."
         );
       } finally {
         setIsLoadingNotes(false);
@@ -861,7 +882,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
     setPending(null);
     setFeedback({
       tone: "warn",
-      text: `A versao ${pending.version} ainda nao mudou de situacao. O workflow pode ter recusado o pedido — confira o run no GitHub Actions.`
+      text: `A versão ${pending.version} ainda não mudou de situação. O workflow pode ter recusado o pedido — confira o run no GitHub Actions.`
     });
   }, [pending, refreshTick]);
 
@@ -924,10 +945,13 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
   async function notifyDevices(): Promise<void> {
     if (!currentVersion || updateTargets.length === 0) return;
     if (
-      !window.confirm(
-        `Avisar ${updateTargets.length} ${updateTargets.length === 1 ? "balanca" : "balancas"} para atualizar para a versao ${currentVersion}?\n\n` +
-          "Cada uma recebe o aviso na proxima verificacao (ate 30 s) e mostra ao operador o botao de atualizar agora. O painel nao reinicia balanca nenhuma: quem escolhe a hora e quem esta na pedreira."
-      )
+      !(await confirm({
+        ...confirmCopy(
+          `Avisar ${updateTargets.length} ${updateTargets.length === 1 ? "balança" : "balanças"} para atualizar para a versão ${currentVersion}?\n\n` +
+            "Cada uma recebe o aviso na próxima verificação (até 30 s) e mostra ao operador o botão de atualizar agora. O painel não reinicia balança nenhuma: quem escolhe a hora é quem está na pedreira."
+        ),
+        confirmLabel: "Avisar"
+      }))
     ) {
       return;
     }
@@ -940,11 +964,11 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
       });
       setFeedback({
         tone: "ok",
-        text: `Aviso enviado para ${updateTargets.length} ${updateTargets.length === 1 ? "balanca" : "balancas"}. Cada uma mostra o pedido ao operador na proxima verificacao; o aviso some sozinho quando ela chega na versao ${currentVersion}.`
+        text: `Aviso enviado para ${updateTargets.length} ${updateTargets.length === 1 ? "balança" : "balanças"}. Cada uma mostra o pedido ao operador na próxima verificação; o aviso some sozinho quando ela chega na versão ${currentVersion}.`
       });
       await load({ silent: true });
     } catch (error) {
-      handleError(error, "Nao foi possivel avisar as balancas.");
+      handleError(error, "Não foi possível avisar as balanças.");
     } finally {
       setIsNotifying(false);
     }
@@ -960,11 +984,11 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
       });
       setFeedback({
         tone: "info",
-        text: "Avisos cancelados. O pedido sai da tela do operador na proxima verificacao."
+        text: "Avisos cancelados. O pedido sai da tela do operador na próxima verificação."
       });
       await load({ silent: true });
     } catch (error) {
-      handleError(error, "Nao foi possivel cancelar os avisos.");
+      handleError(error, "Não foi possível cancelar os avisos.");
     } finally {
       setIsNotifying(false);
     }
@@ -972,7 +996,19 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
 
   async function promote(release: ReleaseRow, intent: PromotionIntent) {
     const action = PROMOTION_ACTIONS[intent];
-    if (action.confirm && !window.confirm(action.confirm(release.version, currentVersion))) return;
+    if (
+      action.confirm &&
+      !(await confirm({
+        ...confirmCopy(action.confirm(release.version, currentVersion)),
+        confirmLabel: action.label,
+        // "Cancelar" ao lado de "Cancelar teste" deixaria a pessoa sem saber qual desiste.
+        cancelLabel: intent === "cancel-test" ? "Manter o teste" : undefined,
+        // Reprovar e a unica sem volta: nem com `force` a versao sobe de novo.
+        tone: action.variant === "danger" ? "danger" : "default"
+      }))
+    ) {
+      return;
+    }
 
     setDispatching(release.version);
     setFeedback({ tone: "info", text: action.dispatched(release.version) });
@@ -992,7 +1028,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
       void load({ silent: true });
     } catch (error) {
       setFeedback(null);
-      handleError(error, "Nao foi possivel promover a versao.");
+      handleError(error, "Não foi possível promover a versão.");
     } finally {
       setDispatching(null);
     }
@@ -1001,7 +1037,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
   const columns: Array<Column<ReleaseRow>> = [
     {
       key: "version",
-      header: "Versao",
+      header: "Versão",
       render: (release) => {
         const highlight = highlights[release.version];
         return (
@@ -1030,7 +1066,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
     },
     {
       key: "state",
-      header: "Situacao",
+      header: "Situação",
       render: (release) => (
         <>
           <Badge tone={stateLabel(release.state).tone} dot>
@@ -1038,34 +1074,34 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
           </Badge>
           {pending?.version === release.version && (
             <p className="adm-cell-sub">
-              Aplicando no GitHub… a situacao muda aqui sozinha quando o run terminar.
+              Aplicando no GitHub… a situação muda aqui sozinha quando o run terminar.
             </p>
           )}
           {release.isCurrentProduction && (
-            <p className="adm-cell-sub">E a versao que a frota esta recebendo.</p>
+            <p className="adm-cell-sub">É a versão que a frota está recebendo.</p>
           )}
           {highlights[release.version] === "ultima" && release.state === "parado" && (
             <p className="adm-cell-sub">
-              Saiu do GitHub Actions e ainda nao foi distribuida para anel nenhum.
+              Saiu do GitHub Actions e ainda não foi distribuída para anel nenhum.
             </p>
           )}
           {release.state === "producao" && release.isNewerThanProduction && (
             <p className="adm-cell-sub">
-              Publicada, mas a frota esta numa versao anterior — regressao em vigor.
+              Publicada, mas a frota está numa versão anterior — regressão em vigor.
             </p>
           )}
           {release.state === "producao" && release.isOlderThanProduction && (
-            <p className="adm-cell-sub">Estavel anterior: da para voltar a frota para ela.</p>
+            <p className="adm-cell-sub">Estável anterior: dá para voltar a frota para ela.</p>
           )}
           {release.state === "compilando" && (
-            <p className="adm-cell-sub">O build esta rodando; os arquivos ainda estao subindo.</p>
+            <p className="adm-cell-sub">O build está rodando; os arquivos ainda estão subindo.</p>
           )}
           {release.state === "reprovada" && (
-            <p className="adm-cell-sub">Quebrou no teste. Fora do ar e travada para promocao.</p>
+            <p className="adm-cell-sub">Quebrou no teste. Fora do ar e travada para promoção.</p>
           )}
           {release.state === "incompleto" && (
             <p className="adm-cell-sub">
-              Faltam arquivos na release (instalador ou metadado) — nao da para distribuir.
+              Faltam arquivos na release (instalador ou metadado) — não dá para distribuir.
             </p>
           )}
         </>
@@ -1089,7 +1125,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
         if (intents.length === 0) {
           return (
             <span className="adm-cell-sub">
-              {release.isOlderThanProduction ? "Anterior a producao atual." : "—"}
+              {release.isOlderThanProduction ? "Anterior à produção atual." : "—"}
             </span>
           );
         }
@@ -1115,8 +1151,8 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
   return (
     <>
       <PageHead
-        title="Atualizacoes do desktop"
-        description="Cada merge gera uma versao que fica parada ate voce mandar. Nada chega nas balancas sozinho."
+        title="Atualizações do desktop"
+        description="Cada merge gera uma versão que fica parada até você mandar. Nada chega nas balanças sozinho."
       />
 
       {feedback && <Note tone={feedback.tone}>{feedback.text}</Note>}
@@ -1124,12 +1160,12 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
       {data && !data.canPromote && (
         <Note tone="warn">
           Falta o secret <strong className="adm-mono">GH_ACTIONS_TOKEN</strong> no Supabase para
-          promover por aqui. Crie um PAT fine-grained deste repositorio com{" "}
-          <strong>Actions: write</strong> e <strong>Contents: read and write</strong> (a permissao
-          de conteudo e o que faz os builds parados aparecerem nesta lista) e cadastre-o. Enquanto
-          isso, a promocao continua disponivel na{" "}
+          promover por aqui. Crie um PAT fine-grained deste repositório com{" "}
+          <strong>Actions: write</strong> e <strong>Contents: read and write</strong> (a permissão
+          de conteúdo é o que faz os builds parados aparecerem nesta lista) e cadastre-o. Enquanto
+          isso, a promoção continua disponível na{" "}
           <a href={data.actionsUrl} target="_blank" rel="noreferrer">
-            pagina do workflow no GitHub
+            página do workflow no GitHub
           </a>
           .
         </Note>
@@ -1144,32 +1180,32 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
       {data && (
         <StatGrid>
           <Stat
-            label="Versao em producao"
+            label="Versão em produção"
             value={productionRelease?.version ?? "—"}
             tone={productionRelease ? "ok" : "warn"}
             hint={
               productionRelease
                 ? `Publicada em ${formatDateTime(productionRelease.publishedAt)}`
-                : "Nenhuma versao estavel publicada."
+                : "Nenhuma versão estável publicada."
             }
           />
           <Stat
-            label="Versao em teste"
+            label="Versão em teste"
             value={testRelease?.version ?? "—"}
             tone={testRelease ? "accent" : "neutral"}
             hint={
               testRelease
                 ? `Publicada em ${formatDateTime(testRelease.publishedAt)}`
-                : "Nenhuma versao no anel de teste."
+                : "Nenhuma versão no anel de teste."
             }
           />
-          <Stat label="Balancas em producao" value={String(data.channelCounts.latest)} />
+          <Stat label="Balanças em produção" value={String(data.channelCounts.latest)} />
           <Stat
-            label="Balancas em teste"
+            label="Balanças em teste"
             value={String(data.channelCounts.beta)}
             hint={
               data.channelCounts.beta === 0
-                ? "Nenhuma balanca avalia as versoes antes da frota. Marque uma em Balancas."
+                ? "Nenhuma balança avalia as versões antes da frota. Marque uma em Balanças."
                 : undefined
             }
           />
@@ -1177,8 +1213,8 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
       )}
 
       <Panel
-        title="Versoes publicadas"
-        description="No topo: a versao que a frota recebe, a que esta em teste, o ultimo build gerado pelo GitHub e a versao anterior — que e para onde a volta atras leva. O link de cada linha abre o texto dos PRs que entraram naquela versao."
+        title="Versões publicadas"
+        description="No topo: a versão que a frota recebe, a que está em teste, o último build gerado pelo GitHub e a versão anterior — que é para onde a volta atrás leva. O link de cada linha abre o texto dos PRs que entraram naquela versão."
         flush
         actions={
           <>
@@ -1187,7 +1223,7 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
                 ? "Verificando…"
                 : pending
                   ? "Acompanhando o run…"
-                  : `Atualizado as ${formatClock(lastRefreshAt)}`}
+                  : `Atualizado às ${formatClock(lastRefreshAt)}`}
             </span>
             <Button onClick={() => void load()} disabled={isLoading}>
               {isLoading ? "Carregando…" : "Atualizar"}
@@ -1201,16 +1237,16 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
           rowKey={(release) => release.tag}
           empty={
             isLoading
-              ? "Carregando versoes…"
-              : "Nenhuma versao encontrada. Builds parados so aparecem aqui se o GH_ACTIONS_TOKEN tiver Contents: read and write."
+              ? "Carregando versões…"
+              : "Nenhuma versão encontrada. Builds parados só aparecem aqui se o GH_ACTIONS_TOKEN tiver Contents: read and write."
           }
         />
       </Panel>
 
       {devices !== undefined && (
         <Panel
-          title="Versoes instaladas na frota"
-          description="O que cada computador esta RODANDO — que nao e o que foi liberado: a balanca verifica a cada 30 min e so troca de versao quando o operador fecha o app."
+          title="Versões instaladas na frota"
+          description="O que cada computador está RODANDO — que não é o que foi liberado: a balança verifica a cada 30 min e só troca de versão quando o operador fecha o app."
           actions={
             <>
               {pendingNotices.length > 0 && (
@@ -1224,9 +1260,9 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
                 disabled={isNotifying || !currentVersion || updateTargets.length === 0}
                 title={
                   !currentVersion
-                    ? "Nenhuma versao em producao para pedir."
+                    ? "Nenhuma versão em produção para pedir."
                     : updateTargets.length === 0
-                      ? "Toda a frota ja esta na versao de producao."
+                      ? "Toda a frota já está na versão de produção."
                       : undefined
                 }
               >
@@ -1234,13 +1270,13 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
                   ? "Avisando…"
                   : updateTargets.length === 0
                     ? "Frota atualizada"
-                    : `Avisar ${updateTargets.length} ${updateTargets.length === 1 ? "balanca" : "balancas"} para atualizar`}
+                    : `Avisar ${updateTargets.length} ${updateTargets.length === 1 ? "balança" : "balanças"} para atualizar`}
               </Button>
             </>
           }
         >
           {devices.length === 0 ? (
-            <p className="adm-cell-sub">Nenhuma balanca ativada ainda.</p>
+            <p className="adm-cell-sub">Nenhuma balança ativada ainda.</p>
           ) : (
             <>
               <FleetVersionBars groups={fleet} total={devices.length} />
@@ -1250,15 +1286,15 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
                 agora" e o operador, na balanca, entre um caminhao e outro.
               */}
               <p className="adm-cell-sub">
-                O aviso chega em ate 30 s e abre na tela do operador o pedido para atualizar. O
-                painel nao reinicia balanca nenhuma — instalar reinicia o app, entao a hora e
-                escolhida na pedreira. Cada aviso some sozinho quando aquela balanca reporta a
-                versao pedida.
+                O aviso chega em até 30 s e abre na tela do operador o pedido para atualizar. O
+                painel não reinicia balança nenhuma — instalar reinicia o app, então a hora é
+                escolhida na pedreira. Cada aviso some sozinho quando aquela balança reporta a
+                versão pedida.
               </p>
               {fleet.some((group) => group.version === null) && (
                 <p className="adm-cell-sub">
-                  "Sem informacao" e a balanca que ainda nao reportou a versao — instalacao anterior
-                  a este campo ou computador que nao se conectou desde entao. Nao quer dizer
+                  "Sem informação" é a balança que ainda não reportou a versão — instalação anterior
+                  a este campo ou computador que não se conectou desde então. Não quer dizer
                   desatualizada.
                 </p>
               )}

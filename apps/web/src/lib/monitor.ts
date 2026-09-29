@@ -173,9 +173,9 @@ export type MonitorPeriod = "today" | "yesterday" | "7d" | "30d" | "month";
 export const MONITOR_PERIODS: ReadonlyArray<{ id: MonitorPeriod; label: string }> = [
   { id: "today", label: "Hoje" },
   { id: "yesterday", label: "Ontem" },
-  { id: "7d", label: "Ultimos 7 dias" },
-  { id: "30d", label: "Ultimos 30 dias" },
-  { id: "month", label: "Este mes" }
+  { id: "7d", label: "Últimos 7 dias" },
+  { id: "30d", label: "Últimos 30 dias" },
+  { id: "month", label: "Este mês" }
 ];
 
 export interface PeriodWindow {
@@ -243,20 +243,20 @@ export function resolvePeriodWindow(
       days = daySpan(addDays(today, -6), 7);
       prevDays = daySpan(addDays(today, -13), 7);
       labels = {
-        label: "Ultimos 7 dias",
-        seriesLabel: "Ultimos 7 dias",
+        label: "Últimos 7 dias",
+        seriesLabel: "Últimos 7 dias",
         compareLabel: "7 dias anteriores",
-        deltaLabel: "vs 7 dias anteriores ate a mesma hora"
+        deltaLabel: "vs 7 dias anteriores até a mesma hora"
       };
       break;
     case "30d":
       days = daySpan(addDays(today, -29), 30);
       prevDays = daySpan(addDays(today, -59), 30);
       labels = {
-        label: "Ultimos 30 dias",
-        seriesLabel: "Ultimos 30 dias",
+        label: "Últimos 30 dias",
+        seriesLabel: "Últimos 30 dias",
         compareLabel: "30 dias anteriores",
-        deltaLabel: "vs 30 dias anteriores ate a mesma hora"
+        deltaLabel: "vs 30 dias anteriores até a mesma hora"
       };
       break;
     case "month": {
@@ -264,10 +264,10 @@ export function resolvePeriodWindow(
       days = monthDays(first);
       prevDays = monthDays(`${addDays(first, -1).slice(0, 7)}-01`);
       labels = {
-        label: "Este mes",
-        seriesLabel: "Este mes",
-        compareLabel: "Mes anterior",
-        deltaLabel: "vs mes anterior ate o mesmo ponto"
+        label: "Este mês",
+        seriesLabel: "Este mês",
+        compareLabel: "Mês anterior",
+        deltaLabel: "vs mês anterior até o mesmo ponto"
       };
       break;
     }
@@ -279,7 +279,7 @@ export function resolvePeriodWindow(
         label: "Hoje",
         seriesLabel: "Hoje",
         compareLabel: "Ontem",
-        deltaLabel: "vs ontem ate a mesma hora"
+        deltaLabel: "vs ontem até a mesma hora"
       };
       resolved = "today";
   }
@@ -344,8 +344,8 @@ export type MonitorWidget = (typeof MONITOR_WIDGETS)[number];
 
 export const MONITOR_WIDGET_LABELS: Record<MonitorWidget, string> = {
   kpis: "Indicadores",
-  feed: "Ultimas vendas",
-  yard: "No patio agora",
+  feed: "Últimas vendas",
+  yard: "No pátio agora",
   hourly: "Vendas por hora",
   products: "Por produto",
   customers: "Top clientes",
@@ -962,7 +962,7 @@ export function salesSeries(
       buckets.push({
         key: `h${hour}`,
         label: `${pad2(hour)}h`,
-        title: `${pad2(hour)}:00 as ${pad2(hour)}:59`,
+        title: `${pad2(hour)}:00 às ${pad2(hour)}:59`,
         previousTitle: null,
         current: future ? null : (current.get(hour) ?? emptyAggregate()),
         previous: previous.get(hour) ?? emptyAggregate(),
@@ -1237,10 +1237,10 @@ export function liveState(input: {
 export function formatAgo(elapsedMs: number): string {
   const seconds = Math.max(0, Math.round(elapsedMs / 1000));
   if (seconds < 5) return "agora";
-  if (seconds < 60) return `ha ${seconds} s`;
+  if (seconds < 60) return `há ${seconds} s`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `ha ${minutes} min`;
-  return `ha ${Math.floor(minutes / 60)} h`;
+  if (minutes < 60) return `há ${minutes} min`;
+  return `há ${Math.floor(minutes / 60)} h`;
 }
 
 // ---------------------------------------------------------------------------

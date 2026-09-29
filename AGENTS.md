@@ -584,6 +584,41 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   Do lado da balanca, tudo o que muda pesagem ou cadastro publica na hora: alem das edicoes,
   o resultado da fila OMIE e da conferencia de faturamento, a NF manual, o cupom impresso, o
   faturamento futuro, os adiantamentos e o pull do OMIE (`cadastroPulledFromOmie`).
+- **Texto de tela com acento** (etapa 1 do plano de UI do site): todo texto que a pessoa VE no
+  site esta em portugues correto — "Operações", "Relatórios", "Balança", "Não há" —, e plural de
+  verdade no lugar de "pedido(s)" (`plural` em `lib/dashboard.ts`). Continua SEM acento o que e
+  codigo: comentario, identificador, rota e valor de URL (`/relatorios`, `?aba=concluidas`),
+  chave de localStorage, valor comparado na logica ou gravado na nuvem. Tambem ficam como estao
+  as copias guardadas por teste (`lib/desktop/*`, `lib/portal/*`, `lib/documentation-*`) e os
+  textos dos ARQUIVOS exportados que o desktop gera igual (PDF/planilha do Insights, relatorios):
+  o desktop ainda escreve sem acento e os dois lados tem de bater. As abas (`IconTabs`,
+  `PillTabs` em `components/desk.tsx`) mostram o NOME ao lado do icone; a aba do navegador diz o
+  nome da tela ("Operações · KyberRock", `lib/page-title.ts`); a menor letra do site e 12px e o
+  texto normal 14px; link e botao-texto usam `--kr-link` (o ambar do acento nao passa no
+  contraste). O logo das telas e `public/logo-128.webp` (5 kB); o `logo.png` de 300 kB ficou so
+  para a previa do link (og:image), o manifest e o icone do iPhone.
+- **Kit de pecas do site** (etapa 2 do plano de UI): um jeito so de fazer cada coisa, em
+  `components/ui.tsx` — `PageHeader` (topo de toda tela: kicker, titulo, `help`, `meta`,
+  `actions`), `Tabs` (`underline` para secoes, `pill` para filtros, com `count`; `IconTabs` e
+  `PillTabs` de `desk.tsx` sao so atalhos para ela), `Pill` (a `Badge` desenha a mesma),
+  `EmptyState`, `ErrorState` (com "Tentar de novo"), `Skeleton`/`SkeletonRows`/`PageSkeleton`,
+  `DataTable` com `loading`, `Modal` (X, Esc so fecha a de cima, foco preso e devolvido),
+  `useConfirm()` (no lugar de `window.confirm`, que o site nao usa mais), `useToast()` (tipos
+  `ok`/`info`/`warn`/`error`; erro NAO some sozinho; `action` para "Desfazer"), `Field` (liga o
+  rotulo ao campo, poe o asterisco sozinho no `required` e mostra `error` embaixo) e `HelpTip`
+  (o "?" que abre no toque — `title=` nao aparece no celular). A vitrine `/kit` (so em `npm run
+dev`, `pages/KitShowcase.tsx`) mostra todas nos dois temas. Cor sempre por token `--kr-*`
+  (inclusive `--kr-chart-*`, `--kr-overlay`, `--kr-radius-*`, `--kr-font-*`); o painel `/admin`
+  aponta os `--adm-*` para eles e segue o tema claro/escuro. `--kr-muted` do site e um tom mais
+  escuro que o do desktop (#716a65): o original ficava abaixo do contraste minimo.
+- **Rapidez** (etapa 3): `useAsync(loader, deps, { key })` e `usePaged(..., { key })` guardam a
+  leitura na memoria da aba (`lib/query-cache.ts`, apagada ao sair e ao entrar) — voltar a uma
+  tela mostra na hora o que ja tinha e rele por tras. A chave TEM de levar tudo que muda o
+  resultado (empresa, unidade, periodo, filtro). O menu pre-carrega o arquivo da tela no
+  mouse/foco/toque (`lib/screens.ts`). A casca (`Layout`) e o cliente da nuvem nao entram mais
+  no arquivo inicial: a pagina de apresentacao aparece sem esperar por eles, e sem sessao
+  guardada (`hasStoredSession` em `lib/auth.tsx`) o site nem espera a nuvem para decidir "nao
+  logado".
 - **Listas de 50 em 50.** Desenhar os 2 mil clientes de uma vez era o que deixava o site
   pesado. `DataTable` mostra 50 linhas e o "Ver mais" (`LoadMore`, `useShowMore` em
   `components/ui.tsx`); a lista de clientes vai alem e pagina NO BANCO (`q.customersPage` +

@@ -21,7 +21,7 @@ const ADMIN_SESSION_KEY = "kyberrock_admin_session";
  * com listas vazias e nenhuma indicacao de que a sessao caiu.
  */
 export class AdminSessionExpiredError extends Error {
-  constructor(message = "Sessao administrativa expirada. Faca login novamente.") {
+  constructor(message = "Sessão administrativa expirada. Faça login novamente.") {
     super(message);
     this.name = "AdminSessionExpiredError";
   }
@@ -76,7 +76,7 @@ export async function callAdminFunction<TResponse>(
 ): Promise<TResponse> {
   if (!isSupabaseConfigured()) {
     throw new Error(
-      "Site sem configuracao do Supabase: defina VITE_SUPABASE_URL e VITE_SUPABASE_PUBLISHABLE_KEY no build."
+      "Site sem configuração do Supabase: defina VITE_SUPABASE_URL e VITE_SUPABASE_PUBLISHABLE_KEY no build."
     );
   }
 

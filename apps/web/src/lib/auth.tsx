@@ -7,7 +7,9 @@ import {
   type Capabilities,
   type Role
 } from "./permissions";
-import { supabase, type Tables } from "./supabase";
+import { clearQueryCache } from "./query-cache";
+import { SUPABASE_URL } from "./supabase-env";
+import type { Tables } from "./supabase";
 
 export type { Role } from "./permissions";
 
@@ -50,7 +52,31 @@ function toUser(profile: Tables<"user_profiles">): SessionUser | null {
   };
 }
 
+/**
+ * O cliente da nuvem (~50 kB comprimido) chega em arquivo proprio, pedido so quando precisa:
+ * quem abre a pagina de apresentacao sem estar logado ve a pagina sem esperar por ele.
+ */
+function cloud() {
+  return import("./supabase").then((module) => module.supabase);
+}
+
+/**
+ * Tem sessao guardada neste navegador? E a chave onde o `supabase-js` grava o login
+ * (`sb-<projeto>-auth-token`). Sem ela nao ha o que conferir e o site responde "nao logado" na
+ * hora. Na duvida (navegador sem armazenamento, endereco estranho) a resposta e "talvez", e o
+ * site confere pelo caminho completo.
+ */
+export function hasStoredSession(url: string = SUPABASE_URL): boolean {
+  try {
+    const project = new URL(url).hostname.split(".")[0];
+    return window.localStorage.getItem(`sb-${project}-auth-token`) !== null;
+  } catch {
+    return true;
+  }
+}
+
 async function loadProfile(userId: string): Promise<SessionUser | null> {
+  const supabase = await cloud();
   const { data, error } = await supabase
     .from("user_profiles")
     .select("*")
@@ -62,30 +88,59 @@ async function loadProfile(userId: string): Promise<SessionUser | null> {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Sem sessao guardada nao ha o que esperar: a pagina de apresentacao aparece na hora.
+  const [loading, setLoading] = useState(hasStoredSession);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    void supabase.auth.getSession().then(async ({ data }) => {
-      const id = data.session?.user.id;
-      const profile = id ? await loadProfile(id) : null;
-      if (!cancelled) {
-        setUser(profile);
-        setLoading(false);
-      }
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === "SIGNED_OUT" || !session) setUser(null);
-    });
+    let unsubscribe: (() => void) | null = null;
+    const storedSession = hasStoredSession();
+    const start = () =>
+      void cloud()
+        .then(async (supabase) => {
+          if (cancelled) return;
+          const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+            if (event === "SIGNED_OUT" || !session) setUser(null);
+          });
+          unsubscribe = () => sub.subscription.unsubscribe();
+          if (!storedSession) return;
+          const { data } = await supabase.auth.getSession();
+          const id = data.session?.user.id;
+          const profile = id ? await loadProfile(id) : null;
+          if (!cancelled) {
+            setUser(profile);
+            setLoading(false);
+          }
+        })
+        .catch(() => {
+          // Arquivo do cliente nao chegou (rede caiu no meio): a tela de entrar aparece, em vez do
+          // logo girando para sempre. Entrar de novo tenta baixar outra vez.
+          if (!cancelled) setLoading(false);
+        });
+    // Sem sessao, o cliente da nuvem so vem depois que a pagina ja apareceu (fica pronto para o
+    // "Entrar" sem disputar a rede com a primeira tela).
+    let cancelIdle: (() => void) | null = null;
+    if (storedSession) start();
+    else if (typeof window.requestIdleCallback === "function") {
+      const handle = window.requestIdleCallback(start, { timeout: 3000 });
+      cancelIdle = () => window.cancelIdleCallback(handle);
+    } else {
+      const handle = window.setTimeout(start, 1200);
+      cancelIdle = () => window.clearTimeout(handle);
+    }
     return () => {
       cancelled = true;
-      sub.subscription.unsubscribe();
+      cancelIdle?.();
+      unsubscribe?.();
     };
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     setError(null);
+    // Leitura guardada de outro login nao pode aparecer para este.
+    clearQueryCache();
+    const supabase = await cloud();
     const { data, error: signInError } = await supabase.auth.signInWithPassword({
       email,
       password
@@ -98,7 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const profile = await loadProfile(data.user.id);
     if (!profile) {
       await supabase.auth.signOut();
-      const message = "Este login nao tem perfil de acesso ativo. Fale com o suporte da Kybernan.";
+      const message = "Este login não tem perfil de acesso ativo. Fale com o suporte da Kybernan.";
       setError(message);
       throw new Error(message);
     }
@@ -106,7 +161,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    const supabase = await cloud();
     await supabase.auth.signOut();
+    clearQueryCache();
     setUser(null);
   }, []);
 
@@ -126,6 +183,6 @@ export function useAuth(): AuthState {
 /** O usuario logado, garantido (as telas so montam depois do guard de rota). */
 export function useUser(): SessionUser {
   const { user } = useAuth();
-  if (!user) throw new Error("Sem usuario logado");
+  if (!user) throw new Error("Sem usuário logado");
   return user;
 }

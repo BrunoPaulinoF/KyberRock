@@ -81,7 +81,7 @@ export const INVOICE_CLOSING_PERIOD_KINDS: readonly InvoiceClosingPeriodKind[] =
 
 export const INVOICE_CLOSING_PERIOD_KIND_LABEL: Record<InvoiceClosingPeriodKind, string> = {
   biweekly: "Quinzena",
-  monthly: "Mes",
+  monthly: "Mês",
   weekly: "Semana",
   custom: "Personalizado"
 };
@@ -100,7 +100,10 @@ export interface InvoiceClosingPeriodSelection {
 export interface InvoiceClosingPeriodRange {
   start: string;
   end: string;
+  /** O nome do periodo no documento, igual ao do desktop (vai no PDF e na planilha). */
   label: string;
+  /** O mesmo nome, com a grafia da tela. */
+  screenLabel: string;
   /** O ciclo que o periodo representa; null no personalizado. */
   cycle: InvoiceClosingCycle | null;
 }
@@ -122,6 +125,9 @@ const MONTH_NAMES = [
   "novembro",
   "dezembro"
 ];
+
+/** Os meses como a tela escreve; `MONTH_NAMES` e o do documento, igual ao do desktop. */
+const MONTH_SCREEN_NAMES = MONTH_NAMES.map((name) => (name === "marco" ? "março" : name));
 
 /** `YYYY-MM-DD` de uma data LOCAL (nunca via ISO/UTC). */
 export function toIsoDay(date: Date): string {
@@ -175,6 +181,7 @@ export function resolveInvoiceClosingPeriod(
       start: from,
       end: to,
       label: `Periodo de ${formatDayLabel(from)} a ${formatDayLabel(to)}`,
+      screenLabel: `Período de ${formatDayLabel(from)} a ${formatDayLabel(to)}`,
       cycle: null
     };
   }
@@ -186,10 +193,12 @@ export function resolveInvoiceClosingPeriod(
     const start = startOfWeek(reference);
     const end = new Date(start);
     end.setDate(end.getDate() + 6);
+    const label = `Semana de ${formatDayLabel(toIsoDay(start))} a ${formatDayLabel(toIsoDay(end))}`;
     return {
       start: toIsoDay(start),
       end: toIsoDay(end),
-      label: `Semana de ${formatDayLabel(toIsoDay(start))} a ${formatDayLabel(toIsoDay(end))}`,
+      label,
+      screenLabel: label,
       cycle: "weekly"
     };
   }
@@ -200,12 +209,14 @@ export function resolveInvoiceClosingPeriod(
   const lastDay = String(daysInMonth(year, monthIndex0)).padStart(2, "0");
   const prefix = `${year}-${String(monthIndex0 + 1).padStart(2, "0")}`;
   const monthName = `${MONTH_NAMES[monthIndex0]} de ${year}`;
+  const screenMonthName = `${MONTH_SCREEN_NAMES[monthIndex0]} de ${year}`;
 
   if (selection.kind === "monthly") {
     return {
       start: `${prefix}-01`,
       end: `${prefix}-${lastDay}`,
       label: `Mes de ${monthName}`,
+      screenLabel: `Mês de ${screenMonthName}`,
       cycle: "monthly"
     };
   }
@@ -215,6 +226,7 @@ export function resolveInvoiceClosingPeriod(
     start: first ? `${prefix}-01` : `${prefix}-16`,
     end: first ? `${prefix}-15` : `${prefix}-${lastDay}`,
     label: `${first ? "1a" : "2a"} quinzena de ${monthName}`,
+    screenLabel: `${first ? "1ª" : "2ª"} quinzena de ${screenMonthName}`,
     cycle: "biweekly"
   };
 }
@@ -375,6 +387,12 @@ export const WEIGHING_BILLING_SITUATION_LABEL: Record<WeighingBillingSituation, 
   failed: "Recusada pelo OMIE"
 };
 
+/** A etiqueta como a tela mostra; a de cima e a do PDF e da planilha, igual a do desktop. */
+const SITUATION_SCREEN_LABEL: Record<WeighingBillingSituation, string> = {
+  ...WEIGHING_BILLING_SITUATION_LABEL,
+  pending: "Não enviada ao OMIE"
+};
+
 export const SITUATION_TONE: Record<
   WeighingBillingSituation,
   "success" | "warning" | "danger" | "info"
@@ -413,7 +431,7 @@ export function resolveSituationDetail(
   if (message) return message;
   if (situation === "billed" || situation === "sent") {
     if (row.omie_sales_order_id) return `Pedido OMIE ${row.omie_sales_order_id}`;
-    if (row.omie_service_order_id) return `Ordem de servico OMIE ${row.omie_service_order_id}`;
+    if (row.omie_service_order_id) return `Ordem de serviço OMIE ${row.omie_service_order_id}`;
   }
   return null;
 }
@@ -430,14 +448,14 @@ export function invoiceNumberLabel(
       state: "not_applicable",
       text: "—",
       title:
-        "Venda interna: vira ordem de servico no OMIE e nao emite NF-e. Se a pedreira emitir nota de servico a partir da OS, o numero aparece aqui."
+        "Venda interna: vira ordem de serviço no OMIE e não emite NF-e. Se a pedreira emitir nota de serviço a partir da OS, o número aparece aqui."
     };
   }
   return {
     state: "pending",
     text: "Sem nota",
     title:
-      "Venda com nota ainda sem numero: ou a NF-e nao foi emitida no OMIE, ou a conferencia ainda nao chegou nesta carga."
+      "Venda com nota ainda sem número: ou a NF-e não foi emitida no OMIE, ou a conferência ainda não chegou nesta carga."
   };
 }
 
@@ -771,13 +789,13 @@ export function lineSituation(line: InvoiceClosingLine): {
   if (line.situation !== "billed" && request) {
     if (request.status === "pending") {
       return {
-        label: "Aguardando a balanca",
+        label: "Aguardando a balança",
         tone: "info",
-        title: "Pedido de faturamento feito pelo site: a balanca da unidade fatura no OMIE."
+        title: "Pedido de faturamento feito pelo site: a balança da unidade fatura no OMIE."
       };
     }
     if (request.status === "processing") {
-      return { label: "Faturando na balanca", tone: "info", title: request.message };
+      return { label: "Faturando na balança", tone: "info", title: request.message };
     }
     if (request.status === "failed" && !line.invoiceNumber) {
       return {
@@ -788,7 +806,7 @@ export function lineSituation(line: InvoiceClosingLine): {
     }
   }
   return {
-    label: line.situationLabel,
+    label: SITUATION_SCREEN_LABEL[line.situation],
     tone: SITUATION_TONE[line.situation],
     title: line.situationDetail
   };

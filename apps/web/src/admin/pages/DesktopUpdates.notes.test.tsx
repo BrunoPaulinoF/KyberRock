@@ -78,7 +78,7 @@ describe("ReleaseNotesModal", () => {
     });
 
     expect(html).toContain("Pull requests: read");
-    expect(html).not.toContain("Mesclado sem texto de descricao");
+    expect(html).not.toContain("Mesclado sem texto de descrição");
     // O link para abrir o PR no GitHub continua ali: e a saida enquanto o PAT
     // nao ganha a permissao.
     expect(html).toContain("https://github.com/BrunoPaulinoF/KyberRock/pull/243");
@@ -87,17 +87,17 @@ describe("ReleaseNotesModal", () => {
   it("PR mesclado sem descricao diz isso, sem deixar um vazio sem explicacao", () => {
     const html = render({ notes: notes({ entries: [entry({ body: "" })] }) });
 
-    expect(html).toContain("Mesclado sem texto de descricao");
+    expect(html).toContain("Mesclado sem texto de descrição");
   });
 
   it("versao sem PR nenhum explica o caso em vez de abrir um modal em branco", () => {
     const html = render({ notes: notes({ entries: [] }) });
 
-    expect(html).toContain("Nenhum PR entre esta versao e a anterior");
+    expect(html).toContain("Nenhum PR entre esta versão e a anterior");
   });
 
   it("erro e carregamento aparecem dentro do modal", () => {
-    expect(render({ notes: null, isLoading: true })).toContain("Lendo os PRs desta versao");
+    expect(render({ notes: null, isLoading: true })).toContain("Lendo os PRs desta versão");
     expect(render({ notes: null, error: "Falha ao consultar o GitHub (502)." })).toContain(
       "Falha ao consultar o GitHub (502)."
     );

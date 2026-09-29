@@ -11,51 +11,101 @@
  * (ativo, pendente, vencido, bloqueado). Quem usa esta tela passa o dia nela e
  * precisa varrer muita linha de uma vez.
  *
- * Escopo: tudo abaixo de `.adm`. O `styles.css` do site continua mandando nas
- * telas da pedreira, que sao de outro publico e outra densidade. Este arquivo so
- * chega ao navegador junto com o painel (`/admin`), que e um pedaco separado.
+ * As CORES, porem, sao as do site: cada `--adm-*` aponta para um `--kr-*` do
+ * `styles.css`, que troca sozinho entre claro e escuro pelo `data-theme` do
+ * `<html>`. O console era "outro produto" (azul, cinza-azulado, claro sempre) e
+ * passou a ser lido como o resto do KyberRock Web, no tema que a pessoa escolheu.
+ * Cor nova aqui sai de um token e tem de funcionar no tema escuro; a unica cor
+ * fixa e a da barra do topo (ver `--adm-chrome-*`).
+ *
+ * Escopo: tudo abaixo de `.adm`. Este arquivo so chega ao navegador junto com o
+ * painel (`/admin`), que e um pedaco separado.
  */
 
 .adm {
   /* Tinta */
-  --adm-ink: #0f172a;
-  --adm-ink-2: #334155;
-  --adm-muted: #64748b;
-  --adm-faint: #94a3b8;
+  --adm-ink: var(--kr-text-strong);
+  --adm-ink-2: var(--kr-text);
+  --adm-muted: var(--kr-muted);
+  /* Rotulo de apoio (grupo do menu, dica do indicador). Era um cinza mais claro que o
+     `muted`; no escuro ele cairia abaixo do contraste de leitura, entao e o mesmo tom. */
+  --adm-faint: var(--kr-muted);
 
   /* Superficies */
-  --adm-canvas: #f1f5f9;
-  --adm-surface: #ffffff;
-  --adm-surface-2: #f8fafc;
-  --adm-surface-3: #eef2f7;
+  --adm-canvas: var(--kr-bg);
+  --adm-surface: var(--kr-surface);
+  --adm-surface-2: var(--kr-surface-soft);
+  --adm-surface-3: var(--kr-input-disabled-bg);
+  /* O que flutua sobre a superficie (menu "⋯", segmento marcado): um degrau acima no escuro. */
+  --adm-surface-raised: var(--kr-surface-elevated);
+  --adm-field-bg: var(--kr-input-bg);
 
   /* Linhas */
-  --adm-line: #e2e8f0;
-  --adm-line-2: #cbd5e1;
+  --adm-line: var(--kr-border);
+  --adm-line-2: var(--kr-input-border);
 
-  /* Acento unico. Cor extra so para estado. */
-  --adm-accent: #1d4ed8;
-  --adm-accent-hover: #1e40af;
-  --adm-accent-soft: #eff6ff;
+  /*
+   * Acento: o ambar do site, em dois papeis que nao trocam entre si.
+   * - Texto/realce (link, item ativo do menu, borda de destaque): `--adm-accent`, o ambar
+   *   escurecido do site (`--kr-link`) — o ambar puro em texto sobre branco nao passa no
+   *   contraste de leitura.
+   * - Fundo (botao principal, filtro marcado): `--adm-accent-fill` com `--adm-on-accent` por
+   *   cima, o mesmo par do botao principal do site (pedra no claro, ambar com texto escuro no
+   *   escuro).
+   */
+  --adm-accent: var(--kr-link);
+  --adm-accent-hover: var(--kr-text-strong);
+  --adm-accent-soft: var(--kr-accent-soft);
+  --adm-accent-line: var(--kr-accent-border);
+  --adm-accent-fill: var(--kr-primary-strong);
+  --adm-accent-fill-hover: var(--kr-primary);
+  --adm-on-accent: var(--kr-primary-text);
+  --adm-focus: var(--kr-focus-ring);
+  --adm-overlay: var(--kr-overlay);
 
   /* Estados */
-  --adm-ok-bg: #dcfce7;
-  --adm-ok-fg: #14532d;
-  --adm-warn-bg: #fef3c7;
-  --adm-warn-fg: #854d0e;
-  --adm-danger-bg: #fee2e2;
-  --adm-danger-fg: #991b1b;
-  --adm-info-bg: #dbeafe;
-  --adm-info-fg: #1e40af;
-  --adm-neutral-bg: #e2e8f0;
-  --adm-neutral-fg: #475569;
+  --adm-ok-bg: var(--kr-success-soft);
+  --adm-ok-fg: var(--kr-success);
+  --adm-ok-line: var(--kr-success-border);
+  --adm-warn-bg: var(--kr-warning-soft);
+  --adm-warn-fg: var(--kr-warning);
+  --adm-warn-line: var(--kr-warning-border);
+  --adm-danger-bg: var(--kr-danger-soft);
+  --adm-danger-fg: var(--kr-danger);
+  --adm-danger-line: var(--kr-danger-border);
+  /* Bolha de alerta (contagem que pede alguem): vermelho cheio com texto claro. */
+  --adm-danger-fill: var(--kr-danger-strong);
+  --adm-on-danger: var(--kr-on-danger);
+  --adm-info-bg: var(--kr-info-bg);
+  --adm-info-fg: var(--kr-info-text);
+  --adm-info-line: var(--kr-info-border);
+  --adm-neutral-bg: var(--kr-surface-soft);
+  --adm-neutral-fg: var(--kr-muted);
+  --adm-neutral-line: var(--kr-border);
+
+  /*
+   * Barra do topo e fundo do login: escuros nos DOIS temas, de proposito — como o topo da
+   * pagina de apresentacao (pedra escura, texto claro). Por isso sao as unicas cores fixas
+   * deste arquivo: acompanhar o tema faria a barra ficar clara no claro e sumir no escuro.
+   */
+  --adm-chrome-bg: #1c1917;
+  --adm-chrome-text: #fafaf9;
+  --adm-chrome-muted: #a8a29e;
+  --adm-chrome-soft: #d6d3d1;
+  --adm-chrome-line: #292524;
+  --adm-chrome-line-2: #44403c;
+  --adm-chrome-hover: rgba(250, 250, 249, 0.08);
+  --adm-chrome-glow: rgba(245, 158, 11, 0.22);
+  --adm-chrome-glow-2: rgba(245, 158, 11, 0.1);
+  /* A arte do logo tem fundo branco: a moldura acompanha a arte, nao o tema. */
+  --adm-logo-plate: #ffffff;
 
   /* Forma */
-  --adm-radius: 10px;
-  --adm-radius-sm: 6px;
-  --adm-radius-lg: 14px;
-  --adm-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
-  --adm-shadow-lg: 0 20px 45px rgba(15, 23, 42, 0.18);
+  --adm-radius: var(--kr-radius-md);
+  --adm-radius-sm: var(--kr-radius-sm);
+  --adm-radius-lg: var(--kr-radius-lg);
+  --adm-shadow: var(--kr-shadow);
+  --adm-shadow-lg: var(--kr-shadow-pop);
 
   /* Ritmo */
   --adm-gap: 16px;
@@ -67,18 +117,13 @@
   color: var(--adm-ink);
   font-size: 14px;
   line-height: 1.5;
-  /*
-   * O console e claro sempre. O site acompanha o tema escuro do sistema no `<html>`
-   * (`color-scheme: dark`), e sem isto os campos, as caixas de selecao e as barras de
-   * rolagem do painel nasceriam escuros no meio das superficies brancas.
-   */
-  color-scheme: light;
 }
 
 /*
- * O `styles.css` do site pinta todo h1-h3 com a cor do tema da pedreira (quase branca no
- * escuro). Aqui o titulo herda a tinta do console. Especificidade de uma classe e vindo
- * antes do resto: qualquer regra de titulo deste arquivo continua valendo.
+ * O `styles.css` do site pinta todo h1-h3 com `--kr-text-strong`, que e a mesma tinta do
+ * console. A regra fica para o titulo herdar a cor de onde ele esta (aviso colorido, barra
+ * do topo) em vez de voltar para a tinta forte. Especificidade de uma classe e vindo antes
+ * do resto: qualquer regra de titulo deste arquivo continua valendo.
  */
 .adm :where(h1, h2, h3, h4) {
   color: inherit;
@@ -102,9 +147,11 @@
   justify-content: space-between;
   gap: var(--adm-gap);
   padding: 10px 20px;
-  background: var(--adm-ink);
-  color: #fff;
-  border-bottom: 1px solid #1e293b;
+  background: var(--adm-chrome-bg);
+  color: var(--adm-chrome-text);
+  border-bottom: 1px solid var(--adm-chrome-line);
+  /* Campos e barras nativos dentro da barra nascem escuros, como ela. */
+  color-scheme: dark;
 }
 
 .adm-brand {
@@ -119,7 +166,7 @@
   height: 30px;
   object-fit: contain;
   border-radius: var(--adm-radius-sm);
-  background: #fff;
+  background: var(--adm-logo-plate);
   padding: 3px;
 }
 
@@ -133,8 +180,8 @@
 
 .adm-brand-sub {
   margin: 0;
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: 12px;
+  color: var(--adm-chrome-muted);
   white-space: nowrap;
 }
 
@@ -144,15 +191,27 @@
   gap: var(--adm-gap-sm);
 }
 
+/* Botao na barra do topo ("Sair"): contorno sobre a pedra escura, igual nos dois temas. */
+.adm-topbar .adm-btn {
+  border-color: var(--adm-chrome-line-2);
+  background: transparent;
+  color: var(--adm-chrome-text);
+}
+
+.adm-topbar .adm-btn:hover:not(:disabled) {
+  border-color: var(--adm-chrome-muted);
+  background: var(--adm-chrome-hover);
+}
+
 /* Etiqueta do ambiente/projeto. Existe para ninguem confundir producao com
    sandbox numa tela que emite boleto de verdade. */
 .adm-env {
   padding: 3px 10px;
-  border: 1px solid #334155;
+  border: 1px solid var(--adm-chrome-line-2);
   border-radius: 999px;
   font-family: var(--adm-mono);
-  font-size: 11px;
-  color: #cbd5e1;
+  font-size: 12px;
+  color: var(--adm-chrome-soft);
   white-space: nowrap;
 }
 
@@ -175,7 +234,7 @@
 .adm-nav-group {
   margin: 0 0 6px;
   padding: 8px 10px 4px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -235,20 +294,23 @@
   border-radius: 999px;
   background: var(--adm-neutral-bg);
   color: var(--adm-neutral-fg);
+  box-shadow: inset 0 0 0 1px var(--adm-neutral-line);
   font-family: var(--adm-mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
 .adm-nav-item[aria-current="page"] .adm-nav-count {
-  background: #dbeafe;
+  background: var(--adm-surface);
   color: var(--adm-accent);
+  box-shadow: inset 0 0 0 1px var(--adm-accent-line);
 }
 
 .adm-nav-count.adm-nav-alert,
 .adm-nav-item[aria-current="page"] .adm-nav-count.adm-nav-alert {
-  background: #dc2626;
-  color: #fff;
+  background: var(--adm-danger-fill);
+  color: var(--adm-on-danger);
+  box-shadow: none;
 }
 
 .adm-main {
@@ -387,7 +449,7 @@
   padding: 9px 12px;
   border-bottom: 1px solid var(--adm-line-2);
   background: var(--adm-surface-3);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -423,9 +485,10 @@
   white-space: nowrap;
 }
 
-/* Linha que exige atencao (fatura vencida, pedreira bloqueada). */
+/* Linha que exige atencao (fatura vencida, pedreira bloqueada): um toque do vermelho de
+   estado sobre a superficie, para nao gritar mais que o selo da linha. */
 .adm-row-alert td {
-  background: #fffbfb;
+  background: color-mix(in srgb, var(--adm-danger-bg) 55%, var(--adm-surface));
 }
 
 .adm-row-muted td {
@@ -513,36 +576,36 @@
 }
 
 .adm-btn-primary {
-  border-color: var(--adm-accent);
-  background: var(--adm-accent);
-  color: #fff;
+  border-color: var(--adm-accent-fill);
+  background: var(--adm-accent-fill);
+  color: var(--adm-on-accent);
 }
 
 .adm-btn-primary:hover:not(:disabled) {
-  background: var(--adm-accent-hover);
-  border-color: var(--adm-accent-hover);
+  background: var(--adm-accent-fill-hover);
+  border-color: var(--adm-accent-fill-hover);
 }
 
 .adm-btn-warn {
-  border-color: #fdba74;
-  background: #fff7ed;
-  color: #c2410c;
+  border-color: var(--adm-warn-line);
+  background: var(--adm-warn-bg);
+  color: var(--adm-warn-fg);
 }
 
 .adm-btn-warn:hover:not(:disabled) {
-  background: #ffedd5;
-  border-color: #fb923c;
+  background: var(--adm-accent-soft);
+  border-color: var(--adm-warn-fg);
 }
 
 .adm-btn-danger {
-  border-color: #fecaca;
-  background: #fef2f2;
-  color: #b91c1c;
+  border-color: var(--adm-danger-line);
+  background: var(--adm-danger-bg);
+  color: var(--adm-danger-fg);
 }
 
 .adm-btn-danger:hover:not(:disabled) {
-  background: #fee2e2;
-  border-color: #fca5a5;
+  background: var(--adm-danger-bg);
+  border-color: var(--adm-danger-fg);
 }
 
 .adm-btn-sm {
@@ -575,7 +638,8 @@
   border-radius: 999px;
   background: var(--adm-neutral-bg);
   color: var(--adm-neutral-fg);
-  font-size: 11px;
+  box-shadow: inset 0 0 0 1px var(--adm-neutral-line);
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -583,21 +647,25 @@
 .adm-badge-ok {
   background: var(--adm-ok-bg);
   color: var(--adm-ok-fg);
+  box-shadow: inset 0 0 0 1px var(--adm-ok-line);
 }
 
 .adm-badge-warn {
   background: var(--adm-warn-bg);
   color: var(--adm-warn-fg);
+  box-shadow: inset 0 0 0 1px var(--adm-warn-line);
 }
 
 .adm-badge-danger {
   background: var(--adm-danger-bg);
   color: var(--adm-danger-fg);
+  box-shadow: inset 0 0 0 1px var(--adm-danger-line);
 }
 
 .adm-badge-info {
   background: var(--adm-info-bg);
   color: var(--adm-info-fg);
+  box-shadow: inset 0 0 0 1px var(--adm-info-line);
 }
 
 .adm-badge-dot::before {
@@ -627,13 +695,13 @@
 }
 
 .adm-stat-ok {
-  border-left-color: #22c55e;
+  border-left-color: var(--adm-ok-fg);
 }
 .adm-stat-warn {
-  border-left-color: #f59e0b;
+  border-left-color: var(--adm-warn-fg);
 }
 .adm-stat-danger {
-  border-left-color: #ef4444;
+  border-left-color: var(--adm-danger-fg);
 }
 .adm-stat-accent {
   border-left-color: var(--adm-accent);
@@ -641,7 +709,7 @@
 
 .adm-stat-label {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -659,7 +727,7 @@
 
 .adm-stat-hint {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--adm-faint);
 }
 
@@ -697,14 +765,14 @@
 }
 
 .adm-field-hint {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--adm-muted);
 }
 
 .adm-field-error {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  color: #b91c1c;
+  color: var(--adm-danger-fg);
 }
 
 .adm-input,
@@ -715,7 +783,7 @@
   padding: 7px 10px;
   border: 1px solid var(--adm-line-2);
   border-radius: var(--adm-radius-sm);
-  background: var(--adm-surface);
+  background: var(--adm-field-bg);
   color: var(--adm-ink);
   font-size: 13px;
   font-family: inherit;
@@ -728,12 +796,13 @@
   line-height: 1.5;
 }
 
+/* O foco dos campos do site: borda ambar e anel suave em volta. */
 .adm-input:focus,
 .adm-select:focus,
 .adm-textarea:focus {
-  outline: 2px solid var(--adm-accent);
-  outline-offset: -1px;
-  border-color: var(--adm-accent);
+  outline: none;
+  border-color: var(--kr-accent);
+  box-shadow: 0 0 0 3px var(--adm-focus);
 }
 
 .adm-input:disabled,
@@ -760,7 +829,7 @@
   margin-top: 2px;
   width: 15px;
   height: 15px;
-  accent-color: var(--adm-accent);
+  accent-color: var(--kr-accent);
 }
 
 .adm-fieldset {
@@ -773,7 +842,7 @@
 
 .adm-fieldset legend {
   padding: 0 6px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -795,32 +864,33 @@
 }
 
 .adm-note-ok {
-  border-color: #bbf7d0;
-  border-left-color: #22c55e;
-  background: #f0fdf4;
+  border-color: var(--adm-ok-line);
+  border-left-color: var(--adm-ok-fg);
+  background: var(--adm-ok-bg);
   color: var(--adm-ok-fg);
 }
 
 .adm-note-warn {
-  border-color: #fde68a;
-  border-left-color: #f59e0b;
-  background: #fffbeb;
+  border-color: var(--adm-warn-line);
+  border-left-color: var(--adm-warn-fg);
+  background: var(--adm-warn-bg);
   color: var(--adm-warn-fg);
 }
 
 .adm-note-danger {
-  border-color: #fecaca;
-  border-left-color: #ef4444;
-  background: #fef2f2;
+  border-color: var(--adm-danger-line);
+  border-left-color: var(--adm-danger-fg);
+  background: var(--adm-danger-bg);
   color: var(--adm-danger-fg);
 }
 
+/* Fundo tirado da cor do proprio texto: serve no aviso neutro e nos coloridos, nos dois temas. */
 .adm-note code {
   padding: 1px 5px;
   border-radius: 4px;
-  background: rgba(15, 23, 42, 0.06);
+  background: color-mix(in srgb, currentColor 10%, transparent);
   font-family: var(--adm-mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .adm-empty {
@@ -843,12 +913,13 @@
   justify-content: center;
   padding: 24px;
   overflow-y: auto;
-  background: rgba(15, 23, 42, 0.55);
+  background: var(--adm-overlay);
 }
 
 .adm-modal-card {
   width: 100%;
   max-width: 720px;
+  border: 1px solid var(--adm-line);
   border-radius: var(--adm-radius);
   background: var(--adm-surface);
   box-shadow: var(--adm-shadow-lg);
@@ -894,6 +965,31 @@
   background: var(--adm-surface-2);
 }
 
+/* Corpo da confirmacao destrutiva (`ConfirmDialog`). */
+.adm-confirm-message {
+  margin: 0;
+  font-size: 13px;
+  color: var(--adm-ink-2);
+}
+
+.adm-confirm-irreversible {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--adm-danger-fg);
+}
+
+/*
+ * Paragrafos da confirmacao do kit (`useConfirm`, em DesktopUpdates.tsx). Essa janela nasce no
+ * `ConfirmProvider` do App, FORA do `.adm` — por isso so espacamento aqui: a cor e a do site.
+ */
+.adm-confirm-paragraph {
+  margin: 0;
+}
+
+.adm-confirm-paragraph + .adm-confirm-paragraph {
+  margin-top: 10px;
+}
+
 /* ---------------------------------------------------------------------------
    Definicoes (rotulo -> valor)
    --------------------------------------------------------------------------- */
@@ -906,7 +1002,7 @@
 
 .adm-kv-item dt {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1368,7 +1464,7 @@
 .adm-fleet-bar {
   height: 10px;
   border-radius: 999px;
-  background: var(--adm-surface-3);
+  background: var(--adm-line);
   overflow: hidden;
 }
 
@@ -1377,23 +1473,25 @@
 .adm-fleet-fill {
   height: 100%;
   border-radius: 999px;
-  background: var(--adm-line-2);
+  background: var(--adm-faint);
 }
 
+/* Cores de grafico do site: com o acento ambar, "teste" e "fora dos aneis" nao podem
+   dividir o mesmo tom — a barra e justamente o que separa um anel do outro. */
 .adm-fleet-fill-producao {
-  background: #16a34a;
+  background: var(--kr-chart-5);
 }
 
 .adm-fleet-fill-teste {
-  background: var(--adm-accent);
+  background: var(--kr-chart-2);
 }
 
 .adm-fleet-fill-outra {
-  background: #d97706;
+  background: var(--kr-chart-1);
 }
 
 .adm-fleet-fill-desconhecida {
-  background: var(--adm-line-2);
+  background: var(--adm-faint);
 }
 
 .adm-fleet-devices {
@@ -1431,7 +1529,7 @@
 /* Aviso de atualizacao pendente naquela balanca (ver DesktopUpdates.tsx). */
 .adm-fleet-chip-notice {
   font-weight: 600;
-  color: #b45309;
+  color: var(--adm-warn-fg);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1443,9 +1541,11 @@
   display: grid;
   place-items: center;
   padding: 24px 16px;
+  /* Pedra escura com brilho ambar, nos dois temas: a mesma cara do login do site. */
   background:
-    radial-gradient(circle at 15% 10%, rgba(29, 78, 216, 0.35), transparent 40%),
-    radial-gradient(circle at 85% 90%, rgba(14, 165, 233, 0.18), transparent 35%), var(--adm-ink);
+    radial-gradient(circle at 15% 10%, var(--adm-chrome-glow), transparent 40%),
+    radial-gradient(circle at 85% 90%, var(--adm-chrome-glow-2), transparent 35%),
+    var(--adm-chrome-bg);
 }
 
 .adm-login-card {
@@ -1454,6 +1554,7 @@
   flex-direction: column;
   gap: 14px;
   padding: 24px;
+  border: 1px solid var(--adm-line);
   border-radius: var(--adm-radius-lg);
   background: var(--adm-surface);
   box-shadow: var(--adm-shadow-lg);
@@ -1471,7 +1572,7 @@
   object-fit: contain;
   border-radius: var(--adm-radius);
   border: 1px solid var(--adm-line);
-  background: #fff;
+  background: var(--adm-logo-plate);
   padding: 3px;
 }
 
@@ -1572,7 +1673,7 @@ button.adm-kpi {
 
 button.adm-kpi:hover {
   border-color: var(--adm-line-2);
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--adm-shadow-lg);
   transform: translateY(-1px);
 }
 
@@ -1586,13 +1687,13 @@ button.adm-kpi:hover {
 }
 
 .adm-kpi-ok::before {
-  background: #22c55e;
+  background: var(--adm-ok-fg);
 }
 .adm-kpi-warn::before {
-  background: #f59e0b;
+  background: var(--adm-warn-fg);
 }
 .adm-kpi-danger::before {
-  background: #ef4444;
+  background: var(--adm-danger-fg);
 }
 .adm-kpi-accent::before {
   background: var(--adm-accent);
@@ -1706,16 +1807,18 @@ button.adm-kpi:hover {
 }
 
 .adm-list-dot-danger {
-  background: #ef4444;
-  box-shadow: 0 0 0 3px #fee2e2;
+  background: var(--adm-danger-fg);
+  box-shadow: 0 0 0 3px var(--adm-danger-line);
 }
 .adm-list-dot-warn {
-  background: #f59e0b;
-  box-shadow: 0 0 0 3px #fef3c7;
+  background: var(--adm-warn-fg);
+  box-shadow: 0 0 0 3px var(--adm-warn-line);
 }
+/* Informativo (o que falta configurar, sem risco hoje): no site "info" tambem e ambar, e aqui
+   ele ficaria igual ao alerta ao lado. Cinza, para o ambar sobrar para o que pede atencao. */
 .adm-list-dot-info {
-  background: #3b82f6;
-  box-shadow: 0 0 0 3px #dbeafe;
+  background: var(--adm-muted);
+  box-shadow: 0 0 0 3px var(--adm-line);
 }
 
 .adm-list-main {
@@ -1755,7 +1858,7 @@ button.adm-kpi:hover {
   align-items: center;
   gap: 6px;
   padding: 30px 16px;
-  color: #16a34a;
+  color: var(--adm-ok-fg);
   text-align: center;
 }
 
@@ -1776,14 +1879,14 @@ button.adm-kpi:hover {
   height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: var(--adm-surface-3);
+  background: var(--adm-line);
 }
 
 .adm-meter-bar span {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: #22c55e;
+  background: var(--adm-ok-fg);
 }
 
 /* Texto longo (motivo da saude) em no maximo duas linhas; o inteiro fica no `title`. */
@@ -1816,20 +1919,20 @@ button.adm-kpi:hover {
   border-radius: 999px;
   background: var(--adm-surface-2);
   color: var(--adm-ink-2);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
 
 .adm-tag-accent {
-  border-color: #bfdbfe;
+  border-color: var(--adm-accent-line);
   background: var(--adm-accent-soft);
   color: var(--adm-accent);
 }
 
 .adm-tag-warn {
-  border-color: #fde68a;
-  background: #fffbeb;
+  border-color: var(--adm-warn-line);
+  background: var(--adm-warn-bg);
   color: var(--adm-warn-fg);
 }
 
@@ -1853,7 +1956,7 @@ button.adm-kpi:hover {
   width: 7px;
   height: 7px;
   border-radius: 999px;
-  background: #22c55e;
+  background: var(--adm-ok-fg);
 }
 
 .adm-chips {
@@ -1884,17 +1987,17 @@ button.adm-kpi:hover {
 }
 
 .adm-chip[aria-pressed="true"] {
-  border-color: var(--adm-accent);
-  background: var(--adm-accent);
-  color: #fff;
+  border-color: var(--adm-accent-fill);
+  background: var(--adm-accent-fill);
+  color: var(--adm-on-accent);
 }
 
 .adm-chip-count {
   padding: 0 6px;
   border-radius: 999px;
-  background: #dc2626;
-  color: #fff;
-  font-size: 11px;
+  background: var(--adm-danger-fill);
+  color: var(--adm-on-danger);
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -1907,7 +2010,7 @@ button.adm-kpi:hover {
   padding: 5px;
   border: 1px solid var(--adm-line);
   border-radius: var(--adm-radius);
-  background: var(--adm-surface);
+  background: var(--adm-surface-raised);
   box-shadow: var(--adm-shadow-lg);
 }
 
@@ -1934,11 +2037,11 @@ button.adm-kpi:hover {
 }
 
 .adm-menu-item-danger {
-  color: #b91c1c;
+  color: var(--adm-danger-fg);
 }
 
 .adm-menu-item-danger:hover:not(:disabled) {
-  background: #fef2f2;
+  background: var(--adm-danger-bg);
 }
 
 /* ---------------------------------------------------------------------------
@@ -2010,7 +2113,7 @@ button.adm-kpi:hover {
 }
 
 .adm-segment button[aria-checked="true"] {
-  background: var(--adm-surface);
+  background: var(--adm-surface-raised);
   color: var(--adm-accent);
   box-shadow: var(--adm-shadow);
 }
@@ -2028,7 +2131,7 @@ button.adm-kpi:hover {
 .adm-switch input {
   width: 16px;
   height: 16px;
-  accent-color: var(--adm-accent);
+  accent-color: var(--kr-accent);
 }
 
 .adm-settings-group {
@@ -2039,7 +2142,7 @@ button.adm-kpi:hover {
 
 .adm-settings-group-title {
   margin: 0 0 12px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;

@@ -533,9 +533,9 @@ describe("tempo real", () => {
 
   it("escreve ha quanto tempo foi a ultima leitura", () => {
     expect(formatAgo(2_000)).toBe("agora");
-    expect(formatAgo(12_400)).toBe("ha 12 s");
-    expect(formatAgo(185_000)).toBe("ha 3 min");
-    expect(formatAgo(2 * 3_600_000 + 5)).toBe("ha 2 h");
+    expect(formatAgo(12_400)).toBe("há 12 s");
+    expect(formatAgo(185_000)).toBe("há 3 min");
+    expect(formatAgo(2 * 3_600_000 + 5)).toBe("há 2 h");
     expect(formatAgo(-5_000)).toBe("agora");
   });
 });

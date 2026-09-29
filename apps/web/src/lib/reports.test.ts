@@ -229,7 +229,7 @@ describe("tabela dinamica de vendas", () => {
       .slice(1)
       .split("\r\n");
     expect(rows[0]).toBe(
-      "Cliente;Produto;Operacoes;Quantidade (t);Preco medio (R$/t);Valor produto (R$);Frete (R$);Total (R$)"
+      "Cliente;Produto;Operações;Quantidade (t);Preço médio (R$/t);Valor produto (R$);Frete (R$);Total (R$)"
     );
     expect(rows.at(-1)).toBe("TOTAL;;3;40,000;75,00;3000,00;300,00;3300,00");
   });

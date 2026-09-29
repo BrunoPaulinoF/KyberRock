@@ -64,7 +64,7 @@ describe("resolveInsightsRange", () => {
     expect(resolveInsightsRange("lastMonth", "", "", now)).toEqual({
       start: "2026-08-01",
       end: "2026-08-31",
-      label: "Mes anterior"
+      label: "Mês anterior"
     });
   });
 

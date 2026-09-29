@@ -25,7 +25,7 @@ export interface PriceHistoryFilter {
 const ACTION_LABELS: Record<string, string> = {
   adicionado: "Adicionado",
   alterado: "Alterado",
-  removido: "Excluido"
+  removido: "Excluído"
 };
 
 export function priceChangeActionLabel(action: string): string {
@@ -62,7 +62,7 @@ export function priceChangePercent(
 }
 
 export function priceChangeSourceLabel(source: string): string {
-  return source === "site" ? "KyberRock Web" : "Balanca";
+  return source === "site" ? "KyberRock Web" : "Balança";
 }
 
 /** O filtro `or` do PostgREST para a busca (cliente, produto ou quem fez), ou `null`. */

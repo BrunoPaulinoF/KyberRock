@@ -32,8 +32,11 @@ import type { LucideIcon } from "lucide-react";
 import { useAuth, useUser } from "../lib/auth";
 import { CadastroLiveProvider } from "../lib/cadastro-live-provider";
 import { canSee, ROLE_LABELS, type Screen } from "../lib/permissions";
+import { usePageTitle } from "../lib/page-title";
 import { publicAsset } from "../lib/public-asset";
+import { preloadScreen } from "../lib/screens";
 import { useTheme } from "../lib/theme";
+import { PageSkeleton } from "./ui";
 
 /**
  * A casca do site: o mesmo menu lateral do KyberRock Desktop — mesmas secoes (Operacional e
@@ -60,34 +63,34 @@ const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
     title: "Operacional",
     items: [
       { screen: "painel", to: "/painel", label: "Painel", icon: LayoutDashboard },
-      { screen: "operacoes", to: "/operacoes", label: "Operacoes", icon: ListChecks },
+      { screen: "operacoes", to: "/operacoes", label: "Operações", icon: ListChecks },
       { screen: "carteira", to: "/carteira", label: "Carteira", icon: Wallet },
       { screen: "cadastros", to: "/cadastros", label: "Cadastros", icon: Database },
       { screen: "cupons", to: "/cupons", label: "Cupons", icon: Receipt },
-      { screen: "senha-preco", to: "/senha-preco", label: "Senha de preco", icon: KeyRound }
+      { screen: "senha-preco", to: "/senha-preco", label: "Senha de preço", icon: KeyRound }
     ]
   },
   {
-    title: "Analise",
+    title: "Análise",
     items: [
       { screen: "comercial", to: "/comercial", label: "Comercial", icon: Handshake },
       { screen: "insights", to: "/insights", label: "Insights", icon: BarChart3 },
       {
         screen: "controle-caminhoes",
         to: "/controle-caminhoes",
-        label: "Controle de caminhoes",
+        label: "Controle de caminhões",
         icon: Truck
       },
       {
         screen: "relatorio-cliente",
         to: "/relatorio-cliente",
-        label: "Relatorio por cliente",
+        label: "Relatório por cliente",
         icon: UserSearch
       },
       {
         screen: "conferencia-faturamento",
         to: "/conferencia-faturamento",
-        label: "Conferencia de faturamento",
+        label: "Conferência de faturamento",
         icon: ClipboardCheck
       },
       {
@@ -96,9 +99,9 @@ const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
         label: "Fechamento de faturas",
         icon: ReceiptText
       },
-      { screen: "relatorios", to: "/relatorios", label: "Relatorios", icon: FileText },
+      { screen: "relatorios", to: "/relatorios", label: "Relatórios", icon: FileText },
       { screen: "monitoramento", to: "/monitoramento", label: "Monitoramento", icon: MonitorPlay },
-      { screen: "documentacao", to: "/documentacao", label: "Documentacao", icon: BookOpen }
+      { screen: "documentacao", to: "/documentacao", label: "Documentação", icon: BookOpen }
     ]
   },
   {
@@ -108,7 +111,7 @@ const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
 ];
 /** Nome da tela aberta, para a barra do celular (a tela das configuracoes nao esta no menu). */
 function currentLabel(pathname: string): string | null {
-  if (pathname.startsWith("/configuracoes")) return "Configuracoes";
+  if (pathname.startsWith("/configuracoes")) return "Configurações";
   for (const section of NAV_SECTIONS) {
     for (const item of section.items) {
       if (pathname === item.to || pathname.startsWith(`${item.to}/`)) return item.label;
@@ -128,6 +131,7 @@ export function Layout() {
   const [navOpen, setNavOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
   const current = currentLabel(location.pathname);
+  usePageTitle(current);
 
   // O menu fecha ao trocar de tela, ao clicar fora e no Esc — como o do desktop.
   useEffect(() => {
@@ -183,7 +187,7 @@ export function Layout() {
         >
           <Menu size={22} />
         </button>
-        <img src={publicAsset("logo.png")} alt="" className="sidebar-logo" />
+        <img src={publicAsset("logo-128.webp")} alt="" className="sidebar-logo" />
         <span className="mobile-bar-title">{current ?? "KyberRock"}</span>
       </header>
       <button
@@ -195,7 +199,7 @@ export function Layout() {
       />
       <aside className="sidebar" id="kr-sidebar">
         <div className="sidebar-header">
-          <img src={publicAsset("logo.png")} alt="" className="sidebar-logo" />
+          <img src={publicAsset("logo-128.webp")} alt="" className="sidebar-logo" />
           <span className="sidebar-brand">KyberRock</span>
           <span className="sidebar-meta">Web</span>
           <button
@@ -207,7 +211,7 @@ export function Layout() {
             <X size={20} />
           </button>
         </div>
-        <nav className="sidebar-nav" aria-label="Navegacao principal">
+        <nav className="sidebar-nav" aria-label="Navegação principal">
           {NAV_SECTIONS.map((section) => {
             const items = section.items.filter((item) => canSee(user.role, item.screen));
             if (items.length === 0) return null;
@@ -215,7 +219,14 @@ export function Layout() {
               <Fragment key={section.title}>
                 <div className="nav-section">{section.title}</div>
                 {items.map(({ screen, to, label, icon: Icon }) => (
-                  <NavLink key={screen} to={to} className="nav-link">
+                  <NavLink
+                    key={screen}
+                    to={to}
+                    className="nav-link"
+                    onPointerEnter={() => preloadScreen(screen)}
+                    onFocus={() => preloadScreen(screen)}
+                    onTouchStart={() => preloadScreen(screen)}
+                  >
                     <Icon size={16} strokeWidth={2.2} />
                     {label}
                   </NavLink>
@@ -256,9 +267,9 @@ export function Layout() {
                   type="button"
                   className={`icon-btn square${showSettings ? " active" : ""}`}
                   onClick={() => setShowSettings((open) => !open)}
-                  aria-label="Configuracoes"
+                  aria-label="Configurações"
                   aria-expanded={showSettings}
-                  title="Configuracoes"
+                  title="Configurações"
                 >
                   <Settings size={17} />
                 </button>
@@ -266,11 +277,11 @@ export function Layout() {
                   <div className="settings-dropdown" role="menu">
                     <button type="button" role="menuitem" onClick={() => openSettings("balanca")}>
                       <Scale size={14} />
-                      Balanca
+                      Balança
                     </button>
                     <button type="button" role="menuitem" onClick={() => openSettings("impressao")}>
                       <Printer size={14} />
-                      Impressao
+                      Impressão
                     </button>
                     <button type="button" role="menuitem" onClick={() => openSettings("cloud")}>
                       <Cloud size={14} />
@@ -300,7 +311,7 @@ export function Layout() {
         {/* Cadastro gravado na balanca aparece nas telas na hora (`lib/cadastro-live.ts`). */}
         <CadastroLiveProvider companyId={user.companyId}>
           {/* A tela chega em arquivo proprio (App.tsx): o menu fica na tela enquanto ela baixa. */}
-          <Suspense fallback={<div className="empty">Carregando...</div>}>
+          <Suspense fallback={<PageSkeleton />}>
             <Outlet />
           </Suspense>
         </CadastroLiveProvider>

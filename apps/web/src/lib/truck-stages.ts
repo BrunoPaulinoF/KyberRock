@@ -28,16 +28,16 @@ const ENTRY_WINDOW_MS = ENTRY_WINDOW_MINUTES * 60_000;
 export const STAGE_LABELS: Record<TruckStage, string> = {
   entrada: "Entrada",
   carregando: "Carregando",
-  saida: "Saida",
+  saida: "Saída",
   cancelada: "Canceladas"
 };
 
 /** O que cada etapa quer dizer, para quem esta olhando a tela. */
 export const STAGE_HINTS: Record<TruckStage, string> = {
-  entrada: `Pesou a entrada nos ultimos ${ENTRY_WINDOW_MINUTES} minutos.`,
-  carregando: "Operacao em aberto: aguardando carregar e pesar a saida.",
-  saida: "Operacao concluida hoje: ja pesou a saida.",
-  cancelada: "Operacao cancelada hoje na balanca."
+  entrada: `Pesou a entrada nos últimos ${ENTRY_WINDOW_MINUTES} minutos.`,
+  carregando: "Operação em aberto: aguardando carregar e pesar a saída.",
+  saida: "Operação concluída hoje: já pesou a saída.",
+  cancelada: "Operação cancelada hoje na balança."
 };
 
 export interface StageTruck {

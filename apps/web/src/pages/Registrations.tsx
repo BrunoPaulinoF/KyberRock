@@ -12,7 +12,7 @@ import { useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { DeskPanel, IconTabs, SectionHead } from "../components/desk";
-import { Alert, DataTable } from "../components/ui";
+import { DataTable, ErrorState, PageHeader } from "../components/ui";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
@@ -61,16 +61,17 @@ export function Registrations() {
 
   return (
     <DeskPanel>
-      <h1 className="desk-title">Cadastros</h1>
+      <PageHeader
+        kicker="Operacional"
+        title="Cadastros"
+        description="Clientes, produtos, pagamento e transporte da pedreira. O que é gravado aqui chega às balanças."
+      />
       <IconTabs
         label="Cadastros"
         tabs={TABS}
         active={tab}
         onChange={(next) => navigate(`/cadastros/${next}`)}
       />
-      <p className="desk-muted">
-        Cadastros: clientes, produtos, condicoes de pagamento e transporte.
-      </p>
       {tab === "clientes" && <CustomersSection />}
       {tab === "produtos" && <ProductsSection />}
       {tab === "pagamento" && <PaymentSection />}
@@ -98,14 +99,15 @@ export function Registrations() {
  */
 function PaymentSection() {
   const user = useUser();
-  const { data, loading, error, refresh } = useAsync(
+  const { data, loading, error, reload, refresh } = useAsync(
     () =>
       Promise.all([
         q.paymentMethods(user.companyId),
         q.accounts(user.companyId),
         q.paymentTerms(user.companyId)
       ]),
-    [user.companyId]
+    [user.companyId],
+    { key: `cadastros:pagamento:${user.companyId}` }
   );
   useOnCadastroChange(refresh, CADASTRO_TABLES.payment);
   const methods = useMemo(
@@ -124,17 +126,18 @@ function PaymentSection() {
 
   return (
     <>
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <ErrorState message={error} onRetry={() => void reload()} />}
       <SectionHead
         title="Formas de pagamento"
         count={methods.length}
-        description="As formas vem do OMIE na sincronizacao (nome e codigo). Ativar, apelidar e vincular a conta e feito na balanca principal."
+        description="As formas vêm do OMIE na sincronização (nome e código). Ativar, apelidar e vincular a conta é feito na balança principal."
       />
       <DataTable
         rows={methods}
         rowKey={(row) => row.id}
         rowClassName={(row) => (row.is_active ? undefined : "inactive")}
-        empty={loading ? "Carregando..." : "Nenhuma forma de pagamento."}
+        loading={loading}
+        empty="Nenhuma forma de pagamento."
         columns={[
           {
             key: "name",
@@ -146,7 +149,7 @@ function PaymentSection() {
                   {row.is_wallet
                     ? "Em carteira | recebimento definido no fechamento"
                     : row.is_customer_credit
-                      ? "Credito do cliente"
+                      ? "Crédito do cliente"
                       : row.alias
                         ? row.name
                         : "-"}
@@ -154,38 +157,40 @@ function PaymentSection() {
               </>
             )
           },
-          { key: "omie", header: "Cod. OMIE", render: (row) => row.omie_code || "-" },
+          { key: "omie", header: "Cód. OMIE", render: (row) => row.omie_code || "-" },
           { key: "status", header: "Status", render: (row) => status(row.is_active) }
         ]}
       />
       <SectionHead
         title="Contas"
         count={accounts.length}
-        description="As contas correntes vem do OMIE na sincronizacao (nome e codigo)."
+        description="As contas correntes vêm do OMIE na sincronização (nome e código)."
       />
       <DataTable
         rows={accounts}
         rowKey={(row) => row.id}
         rowClassName={(row) => (row.is_active ? undefined : "inactive")}
-        empty={loading ? "Carregando..." : "Nenhuma conta."}
+        loading={loading}
+        empty="Nenhuma conta."
         columns={[
           { key: "name", header: "Conta", render: (row) => <strong>{row.name}</strong> },
-          { key: "omie", header: "Cod. OMIE", render: (row) => row.omie_code || "-" },
+          { key: "omie", header: "Cód. OMIE", render: (row) => row.omie_code || "-" },
           { key: "status", header: "Status", render: (row) => status(row.is_active) }
         ]}
       />
       <SectionHead
-        title="Condicoes de pagamento"
+        title="Condições de pagamento"
         count={terms.length}
-        description="Cadastradas no padrao de parcelas do OMIE: 10/20/30/40, A Vista/40/60, Para 93 dias, 50 Parcelas ou periodo (s+20, d+20, q+20, m+20)."
+        description="Cadastradas no padrão de parcelas do OMIE: 10/20/30/40, A Vista/40/60, Para 93 dias, 50 Parcelas ou período (s+20, d+20, q+20, m+20)."
       />
       <DataTable
         rows={terms}
         rowKey={(row) => row.id}
-        empty={loading ? "Carregando..." : "Nenhuma condicao."}
+        loading={loading}
+        empty="Nenhuma condição."
         columns={[
-          { key: "name", header: "Condicao", render: (row) => <strong>{row.name}</strong> },
-          { key: "omie", header: "Cod. OMIE", render: (row) => row.omie_code || "-" },
+          { key: "name", header: "Condição", render: (row) => <strong>{row.name}</strong> },
+          { key: "omie", header: "Cód. OMIE", render: (row) => row.omie_code || "-" },
           { key: "status", header: "Status", render: (row) => status(row.is_active) }
         ]}
       />

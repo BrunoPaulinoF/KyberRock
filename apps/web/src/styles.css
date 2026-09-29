@@ -17,7 +17,9 @@
   --kr-border: #e7e5e4;
   --kr-text: #292524;
   --kr-text-strong: #1c1917;
-  --kr-muted: #78716c;
+  /* So no site: o #78716c do desktop fica em 4,4:1 sobre o fundo #f5f5f4, logo abaixo do minimo
+     de leitura (4,5:1), e e a cor de todo texto secundario. Este tom quase igual passa. */
+  --kr-muted: #716a65;
   --kr-input-bg: #ffffff;
   --kr-input-border: #d6d3d1;
   --kr-input-disabled-bg: #f5f5f4;
@@ -28,6 +30,36 @@
   --kr-accent: #d97706;
   --kr-accent-soft: #fef3c7;
   --kr-accent-border: #fcd34d;
+  /* So do site: o ambar do acento (#d97706) em texto sobre branco fica em 3,2:1, abaixo do
+     minimo de leitura (4,5:1). Link e botao-texto usam este tom mais escuro. */
+  --kr-link: #b45309;
+  --kr-overlay: rgba(12, 10, 9, 0.55);
+  --kr-on-danger: #ffffff;
+  --kr-skeleton: #e7e5e4;
+  --kr-skeleton-shine: #f5f5f4;
+  /* Cores dos graficos e dos icones de indicador: as mesmas em todas as telas. */
+  --kr-chart-1: #d97706;
+  --kr-chart-2: #0891b2;
+  --kr-chart-3: #57534e;
+  --kr-chart-4: #db2777;
+  --kr-chart-5: #16a34a;
+  --kr-chart-6: #7c3aed;
+  /*
+   * Escala do kit (etapa 2 do plano de UI): cantos, letras e sombras de um jeito so. Tela nova
+   * usa estes nomes em vez de numero solto. Nao mudam com o tema.
+   */
+  --kr-radius-sm: 8px;
+  --kr-radius-md: 10px;
+  --kr-radius-lg: 14px;
+  --kr-radius-xl: 20px;
+  --kr-radius-pill: 999px;
+  --kr-font-xs: 12px;
+  --kr-font-sm: 13px;
+  --kr-font-md: 14px;
+  --kr-font-lg: 16px;
+  --kr-font-xl: 18px;
+  --kr-font-2xl: 22px;
+  --kr-shadow-pop: 0 12px 32px rgba(28, 25, 23, 0.14), 0 2px 6px rgba(28, 25, 23, 0.08);
   --kr-focus-ring: rgba(217, 119, 6, 0.4);
   --kr-selection-bg: #fde68a;
   --kr-selection-text: #1c1917;
@@ -79,6 +111,17 @@
   --kr-accent: #fbbf24;
   --kr-accent-soft: #451a03;
   --kr-accent-border: #92400e;
+  --kr-link: #fbbf24;
+  --kr-overlay: rgba(0, 0, 0, 0.65);
+  --kr-skeleton: #292524;
+  --kr-skeleton-shine: #3a3431;
+  --kr-chart-1: #fbbf24;
+  --kr-chart-2: #22d3ee;
+  --kr-chart-3: #a8a29e;
+  --kr-chart-4: #f472b6;
+  --kr-chart-5: #4ade80;
+  --kr-chart-6: #a78bfa;
+  --kr-shadow-pop: 0 16px 40px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.4);
   --kr-focus-ring: rgba(251, 191, 36, 0.5);
   --kr-selection-bg: #b45309;
   --kr-selection-text: #fffbeb;
@@ -131,7 +174,7 @@ body {
     Roboto,
     Arial,
     sans-serif;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.45;
   color: var(--kr-text);
   background: var(--kr-bg);
@@ -209,7 +252,7 @@ h3 {
   padding: 10px;
 }
 .sidebar {
-  width: 224px;
+  width: 252px;
   flex-shrink: 0;
   position: sticky;
   top: 10px;
@@ -242,7 +285,7 @@ h3 {
   color: var(--kr-text-strong);
 }
 .sidebar-meta {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
   margin-left: 2px;
 }
@@ -256,7 +299,7 @@ h3 {
   padding-right: 4px;
 }
 .nav-section {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--kr-muted);
   text-transform: uppercase;
@@ -270,7 +313,7 @@ h3 {
   width: 100%;
   padding: 8px 12px;
   min-height: 32px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--kr-muted);
   background: transparent;
@@ -388,7 +431,7 @@ h3 {
   padding: 8px 10px;
   background: transparent;
   color: var(--kr-text);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   text-align: left;
   cursor: pointer;
@@ -397,7 +440,7 @@ h3 {
   background: var(--kr-surface-soft);
 }
 .settings-dropdown button.danger {
-  color: #b91c1c;
+  color: var(--kr-danger);
 }
 .settings-divider {
   height: 1px;
@@ -414,41 +457,161 @@ h3 {
 }
 
 /* ---------- cabecalho da tela (o "hero" do desktop) ---------- */
-.page-head {
+/* ---------- topo de tela (PageHeader do kit) ---------- */
+.page-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  padding: 14px 16px;
-  border-radius: 14px;
-  background: var(--kr-surface);
-  border: 1px solid var(--kr-border);
-  box-shadow: var(--kr-shadow);
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  margin-bottom: 14px;
 }
-.page-head .kicker {
+.page-header-text {
+  flex: 1 1 320px;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.page-header-kicker {
   margin: 0;
   color: var(--kr-muted);
-  font-size: 12px;
+  font-size: var(--kr-font-xs);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.page-head h1 {
-  margin: 4px 0;
-  font-size: 24px;
-  line-height: 1.05;
-}
-.page-head p {
-  margin: 0;
-  color: var(--kr-muted);
-  font-size: 13px;
-  line-height: 1.35;
-}
-.actions {
+.page-header-title {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
+}
+.page-header-title h1,
+.page-header-title h2 {
+  margin: 0;
+  font-size: var(--kr-font-2xl);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: var(--kr-text-strong);
+  overflow-wrap: anywhere;
+}
+.page-header-meta {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: 6px;
+}
+.page-header-description {
+  margin: 0;
+  max-width: 75ch;
+  color: var(--kr-muted);
+  font-size: var(--kr-font-md);
+  line-height: 1.45;
+}
+.page-header-actions,
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---------- ajuda "?" (HelpTip) ---------- */
+.help-tip {
+  position: relative;
+  display: inline-flex;
+}
+.help-tip-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--kr-radius-pill);
+  background: transparent;
+  color: var(--kr-muted);
+  cursor: pointer;
+}
+.help-tip-btn:hover,
+.help-tip-btn[aria-expanded="true"] {
+  color: var(--kr-text-strong);
+  background: var(--kr-surface-soft);
+}
+.help-tip-bubble {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: -6px;
+  z-index: 60;
+  width: max-content;
+  max-width: 320px;
+  padding: 10px 12px;
+  border-radius: var(--kr-radius-md);
+  background: var(--kr-tooltip-bg);
+  color: var(--kr-tooltip-text);
+  border: 1px solid var(--kr-tooltip-border);
+  box-shadow: var(--kr-shadow-pop);
+  font-size: var(--kr-font-sm);
+  font-weight: 500;
+  line-height: 1.45;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: normal;
+}
+
+/* ---------- carregando (esqueleto) ---------- */
+.skeleton {
+  display: block;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--kr-skeleton),
+    var(--kr-skeleton-shine),
+    var(--kr-skeleton)
+  );
+  background-size: 200% 100%;
+  animation: kr-skeleton 1.4s ease-in-out infinite;
+}
+@keyframes kr-skeleton {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
+.skeleton-rows {
+  display: grid;
+  gap: 16px;
+  padding: 16px 12px;
+}
+.skeleton-row {
+  display: grid;
+  gap: 16px;
+  align-items: center;
+}
+.page-skeleton {
+  display: grid;
+  gap: 18px;
+  padding: 16px;
+  border-radius: var(--kr-radius-lg);
+  background: var(--kr-surface);
+  border: 1px solid var(--kr-border);
+  box-shadow: var(--kr-shadow);
+}
+.page-skeleton-head {
+  display: grid;
+  gap: 10px;
+}
+.page-skeleton-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
 }
 
 /* ---------- cartoes e paineis ---------- */
@@ -461,22 +624,6 @@ h3 {
 }
 .panel-body {
   padding: 14px 16px;
-}
-.toolbar {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--kr-border);
-  background: var(--kr-surface-soft);
-}
-.toolbar label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--kr-muted);
-  font-weight: 600;
 }
 .kpis {
   display: grid;
@@ -493,7 +640,7 @@ h3 {
 }
 .kpi span {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--kr-muted);
   text-transform: uppercase;
@@ -530,7 +677,7 @@ table.data td {
   border-bottom: 1px solid var(--kr-border);
   vertical-align: middle;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 14px;
 }
 table.data tbody tr:last-child td {
   border-bottom: none;
@@ -539,7 +686,7 @@ table.data th {
   position: sticky;
   top: 0;
   z-index: 1;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -602,13 +749,26 @@ table.data th.num {
   font-size: 12px;
   color: var(--kr-muted);
 }
+.field-required {
+  color: var(--kr-danger);
+}
+.field-error {
+  font-size: var(--kr-font-sm);
+  font-weight: 600;
+  color: var(--kr-danger);
+}
+.field.has-error .input,
+.field.has-error .select,
+.field.has-error .textarea {
+  border-color: var(--kr-danger);
+}
 .input,
 .select,
 .textarea {
   border: 1px solid var(--kr-input-border);
   border-radius: 10px;
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: 14px;
   background: var(--kr-input-bg);
   color: var(--kr-text-strong);
   min-width: 0;
@@ -672,7 +832,7 @@ input[type="radio"] {
   color: var(--kr-text-strong);
   cursor: pointer;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.2;
   white-space: nowrap;
 }
@@ -684,7 +844,7 @@ input[type="radio"] {
 .btn.danger {
   border-color: transparent;
   background: var(--kr-danger-strong);
-  color: #fff;
+  color: var(--kr-on-danger);
 }
 .btn.ghost-danger {
   color: var(--kr-danger);
@@ -699,7 +859,7 @@ input[type="radio"] {
 .btn.link {
   border: none;
   background: none;
-  color: var(--kr-accent);
+  color: var(--kr-link);
   padding: 2px 4px;
   font-weight: 700;
 }
@@ -707,48 +867,12 @@ input[type="radio"] {
   opacity: 0.55;
   cursor: not-allowed;
 }
-
-/* ---------- etiquetas (o SituationPill do desktop) ---------- */
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
-  background: var(--kr-surface-soft);
-  border: 1px solid var(--kr-border);
-  color: var(--kr-muted);
-}
-.badge.ok {
-  background: var(--kr-success-soft);
-  border-color: var(--kr-success-border);
-  color: var(--kr-success);
-}
-.badge.warn {
-  background: var(--kr-warning-soft);
-  border-color: var(--kr-warning-border);
-  color: var(--kr-warning);
-}
-.badge.err {
-  background: var(--kr-danger-soft);
-  border-color: var(--kr-danger-border);
-  color: var(--kr-danger);
-}
-.badge.accent,
-.badge.info {
-  background: var(--kr-info-bg);
-  border-color: var(--kr-info-border);
-  color: var(--kr-info-text);
-}
-
 /* ---------- avisos e toast ---------- */
 .alert {
   border-radius: 12px;
   padding: 10px 14px;
   border: 1px solid;
-  font-size: 13px;
+  font-size: 14px;
 }
 .alert.error {
   background: var(--kr-danger-soft);
@@ -761,9 +885,11 @@ input[type="radio"] {
   color: var(--kr-warning);
 }
 .alert.info {
-  background: var(--kr-info-bg);
-  border-color: var(--kr-info-border);
-  color: var(--kr-info-text);
+  /* Neutro de proposito: em ambar, "informacao" ficava igual a "atencao" e a pessoa nao sabia
+     qual pedia cuidado. */
+  background: var(--kr-surface-soft);
+  border-color: var(--kr-border);
+  color: var(--kr-text);
 }
 .toast-stack {
   position: fixed;
@@ -781,15 +907,15 @@ input[type="radio"] {
 .toast {
   pointer-events: auto;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
-  padding: 10px 14px;
+  padding: 10px 10px 10px 14px;
   border-radius: 12px;
   background: var(--kr-surface-elevated);
   color: var(--kr-text-strong);
   border: 1px solid var(--kr-border);
   box-shadow: var(--kr-shadow);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   max-width: 100%;
 }
@@ -798,12 +924,59 @@ input[type="radio"] {
   border-color: var(--kr-danger-border);
   color: var(--kr-danger);
 }
+.toast.warn {
+  background: var(--kr-warning-soft);
+  border-color: var(--kr-warning-border);
+  color: var(--kr-warning);
+}
+.toast-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.toast.ok .toast-icon {
+  color: var(--kr-success);
+}
+.toast.info .toast-icon {
+  color: var(--kr-link);
+}
+.toast-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.4;
+}
+.toast-action {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-weight: 800;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.toast-close {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin: -4px 0 -4px 0;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--kr-radius-sm);
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+}
+.toast-close:hover {
+  opacity: 1;
+}
 
 /* ---------- modal (o CrudFormModal do desktop) ---------- */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--kr-overlay);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -825,21 +998,60 @@ input[type="radio"] {
 .modal.wide {
   max-width: 860px;
 }
+.modal:focus {
+  outline: none;
+}
 .modal-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
   border-radius: 16px 16px 0 0;
-  padding: 14px 18px;
+  padding: 14px 12px 14px 18px;
   border-bottom: 1px solid var(--kr-border);
   background: var(--kr-surface-soft);
 }
+.modal-head-text {
+  flex: 1;
+  min-width: 0;
+}
 .modal-head h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--kr-font-xl);
   font-weight: 700;
 }
 .modal-head p {
   margin: 4px 0 0;
   color: var(--kr-muted);
-  font-size: 12px;
+  font-size: var(--kr-font-sm);
+}
+.modal-close {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  margin: -4px 0;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--kr-radius-sm);
+  background: transparent;
+  color: var(--kr-muted);
+  cursor: pointer;
+}
+.modal-close:hover {
+  background: var(--kr-surface);
+  color: var(--kr-text-strong);
+}
+.confirm-message {
+  white-space: pre-line;
+  font-size: var(--kr-font-md);
+  line-height: 1.5;
+  color: var(--kr-text);
+}
+.confirm-irreversible {
+  margin: 10px 0 0;
+  font-size: var(--kr-font-sm);
+  font-weight: 600;
+  color: var(--kr-danger);
 }
 .modal-body {
   padding: 18px;
@@ -856,89 +1068,173 @@ input[type="radio"] {
 }
 
 /* ---------- login ---------- */
+/*
+ * A mesma cara do cartao de login da pagina de apresentacao (`landing.css`, `.lp-login`): pedra
+ * escura com brilho ambar atras, cartao da cor da superficie do tema e botao ambar com texto
+ * escuro (o ambar com texto branco nao passa no contraste). O fundo e escuro nos dois temas,
+ * como o topo da pagina de apresentacao.
+ */
 .login {
+  --login-night: #0c0a09;
+  --login-glow: rgba(245, 158, 11, 0.22);
+  --login-line: rgba(250, 250, 249, 0.06);
+  --login-amber: #f59e0b;
+  --login-amber-hi: #fbbf24;
+  --login-amber-text: #1c1206;
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
-  padding: 16px;
-  background: var(--kr-bg);
+  padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  background:
+    radial-gradient(60rem 30rem at 15% -10%, var(--login-glow), transparent 60%),
+    linear-gradient(var(--login-line) 1px, transparent 1px) 0 0 / 48px 48px,
+    linear-gradient(90deg, var(--login-line) 1px, transparent 1px) 0 0 / 48px 48px,
+    var(--login-night);
 }
-.login .panel {
+.login-card {
   width: 100%;
-  max-width: 380px;
+  max-width: 400px;
+  display: grid;
+  gap: 14px;
+  padding: 28px;
+  border-radius: 20px;
+  background: var(--kr-surface);
+  border: 1px solid var(--kr-border);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
 }
 .login-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 12px;
 }
 .login-brand img {
-  height: 36px;
-  width: auto;
-  border-radius: 8px;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  border: 1px solid var(--kr-border);
 }
-.login-brand h1 {
-  margin: 0;
-  font-size: 22px;
-  line-height: 1.1;
-}
-.login-brand small {
+.login-brand strong {
   display: block;
-  color: var(--kr-muted);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 18px;
+  line-height: 1.2;
+  color: var(--kr-text-strong);
 }
-.login .sub {
+.login-brand span {
+  display: block;
+  font-size: 13px;
   color: var(--kr-muted);
-  margin: 0 0 16px;
 }
-.login .alert {
-  margin-bottom: 12px;
+.login-card h1 {
+  margin: 6px 0 0;
+  font-size: 26px;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+.login-sub {
+  margin: 0;
+  color: var(--kr-muted);
+  font-size: 15px;
+}
+.login-card .alert {
+  margin: 0;
+}
+.login-form {
+  display: grid;
+  gap: 14px;
+}
+.login-field {
+  display: grid;
+  gap: 6px;
+}
+.login-field > span:first-child {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--kr-text-strong);
+}
+.login-field .input {
+  width: 100%;
+  min-height: 46px;
+  font-size: 16px;
+  border-radius: 12px;
+  padding: 10px 14px;
+}
+.login-password {
+  position: relative;
+  display: block;
+}
+.login-password .input {
+  padding-right: 48px;
+}
+.login-reveal {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--kr-muted);
+  cursor: pointer;
+}
+.login-reveal:hover {
+  color: var(--kr-text-strong);
+  background: var(--kr-surface-soft);
+}
+.login-reveal:not(:disabled):active {
+  transform: translateY(-50%);
+}
+.login-submit {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: none;
+  border-radius: 999px;
+  background: var(--login-amber);
+  color: var(--login-amber-text);
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(245, 158, 11, 0.28);
+}
+.login-submit:not(:disabled):hover {
+  background: var(--login-amber-hi);
+  filter: none;
+}
+.login-submit:disabled {
+  opacity: 0.7;
+}
+.login-roles {
+  margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--kr-border);
+  font-size: 13px;
+  color: var(--kr-muted);
 }
 .login-foot {
-  margin: 14px 0 0;
+  margin: 0;
   text-align: center;
-  font-size: 12px;
+  font-size: 14px;
 }
 .login-foot a {
-  color: var(--kr-accent);
-  font-weight: 600;
+  color: var(--kr-link);
+  font-weight: 700;
   text-decoration: none;
 }
 .login-foot a:hover {
   text-decoration: underline;
 }
-
-/* ---------- sub-abas (o subTabs do desktop) ---------- */
-.tabs {
-  display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--kr-border);
-  flex-wrap: wrap;
+@media (max-width: 480px) {
+  .login-card {
+    padding: 22px 18px;
+  }
 }
-.tab {
-  border: none;
-  background: none;
-  padding: 8px 12px;
-  cursor: pointer;
-  color: var(--kr-muted);
-  font-weight: 600;
-  font-size: 13px;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  border-radius: 8px 8px 0 0;
-}
-.tab:hover {
-  color: var(--kr-text-strong);
-  background: var(--kr-surface-soft);
-}
-.tab.active {
-  color: var(--kr-text-strong);
-  border-bottom-color: var(--kr-accent);
-  font-weight: 700;
-}
-
 /* ---------- operacao pelo site: busca, pedidos ao vivo, peso ---------- */
 .picker {
   position: relative;
@@ -997,11 +1293,15 @@ input[type="radio"] {
 }
 .picker-list li small {
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .picker-empty,
 .picker-none {
   color: var(--kr-muted);
+}
+.picker-list li.picker-loading {
+  gap: 10px;
+  cursor: default;
 }
 .request-feed {
   list-style: none;
@@ -1068,11 +1368,6 @@ input[type="radio"] {
   font-weight: 800;
   letter-spacing: 0.02em;
 }
-.page-head .actions .badge {
-  font-size: 12px;
-  padding: 4px 10px;
-}
-
 /* ---------- tela do carregador (celular e tablet, dentro da pedreira) ---------- */
 .loading-shell {
   min-height: 100vh;
@@ -1271,21 +1566,6 @@ input[type="radio"] {
   border: 1px solid var(--kr-border);
   color: var(--kr-text-strong);
 }
-.loading-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 36px 16px;
-  text-align: center;
-  border: 1px dashed var(--kr-border);
-  border-radius: 14px;
-  color: var(--kr-muted);
-}
-.loading-empty strong {
-  color: var(--kr-text-strong);
-  font-size: 16px;
-}
 .loading-list {
   list-style: none;
   margin: 0;
@@ -1476,11 +1756,6 @@ input[type="radio"] {
   flex-direction: column;
   min-height: calc(100vh - 20px);
 }
-.desk-title {
-  margin: 0 0 4px;
-  font-size: 15px;
-  color: var(--kr-text-strong);
-}
 .desk-kicker {
   margin: 0;
   color: var(--kr-muted);
@@ -1491,18 +1766,8 @@ input[type="radio"] {
 }
 .desk-muted {
   color: var(--kr-muted);
-  font-size: 13px;
+  font-size: 14px;
   margin: 12px 0 0;
-}
-.desk-title-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.desk-title-row .desk-title {
-  margin: 0;
 }
 .icon-tabs {
   display: flex;
@@ -1515,11 +1780,15 @@ input[type="radio"] {
   border: none;
   border-bottom: 2px solid transparent;
   border-radius: 0;
-  padding: 8px 16px;
+  padding: 9px 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  line-height: 0;
+  gap: 7px;
+  line-height: 1.2;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
   background: transparent;
   color: var(--kr-muted);
   cursor: pointer;
@@ -1533,6 +1802,7 @@ input[type="radio"] {
 }
 .pill-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
 }
@@ -1543,7 +1813,11 @@ input[type="radio"] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  line-height: 0;
+  gap: 7px;
+  line-height: 1.2;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
   background: var(--kr-surface);
   color: var(--kr-text-strong);
   cursor: pointer;
@@ -1553,12 +1827,44 @@ input[type="radio"] {
   color: var(--kr-primary-text);
   border-color: var(--kr-primary-strong);
 }
+.pill-tab:disabled,
+.icon-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.tab-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--kr-radius-pill);
+  border: 1px solid var(--kr-border);
+  background: var(--kr-surface-soft);
+  color: var(--kr-text-strong);
+  font-size: var(--kr-font-xs);
+  font-weight: 800;
+}
+.pill-tab.active .tab-count {
+  background: transparent;
+  border-color: currentColor;
+  color: inherit;
+}
 .section-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
   margin: 20px 0 12px;
+}
+.desk-panel > .section-head:first-child,
+.page-header + .section-head {
+  margin-top: 0;
+}
+/* Abas dentro de janela (ficha do cliente): o conteudo da aba nao cola nelas. */
+.modal-body .icon-tabs,
+.modal-body .pill-tabs {
+  margin-bottom: 14px;
 }
 .section-head h2 {
   display: flex;
@@ -1583,7 +1889,7 @@ input[type="radio"] {
   border: 1px solid var(--kr-border);
   background: var(--kr-surface-soft);
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
 }
 .new-btn {
@@ -1618,7 +1924,7 @@ input[type="radio"] {
   outline: none;
   background: transparent;
   padding: 8px 0;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--kr-text-strong);
 }
 .icon-action {
@@ -1690,7 +1996,7 @@ input[type="radio"] {
   gap: 5px;
   padding: 2px 8px 2px 6px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -1726,9 +2032,10 @@ input[type="radio"] {
 .empty-state {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 4px;
   padding: 26px;
-  border-radius: 14px;
+  border-radius: var(--kr-radius-lg);
   background: var(--kr-surface-soft);
   color: var(--kr-muted);
   text-align: center;
@@ -1736,9 +2043,25 @@ input[type="radio"] {
 .empty-state strong {
   color: var(--kr-text-strong);
 }
+.empty-state-icon {
+  margin-bottom: 4px;
+  color: var(--kr-muted);
+}
+.empty-state-action {
+  margin-top: 10px;
+}
+.error-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
 .pill {
   display: inline-flex;
   align-items: center;
+  /* Em coluna (celula de tabela, cartao) a etiqueta nao estica; numa linha centralizada, fica no
+     meio da linha (regra logo abaixo). */
   justify-self: start;
   align-self: flex-start;
   padding: 2px 8px;
@@ -1746,7 +2069,7 @@ input[type="radio"] {
   border: 1px solid var(--kr-border);
   background: var(--kr-surface-soft);
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
 }
@@ -1755,11 +2078,23 @@ input[type="radio"] {
   color: var(--kr-success);
   border-color: var(--kr-success-border);
 }
-.pill.warning,
+.pill.warning {
+  background: var(--kr-warning-soft);
+  color: var(--kr-warning);
+  border-color: var(--kr-warning-border);
+}
+/* Informacao e contorno, atencao e cheia: nas duas em ambar a pessoa nao sabia qual pedia
+   cuidado ("Enviado" e "Pendente" ficavam iguais). */
 .pill.info {
-  background: var(--kr-info-bg);
-  color: var(--kr-info-text);
-  border-color: var(--kr-info-border);
+  background: transparent;
+  color: var(--kr-link);
+  border-color: var(--kr-accent-border);
+}
+.page-header-meta .pill,
+.section-head .pill,
+.loading-card-top .pill,
+.kit-row .pill {
+  align-self: center;
 }
 .pill.danger {
   background: var(--kr-danger-soft);
@@ -1847,7 +2182,7 @@ input[type="radio"] {
   gap: 10px;
   padding: 8px 10px;
   border-top: 1px solid var(--kr-border);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--kr-text);
   min-width: 720px;
 }
@@ -1867,7 +2202,7 @@ input[type="radio"] {
   border-top: none;
   background: var(--kr-surface-soft);
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -1894,7 +2229,7 @@ input[type="radio"] {
   color: var(--kr-text-strong);
 }
 .op-cell small {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
 }
 .op-plate {
@@ -1904,13 +2239,6 @@ input[type="radio"] {
   gap: 5px;
   min-width: 0;
 }
-.executor-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 /* Campo com botao ao lado (CNPJ + "Buscar CNPJ" no cadastro do cliente). */
 .input-with-action {
   display: flex;
@@ -1930,7 +2258,7 @@ input[type="radio"] {
   border-radius: 10px;
   background: var(--kr-surface-soft);
   padding: 8px 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
   line-height: 1.45;
   margin-bottom: 6px;
@@ -2061,7 +2389,7 @@ input[type="radio"] {
     z-index: 940;
     border: none;
     padding: 0;
-    background: rgba(0, 0, 0, 0.45);
+    background: var(--kr-overlay);
     opacity: 0;
     pointer-events: none;
     transition: opacity 220ms ease;
@@ -2129,34 +2457,21 @@ input[type="radio"] {
   .desk-panel {
     padding: 12px;
   }
-  .desk-title-row,
   .section-head {
     flex-wrap: wrap;
   }
   .section-head > .btn {
     flex: 1 1 auto;
   }
-  .toolbar > .input,
-  .toolbar > .select,
-  .toolbar > label {
-    flex: 1 1 160px;
-  }
-  .badge {
-    white-space: normal;
-  }
-
   /* abas numa linha so que rola para o lado, em vez de quebrar em varias linhas */
-  .tabs,
   .icon-tabs {
     flex-wrap: nowrap;
     overflow-x: auto;
     scrollbar-width: none;
   }
-  .tabs::-webkit-scrollbar,
   .icon-tabs::-webkit-scrollbar {
     display: none;
   }
-  .tab,
   .icon-tab {
     flex-shrink: 0;
     min-height: 40px;
@@ -2220,8 +2535,7 @@ input[type="radio"] {
   }
 }
 
-.modal-body .alert,
-.modal-body .toolbar {
+.modal-body .alert {
   margin-bottom: 12px;
 }
 
@@ -2370,29 +2684,80 @@ input[type="radio"] {
   gap: 8px;
   flex-wrap: wrap;
 }
-.file-tabs {
+/* ---------- kit no celular ---------- */
+@media (max-width: 800px) {
+  .page-header-title h1,
+  .page-header-title h2 {
+    font-size: 20px;
+  }
+  /* A bolha de ajuda vira uma faixa presa embaixo da tela: ancorada no "?" ela vazaria pela
+     borda do celular. */
+  .help-tip-bubble {
+    position: fixed;
+    top: auto;
+    left: 16px;
+    right: 16px;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    width: auto;
+    max-width: none;
+  }
+  .toast-stack {
+    bottom: max(12px, env(safe-area-inset-bottom));
+    width: calc(100vw - 24px);
+  }
+}
+
+/* ---------- vitrine do kit (/kit, so em desenvolvimento) e tela de espera ---------- */
+.kit {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 16px;
+  display: grid;
+  gap: 16px;
+}
+.kit-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin: 0 0 14px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--kr-border);
-}
-.file-tab {
-  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border: 1px solid var(--kr-border);
-  border-radius: 999px;
-  padding: 6px 12px;
-  background: var(--kr-surface);
-  color: var(--kr-muted);
-  font-weight: 700;
-  font-size: 12px;
-  cursor: pointer;
+  gap: 8px;
+  margin: 10px 0;
 }
-.file-tab.active {
-  border-color: transparent;
-  background: var(--kr-primary-strong);
-  color: var(--kr-primary-text);
+.kit-stack {
+  display: grid;
+  gap: 8px;
+}
+.kit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.app-splash {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  background: var(--kr-bg);
+}
+.app-splash img {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--kr-radius-lg);
+  border: 1px solid var(--kr-border);
+  animation: kr-splash 1.1s ease-in-out infinite alternate;
+}
+@keyframes kr-splash {
+  from {
+    opacity: 0.55;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-splash img {
+    animation: none;
+  }
 }

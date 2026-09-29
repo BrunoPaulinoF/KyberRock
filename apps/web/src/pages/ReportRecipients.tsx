@@ -1,8 +1,18 @@
 import { useState } from "react";
 
-import { EmptyState, IconAction, NewButton, Pill, SectionHead } from "../components/desk";
-import { Alert, DataTable, Field, Modal, useToast } from "../components/ui";
+import { IconAction, NewButton, SectionHead } from "../components/desk";
+import {
+  Alert,
+  DataTable,
+  ErrorState,
+  Field,
+  Modal,
+  Pill,
+  useConfirm,
+  useToast
+} from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
+import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { useAsync } from "../lib/use-async";
@@ -37,8 +47,8 @@ interface Channels {
 
 const REPORT_TYPE_LABEL: Record<string, string> = {
   sales: "Vendas",
-  trucks: "Caminhoes",
-  both: "Vendas + Caminhoes"
+  trucks: "Caminhões",
+  both: "Vendas + Caminhões"
 };
 
 type Channel = "email" | "whatsapp" | "both";
@@ -79,14 +89,17 @@ const CHANNEL_LABEL: Record<Channel, string> = {
 };
 
 export function ReportRecipients() {
+  const user = useUser();
   const toast = useToast();
+  const confirm = useConfirm();
   const { data, loading, error, reload, refresh } = useAsync(
     async () =>
       (await callWebApi("list_report_recipients")) as unknown as {
         recipients: Recipient[];
         channels: Channels;
       },
-    []
+    [user.companyId],
+    { key: `relatorios:destinatarios:${user.companyId}` }
   );
   useOnCadastroChange(refresh, CADASTRO_TABLES.reportRecipients);
   const [form, setForm] = useState<FormState | null>(null);
@@ -127,7 +140,7 @@ export function ReportRecipients() {
         sendFinancial: form.sendFinancial,
         financialScheduleTime: form.sendFinancial ? form.financialScheduleTime : null
       });
-      toast.push(form.id ? "Destinatario atualizado." : "Destinatario adicionado.");
+      toast.push(form.id ? "Destinatário atualizado." : "Destinatário adicionado.");
       setForm(null);
       await reload();
     } catch (caught) {
@@ -139,10 +152,24 @@ export function ReportRecipients() {
 
   async function remove(recipient: Recipient) {
     const name = recipient.display_name || recipient.email || recipient.whatsapp_phone || "";
-    if (!window.confirm(`Remover o destinatario ${name}?`)) return;
+    const ok = await confirm({
+      title: "Remover destinatário?",
+      message: name ? (
+        <>
+          Remover o destinatário <strong>{name}</strong>? Os relatórios deixam de ser enviados para
+          ele.
+        </>
+      ) : (
+        "Os relatórios deixam de ser enviados para este destinatário."
+      ),
+      confirmLabel: "Remover",
+      tone: "danger",
+      irreversible: true
+    });
+    if (!ok) return;
     try {
       await callWebApi("delete_report_recipient", { id: recipient.id });
-      toast.push("Destinatario removido.");
+      toast.push("Destinatário removido.");
       await reload();
     } catch (caught) {
       toast.push(errorMessage(caught), "error");
@@ -152,9 +179,9 @@ export function ReportRecipients() {
   return (
     <>
       <SectionHead
-        title="Destinatarios cadastrados"
+        title="Destinatários cadastrados"
         count={recipients.length}
-        description="Quem recebe o fechamento diario por e-mail ou WhatsApp. Vale para todas as balancas da pedreira."
+        description="Quem recebe o fechamento diário por e-mail ou WhatsApp. Vale para todas as balanças da pedreira."
         action={
           <NewButton
             onClick={() => {
@@ -162,11 +189,11 @@ export function ReportRecipients() {
               setForm(EMPTY_FORM);
             }}
           >
-            Novo destinatario
+            Novo destinatário
           </NewButton>
         }
       />
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <ErrorState message={error} onRetry={() => void reload()} />}
       {channels && (
         <div className="recipients-channels">
           <span>
@@ -176,7 +203,7 @@ export function ReportRecipients() {
                 Configurado{channels.emailSender ? ` (${channels.emailSender})` : ""}
               </Pill>
             ) : (
-              <Pill tone="warning">Nao configurado</Pill>
+              <Pill tone="warning">Não configurado</Pill>
             )}
           </span>
           <span>
@@ -186,20 +213,19 @@ export function ReportRecipients() {
                 {channels.whatsappStatus === "connected" ? "Conectado" : "Configurado"}
               </Pill>
             ) : (
-              <Pill tone="warning">Nao configurado</Pill>
+              <Pill tone="warning">Não configurado</Pill>
             )}
           </span>
-          <small>O SMTP, o WhatsApp e o horario dos envios sao configurados na balanca.</small>
+          <small>O SMTP, o WhatsApp e o horário dos envios são configurados na balança.</small>
         </div>
       )}
-      {!loading && recipients.length === 0 ? (
-        <EmptyState title="Nenhum destinatario cadastrado." />
-      ) : (
+      {!error && (
         <DataTable
           rows={recipients}
           rowKey={(row) => row.id}
           rowClassName={(row) => (row.is_active ? undefined : "inactive")}
-          empty={loading ? "Carregando..." : "Nenhum destinatario cadastrado."}
+          loading={loading}
+          empty="Nenhum destinatário cadastrado."
           columns={[
             { key: "name", header: "Nome", render: (row) => row.display_name ?? "-" },
             { key: "channel", header: "Canal", render: (row) => CHANNEL_LABEL[channelOf(row)] },
@@ -207,7 +233,7 @@ export function ReportRecipients() {
             { key: "whatsapp", header: "WhatsApp", render: (row) => row.whatsapp_phone ?? "-" },
             {
               key: "types",
-              header: "Relatorios",
+              header: "Relatórios",
               render: (row) => REPORT_TYPE_LABEL[row.report_types] ?? "Vendas"
             },
             {
@@ -218,7 +244,7 @@ export function ReportRecipients() {
                   ? row.financial_schedule_time
                     ? `Sim (${row.financial_schedule_time})`
                     : "Sim"
-                  : "Nao"
+                  : "Não"
             },
             {
               key: "status",
@@ -228,14 +254,14 @@ export function ReportRecipients() {
             },
             {
               key: "actions",
-              header: "Acoes",
+              header: "Ações",
               numeric: true,
               render: (row) => (
                 <span className="row-actions">
-                  <IconAction icon="edit" label="Editar destinatario" onClick={() => edit(row)} />
+                  <IconAction icon="edit" label="Editar destinatário" onClick={() => edit(row)} />
                   <IconAction
                     icon="trash"
-                    label="Remover destinatario"
+                    label="Remover destinatário"
                     tone="danger"
                     onClick={() => void remove(row)}
                   />
@@ -248,7 +274,7 @@ export function ReportRecipients() {
 
       {form && (
         <Modal
-          title={form.id ? "Editar destinatario" : "Adicionar destinatario"}
+          title={form.id ? "Editar destinatário" : "Adicionar destinatário"}
           wide
           onClose={() => setForm(null)}
           footer={
@@ -265,12 +291,12 @@ export function ReportRecipients() {
           {formError && <Alert kind="error">{formError}</Alert>}
           <div className="grid-3">
             <div>
-              <h4 className="recipients-form-title">Identificacao</h4>
+              <h4 className="recipients-form-title">Identificação</h4>
               <Field label="Nome (opcional)">
                 <input
                   className="input"
                   value={form.displayName}
-                  placeholder="Dono ou responsavel"
+                  placeholder="Dono ou responsável"
                   onChange={(event) => setForm({ ...form, displayName: event.target.value })}
                 />
               </Field>
@@ -281,7 +307,7 @@ export function ReportRecipients() {
                   onChange={(event) => setForm({ ...form, isActive: event.target.value === "yes" })}
                 >
                   <option value="yes">Sim</option>
-                  <option value="no">Nao</option>
+                  <option value="no">Não</option>
                 </select>
               </Field>
             </div>
@@ -318,16 +344,16 @@ export function ReportRecipients() {
               </Field>
             </div>
             <div>
-              <h4 className="recipients-form-title">Relatorios</h4>
-              <Field label="Relatorios enviados">
+              <h4 className="recipients-form-title">Relatórios</h4>
+              <Field label="Relatórios enviados">
                 <select
                   className="select"
                   value={form.reportTypes}
                   onChange={(event) => setForm({ ...form, reportTypes: event.target.value })}
                 >
                   <option value="sales">Vendas</option>
-                  <option value="trucks">Caminhoes</option>
-                  <option value="both">Vendas + Caminhoes</option>
+                  <option value="trucks">Caminhões</option>
+                  <option value="both">Vendas + Caminhões</option>
                 </select>
               </Field>
               <label className="check">
@@ -336,10 +362,10 @@ export function ReportRecipients() {
                   checked={form.sendFinancial}
                   onChange={(event) => setForm({ ...form, sendFinancial: event.target.checked })}
                 />
-                Recebe o relatorio financeiro (OMIE)
+                Recebe o relatório financeiro (OMIE)
               </label>
               {form.sendFinancial && (
-                <Field label="Horario do financeiro" hint="Vazio = o horario geral dos envios.">
+                <Field label="Horário do financeiro" hint="Vazio = o horário geral dos envios.">
                   <select
                     className="select"
                     value={form.financialScheduleTime}
@@ -347,7 +373,7 @@ export function ReportRecipients() {
                       setForm({ ...form, financialScheduleTime: event.target.value })
                     }
                   >
-                    <option value="">Horario geral</option>
+                    <option value="">Horário geral</option>
                     {Array.from({ length: 24 }, (_, hour) => {
                       const value = `${String(hour).padStart(2, "0")}:00`;
                       return (

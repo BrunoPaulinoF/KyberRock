@@ -1,20 +1,14 @@
 /* Painel operacional — os estilos inline de `DashboardView.tsx` do desktop, em classes. */
 
 .dash {
-  --dash-chart-1: #d97706;
-  --dash-chart-3: #57534e;
-  --dash-chart-5: #16a34a;
-  --dash-chart-6: #7c3aed;
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-width: 0;
 }
-:root[data-theme="dark"] .dash {
-  --dash-chart-1: #fbbf24;
-  --dash-chart-3: #a8a29e;
-  --dash-chart-5: #4ade80;
-  --dash-chart-6: #a78bfa;
+/* O topo (`PageHeader`) fica fora dos cartoes; o espaco ate a faixa de saude e o `gap`. */
+.dash > .page-header {
+  margin-bottom: 0;
 }
 
 .dash-card {
@@ -27,24 +21,6 @@
   flex-direction: column;
   gap: 12px;
   min-width: 0;
-}
-.dash-hero {
-  flex-direction: row;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 16px;
-  flex-wrap: wrap;
-}
-.dash-hero-title {
-  margin: 4px 0;
-  font-size: 21px;
-  color: var(--kr-text-strong);
-}
-.dash-hero-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 .dash-muted {
   color: var(--kr-muted);
@@ -99,7 +75,7 @@
   color: var(--kr-danger);
 }
 .dash-health-label {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -127,15 +103,6 @@
   margin: 4px 0 0;
   font-size: 16px;
   color: var(--kr-text-strong);
-}
-.dash-ok-tag {
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--kr-surface-soft);
-  border: 1px solid var(--kr-border);
-  color: var(--kr-muted);
-  font-size: 11px;
-  font-weight: 700;
 }
 .dash-kpis {
   display: grid;
@@ -167,19 +134,19 @@
   background: color-mix(in srgb, currentColor 12%, transparent);
 }
 .dash-kpi-icon.chart-1 {
-  color: var(--dash-chart-1);
+  color: var(--kr-chart-1);
 }
 .dash-kpi-icon.chart-3 {
-  color: var(--dash-chart-3);
+  color: var(--kr-chart-3);
 }
 .dash-kpi-icon.chart-5 {
-  color: var(--dash-chart-5);
+  color: var(--kr-chart-5);
 }
 .dash-kpi-icon.chart-6 {
-  color: var(--dash-chart-6);
+  color: var(--kr-chart-6);
 }
 .dash-kpi-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -192,7 +159,7 @@
   white-space: nowrap;
 }
 .dash-kpi-hint {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
 }
 
@@ -215,6 +182,10 @@
   border-left-color: var(--kr-danger-border);
   background: var(--kr-danger-soft);
   color: var(--kr-danger);
+}
+.dash-pending-skeleton {
+  display: grid;
+  gap: 6px;
 }
 .dash-pending-title {
   font-size: 12px;
@@ -248,7 +219,7 @@
   color: var(--kr-text-strong);
 }
 .dash-pending-detail {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
 }
 .dash-pending-action {
@@ -258,7 +229,7 @@
   padding: 4px 8px;
   cursor: pointer;
   font-weight: 700;
-  font-size: 11px;
+  font-size: 12px;
   background: var(--kr-surface);
   color: var(--kr-muted);
   white-space: nowrap;
@@ -295,7 +266,7 @@
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  font-size: 10px;
+  font-size: 12px;
 }
 .dash-recent-item {
   width: 100%;
@@ -322,34 +293,6 @@
   color: var(--kr-text-strong);
   min-width: 0;
 }
-.dash-tag {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border: 1px solid transparent;
-}
-.dash-tag.invoice {
-  background: var(--kr-info-bg);
-  color: var(--kr-info-text);
-}
-.dash-tag.internal {
-  background: var(--kr-surface-soft);
-  border-color: var(--kr-border);
-  color: var(--kr-muted);
-}
-.dash-tag.open {
-  background: var(--kr-danger-soft);
-  color: var(--kr-danger);
-}
-.dash-tag.closed {
-  background: var(--kr-success-soft);
-  color: var(--kr-success);
-}
-
 @media (max-width: 640px) {
   .dash-columns {
     grid-template-columns: 1fr;

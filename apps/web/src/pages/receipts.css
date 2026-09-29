@@ -6,28 +6,6 @@
   gap: 16px;
   min-width: 0;
 }
-.rc-head {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-.rc-head-icon {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  background: var(--kr-accent-soft);
-  color: var(--kr-info-text);
-  border: 1px solid var(--kr-accent-border);
-}
-.rc-head-text {
-  margin: 0;
-  color: var(--kr-muted);
-  font-size: 14px;
-  line-height: 1.5;
-}
 
 /* ---------- busca ---------- */
 .rc-search {
@@ -126,28 +104,8 @@
   justify-content: space-between;
   gap: 10px;
 }
-.rc-copies {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.rc-copy {
-  padding: 5px 10px;
-  border: 1px solid var(--kr-border);
-  border-radius: 999px;
-  background: var(--kr-surface);
-  color: var(--kr-text);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-.rc-copy.active {
-  background: var(--kr-primary);
-  border-color: var(--kr-primary);
-  color: var(--kr-primary-text);
-}
-/* O papel do cupom: branco nos dois temas, como sai da impressora. */
+/* O papel do cupom: branco nos dois temas, como sai da impressora. Por isso as cores do papel
+   (fundo, texto e o azul da NF-e) sao fixas e nao seguem os tokens do tema. */
 .rc-paper {
   margin: 0;
   padding: 16px 14px;
@@ -168,7 +126,7 @@
   background-image: repeating-linear-gradient(
     -45deg,
     transparent 0 22px,
-    rgba(220, 38, 38, 0.06) 22px 44px
+    color-mix(in srgb, var(--kr-danger-strong) 6%, transparent) 22px 44px
   );
 }
 /* O numero da NF-e, acrescentado no fim da via virtual (o papel sai antes da nota). */
@@ -176,16 +134,10 @@
   font-weight: 700;
   color: #0b4a8b;
 }
+/* A largura do papel: sem ela a coluna do cupom encolhe ate o tamanho do texto. */
 .rc-paper-empty {
   width: 340px;
   max-width: 100%;
-  padding: 28px 18px;
-  border: 1px dashed var(--kr-border);
-  border-radius: 10px;
-  color: var(--kr-muted);
-  font-size: 13px;
-  line-height: 1.5;
-  text-align: center;
 }
 
 .rc-info {
@@ -243,7 +195,7 @@
 .rc-card h2 {
   margin: 0 0 10px;
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;

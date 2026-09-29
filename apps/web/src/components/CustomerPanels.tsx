@@ -37,8 +37,8 @@ import { canSee } from "../lib/permissions";
 import { operationCodeLabel } from "../lib/receipt-lookup";
 import { saleInstant } from "../lib/reports";
 import { useAsync } from "../lib/use-async";
-import { EmptyState, Pill, PlateBadge } from "./desk";
-import { Alert, Modal } from "./ui";
+import { PlateBadge } from "./desk";
+import { Alert, EmptyState, ErrorState, Modal, Pill, Skeleton, SkeletonRows } from "./ui";
 
 function kg(value: number | null | undefined): string {
   return (value ?? 0).toLocaleString("pt-BR");
@@ -66,7 +66,7 @@ function TotalsStrip({ totals }: { totals: WeighingTotals }) {
   const items = [
     { label: "Pesagens", value: totals.operations.toLocaleString("pt-BR") },
     { label: "Toneladas", value: formatTons(totals.netWeightKg) },
-    { label: "Preco medio", value: perTon(totals.avgPriceCentsPerTon) },
+    { label: "Preço médio", value: perTon(totals.avgPriceCentsPerTon) },
     { label: "Produto", value: formatMoney(totals.productTotalCents) },
     { label: "Frete", value: formatMoney(totals.freightTotalCents) },
     { label: "Total", value: formatMoney(totals.totalCents) }
@@ -126,13 +126,21 @@ export function CustomerWeighingsModal({
       validRange
         ? loadCustomerWeighings(user.companyId, customer, period.startIso, period.endIso)
         : Promise.resolve([]),
-    [user.companyId, customer.id, customer.name, period.startIso, period.endIso, validRange]
+    [user.companyId, customer.id, customer.name, period.startIso, period.endIso, validRange],
+    // A unidade filtra na tela; o cliente sem cadastro e achado pelo nome.
+    {
+      key: validRange
+        ? `cliente-pesagens:${user.companyId}:${customer.id ?? ""}:${customer.name}:${period.startIso}:${period.endIso}`
+        : null
+    }
   );
   const rows = useMemo(
     () => (ops.data ?? []).filter((op) => !unitId || op.unit_id === unitId),
     [ops.data, unitId]
   );
   const groups = useMemo(() => groupWeighingsByProduct(rows), [rows]);
+  // Periodo novo a caminho: o esqueleto no lugar da lista do periodo anterior.
+  const shownGroups = ops.loading ? [] : groups;
   const totals = useMemo(() => sumWeighings(rows), [rows]);
   const showReceipts = canSee(user.role, "cupons");
 
@@ -150,7 +158,7 @@ export function CustomerWeighingsModal({
     <Modal
       wide
       title={customer.name}
-      description="Pesagens concluidas do cliente, separadas por produto (pela data de fechamento)."
+      description="Pesagens concluídas do cliente, separadas por produto (pela data de fechamento)."
       onClose={onClose}
       footer={
         <>
@@ -175,7 +183,7 @@ export function CustomerWeighingsModal({
             />
           </label>
           <label className="op-filter">
-            Ate
+            Até
             <input
               className="input"
               type="date"
@@ -183,19 +191,20 @@ export function CustomerWeighingsModal({
               onChange={(event) => setEnd(event.target.value)}
             />
           </label>
-          {ops.loading && <span className="cp-muted">Carregando...</span>}
         </div>
 
-        {!validRange && <Alert kind="error">A data inicial precisa ser anterior a final.</Alert>}
-        {ops.error && <Alert kind="error">{ops.error}</Alert>}
+        {!validRange && <Alert kind="error">A data inicial precisa ser anterior à final.</Alert>}
+        {ops.error && <ErrorState message={ops.error} onRetry={() => void ops.reload()} />}
 
         <TotalsStrip totals={totals} />
 
-        {!ops.loading && groups.length === 0 && validRange && (
-          <EmptyState title="Nenhuma pesagem deste cliente no periodo." />
+        {ops.loading && <SkeletonRows rows={4} columns={6} />}
+
+        {!ops.loading && !ops.error && groups.length === 0 && validRange && (
+          <EmptyState title="Nenhuma pesagem deste cliente no período." />
         )}
 
-        {groups.map((group) => (
+        {shownGroups.map((group) => (
           <section key={group.key} className="cp-product">
             <button
               type="button"
@@ -210,7 +219,9 @@ export function CustomerWeighingsModal({
                 {group.productDescription}
               </span>
               <span className="cp-product-sum">
-                <span>{group.totals.operations} pesagens</span>
+                <span>
+                  {group.totals.operations} {group.totals.operations === 1 ? "pesagem" : "pesagens"}
+                </span>
                 <span>{formatTons(group.totals.netWeightKg)}</span>
                 <span>{perTon(group.totals.avgPriceCentsPerTon)}</span>
                 <strong>{formatMoney(group.totals.totalCents)}</strong>
@@ -305,7 +316,8 @@ export function CustomerInfoModal({
   const user = useUser();
   const info = useAsync(
     () => loadCustomerInfo(user.companyId, customer.id),
-    [user.companyId, customer.id]
+    [user.companyId, customer.id],
+    { key: `cliente-info:${user.companyId}:${customer.id ?? ""}` }
   );
   const row = info.data?.customer ?? null;
   const specialPrices = info.data?.specialPrices ?? [];
@@ -347,11 +359,11 @@ export function CustomerInfoModal({
           )}
         </div>
 
-        {info.error && <Alert kind="error">{info.error}</Alert>}
-        {info.loading && <p className="cp-muted">Carregando cadastro...</p>}
+        {info.error && <ErrorState message={info.error} onRetry={() => void info.reload()} />}
+        {info.loading && <SkeletonRows rows={4} columns={3} />}
         {!info.loading && !row && !info.error && (
           <Alert kind="info">
-            Esta venda foi feita sem cadastro de cliente (so o nome ficou na pesagem).
+            Esta venda foi feita sem cadastro de cliente (só o nome ficou na pesagem).
           </Alert>
         )}
 
@@ -360,7 +372,7 @@ export function CustomerInfoModal({
             <h3>Resumo · {summary.periodLabel}</h3>
             <TotalsStrip totals={summary.totals} />
             <p className="cp-muted">
-              Ultima pesagem no periodo: {summary.lastSale ? formatDateTime(summary.lastSale) : "—"}
+              Última pesagem no período: {summary.lastSale ? formatDateTime(summary.lastSale) : "—"}
             </p>
           </section>
         )}
@@ -370,12 +382,12 @@ export function CustomerInfoModal({
             <CustomerBalanceCard customer={row} />
 
             <InfoSection title="Cadastro">
-              <InfoItem label="Razao social" value={row.legal_name} wide />
+              <InfoItem label="Razão social" value={row.legal_name} wide />
               <InfoItem label="Nome fantasia" value={row.trade_name} wide />
               <InfoItem label="Documento" value={formatDocument(row.document)} />
-              <InfoItem label="Tipo" value={row.is_individual ? "Pessoa fisica" : "Empresa"} />
-              <InfoItem label="Inscricao estadual" value={row.state_registration} />
-              <InfoItem label="Inscricao municipal" value={row.municipal_registration} />
+              <InfoItem label="Tipo" value={row.is_individual ? "Pessoa física" : "Empresa"} />
+              <InfoItem label="Inscrição estadual" value={row.state_registration} />
+              <InfoItem label="Inscrição municipal" value={row.municipal_registration} />
               <InfoItem label="Cliente desde" value={formatDate(row.created_at)} />
             </InfoSection>
 
@@ -384,31 +396,32 @@ export function CustomerInfoModal({
               <InfoItem label="Telefone" value={row.phone} />
               <InfoItem label="Telefone 2" value={row.phone_secondary} />
               <InfoItem label="E-mail" value={row.email} />
-              <InfoItem label="Endereco" value={customerAddress(row)} wide />
+              <InfoItem label="Endereço" value={customerAddress(row)} wide />
               <InfoItem label="Cidade" value={customerCityLine(row)} wide />
             </InfoSection>
 
             <InfoSection title="Comercial">
               <InfoItem label="Forma de pagamento" value={info.data?.paymentMethodName} />
-              <InfoItem label="Condicao" value={info.data?.paymentTermName} />
+              <InfoItem label="Condição" value={info.data?.paymentTermName} />
               <InfoItem label="Transportadora" value={info.data?.carrierName} />
               <InfoItem
                 label="Exige nota"
-                value={row.nf_required === null ? null : row.nf_required ? "Sim" : "Nao"}
+                value={row.nf_required === null ? null : row.nf_required ? "Sim" : "Não"}
               />
-              <InfoItem label="Conta de credito" value={creditLabel(row)} />
+              <InfoItem label="Conta de crédito" value={creditLabel(row)} />
               <InfoItem
-                label="Limite de credito"
+                label="Limite de crédito"
                 value={row.credit_limit_cents ? formatMoney(row.credit_limit_cents) : null}
               />
             </InfoSection>
 
             <section className="cp-card">
-              <h3>Precos especiais ({specialPrices.length})</h3>
+              <h3>Preços especiais ({specialPrices.length})</h3>
               {specialPrices.length === 0 ? (
-                <p className="cp-muted">
-                  Sem preco especial: o cliente paga o preco padrao de cada produto.
-                </p>
+                <EmptyState
+                  title="Sem preço especial"
+                  hint="O cliente paga o preço padrão de cada produto."
+                />
               ) : (
                 <div className="table-wrap cp-table">
                   <table className="data">
@@ -416,8 +429,8 @@ export function CustomerInfoModal({
                       <tr>
                         <th>Produto</th>
                         <th className="num">Especial</th>
-                        <th className="num">Padrao</th>
-                        <th className="num">Diferenca</th>
+                        <th className="num">Padrão</th>
+                        <th className="num">Diferença</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -426,7 +439,7 @@ export function CustomerInfoModal({
                           <td>
                             <strong>{price.productDescription}</strong>
                             {price.productCode && (
-                              <span className="cell-sub">Codigo {price.productCode}</span>
+                              <span className="cell-sub">Código {price.productCode}</span>
                             )}
                           </td>
                           <td className="num">
@@ -445,7 +458,7 @@ export function CustomerInfoModal({
             </section>
 
             {row.observations && (
-              <InfoSection title="Observacoes">
+              <InfoSection title="Observações">
                 <InfoItem label="" value={row.observations} wide />
               </InfoSection>
             )}
@@ -472,7 +485,8 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
   const user = useUser();
   const credit = useAsync(
     () => loadCreditBalance(user.companyId, customer.id),
-    [user.companyId, customer.id]
+    [user.companyId, customer.id],
+    { key: `cliente-credito:${user.companyId}:${customer.id}` }
   );
   // Sem codigo no OMIE nao ha o que perguntar: nem gasta a chamada. O "Atualizar" pergunta de
   // novo mesmo com a resposta guardada (`loadOmieBalance`).
@@ -505,7 +519,7 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
       </div>
       <dl className="cp-items">
         {omie.loading && !omieData ? (
-          <InfoItem label="Em aberto no OMIE" value="Consultando..." />
+          <InfoItem label="Em aberto no OMIE" value={<Skeleton width={140} height={14} />} />
         ) : omieData?.status === "ok" ? (
           <>
             <InfoItem
@@ -514,7 +528,7 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
                 <>
                   {formatMoney(omieData.openCents)}
                   <span className="cell-sub">
-                    {omieData.openTitles === 1 ? "1 titulo" : `${omieData.openTitles} titulos`}
+                    {omieData.openTitles === 1 ? "1 título" : `${omieData.openTitles} títulos`}
                   </span>
                 </>
               }
@@ -527,8 +541,8 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
                     {formatMoney(omieData.overdueCents)}
                     <span className="cell-sub">
                       {omieData.overdueTitles === 1
-                        ? "1 titulo"
-                        : `${omieData.overdueTitles} titulos`}
+                        ? "1 título"
+                        : `${omieData.overdueTitles} títulos`}
                     </span>
                   </span>
                 ) : (
@@ -537,14 +551,14 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
               }
             />
             <InfoItem
-              label="Proximo vencimento"
+              label="Próximo vencimento"
               value={omieData.nextDueDate ? formatDate(omieData.nextDueDate) : null}
             />
           </>
         ) : omieData?.status === "not_linked" ? (
           <InfoItem
             label="Em aberto no OMIE"
-            value="Cliente ainda sem codigo no OMIE"
+            value="Cliente ainda sem código no OMIE"
             wide={!showCredit}
           />
         ) : (
@@ -556,7 +570,7 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
         )}
         {showCredit && (
           <InfoItem
-            label="Credito no KyberRock"
+            label="Crédito no KyberRock"
             value={
               credit.error ? (
                 credit.error
@@ -564,11 +578,11 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
                 <span className={credit.data.balanceCents < 0 ? "cp-danger" : undefined}>
                   {formatMoney(credit.data.balanceCents)}
                   <span className="cell-sub">
-                    {credit.data.balanceCents < 0 ? "utilizado do limite" : "disponivel"}
+                    {credit.data.balanceCents < 0 ? "utilizado do limite" : "disponível"}
                   </span>
                 </span>
               ) : (
-                "Carregando..."
+                <Skeleton width={120} height={14} />
               )
             }
           />
@@ -581,7 +595,7 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
         <p className="cp-muted">
           Consultado no OMIE em {formatDateTime(omieData.checkedAt)}.
           {omieData.truncated &&
-            " O cliente tem mais de cinco mil titulos em aberto: o total e parcial."}
+            " O cliente tem mais de cinco mil títulos em aberto: o total é parcial."}
         </p>
       )}
     </section>
@@ -600,11 +614,11 @@ function InvoiceBalances({ groups }: { groups: OmieInvoiceBalance[] }) {
         <thead>
           <tr>
             <th>Nota fiscal</th>
-            <th>Emissao</th>
-            <th className="num">Titulos</th>
+            <th>Emissão</th>
+            <th className="num">Títulos</th>
             <th className="num">Vencido</th>
             <th className="num">Em aberto</th>
-            <th>Proximo vencimento</th>
+            <th>Próximo vencimento</th>
           </tr>
         </thead>
         <tbody>

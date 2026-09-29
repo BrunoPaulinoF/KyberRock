@@ -40,7 +40,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   monitoramento: "Monitoramento",
   comercial: "Comercial",
   gestor: "Gestor",
-  operacao: "Operacao",
+  operacao: "Operação",
   administrador: "Administrador"
 };
 

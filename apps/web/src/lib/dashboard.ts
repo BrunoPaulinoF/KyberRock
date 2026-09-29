@@ -37,6 +37,11 @@ const TIME_ZONE = "America/Sao_Paulo";
 
 // ---------- formatacao (a mesma do desktop) ----------
 
+/** Singular ou plural pelo numero: "1 pedido", "3 pedidos" (no lugar de "pedido(s)"). */
+export function plural(count: number, one: string, many: string): string {
+  return count === 1 ? one : many;
+}
+
 /** Toneladas com uma casa, como o KPI do desktop ("12,4 t"). */
 export function formatDashTons(kg: number): string {
   return `${(kg / 1000).toLocaleString("pt-BR", {
@@ -245,38 +250,38 @@ export function buildHealthPills(input: HealthInput): HealthPill[] {
   if (executor === undefined) {
     pills.push({
       id: "executor",
-      label: "Balanca",
+      label: "Balança",
       value: "Verificando...",
       tone: "neutral",
-      detail: "Consultando a balanca que executa os pedidos do site",
+      detail: "Consultando a balança que executa os pedidos do site",
       to: null
     });
   } else if (executor === null) {
     pills.push({
       id: "executor",
-      label: "Balanca",
-      value: "Nao definida",
+      label: "Balança",
+      value: "Não definida",
       tone: "warning",
-      detail: "Nenhuma balanca da unidade executa os pedidos do site (defina no painel)",
+      detail: "Nenhuma balança da unidade executa os pedidos do site (defina no painel)",
       to: null
     });
   } else {
     pills.push({
       id: "executor",
-      label: "Balanca",
+      label: "Balança",
       value: executor.online ? `${executor.name} conectada` : `${executor.name} fora do ar`,
       tone: executor.online ? "success" : "danger",
       detail: executor.online
-        ? "Balanca executora conectada: os pedidos do site sao registrados na hora"
-        : "Os pedidos do site ficam na fila ate a balanca voltar",
+        ? "Balança executora conectada: os pedidos do site são registrados na hora"
+        : "Os pedidos do site ficam na fila até a balança voltar",
       to: null
     });
     pills.push({
       id: "executor-seen",
-      label: "Ultimo sinal",
+      label: "Último sinal",
       value: executor.seenAt ? input.formatDateTime(executor.seenAt) : "Nunca",
       tone: executor.seenAt ? (executor.online ? "success" : "warning") : "warning",
-      detail: "Ultima vez que a balanca executora falou com a nuvem",
+      detail: "Última vez que a balança executora falou com a nuvem",
       to: null
     });
   }
@@ -296,9 +301,9 @@ export function buildHealthPills(input: HealthInput): HealthPill[] {
       pills.push({
         id: "omie",
         label: "OMIE",
-        value: `${pending} pendente(s)`,
+        value: `${pending} ${plural(pending, "pendente", "pendentes")}`,
         tone: "warning",
-        detail: "Pedidos aguardando envio ao OMIE pela balanca",
+        detail: "Pedidos aguardando envio ao OMIE pela balança",
         to: "/operacoes?aba=concluidas"
       });
     } else {
@@ -322,15 +327,15 @@ export function buildHealthPills(input: HealthInput): HealthPill[] {
         waiting > 0
           ? `${waiting} aguardando`
           : failed > 0
-            ? `${failed} nao registrado(s)`
+            ? `${failed} ${plural(failed, "não registrado", "não registrados")}`
             : "Em dia",
       tone: waiting > 0 ? "warning" : failed > 0 ? "danger" : "success",
       detail:
         waiting > 0
           ? "Pedidos esperando a balanca executora registrar"
           : failed > 0
-            ? "A balanca devolveu pedidos sem registrar (ultimas 12 h)"
-            : "Nenhum pedido esperando a balanca",
+            ? "A balança devolveu pedidos sem registrar (últimas 12 h)"
+            : "Nenhum pedido esperando a balança",
       to: "/operacoes"
     });
   }

@@ -4,8 +4,16 @@ import { Printer, ReceiptText, Search } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 
-import { DeskPanel, EmptyState, PlateBadge } from "../components/desk";
-import { Alert, Badge } from "../components/ui";
+import { DeskPanel, PlateBadge } from "../components/desk";
+import {
+  Alert,
+  EmptyState,
+  PageHeader,
+  Pill,
+  SkeletonRows,
+  Tabs,
+  type PillTone
+} from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { operationStatusLabel } from "../lib/customer-report";
@@ -32,11 +40,11 @@ function kg(value: number | null | undefined): string {
   return value === null || value === undefined ? "—" : `${value.toLocaleString("pt-BR")} kg`;
 }
 
-function statusKind(status: string): "ok" | "warn" | "err" | "accent" {
-  if (status === "cancelled" || status === "sync_error") return "err";
-  if (status === "synced") return "ok";
-  if (["closed_local", "pending_cloud", "pending_omie"].includes(status)) return "accent";
-  return "warn";
+function statusTone(status: string): PillTone {
+  if (status === "cancelled" || status === "sync_error") return "danger";
+  if (status === "synced") return "success";
+  if (["closed_local", "pending_cloud", "pending_omie"].includes(status)) return "info";
+  return "warning";
 }
 
 /**
@@ -63,7 +71,7 @@ export function Receipts() {
         setDetail(next);
         setCopyIndex(0);
       } catch (loadError) {
-        setError(errorMessage(loadError, "Nao foi possivel abrir o cupom."));
+        setError(errorMessage(loadError, "Não foi possível abrir o cupom."));
       } finally {
         setSearching(false);
       }
@@ -87,7 +95,7 @@ export function Receipts() {
         setMatches(found);
         if (found.length === 1) await open(found[0].operation.id);
       } catch (searchError) {
-        setError(errorMessage(searchError, "Nao foi possivel buscar o cupom."));
+        setError(errorMessage(searchError, "Não foi possível buscar o cupom."));
       } finally {
         setSearching(false);
       }
@@ -110,20 +118,17 @@ export function Receipts() {
 
   return (
     <DeskPanel>
+      <PageHeader
+        kicker="Operacional"
+        title="Cupons"
+        description={
+          <>
+            Digite o <strong>COD</strong> que aparece no topo do cupom (ex.: 3249) ou o número da
+            via (ex.: 4038-4) para ver o cupom e as informações da pesagem.
+          </>
+        }
+      />
       <div className="rc">
-        <header className="rc-head">
-          <span className="rc-head-icon" aria-hidden="true">
-            <ReceiptText size={20} />
-          </span>
-          <div>
-            <h1 className="desk-title">Cupons</h1>
-            <p className="rc-head-text">
-              Digite o <strong>COD</strong> que aparece no topo do cupom (ex.: 3249) ou o numero da
-              via (ex.: 4038-4) para ver o cupom e as informacoes da pesagem.
-            </p>
-          </div>
-        </header>
-
         <form className="rc-search" onSubmit={submit} role="search">
           <label className="rc-search-field">
             <Search size={16} aria-hidden="true" />
@@ -132,7 +137,7 @@ export function Receipts() {
               value={text}
               onChange={(event) => setText(event.target.value)}
               placeholder="COD 003249 ou 000004038-4"
-              aria-label="Codigo do cupom"
+              aria-label="Código do cupom"
               inputMode="text"
               autoFocus
             />
@@ -146,15 +151,15 @@ export function Receipts() {
 
         {matches && matches.length === 0 && !error && (
           <EmptyState
-            title="Nenhum cupom com esse codigo"
-            hint="Confira o numero no papel. O cupom aparece aqui depois que a balanca envia a pesagem para a nuvem."
+            title="Nenhum cupom com esse código"
+            hint="Confira o número no papel. O cupom aparece aqui depois que a balança envia a pesagem para a nuvem."
           />
         )}
 
         {matches && matches.length > 1 && (
           <section className="rc-matches" aria-label="Pesagens encontradas">
             <p className="rc-matches-title">
-              {matches.length} pesagens com esse numero. Escolha uma:
+              {matches.length} pesagens com esse número. Escolha uma:
             </p>
             <div className="rc-match-list">
               {matches.map((match) => (
@@ -183,14 +188,16 @@ export function Receipts() {
           </section>
         )}
 
-        {detail && (
+        {detail ? (
           <ReceiptView detail={detail} copyIndex={copyIndex} onCopyChange={setCopyIndex} />
+        ) : (
+          searching && <SkeletonRows rows={6} columns={3} />
         )}
 
-        {!matches && !detail && !error && (
+        {!matches && !detail && !error && !searching && (
           <EmptyState
             title="Busque um cupom"
-            hint="O cupom aparece como saiu na impressora da balanca, com a pesagem, os valores e o pedido do OMIE."
+            hint="O cupom aparece como saiu na impressora da balança, com a pesagem, os valores e o pedido do OMIE."
           />
         )}
       </div>
@@ -227,21 +234,20 @@ function ReceiptView({
     <div className="rc-grid">
       <section className="rc-paper-card" aria-label="Cupom impresso">
         <div className="rc-paper-head">
-          <div className="rc-copies" role="tablist" aria-label="Vias impressas">
-            {copies.map((item, index) => (
-              <button
-                type="button"
-                key={item.id}
-                role="tab"
-                aria-selected={index === copyIndex}
-                className={`rc-copy${index === copyIndex ? " active" : ""}`}
-                onClick={() => onCopyChange(index)}
-                title={`Via ${receiptNumberLabel(item.receipt_number, item.device_number)}`}
-              >
-                {copyLabel(item.copy_number)}
-              </button>
-            ))}
-          </div>
+          {copies.length > 0 ? (
+            <Tabs
+              label="Vias impressas"
+              variant="pill"
+              active={String(copyIndex)}
+              onChange={(id) => onCopyChange(Number(id))}
+              tabs={copies.map((item, index) => ({
+                id: String(index),
+                label: copyLabel(item.copy_number)
+              }))}
+            />
+          ) : (
+            <span />
+          )}
           <button type="button" className="btn" onClick={print} disabled={lines.length === 0}>
             <Printer size={15} />
             Imprimir
@@ -253,7 +259,7 @@ function ReceiptView({
             {stamp.length > 0 && (
               <span
                 className="rc-paper-nf"
-                title="A nota fiscal saiu depois da impressao: o numero nao esta no papel."
+                title="A nota fiscal saiu depois da impressão: o número não está no papel."
               >
                 {`\n${stamp.join("\n")}`}
               </span>
@@ -261,9 +267,14 @@ function ReceiptView({
           </pre>
         ) : (
           <div className="rc-paper-empty">
-            {copies.length === 0
-              ? "Esta pesagem ainda nao tem cupom impresso."
-              : "A balanca nao guardou a copia desta via. As informacoes ao lado sao da pesagem."}
+            <EmptyState
+              icon={ReceiptText}
+              title={
+                copies.length === 0
+                  ? "Esta pesagem ainda não tem cupom impresso."
+                  : "A balança não guardou a cópia desta via. As informações ao lado são da pesagem."
+              }
+            />
           </div>
         )}
       </section>
@@ -278,9 +289,9 @@ function ReceiptView({
             <strong className="rc-summary-name">{operation.customer_name ?? "Sem cliente"}</strong>
           </div>
           <div className="rc-summary-side">
-            <Badge kind={statusKind(operation.status)}>
+            <Pill tone={statusTone(operation.status)}>
               {operationStatusLabel(operation.status)}
-            </Badge>
+            </Pill>
             <span className="rc-summary-total">{formatMoney(operation.total_cents)}</span>
           </div>
         </div>
@@ -316,8 +327,8 @@ function ReceiptView({
 
         <InfoCard title="Pesagem">
           <Item label="Entrada" value={kg(operation.entry_weight_kg)} />
-          <Item label="Saida" value={kg(operation.exit_weight_kg)} />
-          <Item label="Peso liquido" value={kg(operation.net_weight_kg)} strong />
+          <Item label="Saída" value={kg(operation.exit_weight_kg)} />
+          <Item label="Peso líquido" value={kg(operation.net_weight_kg)} strong />
           <Item label="Chegou" value={formatDateTime(operation.created_at)} />
           <Item label="Saiu" value={formatDateTime(operation.closed_at)} />
           <Item
@@ -329,7 +340,7 @@ function ReceiptView({
 
         <InfoCard title="Valores">
           <Item
-            label="Preco por tonelada"
+            label="Preço por tonelada"
             value={
               operation.unit_price_cents === null ? null : formatMoney(operation.unit_price_cents)
             }
@@ -338,8 +349,8 @@ function ReceiptView({
           <Item label="Frete" value={formatMoney(operation.freight_total_cents)} />
           <Item label="Total" value={formatMoney(operation.total_cents)} strong />
           <Item label="Forma de pagamento" value={detail.paymentMethodName} />
-          <Item label="Condicao" value={detail.paymentTermName} />
-          <Item label="Tabela de preco" value={operation.applied_price_table_name} />
+          <Item label="Condição" value={detail.paymentTermName} />
+          <Item label="Tabela de preço" value={operation.applied_price_table_name} />
         </InfoCard>
 
         <InfoCard title="Nota e OMIE">
@@ -360,7 +371,7 @@ function ReceiptView({
             pedido do cliente: com o nome "Pedido OMIE" ele era lido como numero de pedido.
           */}
           <Item
-            label="Codigo interno no OMIE"
+            label="Código interno no OMIE"
             value={operation.omie_sales_order_id ? String(operation.omie_sales_order_id) : null}
           />
           <Item label="Faturamento" value={operation.omie_billing_status} />
@@ -369,7 +380,7 @@ function ReceiptView({
         </InfoCard>
 
         {copies.length > 0 && (
-          <InfoCard title="Impressoes">
+          <InfoCard title="Impressões">
             <div className="rc-prints">
               {copies.map((item) => (
                 <div key={item.id} className="rc-print">

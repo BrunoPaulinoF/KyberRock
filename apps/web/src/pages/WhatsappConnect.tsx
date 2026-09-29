@@ -147,13 +147,13 @@ function ClosedCard({ icon, title, message }: { icon: string; title: string; mes
   return (
     <div style={styles.page}>
       <div style={styles.card}>
-        <img src={publicAsset("logo.png")} alt="" style={styles.logo} />
+        <img src={publicAsset("logo-128.webp")} alt="" style={styles.logo} />
         <p style={styles.brand}>KyberRock</p>
         <div style={styles.icon}>{icon}</div>
         <h1 style={styles.title}>{title}</h1>
         <p style={styles.text}>{message}</p>
         <p style={styles.muted}>
-          Peca um link novo na tela de Relatorios do computador da balanca.
+          Peça um link novo na tela de Relatórios do computador da balança.
         </p>
       </div>
     </div>
@@ -193,7 +193,7 @@ export function WhatsappConnect() {
       setState((current) => (current === "loading" ? "offline" : current));
       setSnapshot((current) => ({
         ...(current ?? {}),
-        error: "Sem conexao com o servidor. Tentando de novo..."
+        error: "Sem conexão com o servidor. Tentando de novo..."
       }));
     }
   }, [token]);
@@ -216,7 +216,7 @@ export function WhatsappConnect() {
     return (
       <div style={styles.page}>
         <div style={styles.card}>
-          <img src={publicAsset("logo.png")} alt="" style={styles.logo} />
+          <img src={publicAsset("logo-128.webp")} alt="" style={styles.logo} />
           <p style={styles.brand}>KyberRock</p>
           <p style={styles.text}>Abrindo o link...</p>
         </div>
@@ -231,8 +231,8 @@ export function WhatsappConnect() {
         title="WhatsApp conectado!"
         message={
           snapshot?.profileName
-            ? `Conectado como ${snapshot.profileName}. Pode fechar esta pagina.`
-            : "Pareamento concluido. Pode fechar esta pagina."
+            ? `Conectado como ${snapshot.profileName}. Pode fechar esta página.`
+            : "Pareamento concluído. Pode fechar esta página."
         }
       />
     );
@@ -253,7 +253,7 @@ export function WhatsappConnect() {
       <ClosedCard
         icon="⏳"
         title="Link expirado"
-        message="Este link valia 15 minutos e ja passou do prazo."
+        message="Este link valia 15 minutos e já passou do prazo."
       />
     );
   }
@@ -263,7 +263,7 @@ export function WhatsappConnect() {
   return (
     <div style={styles.page}>
       <div style={styles.card}>
-        <img src={publicAsset("logo.png")} alt="" style={styles.logo} />
+        <img src={publicAsset("logo-128.webp")} alt="" style={styles.logo} />
         <p style={styles.brand}>KyberRock</p>
         <h1 style={styles.title}>
           {snapshot?.companyName
@@ -271,7 +271,7 @@ export function WhatsappConnect() {
             : "Conectar o WhatsApp"}
         </h1>
         <p style={styles.text}>
-          Escaneie o QR code abaixo com o celular que vai enviar os relatorios.
+          Escaneie o QR code abaixo com o celular que vai enviar os relatórios.
         </p>
 
         <div style={styles.qrFrame}>
@@ -291,22 +291,22 @@ export function WhatsappConnect() {
         {snapshot?.error ? <p style={styles.alert}>{snapshot.error}</p> : null}
         {snapshot?.paircode ? (
           <p style={styles.text}>
-            Codigo de pareamento: <span style={styles.paircode}>{snapshot.paircode}</span>
+            Código de pareamento: <span style={styles.paircode}>{snapshot.paircode}</span>
           </p>
         ) : null}
 
         <ol style={styles.steps}>
-          <li>Abra o WhatsApp no celular do numero da pedreira.</li>
+          <li>Abra o WhatsApp no celular do número da pedreira.</li>
           <li>
-            Toque em <strong>Configuracoes &gt; Aparelhos conectados</strong>.
+            Toque em <strong>Configurações &gt; Aparelhos conectados</strong>.
           </li>
           <li>
-            Toque em <strong>Conectar aparelho</strong> e aponte a camera para o QR acima.
+            Toque em <strong>Conectar aparelho</strong> e aponte a câmera para o QR acima.
           </li>
         </ol>
 
         <p style={styles.muted}>
-          O QR se renova sozinho enquanto esta pagina estiver aberta. Nao compartilhe este link:
+          O QR se renova sozinho enquanto esta página estiver aberta. Não compartilhe este link:
           quem o abrir dentro do prazo pode conectar um aparelho ao WhatsApp da pedreira.
         </p>
       </div>

@@ -31,7 +31,7 @@ export function parseDeviceName(raw: string): DeviceNameResult {
   if (name.length > DEVICE_NAME_MAX_LENGTH) {
     return {
       ok: false,
-      error: `O nome do computador deve ter no maximo ${DEVICE_NAME_MAX_LENGTH} caracteres.`
+      error: `O nome do computador deve ter no máximo ${DEVICE_NAME_MAX_LENGTH} caracteres.`
     };
   }
   return { ok: true, name };

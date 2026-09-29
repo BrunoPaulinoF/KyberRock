@@ -31,7 +31,7 @@ describe("FleetVersionBars", () => {
     expect(html).toContain("Portaria");
     expect(html).toContain("Pedreira Sul");
     expect(html).toContain("Escritorio");
-    expect(html).toContain("1 de 2 balancas");
+    expect(html).toContain("1 de 2 balanças");
   });
 
   it("a balanca sem versao reportada aparece como sem informacao, nao como zero", () => {
@@ -40,7 +40,7 @@ describe("FleetVersionBars", () => {
       <FleetVersionBars groups={groupFleetVersions(devices)} total={devices.length} />
     );
 
-    expect(html).toContain("Sem informacao");
+    expect(html).toContain("Sem informação");
     expect(html).toContain("Deposito");
   });
 

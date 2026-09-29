@@ -42,9 +42,9 @@ describe("frete da Nova entrada do site", () => {
         { ...withFreight, freightCalculationType: "per_ton_km", freightBaseValueCents: 100 },
         ""
       )
-    ).toBe("Informe a distancia do frete em km.");
+    ).toBe("Informe a distância do frete em km.");
     expect(validateEntryFreight(INITIAL_ENTRY_FREIGHT, "quando der")).toContain(
-      "Condicao personalizada invalida"
+      "Condição personalizada inválida"
     );
     expect(validateEntryFreight(INITIAL_ENTRY_FREIGHT, "7 14 21")).toBeNull();
   });
@@ -116,9 +116,9 @@ describe("frete da Nova entrada do site", () => {
 
   it("previa da condicao igual a legenda do desktop", () => {
     expect(describePaymentCondition("").status).toBe("empty");
-    expect(describePaymentCondition("30").message).toBe("1 parcela em 30 dias apos a venda.");
+    expect(describePaymentCondition("30").message).toBe("1 parcela em 30 dias após a venda.");
     expect(describePaymentCondition("7 14 21").message).toBe(
-      "3 parcelas: 7, 14 e 21 dias apos a venda."
+      "3 parcelas: 7, 14 e 21 dias após a venda."
     );
     expect(describePaymentCondition("xyz").status).toBe("invalid");
   });

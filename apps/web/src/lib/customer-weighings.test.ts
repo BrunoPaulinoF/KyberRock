@@ -97,9 +97,9 @@ describe("cartao Info", () => {
       "Ibiuna/SP - CEP 18150-000"
     );
     expect(customerCityLine({ city: null, state: null, zipcode: null })).toBe("");
-    expect(creditLabel({ credit_account_enabled: true, credit_mode: "prepaid" })).toBe("Pre-pago");
+    expect(creditLabel({ credit_account_enabled: true, credit_mode: "prepaid" })).toBe("Pré-pago");
     expect(creditLabel({ credit_account_enabled: true, credit_mode: "normal" })).toBe("Fiado");
-    expect(creditLabel({ credit_account_enabled: false, credit_mode: "normal" })).toBe("Nao usa");
+    expect(creditLabel({ credit_account_enabled: false, credit_mode: "normal" })).toBe("Não usa");
   });
 });
 

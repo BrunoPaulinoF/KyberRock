@@ -1,114 +1,31 @@
 /*
  * Tela Insights — o `styles` de apps/desktop/src/renderer/InsightsView.tsx. As cores dos
- * graficos sao as `--kr-chart-*` de `getThemeVariables` (App.tsx do desktop), que o
- * `styles.css` do site nao traz; ficam aqui, presas a esta tela.
+ * graficos sao as `--kr-chart-*` do `styles.css` (as mesmas em todas as telas e nos dois temas);
+ * eixo, grade e dica do grafico usam as cores de texto, linha e superficie do tema.
  */
 
 .insights {
-  --kr-chart-1: #d97706;
-  --kr-chart-2: #0d9488;
-  --kr-chart-3: #57534e;
-  --kr-chart-4: #dc2626;
-  --kr-chart-5: #16a34a;
-  --kr-chart-6: #7c3aed;
-  --kr-chart-7: #db2777;
-  --kr-chart-axis: #78716c;
-  --kr-chart-grid: #e7e5e4;
-  --kr-chart-tooltip-bg: #ffffff;
-  --kr-chart-tooltip-border: #e7e5e4;
-  --kr-chart-tooltip-text: #292524;
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-width: 0;
 }
-
-:root[data-theme="dark"] .insights {
-  --kr-chart-1: #fbbf24;
-  --kr-chart-2: #2dd4bf;
-  --kr-chart-3: #a8a29e;
-  --kr-chart-4: #f87171;
-  --kr-chart-5: #4ade80;
-  --kr-chart-6: #a78bfa;
-  --kr-chart-7: #f472b6;
-  --kr-chart-axis: #78716c;
-  --kr-chart-grid: #2e2925;
-  --kr-chart-tooltip-bg: #1c1917;
-  --kr-chart-tooltip-border: #44403c;
-  --kr-chart-tooltip-text: #e7e5e4;
+/* O topo (`PageHeader`) fica fora dos cartoes; o espaco ate o periodo e o `gap`. */
+.insights > .page-header {
+  margin-bottom: 0;
 }
 
-/* ---------- cabecalho e periodo ---------- */
-.insights-header {
+/* ---------- periodo ---------- */
+.insights-period {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 10px;
+  align-items: center;
+  gap: 8px 10px;
   flex-wrap: wrap;
-}
-.insights-title-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.insights-title {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--kr-text-strong);
-  margin: 0;
-}
-.insights-tip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  cursor: help;
-  opacity: 0.42;
-  color: var(--kr-text);
-  border-radius: 999px;
-  transition:
-    opacity 160ms ease,
-    background 160ms ease;
-}
-.insights-tip:hover {
-  opacity: 0.9;
-  background: color-mix(in srgb, var(--kr-chart-1) 12%, transparent);
-}
-.insights-period-col {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
-}
-.insights-period-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-.insights-chip {
-  padding: 6px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--kr-text);
-  background: var(--kr-card-bg);
-  border: 1px solid var(--kr-card-border);
-  border-radius: 999px;
-  cursor: pointer;
-  font-family: inherit;
-}
-.insights-chip.active {
-  color: #ffffff;
-  background: var(--kr-chart-1);
-  border-color: var(--kr-chart-1);
 }
 .insights-custom-dates {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  justify-content: flex-end;
 }
 .insights-custom-dates label {
   display: flex;
@@ -121,11 +38,6 @@
 .insights-custom-dates .input {
   border-radius: 8px;
   padding: 5px 8px;
-}
-.insights-period-hint {
-  font-size: 11px;
-  color: var(--kr-muted);
-  margin: 0;
 }
 
 /* ---------- KPIs ---------- */
@@ -146,7 +58,7 @@
   margin: 0;
 }
 .insights-kpi-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--kr-muted);
   text-transform: uppercase;
@@ -192,17 +104,12 @@
   margin: 0;
 }
 .insights-card-head span {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
 }
 .insights-chart-body {
   width: 100%;
   min-height: 205px;
-}
-.insights-muted {
-  color: var(--kr-muted);
-  font-size: 13px;
-  margin: 0;
 }
 .insights-chart {
   position: relative;
@@ -213,18 +120,18 @@
   overflow: visible;
 }
 .insights-grid line {
-  stroke: var(--kr-chart-grid);
+  stroke: var(--kr-border);
   stroke-dasharray: 3 3;
 }
 .insights-axis line {
-  stroke: var(--kr-chart-axis);
+  stroke: var(--kr-muted);
 }
 .insights-axis text {
-  fill: var(--kr-chart-axis);
-  font-size: 11px;
+  fill: var(--kr-muted);
+  font-size: 12px;
 }
 .insights-cursor {
-  stroke: var(--kr-chart-axis);
+  stroke: var(--kr-muted);
   stroke-width: 1;
 }
 .insights-band {
@@ -234,11 +141,11 @@
   position: absolute;
   z-index: 5;
   pointer-events: none;
-  background: var(--kr-chart-tooltip-bg);
-  border: 1px solid var(--kr-chart-tooltip-border);
+  background: var(--kr-surface-elevated);
+  border: 1px solid var(--kr-border);
   border-radius: 6px;
   font-size: 12px;
-  color: var(--kr-chart-tooltip-text);
+  color: var(--kr-text);
   box-shadow: var(--kr-shadow);
   padding: 8px 10px;
   white-space: nowrap;
@@ -292,7 +199,7 @@
   gap: 10px;
 }
 .insights-sync-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--kr-muted);
   text-transform: uppercase;
@@ -305,10 +212,8 @@
   color: var(--kr-text-strong);
   margin: 4px 0 0;
 }
-.insights-sync-hint {
-  font-size: 11px;
-  color: var(--kr-muted);
-  margin: 6px 0 0;
+.insights-status .error-state {
+  margin-top: 8px;
 }
 .insights-pivot-controls {
   display: flex;
@@ -332,6 +237,10 @@
   padding: 6px 8px;
   font-weight: 700;
 }
+.insights-pivot .skeleton-rows,
+.insights-pivot .empty-state {
+  margin-top: 8px;
+}
 .insights-pivot-scroll {
   overflow: auto;
   max-height: min(420px, 48vh);
@@ -347,7 +256,7 @@
   padding: 8px 12px;
   border-bottom: 2px solid var(--kr-card-border);
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   position: sticky;
@@ -368,10 +277,4 @@
   padding: 8px 12px;
   font-weight: 800;
   border-bottom: 0;
-}
-.insights-pivot-table td.insights-pivot-empty {
-  padding: 16px 12px;
-  color: var(--kr-muted);
-  text-align: center;
-  font-style: italic;
 }

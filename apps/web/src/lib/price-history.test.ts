@@ -11,8 +11,8 @@ import {
 describe("historico de preco especial no site", () => {
   it("rotula a acao e a origem", () => {
     expect(priceChangeActionLabel("adicionado")).toBe("Adicionado");
-    expect(priceChangeActionLabel("removido")).toBe("Excluido");
-    expect(priceChangeSourceLabel("balanca")).toBe("Balanca");
+    expect(priceChangeActionLabel("removido")).toBe("Excluído");
+    expect(priceChangeSourceLabel("balanca")).toBe("Balança");
     expect(priceChangeSourceLabel("site")).toBe("KyberRock Web");
   });
 
