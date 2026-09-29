@@ -8,6 +8,7 @@ import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
+import { defaultPriceByProduct } from "../lib/customer-cadastro";
 import { formatMoney, parseMoneyToCents } from "../lib/format";
 import { matchesSearch } from "../lib/operation";
 import { q, type Product } from "../lib/queries";
@@ -46,14 +47,10 @@ export function ProductsSection() {
     () => new Map(defaults.map((p) => [p.product_id, p.unit_price_cents])),
     [defaults]
   );
-  const defaultByProduct = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const product of products) {
-      const price = tableByProduct.get(product.id) ?? product.unit_price_cents;
-      if (price != null && price > 0) map.set(product.id, price);
-    }
-    return map;
-  }, [products, tableByProduct]);
+  const defaultByProduct = useMemo(
+    () => defaultPriceByProduct(products, defaults),
+    [products, defaults]
+  );
   const fromOmie = (product: Product) =>
     !tableByProduct.has(product.id) && defaultByProduct.has(product.id);
   const visibleProducts = products.filter((p) =>
@@ -177,7 +174,7 @@ export function ProductsSection() {
 
       <SectionHead
         title="Preco especial por cliente"
-        description="Escolha o cliente para ver o preco dele em cada produto. Sem preco especial, vale o padrao."
+        description="Escolha o cliente para ver o preco dele em cada produto. Sem preco especial, vale o padrao. Tambem da para abrir pela aba Clientes, no botao da etiqueta."
       />
       <div style={{ maxWidth: 420, marginBottom: 10 }}>
         <CustomerPicker companyId={user.companyId} value={customerId} onChange={setCustomerId} />

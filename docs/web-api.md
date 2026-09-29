@@ -191,6 +191,20 @@ digitam, a operação sempre, o gestor conforme o login) — ver `DELETE_ACTIONS
 
 Grava só o que veio e carimba `commercial_published_at` — é essa marca que faz as balanças
 adotarem o bloco. `defaultCarrierId` e `defaultPaymentMethodId` precisam existir na empresa.
+`defaultFreightModality` (`cif`, `fob`, `third_party`, `none` ou os legados `own_sender` /
+`own_recipient`; `null` tira o padrão) **não** é do bloco com dono: mandado sozinho, grava sem
+carimbar `commercial_published_at` — carimbar por ele faria as balanças adotarem o nulo de um
+bloco de crédito que ninguém publicou.
+
+| Ação                                     | Payload                                                                               | Devolve                            |
+| ---------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------- |
+| `set_customer_future_billing_invoice`    | `customerId`, `productId?` (`null` = qualquer produto), `nfeNumber`, `totalWeightKg?` | `id`, `nfeNumber`, `totalWeightKg` |
+| `remove_customer_future_billing_invoice` | `id`                                                                                  | `id`                               |
+
+**Nota de venda para entrega futura** (CFOP 5.922, aba Fiscal da ficha na balança): uma linha viva
+por (cliente, produto, número) — repetir a mesma nota só corrige o total. `nfeNumber` vira só
+dígitos; `totalWeightKg` vazio, zero ou inválido é `null` (nota sem controle de saldo). O saldo é
+baixado pela balança, pelas pesagens. Remover é lápide.
 
 ### 4.4 Transportadora, motorista, veículo (comercial, gestor, operação e administrador)
 
@@ -239,9 +253,18 @@ mesma linha — nunca nasce um par duplicado.
 | `set_price_table_item`          | `priceTableId`, `productId`, `unitPriceCents`, `unit?`, `validFrom?`, `validTo?` | `id`, `unitPriceCents` |
 | `remove_price_table_item`       | `priceTableId`, `productId`                                                      | `removed`              |
 | `set_customer_price_table`      | `customerId`, `priceTableId` (`null` desvincula)                                 | `id`, `priceTableId`   |
+| `set_customer_freight_value`    | `customerId`, `productId?` (`null` = todos os produtos), `baseValueCents` (> 0)  | `id`, `baseValueCents` |
+| `remove_customer_freight_value` | `customerId`, `productId?`, `modality?` (`null` = a regra única antiga)          | `removed`              |
 
 Toda ação desta seção aceita `pricePassword` — obrigatório para quem tem `requiresPricePassword`
 (ver seção 2). A senha é conferida e descartada; nunca é gravada.
+
+**Frete do cadastro do cliente** (`customer_freight_rules`, uma linha por cliente+produto):
+o site grava o valor combinado em R$/t na chave `cif` do mapa `modalities` do `rule_json`, com
+`source: "manual"` — o mesmo formato da balança, e o valor manual vence a memória da última venda
+na entrada. O resto do mapa (a memória `last_used` que cada balança guarda) é preservado
+(`_shared/customer-freight-rule.ts`). Remover tira só aquele tipo de frete; sem `modality`, ou
+quando a linha sobra vazia, ela vira lápide — como o "Remover" da balança.
 
 Regra de ouro do preço: **uma linha viva por chave natural** (produto; cliente+produto;
 tabela+produto). A `web-api` atualiza a linha que existe em vez de criar outra — era o segundo id
@@ -385,10 +408,6 @@ chave no `desktop-status` e confere o código sem internet (`apps/desktop/src/se
 
 ### 4.14 O que ainda não está na `web-api` (próximas versões)
 
-- Regra de frete do cliente (`customer_freight_rules.rule_json`) — o formato do JSON é o da
-  balança (`apps/desktop/src/services/customer-freight-rules.ts`) e precisa ser documentado
-  antes de abrir a escrita.
-- Nota de faturamento futuro (`customer_future_billing_invoices`): leitura já funciona.
 - Gestão de usuários pela própria pedreira (hoje é o painel `/admin`).
 
 ## 5. Como o cadastro do site chega na balança

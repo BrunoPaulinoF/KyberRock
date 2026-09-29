@@ -467,6 +467,28 @@ describe("web-api: cliente", () => {
     expect(result.status).toBe(404);
     expect(h.store.rows("customers")[0].commercial_published_at).toBeUndefined();
   });
+
+  it("so o tipo de frete padrao nao carimba o bloco comercial; tipo desconhecido e 400", async () => {
+    const h = harness({ role: "comercial" });
+    h.store.seed("customers", [{ id: "c-1", company_id: COMPANY }]);
+
+    const bad = await h.call("set_customer_commercial", {
+      id: "c-1",
+      defaultFreightModality: "caminhao"
+    });
+    expect(bad.status).toBe(400);
+
+    const result = await h.call("set_customer_commercial", {
+      id: "c-1",
+      defaultFreightModality: "fob"
+    });
+    expect(result.status).toBe(200);
+    expect(h.store.rows("customers")[0]).toMatchObject({
+      default_freight_modality: "fob",
+      updated_at: NOW
+    });
+    expect(h.store.rows("customers")[0].commercial_published_at).toBeUndefined();
+  });
 });
 
 describe("web-api: transportadora, motorista, veiculo e vinculos", () => {
@@ -770,6 +792,130 @@ describe("web-api: preco (gestor)", () => {
 
     const badDate = await h.call("upsert_price_table", { id: "id-1", validTo: "31/12/2026" });
     expect(badDate.status).toBe(400);
+  });
+});
+
+describe("web-api: frete e entrega futura do cliente", () => {
+  it("frete do cadastro atualiza a linha do par e preserva a memoria da ultima venda", async () => {
+    const h = harness({ role: "comercial" });
+    h.store.seed("customers", [{ id: "c-1", company_id: COMPANY }]);
+    h.store.seed("customer_freight_rules", [
+      {
+        id: "fr-1",
+        company_id: COMPANY,
+        customer_id: "c-1",
+        product_id: null,
+        is_active: true,
+        rule_json: {
+          baseValueCents: 0,
+          modalities: { none: { baseValueCents: 0, source: "last_used" } }
+        }
+      }
+    ]);
+
+    const result = await h.call("set_customer_freight_value", {
+      customerId: "c-1",
+      productId: null,
+      baseValueCents: 1500
+    });
+
+    expect(result.status).toBe(200);
+    expect(result.body.id).toBe("fr-1");
+    const rules = h.store.rows("customer_freight_rules");
+    expect(rules).toHaveLength(1);
+    expect(rules[0].updated_at).toBe(NOW);
+    expect((rules[0].rule_json as Row).modalities).toEqual({
+      none: { baseValueCents: 0, source: "last_used" },
+      cif: {
+        type: "per_ton",
+        baseValueCents: 1500,
+        destination: null,
+        source: "manual",
+        updatedAt: NOW
+      }
+    });
+  });
+
+  it("frete por produto nasce numa linha propria; valor zero e recusado", async () => {
+    const h = harness({ role: "gestor" });
+    h.store.seed("customers", [{ id: "c-1", company_id: COMPANY }]);
+    h.store.seed("products", [{ id: "p-1", company_id: COMPANY }]);
+
+    expect(
+      (await h.call("set_customer_freight_value", { customerId: "c-1", baseValueCents: 0 })).status
+    ).toBe(400);
+    const created = await h.call("set_customer_freight_value", {
+      customerId: "c-1",
+      productId: "p-1",
+      baseValueCents: 2000
+    });
+    expect(created.status).toBe(200);
+    expect(h.store.rows("customer_freight_rules")[0]).toMatchObject({
+      customer_id: "c-1",
+      product_id: "p-1",
+      is_active: true
+    });
+
+    const removed = await h.call("remove_customer_freight_value", {
+      customerId: "c-1",
+      productId: "p-1",
+      modality: "cif"
+    });
+    expect(removed.body.removed).toBe(1);
+    expect(h.store.rows("customer_freight_rules")[0]).toMatchObject({
+      deleted_at: NOW,
+      is_active: false
+    });
+  });
+
+  it("frete pede a senha de preco para quem precisa", async () => {
+    const h = harness({ role: "operacao", requiresPricePassword: true });
+    h.store.seed("companies", [{ id: COMPANY, price_change_password: "4321" }]);
+    h.store.seed("customers", [{ id: "c-1", company_id: COMPANY }]);
+    const result = await h.call("set_customer_freight_value", {
+      customerId: "c-1",
+      baseValueCents: 1500
+    });
+    expect(result.status).toBe(403);
+    expect(h.store.rows("customer_freight_rules")).toHaveLength(0);
+  });
+
+  it("nota de entrega futura: mesma nota corrige o total; remover e lapide", async () => {
+    const h = harness({ role: "comercial" });
+    h.store.seed("customers", [{ id: "c-1", company_id: COMPANY }]);
+    h.store.seed("products", [{ id: "p-1", company_id: COMPANY }]);
+
+    expect(
+      (await h.call("set_customer_future_billing_invoice", { customerId: "c-1", nfeNumber: "" }))
+        .status
+    ).toBe(400);
+    const first = await h.call("set_customer_future_billing_invoice", {
+      customerId: "c-1",
+      productId: "p-1",
+      nfeNumber: "12.345",
+      totalWeightKg: 30000
+    });
+    expect(first.status).toBe(200);
+    const again = await h.call("set_customer_future_billing_invoice", {
+      customerId: "c-1",
+      productId: "p-1",
+      nfeNumber: "12345",
+      totalWeightKg: ""
+    });
+    expect(again.body.id).toBe(first.body.id);
+    const invoices = h.store.rows("customer_future_billing_invoices");
+    expect(invoices).toHaveLength(1);
+    expect(invoices[0]).toMatchObject({
+      customer_id: "c-1",
+      product_id: "p-1",
+      nfe_number: "12345",
+      total_weight_kg: null,
+      is_active: true
+    });
+
+    const removed = await h.call("remove_customer_future_billing_invoice", { id: first.body.id });
+    expect(removed.status).toBe(200);
+    expect(invoices[0]).toMatchObject({ deleted_at: NOW, is_active: false });
   });
 });
 

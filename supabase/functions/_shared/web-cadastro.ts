@@ -158,6 +158,31 @@ export function parseCustomerInput(
 }
 
 export const CREDIT_MODES = ["normal", "prepaid"] as const;
+
+/** As colunas com dono do bloco comercial/credito (`MASTERED_CUSTOMER_COLUMNS` do desktop). */
+export const MASTERED_CUSTOMER_COLUMNS = [
+  "default_payment_method_id",
+  "default_carrier_id",
+  "nf_required",
+  "credit_mode",
+  "credit_account_enabled",
+  "credit_periodicity",
+  "credit_closing_day",
+  "credit_second_closing_day",
+  "credit_boleto_days",
+  "credit_second_boleto_days",
+  "credit_closing_weekday"
+] as const;
+
+/** Os tipos de frete que a balanca aceita como padrao do cliente (`isFreightModality`). */
+export const FREIGHT_MODALITY_KEYS = [
+  "cif",
+  "fob",
+  "third_party",
+  "own_sender",
+  "own_recipient",
+  "none"
+] as const;
 export const CREDIT_PERIODICITIES = ["monthly", "biweekly", "weekly"] as const;
 
 /**
@@ -170,11 +195,21 @@ export function parseCommercialInput(payload: Payload): ParseResult<Record<strin
 
   for (const [input, column] of [
     ["defaultPaymentMethodId", "default_payment_method_id"],
-    ["defaultCarrierId", "default_carrier_id"],
-    ["defaultFreightModality", "default_freight_modality"]
+    ["defaultCarrierId", "default_carrier_id"]
   ] as const) {
     const value = optionalText(payload, input);
     if (value !== undefined) columns[column] = value;
+  }
+
+  const freightModality = optionalText(payload, "defaultFreightModality");
+  if (freightModality !== undefined) {
+    if (
+      freightModality !== null &&
+      !(FREIGHT_MODALITY_KEYS as readonly string[]).includes(freightModality)
+    ) {
+      return parseFailure("Tipo de frete padrao invalido.");
+    }
+    columns.default_freight_modality = freightModality;
   }
 
   for (const [input, column] of [

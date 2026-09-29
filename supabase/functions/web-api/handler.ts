@@ -28,6 +28,7 @@ import { normalizeDocument } from "../_shared/document.ts";
 import {
   buildOmieCarrierPayload,
   buildOmieCustomerPayload,
+  MASTERED_CUSTOMER_COLUMNS,
   optionalText,
   parseCarrierInput,
   parseCommercialInput,
@@ -73,6 +74,7 @@ import {
   type UpdateRequestPayload
 } from "../_shared/operation-requests.ts";
 import { priceChangeAction } from "../_shared/price-change-log.ts";
+import { withManualFreightValue, withoutFreightValue } from "../_shared/customer-freight-rule.ts";
 import { recipientColumns, validateReportRecipient } from "../_shared/report-recipients.ts";
 
 export type Row = Record<string, unknown>;
@@ -164,6 +166,10 @@ export const WEB_API_ACTIONS = [
   "set_price_table_item",
   "remove_price_table_item",
   "set_customer_price_table",
+  "set_customer_freight_value",
+  "remove_customer_freight_value",
+  "set_customer_future_billing_invoice",
+  "remove_customer_future_billing_invoice",
   "settle_wallet",
   "reopen_wallet",
   "request_invoice_closing",
@@ -193,7 +199,10 @@ export const GESTOR_ONLY_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiActi
   "delete_report_recipient"
 ]);
 
-/** Preco padrao, especial por cliente e tabelas de preco. Pedem a senha de preco (ver acima). */
+/**
+ * Preco padrao, especial por cliente, tabelas de preco e o valor de frete do cadastro do cliente
+ * (e dinheiro cobrado do cliente como o preco). Pedem a senha de preco (ver acima).
+ */
 export const PRICE_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "set_product_default_price",
   "set_customer_special_price",
@@ -202,7 +211,9 @@ export const PRICE_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "set_price_table_active",
   "set_price_table_item",
   "remove_price_table_item",
-  "set_customer_price_table"
+  "set_customer_price_table",
+  "set_customer_freight_value",
+  "remove_customer_freight_value"
 ]);
 
 /**
@@ -244,7 +255,9 @@ export const CUSTOMER_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>
   "set_customer_commercial",
   "delete_customer",
   "set_customer_vehicle",
-  "set_customer_carrier"
+  "set_customer_carrier",
+  "set_customer_future_billing_invoice",
+  "remove_customer_future_billing_invoice"
 ]);
 
 /** Veiculo, motorista, transportadora e os vinculos entre eles. */
@@ -553,11 +566,16 @@ async function setCustomerCommercial(ctx: ActionContext): Promise<Row> {
     );
   }
 
+  // E a marca que faz a balanca adotar o bloco (`isCommercialBlockPublished`): sem ela o nulo
+  // das demais colunas seria lido como "ninguem publicou ainda". So carimba quando veio coluna
+  // DO BLOCO — o tipo de frete padrao nao tem dono, e carimbar por ele faria a balanca adotar o
+  // nulo de um bloco de credito que ninguem publicou.
+  const publishesBlock = Object.keys(columns).some((column) =>
+    (MASTERED_CUSTOMER_COLUMNS as readonly string[]).includes(column)
+  );
   await ctx.store.updateRow("customers", ctx.session.companyId, id, {
     ...columns,
-    // E esta marca que faz a balanca adotar o bloco (`isCommercialBlockPublished`): sem ela
-    // o nulo das demais colunas seria lido como "ninguem publicou ainda".
-    commercial_published_at: ctx.nowIso,
+    ...(publishesBlock ? { commercial_published_at: ctx.nowIso } : {}),
     updated_at: ctx.nowIso
   });
   return { id };
@@ -1136,6 +1154,172 @@ async function setCustomerPriceTable(ctx: ActionContext): Promise<Row> {
     updated_at: ctx.nowIso
   });
   return { id, priceTableId };
+}
+
+// ---------------------------------------------------------------------------
+// Frete do cadastro do cliente e nota de entrega futura
+// ---------------------------------------------------------------------------
+
+/** O produto da regra/nota: ausente ou nulo e "qualquer produto do cliente". */
+async function optionalProductId(ctx: ActionContext): Promise<string | null> {
+  const productId = optionalText(ctx.payload, "productId") ?? null;
+  if (productId) await requireRow(ctx, "products", productId, "Produto");
+  return productId;
+}
+
+/** As linhas vivas de frete do par (cliente, produto) — produto nulo e o "frete fixo". */
+function liveFreightRules(ctx: ActionContext, customerId: string, productId: string | null) {
+  return ctx.store.listRows(
+    "customer_freight_rules",
+    ctx.session.companyId,
+    "id, rule_json, is_active",
+    [
+      { column: "customer_id", value: customerId },
+      { column: "product_id", value: productId }
+    ],
+    { live: true }
+  );
+}
+
+/**
+ * O valor de frete combinado com o cliente (R$/ton), como o "Salvar frete" da ficha do cliente na
+ * balanca. Uma linha viva por (cliente, produto): atualiza a que existe, preservando a memoria da
+ * ultima venda que as balancas guardam na mesma linha (`_shared/customer-freight-rule.ts`).
+ */
+async function setCustomerFreightValue(ctx: ActionContext): Promise<Row> {
+  const customerId = requiredId(ctx.payload, "customerId", "o cliente");
+  await requireRow(ctx, "customers", customerId, "Cliente");
+  const productId = await optionalProductId(ctx);
+  const raw = ctx.payload.baseValueCents;
+  const baseValueCents = typeof raw === "number" ? raw : Number(String(raw ?? "").trim());
+  if (!Number.isInteger(baseValueCents) || baseValueCents <= 0) {
+    throw new WebApiError(
+      400,
+      "Frete invalido: informe o valor por tonelada em centavos, acima de zero."
+    );
+  }
+
+  const live = await liveFreightRules(ctx, customerId, productId);
+  const current = live.find((row) => row.is_active !== false) ?? live[0] ?? null;
+  const ruleJson = withManualFreightValue(current?.rule_json ?? null, baseValueCents, ctx.nowIso);
+  if (current) {
+    await ctx.store.updateRow("customer_freight_rules", ctx.session.companyId, String(current.id), {
+      rule_json: ruleJson,
+      is_active: true,
+      updated_at: ctx.nowIso
+    });
+    return { id: String(current.id), baseValueCents };
+  }
+  const id = ctx.newId();
+  await ctx.store.insertRow("customer_freight_rules", {
+    id,
+    company_id: ctx.session.companyId,
+    customer_id: customerId,
+    product_id: productId,
+    rule_json: ruleJson,
+    is_active: true,
+    created_at: ctx.nowIso,
+    updated_at: ctx.nowIso
+  });
+  return { id, baseValueCents };
+}
+
+/**
+ * Tira um valor de frete do cliente, como o "Remover" da balanca: `modality` tira so aquele tipo
+ * de frete; sem ela, a regra unica antiga — e a linha inteira sai (lapide) quando sobra vazia.
+ */
+async function removeCustomerFreightValue(ctx: ActionContext): Promise<Row> {
+  const customerId = requiredId(ctx.payload, "customerId", "o cliente");
+  const productId = optionalText(ctx.payload, "productId") ?? null;
+  const modality = optionalText(ctx.payload, "modality") ?? null;
+  const live = await liveFreightRules(ctx, customerId, productId);
+  if (live.length === 0) return { removed: 0 };
+
+  const current = live.find((row) => row.is_active !== false) ?? live[0];
+  const ruleJson = withoutFreightValue(current.rule_json, modality);
+  if (ruleJson) {
+    await ctx.store.updateRow("customer_freight_rules", ctx.session.companyId, String(current.id), {
+      rule_json: ruleJson,
+      updated_at: ctx.nowIso
+    });
+    return { removed: 1 };
+  }
+  for (const row of live) {
+    await ctx.store.updateRow("customer_freight_rules", ctx.session.companyId, String(row.id), {
+      deleted_at: ctx.nowIso,
+      is_active: false,
+      updated_at: ctx.nowIso
+    });
+  }
+  return { removed: live.length };
+}
+
+/**
+ * Nota de venda para entrega futura (CFOP 5.922), a aba Fiscal da ficha do cliente na balanca
+ * (`setCustomerFutureBillingInvoice`): uma linha viva por (cliente, produto, numero da nota) —
+ * repetir a mesma nota so corrige o total. O saldo e calculado na balanca, pelas pesagens.
+ */
+async function setCustomerFutureBillingInvoice(ctx: ActionContext): Promise<Row> {
+  const customerId = requiredId(ctx.payload, "customerId", "o cliente");
+  await requireRow(ctx, "customers", customerId, "Cliente");
+  const productId = await optionalProductId(ctx);
+  const nfeNumber = String(ctx.payload.nfeNumber ?? "").replace(/\D/g, "");
+  if (!nfeNumber)
+    throw new WebApiError(400, "Informe o numero da nota fiscal de faturamento futuro.");
+  // Vazio, zero ou lixo e nota sem controle de saldo — a mesma regra da balanca.
+  const rawWeight = ctx.payload.totalWeightKg;
+  const parsedWeight =
+    typeof rawWeight === "number" ? rawWeight : Number(String(rawWeight ?? "").replace(",", "."));
+  const totalWeightKg =
+    rawWeight !== null && rawWeight !== undefined && rawWeight !== "" && parsedWeight > 0
+      ? parsedWeight
+      : null;
+
+  const live = await ctx.store.listRows(
+    "customer_future_billing_invoices",
+    ctx.session.companyId,
+    "id",
+    [
+      { column: "customer_id", value: customerId },
+      { column: "product_id", value: productId },
+      { column: "nfe_number", value: nfeNumber }
+    ],
+    { live: true }
+  );
+  if (live.length > 0) {
+    const id = String(live[0].id);
+    await ctx.store.updateRow("customer_future_billing_invoices", ctx.session.companyId, id, {
+      total_weight_kg: totalWeightKg,
+      is_active: true,
+      updated_at: ctx.nowIso
+    });
+    return { id, nfeNumber, totalWeightKg };
+  }
+  const id = ctx.newId();
+  await ctx.store.insertRow("customer_future_billing_invoices", {
+    id,
+    company_id: ctx.session.companyId,
+    customer_id: customerId,
+    product_id: productId,
+    nfe_number: nfeNumber,
+    total_weight_kg: totalWeightKg,
+    is_active: true,
+    created_at: ctx.nowIso,
+    updated_at: ctx.nowIso
+  });
+  return { id, nfeNumber, totalWeightKg };
+}
+
+/** Encerra a nota: lapide, para a remocao chegar as balancas em vez de a nota voltar no pull. */
+async function removeCustomerFutureBillingInvoice(ctx: ActionContext): Promise<Row> {
+  const id = requiredId(ctx.payload, "id", "a nota");
+  await requireRow(ctx, "customer_future_billing_invoices", id, "Nota de entrega futura");
+  await ctx.store.updateRow("customer_future_billing_invoices", ctx.session.companyId, id, {
+    deleted_at: ctx.nowIso,
+    is_active: false,
+    updated_at: ctx.nowIso
+  });
+  return { id };
 }
 
 // ---------------------------------------------------------------------------
@@ -2099,6 +2283,14 @@ async function runAction(action: WebApiAction, ctx: ActionContext): Promise<Row>
       return removePriceTableItem(ctx);
     case "set_customer_price_table":
       return setCustomerPriceTable(ctx);
+    case "set_customer_freight_value":
+      return setCustomerFreightValue(ctx);
+    case "remove_customer_freight_value":
+      return removeCustomerFreightValue(ctx);
+    case "set_customer_future_billing_invoice":
+      return setCustomerFutureBillingInvoice(ctx);
+    case "remove_customer_future_billing_invoice":
+      return removeCustomerFutureBillingInvoice(ctx);
     case "settle_wallet":
       return settleWallet(ctx);
     case "reopen_wallet":
