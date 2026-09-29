@@ -3,6 +3,7 @@ import "./comercial.css";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { DeskPanel } from "../components/desk";
+import { Picker } from "../components/Picker";
 import { PriceHistory } from "../components/PriceHistory";
 import { TruckStages } from "../components/TruckStages";
 import { useUser } from "../lib/auth";
@@ -375,37 +376,29 @@ export function Comercial() {
               </>
             ) : null}
 
-            <label className="comercial-field">
+            <div className="comercial-field">
               Cliente
-              <select
-                className="select"
-                value={customerFilter}
-                onChange={(event) => setCustomerFilter(event.target.value)}
-              >
-                <option value="all">Todos</option>
-                {customerOptions.map(([id, name]) => (
-                  <option key={id} value={id}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <Picker
+                value={customerFilter === "all" ? "" : customerFilter}
+                options={customerOptions.map(([id, name]) => ({ value: id, label: name }))}
+                onChange={(id) => setCustomerFilter(id || "all")}
+                placeholder="Buscar cliente..."
+                allowEmpty
+                emptyLabel="Todos"
+              />
+            </div>
 
-            <label className="comercial-field">
+            <div className="comercial-field">
               Produto
-              <select
-                className="select"
-                value={productFilter}
-                onChange={(event) => setProductFilter(event.target.value)}
-              >
-                <option value="all">Todos</option>
-                {productOptions.map(([id, name]) => (
-                  <option key={id} value={id}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <Picker
+                value={productFilter === "all" ? "" : productFilter}
+                options={productOptions.map(([id, name]) => ({ value: id, label: name }))}
+                onChange={(id) => setProductFilter(id || "all")}
+                placeholder="Buscar produto..."
+                allowEmpty
+                emptyLabel="Todos"
+              />
+            </div>
 
             <label className="comercial-field">
               Frete

@@ -3,6 +3,7 @@ import "./wallet.css";
 import { Lightbulb, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { Picker } from "../components/Picker";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
@@ -405,21 +406,18 @@ export function Wallet() {
       </div>
 
       <div className="wallet-settle">
-        <label className="wallet-field">
+        <div className="wallet-field">
           Forma de recebimento
-          <select
-            className="wallet-input"
+          <Picker
             value={settlementMethodId}
-            onChange={(event) => setSettlementMethodId(event.target.value)}
-          >
-            <option value="">Selecione...</option>
-            {settlementMethods.map((method) => (
-              <option key={method.id} value={method.id}>
-                {paymentMethodDisplayName(method)}
-              </option>
-            ))}
-          </select>
-        </label>
+            options={settlementMethods.map((method) => ({
+              value: method.id,
+              label: paymentMethodDisplayName(method)
+            }))}
+            onChange={setSettlementMethodId}
+            placeholder="Buscar forma de recebimento..."
+          />
+        </div>
         <label className="wallet-field">
           Vencimento
           <input

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { ConditionLegend } from "../components/ConditionLegend";
 import { IconAction, NewButton, Pill, SearchBar, SectionHead } from "../components/desk";
+import { Picker } from "../components/Picker";
 import { DeleteDialog } from "../components/PricePassword";
 import {
   Alert,
@@ -604,34 +605,29 @@ function CommercialForm({
       <form id={formId} onSubmit={(e) => void onSubmit(e)}>
         <div className="grid-2">
           <Field label="Forma de pagamento padrao">
-            <select
-              className="select"
+            <Picker
               value={form.defaultPaymentMethodId}
-              onChange={(e) => setForm((f) => ({ ...f, defaultPaymentMethodId: e.target.value }))}
-            >
-              <option value="">—</option>
-              {methodGroups.map(({ row: m }) => (
-                <option key={m.id} value={m.id}>
-                  {m.alias || m.name}
-                </option>
-              ))}
-            </select>
+              options={methodGroups.map(({ row: m }) => ({
+                value: m.id,
+                label: m.alias || m.name
+              }))}
+              onChange={(id) => setForm((f) => ({ ...f, defaultPaymentMethodId: id }))}
+              placeholder="Buscar forma de pagamento..."
+              allowEmpty
+              emptyLabel="Sem forma padrao"
+            />
           </Field>
           <Field label="Transportadora padrao">
-            <select
-              className="select"
+            <Picker
               value={form.defaultCarrierId}
-              onChange={(e) => setForm((f) => ({ ...f, defaultCarrierId: e.target.value }))}
-            >
-              <option value="">—</option>
-              {carriers
+              options={carriers
                 .filter((c) => c.is_active)
-                .map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-            </select>
+                .map((c) => ({ value: c.id, label: c.name }))}
+              onChange={(id) => setForm((f) => ({ ...f, defaultCarrierId: id }))}
+              placeholder="Buscar transportadora..."
+              allowEmpty
+              emptyLabel="Sem transportadora padrao"
+            />
           </Field>
         </div>
         <label className="check">
