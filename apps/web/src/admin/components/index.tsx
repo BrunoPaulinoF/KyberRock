@@ -8,8 +8,9 @@
  *
  * As classes vivem em `admin-ui.css` (prefixo `adm-`).
  */
-import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import { MoreHorizontal } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import { publicAsset } from "../../lib/public-asset";
 
@@ -441,6 +442,9 @@ export interface NavSection {
   label: string;
   group: string;
   count?: number;
+  icon?: ReactNode;
+  /** Quantos itens desta secao precisam de alguem (bolha vermelha no lugar da contagem). */
+  alert?: number;
 }
 
 /**
@@ -491,7 +495,7 @@ export function AdminShell({
       <div className="adm-body">
         <nav className="adm-nav" aria-label="Secoes administrativas">
           {groups.map(([group, items]) => (
-            <div key={group}>
+            <div key={group} className="adm-nav-section">
               <p className="adm-nav-group">{group}</p>
               {items.map((section) => (
                 <button
@@ -501,10 +505,17 @@ export function AdminShell({
                   aria-current={activeSection === section.id ? "page" : undefined}
                   onClick={() => onSelectSection(section.id)}
                 >
-                  <span>{section.label}</span>
-                  {section.count !== undefined && (
+                  <span className="adm-nav-label">
+                    {section.icon && <span className="adm-nav-icon">{section.icon}</span>}
+                    <span>{section.label}</span>
+                  </span>
+                  {section.alert ? (
+                    <span className="adm-nav-count adm-nav-alert" title="Precisam de atencao">
+                      {section.alert}
+                    </span>
+                  ) : section.count !== undefined ? (
                     <span className="adm-nav-count">{section.count}</span>
-                  )}
+                  ) : null}
                 </button>
               ))}
             </div>
@@ -576,5 +587,143 @@ export function CopyButton({ value, label = "Copiar" }: { value: string; label?:
     >
       {copied ? "Copiado" : label}
     </Button>
+  );
+}
+
+/**
+ * Cartao de indicador da Visao geral. Clicavel: cada numero leva para a aba que o explica —
+ * numero que nao leva a lugar nenhum so faz a pessoa procurar a aba no menu.
+ */
+export function KpiCard({
+  icon,
+  label,
+  value,
+  hint,
+  tone = "neutral",
+  onClick
+}: {
+  icon?: ReactNode;
+  label: string;
+  value: ReactNode;
+  hint?: ReactNode;
+  tone?: "neutral" | "ok" | "warn" | "danger" | "accent";
+  onClick?: () => void;
+}) {
+  const className = `adm-kpi${tone === "neutral" ? "" : ` adm-kpi-${tone}`}`;
+  const body = (
+    <>
+      <span className="adm-kpi-head">
+        {icon && <span className="adm-kpi-icon">{icon}</span>}
+        <span className="adm-kpi-label">{label}</span>
+      </span>
+      <span className="adm-kpi-value">{value}</span>
+      {hint && <span className="adm-kpi-hint">{hint}</span>}
+    </>
+  );
+  return onClick ? (
+    <button type="button" className={className} onClick={onClick}>
+      {body}
+    </button>
+  ) : (
+    <div className={className}>{body}</div>
+  );
+}
+
+export interface MenuItem {
+  label: string;
+  onClick: () => void;
+  tone?: "danger";
+  disabled?: boolean;
+  title?: string;
+}
+
+/**
+ * Acoes secundarias da linha ("⋯"). Quatro botoes em toda linha empurravam a informacao para
+ * fora da tela; na linha fica so a acao do dia a dia, e o resto (bloquear, excluir, ver
+ * credenciais) mora aqui.
+ *
+ * A lista abre em `position: fixed`, calculada pelo botao: dentro da tabela (que rola na
+ * horizontal) um menu absoluto seria cortado nas ultimas linhas.
+ */
+export function RowMenu({ items, label = "Mais acoes" }: { items: MenuItem[]; label?: string }) {
+  const [style, setStyle] = useState<CSSProperties | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!style) return;
+    const close = () => setStyle(null);
+    function onPointerDown(event: MouseEvent): void {
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target) || buttonRef.current?.contains(target)) return;
+      close();
+    }
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") close();
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [style]);
+
+  function toggle(): void {
+    if (style) {
+      setStyle(null);
+      return;
+    }
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const right = Math.max(8, window.innerWidth - rect.right);
+    // Perto do rodape da janela a lista abre para cima.
+    const opensUp = rect.bottom + 40 * items.length + 16 > window.innerHeight;
+    setStyle(
+      opensUp
+        ? { right, bottom: window.innerHeight - rect.top + 4 }
+        : { right, top: rect.bottom + 4 }
+    );
+  }
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        className="adm-btn adm-btn-sm adm-btn-icon"
+        aria-haspopup="menu"
+        aria-expanded={Boolean(style)}
+        aria-label={label}
+        title={label}
+        onClick={toggle}
+      >
+        <MoreHorizontal size={16} aria-hidden="true" />
+      </button>
+      {style && (
+        <div ref={menuRef} className="adm-menu" role="menu" style={style}>
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              role="menuitem"
+              className={`adm-menu-item${item.tone === "danger" ? " adm-menu-item-danger" : ""}`}
+              disabled={item.disabled}
+              title={item.title}
+              onClick={() => {
+                setStyle(null);
+                item.onClick();
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
   );
 }

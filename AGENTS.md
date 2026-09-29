@@ -326,6 +326,21 @@ offending link of the chain, not above the `return`.
 - Formato de **console técnico**: tabela densa (`DataTable`) no lugar de lista em cartão,
   monoespaçada para id/código/valor, cor reservada para estado. Criar e editar são modal, para a
   listagem ficar com a largura toda.
+- **A primeira tela é a Visão geral** (`pages/Overview.tsx`): cartões clicáveis (pedreiras,
+  balanças online, as que precisam de atenção, logins, a receber, versão em produção), a lista
+  das balanças com problema e as pendências de configuração por pedreira (sem OMIE, sem balança
+  ativada, sem principal de preço com duas ou mais balanças, unidade sem executora das pesagens
+  do site, balança sem login). As regras são puras e testadas em `lib/overview.ts` e saem da
+  mesma resposta do `list`; financeiro e versão são leituras à parte e best-effort ("—" quando
+  falham). "Precisa de atenção" é o MESMO recorte na Visão geral, na bolha vermelha do menu e no
+  filtro da aba Balanças (`matchesDeviceFilter`) — o dispositivo virtual do site (`web-<id>`) fica
+  fora dos três.
+- **Na linha fica só a ação do dia a dia**; o resto (bloquear, excluir, ver credenciais, trocar
+  senha) mora no menu "⋯" (`RowMenu`, aberto em `position: fixed` para a tabela que rola não o
+  cortar). As escolhas da balança (unidade, principal de preço, executora das pesagens do site,
+  anel de atualização, perfil e senha de preço do login) saíram das caixas de seleção da linha
+  para a janela **Configurar**, e as do login para **Editar**: cada campo alterado vira a mesma
+  ação do `admin-api` de antes, em sequência e com uma releitura só (`runBatch`).
 - `src/admin/components/smoke.test.tsx` renderiza os primitivos com `react-dom/server` — é o que
   pega erro de runtime nos componentes sem precisar de jsdom no repositório.
 - **Botão de olho (`reveal_credentials`)**: mostra as credenciais de UM cadastro, sob demanda —
