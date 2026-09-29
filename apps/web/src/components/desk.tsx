@@ -20,10 +20,15 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { Tabs, type TabItem } from "./ui";
+
+// A etiqueta e a lista vazia moram no kit; o nome continua valendo aqui.
+export { EmptyState, Pill } from "./ui";
+
 /**
  * As pecas de tela do KyberRock Desktop, em React para a web: o mesmo cartao unico por tela,
- * as mesmas abas so com icone, o mesmo cabecalho de secao com contador, a mesma barra de busca
- * e os mesmos botoes de acao quadrados. O objetivo e o operador nao perceber que trocou de
+ * as mesmas abas (aqui com o nome escrito), o mesmo cabecalho de secao com contador, a mesma
+ * barra de busca e os mesmos botoes de acao quadrados. O objetivo e o operador nao perceber que trocou de
  * programa (`apps/desktop/src/renderer/App.tsx`, `crud-ui.tsx`, `IconActionButton.tsx`).
  */
 
@@ -34,64 +39,25 @@ export function DeskPanel({ children, fill }: { children: ReactNode; fill?: bool
 
 /**
  * Abas sublinhadas em ambar (Cadastros, Transporte). O desktop mostra so o icone; aqui o nome
- * vai escrito ao lado, porque quem abre o site pela primeira vez nao sabe o que cada desenho quer
- * dizer.
+ * vai escrito ao lado — sao as `Tabs` do kit (`components/ui.tsx`).
  */
-export function IconTabs<T extends string>({
-  tabs,
-  active,
-  onChange,
-  label
-}: {
-  tabs: Array<{ id: T; label: string; icon: LucideIcon }>;
+export function IconTabs<T extends string>(props: {
+  tabs: Array<TabItem<T>>;
   active: T;
   onChange: (id: T) => void;
   label: string;
 }) {
-  return (
-    <nav className="icon-tabs" aria-label={label}>
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          className={`icon-tab${tab.id === active ? " active" : ""}`}
-          aria-pressed={tab.id === active}
-          onClick={() => onChange(tab.id)}
-        >
-          <tab.icon size={16} aria-hidden="true" />
-          <span>{tab.label}</span>
-        </button>
-      ))}
-    </nav>
-  );
+  return <Tabs {...props} variant="underline" />;
 }
 
 /** Abas redondas com icone e nome (Operacoes: abertas, canceladas, concluidas; Relatorios). */
-export function PillTabs<T extends string>({
-  tabs,
-  active,
-  onChange
-}: {
-  tabs: Array<{ id: T; label: string; icon: LucideIcon }>;
+export function PillTabs<T extends string>(props: {
+  tabs: Array<TabItem<T>>;
   active: T;
   onChange: (id: T) => void;
+  label?: string;
 }) {
-  return (
-    <div className="pill-tabs">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          className={`pill-tab${tab.id === active ? " active" : ""}`}
-          aria-pressed={tab.id === active}
-          onClick={() => onChange(tab.id)}
-        >
-          <tab.icon size={16} strokeWidth={2} aria-hidden="true" />
-          <span>{tab.label}</span>
-        </button>
-      ))}
-    </div>
-  );
+  return <Tabs {...props} label={props.label ?? "Filtro da lista"} variant="pill" />;
 }
 
 /** "Clientes [4]" + descricao + botao "Novo ..." (o cabecalho das listas do desktop). */
@@ -247,25 +213,4 @@ export function LoaderLight({ completedAt }: { completedAt: string | null | unde
       {done ? "Concluída" : "Aguardando"}
     </span>
   );
-}
-
-/** Estado vazio centralizado, com titulo e dica. */
-export function EmptyState({ title, hint }: { title: string; hint?: string }) {
-  return (
-    <div className="empty-state">
-      <strong>{title}</strong>
-      {hint && <span>{hint}</span>}
-    </div>
-  );
-}
-
-/** Etiqueta de situacao (OMIE, LOCAL, Enviando ao OMIE...). */
-export function Pill({
-  tone = "neutral",
-  children
-}: {
-  tone?: "neutral" | "success" | "warning" | "danger" | "info";
-  children: ReactNode;
-}) {
-  return <span className={`pill ${tone}`}>{children}</span>;
 }

@@ -468,7 +468,7 @@ export function Landing() {
   return (
     <div className="lp">
       <header className="lp-nav">
-        <a className="lp-brand" href="#inicio">
+        <a className="lp-brand" href="#inicio" aria-label="KyberRock, voltar ao início">
           <img src={publicAsset("logo-128.webp")} alt="" />
           <strong>KyberRock</strong>
         </a>

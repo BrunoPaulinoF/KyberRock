@@ -5,7 +5,7 @@ import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { isStandaloneDisplay } from "../lib/pwa-install";
 import { publicAsset } from "../lib/public-asset";
-import { isSupabaseConfigured } from "../lib/supabase";
+import { isSupabaseConfigured } from "../lib/supabase-env";
 
 /**
  * Login do site (e do app instalado no celular do carregador). Tem a mesma cara do cartao de

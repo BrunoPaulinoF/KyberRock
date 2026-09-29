@@ -34,7 +34,9 @@ import { CadastroLiveProvider } from "../lib/cadastro-live-provider";
 import { canSee, ROLE_LABELS, type Screen } from "../lib/permissions";
 import { usePageTitle } from "../lib/page-title";
 import { publicAsset } from "../lib/public-asset";
+import { preloadScreen } from "../lib/screens";
 import { useTheme } from "../lib/theme";
+import { PageSkeleton } from "./ui";
 
 /**
  * A casca do site: o mesmo menu lateral do KyberRock Desktop — mesmas secoes (Operacional e
@@ -217,7 +219,14 @@ export function Layout() {
               <Fragment key={section.title}>
                 <div className="nav-section">{section.title}</div>
                 {items.map(({ screen, to, label, icon: Icon }) => (
-                  <NavLink key={screen} to={to} className="nav-link">
+                  <NavLink
+                    key={screen}
+                    to={to}
+                    className="nav-link"
+                    onPointerEnter={() => preloadScreen(screen)}
+                    onFocus={() => preloadScreen(screen)}
+                    onTouchStart={() => preloadScreen(screen)}
+                  >
                     <Icon size={16} strokeWidth={2.2} />
                     {label}
                   </NavLink>
@@ -302,7 +311,7 @@ export function Layout() {
         {/* Cadastro gravado na balanca aparece nas telas na hora (`lib/cadastro-live.ts`). */}
         <CadastroLiveProvider companyId={user.companyId}>
           {/* A tela chega em arquivo proprio (App.tsx): o menu fica na tela enquanto ela baixa. */}
-          <Suspense fallback={<div className="empty">Carregando...</div>}>
+          <Suspense fallback={<PageSkeleton />}>
             <Outlet />
           </Suspense>
         </CadastroLiveProvider>

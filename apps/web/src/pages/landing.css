@@ -252,7 +252,7 @@
 
 .lp-kicker {
   margin-bottom: 14px;
-  color: var(--lp-amber-deep);
+  color: var(--kr-link);
   font-size: 13px;
   font-weight: 800;
   letter-spacing: 0.14em;
@@ -870,7 +870,7 @@
 
 .lp-place-kicker {
   margin-top: 18px !important;
-  color: var(--kr-accent);
+  color: var(--kr-link);
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.12em;
