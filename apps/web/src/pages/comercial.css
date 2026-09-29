@@ -7,24 +7,9 @@
   gap: 16px;
 }
 
-.comercial-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.comercial-subtitle {
-  margin: 4px 0 0;
-  color: var(--kr-muted);
-  font-size: 13px;
-}
-
-.comercial-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
+/* O topo (`PageHeader`) esta dentro do cartao; o espaco ate os filtros e o `gap`. */
+.comercial-panel > .page-header {
+  margin-bottom: 0;
 }
 
 .comercial-controls {
@@ -42,43 +27,6 @@
   font-size: 12px;
   font-weight: 700;
   color: var(--kr-muted);
-}
-
-.comercial-tabs {
-  display: inline-flex;
-  gap: 6px;
-  padding: 4px;
-  border-radius: 12px;
-  background: var(--kr-surface-soft);
-  flex-wrap: wrap;
-}
-
-.comercial-tab {
-  border: none;
-  background: transparent;
-  padding: 8px 14px;
-  border-radius: 9px;
-  font: inherit;
-  font-weight: 600;
-  color: var(--kr-text);
-  cursor: pointer;
-}
-
-.comercial-tab.is-active {
-  background: var(--kr-primary-strong);
-  color: var(--kr-primary-text);
-}
-
-.comercial-error {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  border: 1px solid var(--kr-danger-border);
-  border-radius: 10px;
-  background: var(--kr-danger-soft);
-  color: var(--kr-danger-strong);
 }
 
 .comercial-table-wrap {
@@ -116,19 +64,9 @@
   border-bottom: none;
 }
 
-.comercial-empty {
-  margin: 8px 0 0;
-  color: var(--kr-muted);
-}
-
-.comercial-warning {
-  margin: 0;
-  color: var(--kr-warning);
-  font-weight: 600;
-}
-
 /* Impressao: igual a do portal — so titulo, periodo e tabela, em A4 paisagem (a tabela tem ate
-   8 colunas). A pagina nomeada deixa o paisagem so nesta tela. */
+   8 colunas). A pagina nomeada deixa o paisagem so nesta tela. As cores fixas daqui (papel
+   branco, texto escuro) sao de proposito: o papel nao segue o tema escuro da tela. */
 @page comercial {
   size: A4 landscape;
   margin: 10mm;
@@ -140,7 +78,9 @@
   }
 
   .sidebar,
-  .comercial-no-print {
+  .comercial-no-print,
+  .comercial-page .page-header-kicker,
+  .comercial-page .page-header-actions {
     display: none !important;
   }
 

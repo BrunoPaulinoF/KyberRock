@@ -7,40 +7,10 @@
   min-width: 0;
   min-height: calc(100vh - 20px);
 }
-.truck-control-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: 10px;
+/* O topo (`PageHeader`) fica fora dos cartoes; o espaco ate os filtros e o `gap`. */
+.truck-control > .page-header {
+  margin-bottom: 0;
   flex-shrink: 0;
-}
-.truck-control-title-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.truck-control-title {
-  margin: 0;
-  color: var(--kr-text-strong);
-  font-size: 18px;
-}
-.truck-control-help {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  cursor: help;
-  opacity: 0.42;
-  color: var(--kr-muted);
-}
-.truck-control-help:hover {
-  opacity: 0.9;
-}
-.truck-control-actions {
-  display: flex;
-  gap: 6px;
 }
 .truck-control-filters {
   display: flex;
@@ -113,15 +83,6 @@
   font-size: 12px;
   margin: 0;
 }
-.truck-control-error {
-  margin: 0;
-  color: var(--kr-danger);
-  background: var(--kr-danger-soft);
-  border: 1px solid var(--kr-danger-border);
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 13px;
-}
 .truck-control-plate {
   display: inline-block;
   font-weight: 800;
@@ -169,14 +130,12 @@
 }
 
 /* ---------- um cartao por caminhao ---------- */
-.truck-control-empty {
-  margin: 0;
-  padding: 28px;
+/* Lista vazia e primeira leitura no mesmo cartao branco dos caminhoes. */
+.truck-control > .empty-state,
+.truck-control-loading {
   border: 1px solid var(--kr-border);
   border-radius: 14px;
   background: var(--kr-surface);
-  color: var(--kr-muted);
-  text-align: center;
 }
 .truck-control-list {
   display: flex;

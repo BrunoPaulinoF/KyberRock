@@ -1,84 +1,45 @@
 /* Etapas do caminhao na pedreira (ENTRADA -> CARREGANDO -> SAIDA), tela Comercial.
-   As tres cores sao as tres primeiras da paleta categorica validada (azul, laranja, verde-agua),
-   com passo proprio no tema escuro. A etapa e sempre dita por escrito tambem: a cor so reforca. */
+   As cores das etapas sao as dos graficos do site (`--kr-chart-*`, com passo proprio no tema
+   escuro) e a cancelada e o vermelho de erro do tema. A etapa e sempre dita por escrito tambem:
+   a cor so reforca. */
 
 .truck-stages {
-  --ts-entrada: #2a78d6;
-  --ts-carregando: #eb6834;
-  --ts-saida: #1baf7a;
-  --ts-exit: #78716c;
-  --ts-cancelada: #b91c1c;
-  --ts-live: #15803d;
   display: flex;
   flex-direction: column;
   gap: 14px;
   min-width: 0;
 }
-:root[data-theme="dark"] .truck-stages {
-  --ts-entrada: #3987e5;
-  --ts-carregando: #d95926;
-  --ts-saida: #199e70;
-  --ts-exit: #a8a29e;
-  --ts-cancelada: #f87171;
-  --ts-live: #4ade80;
-}
 .ts-entrada {
-  --stage: var(--ts-entrada);
+  --stage: var(--kr-chart-2);
 }
 .ts-carregando {
-  --stage: var(--ts-carregando);
+  --stage: var(--kr-chart-1);
 }
 .ts-saida {
-  --stage: var(--ts-saida);
-}
-.ts-exit {
-  --stage: var(--ts-exit);
+  --stage: var(--kr-chart-5);
 }
 .ts-cancelada {
-  --stage: var(--ts-cancelada);
+  --stage: var(--kr-danger);
 }
 
-.ts-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  flex-wrap: wrap;
+/* O topo (`PageHeader`) e o primeiro bloco do cartao; o espaco ate as etapas e o `gap`. */
+.truck-stages > .page-header {
+  margin-bottom: 0;
 }
-.ts-title {
-  margin: 0;
-  color: var(--kr-text-strong);
-  font-size: 20px;
-}
-.ts-subtitle {
-  margin: 4px 0 0;
-  color: var(--kr-muted);
-  font-size: 13px;
-}
+/* "Ao vivo": a etiqueta do kit com a bolinha na cor dela. */
 .ts-live {
   display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 10px;
-  border: 1px solid var(--kr-border);
-  border-radius: 999px;
-  color: var(--kr-text);
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
 }
-.ts-live > span {
+.ts-live-dot {
   width: 8px;
   height: 8px;
+  margin-right: 6px;
+  flex-shrink: 0;
   border-radius: 50%;
-  background: var(--kr-muted);
+  background: currentColor;
 }
-.ts-live.live > span {
-  background: var(--ts-live);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ts-live) 25%, transparent);
-}
-.ts-live.down > span {
-  background: var(--kr-warning);
+.ts-live.live .ts-live-dot {
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 25%, transparent);
 }
 
 /* ---------- a faixa das etapas (setas) ---------- */
@@ -191,7 +152,7 @@
 }
 /* O motivo do cancelamento, embaixo do produto. */
 .ts-item-text .ts-item-reason {
-  color: var(--ts-cancelada);
+  color: var(--kr-danger);
   font-weight: 600;
 }
 @media (max-width: 1280px) {
@@ -243,12 +204,16 @@
   overscroll-behavior: contain;
   list-style: none;
 }
-.ts-empty {
-  margin: 0;
-  padding: 16px 12px;
-  color: var(--kr-muted);
-  font-size: 13px;
-  text-align: center;
+/* Etapa sem caminhao (ou a primeira leitura a caminho): no lugar da lista, com o mesmo respiro. */
+.ts-list-state {
+  padding: 8px;
+}
+.ts-list-state .empty-state {
+  padding: 18px 12px;
+}
+.ts-list-skeleton {
+  display: grid;
+  gap: 6px;
 }
 .ts-item {
   display: grid;

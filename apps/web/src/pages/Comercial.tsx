@@ -1,11 +1,20 @@
 import "./comercial.css";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { DeskPanel } from "../components/desk";
 import { Picker } from "../components/Picker";
 import { PriceHistory } from "../components/PriceHistory";
 import { TruckStages } from "../components/TruckStages";
+import {
+  Alert,
+  EmptyState,
+  ErrorState,
+  PageHeader,
+  SkeletonRows,
+  Tabs,
+  type TabItem
+} from "../components/ui";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
@@ -24,6 +33,7 @@ import {
 } from "../lib/portal/sales-report";
 import { downloadFile } from "../lib/report-output";
 import { supabase } from "../lib/supabase";
+import { useAsync } from "../lib/use-async";
 
 /**
  * Aba Comercial (perfis comercial e gestor). No topo, as etapas dos caminhoes na pedreira em
@@ -44,11 +54,11 @@ interface FetchedRow extends SalesOperationRow {
   freight_type: string | null;
 }
 
-const GROUP_OPTIONS: Array<{ value: SalesGroupBy; label: string }> = [
-  { value: "product", label: "Produtos" },
-  { value: "customer", label: "Clientes" },
-  { value: "customer_product", label: "Cliente × Produto" },
-  { value: "day", label: "Por dia" }
+const GROUP_OPTIONS: Array<TabItem<SalesGroupBy>> = [
+  { id: "product", label: "Produtos" },
+  { id: "customer", label: "Clientes" },
+  { id: "customer_product", label: "Cliente × Produto" },
+  { id: "day", label: "Por dia" }
 ];
 
 const PERIOD_OPTIONS: Array<{ value: PeriodPreset; label: string }> = [
@@ -130,6 +140,46 @@ function resolvePeriod(
   return { startIso: start.toISOString(), endIso: end.toISOString(), label: "mês passado" };
 }
 
+type PeriodRange = { startIso: string; endIso: string };
+
+/** As vendas fechadas do periodo, de 1000 em 1000, ate `MAX_PAGES` paginas. */
+async function loadSalesRows(
+  companyId: string,
+  period: PeriodRange
+): Promise<{ rows: FetchedRow[]; truncated: boolean }> {
+  try {
+    const fetched: FetchedRow[] = [];
+    let hitCap = false;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const { data, error } = await supabase
+        .from("weighing_operations")
+        .select(
+          "customer_id, customer_name, product_id, product_description, freight_type, net_weight_kg, product_total_cents, freight_total_cents, total_cents, created_at, closed_at"
+        )
+        .eq("company_id", companyId)
+        .in("status", [...SALES_CLOSED_STATUSES])
+        // Periodo pela data de FECHAMENTO (a data da venda e a de emissao no OMIE); operacao
+        // antiga, sem `closed_at`, entra pela criacao — o mesmo recorte do portal.
+        .or(
+          [
+            `and(closed_at.gte."${period.startIso}",closed_at.lt."${period.endIso}")`,
+            `and(closed_at.is.null,created_at.gte."${period.startIso}",created_at.lt."${period.endIso}")`
+          ].join(",")
+        )
+        .order("closed_at", { ascending: true, nullsFirst: true })
+        .order("created_at", { ascending: true })
+        .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
+      if (error) throw new Error(error.message);
+      fetched.push(...((data ?? []) as FetchedRow[]));
+      if (!data || data.length < PAGE_SIZE) break;
+      if (page === MAX_PAGES - 1) hitCap = true;
+    }
+    return { rows: fetched, truncated: hitCap };
+  } catch (error) {
+    throw error instanceof Error ? error : new Error("Falha ao carregar as vendas do período.");
+  }
+}
+
 function formatMoney(cents: number | null): string {
   if (cents === null) return "—";
   return (cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -151,75 +201,44 @@ export function Comercial() {
   const [customerFilter, setCustomerFilter] = useState("all");
   const [productFilter, setProductFilter] = useState("all");
   const [freightFilter, setFreightFilter] = useState<SalesFreightFilter>(SALES_FREIGHT_ALL);
-  const [rows, setRows] = useState<FetchedRow[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [truncated, setTruncated] = useState(false);
 
   const resolvedPeriod = useMemo(
     () => resolvePeriod(period, customStart, customEnd),
     [period, customStart, customEnd]
   );
+  /*
+   * O periodo que a leitura usa. Datas personalizadas incompletas (ou o fim antes do inicio)
+   * nao leem nada: a tela segue com as vendas do ultimo periodo valido, como antes.
+   */
+  const [fetchPeriod, setFetchPeriod] = useState<PeriodRange | null>(resolvedPeriod);
+  if (
+    resolvedPeriod &&
+    (resolvedPeriod.startIso !== fetchPeriod?.startIso ||
+      resolvedPeriod.endIso !== fetchPeriod?.endIso)
+  ) {
+    setFetchPeriod({ startIso: resolvedPeriod.startIso, endIso: resolvedPeriod.endIso });
+  }
 
-  /** `silent`: releitura pelo aviso da balanca, sem "Carregando..." e sem apagar o erro. */
-  const loadRows = useCallback(
-    async (silent = false) => {
-      if (!resolvedPeriod) return;
-      if (!silent) {
-        setIsLoading(true);
-        setLoadError(null);
-      }
-      try {
-        const fetched: FetchedRow[] = [];
-        let hitCap = false;
-        for (let page = 0; page < MAX_PAGES; page++) {
-          const { data, error } = await supabase
-            .from("weighing_operations")
-            .select(
-              "customer_id, customer_name, product_id, product_description, freight_type, net_weight_kg, product_total_cents, freight_total_cents, total_cents, created_at, closed_at"
-            )
-            .eq("company_id", user.companyId)
-            .in("status", [...SALES_CLOSED_STATUSES])
-            // Periodo pela data de FECHAMENTO (a data da venda e a de emissao no OMIE); operacao
-            // antiga, sem `closed_at`, entra pela criacao — o mesmo recorte do portal.
-            .or(
-              [
-                `and(closed_at.gte."${resolvedPeriod.startIso}",closed_at.lt."${resolvedPeriod.endIso}")`,
-                `and(closed_at.is.null,created_at.gte."${resolvedPeriod.startIso}",created_at.lt."${resolvedPeriod.endIso}")`
-              ].join(",")
-            )
-            .order("closed_at", { ascending: true, nullsFirst: true })
-            .order("created_at", { ascending: true })
-            .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
-          if (error) throw new Error(error.message);
-          fetched.push(...((data ?? []) as FetchedRow[]));
-          if (!data || data.length < PAGE_SIZE) break;
-          if (page === MAX_PAGES - 1) hitCap = true;
-        }
-        setRows(fetched);
-        setTruncated(hitCap);
-        if (silent) setLoadError(null);
-      } catch (error) {
-        // Releitura de fundo que falhou fica calada: a tela segue com o que ja tinha.
-        if (!silent) {
-          setLoadError(
-            error instanceof Error ? error.message : "Falha ao carregar as vendas do período."
-          );
-        }
-      } finally {
-        if (!silent) setIsLoading(false);
-      }
-    },
-    [user.companyId, resolvedPeriod]
+  // Memoria entre telas: a chave leva a empresa e o periodo lido (inicio e fim).
+  const sales = useAsync(
+    () =>
+      fetchPeriod
+        ? loadSalesRows(user.companyId, fetchPeriod)
+        : Promise.resolve({ rows: [] as FetchedRow[], truncated: false }),
+    [user.companyId, fetchPeriod?.startIso, fetchPeriod?.endIso],
+    {
+      key: fetchPeriod
+        ? `comercial:vendas:${user.companyId}:${fetchPeriod.startIso}:${fetchPeriod.endIso}`
+        : null
+    }
   );
+  const rows = useMemo(() => sales.data?.rows ?? [], [sales.data]);
+  const truncated = sales.data?.truncated ?? false;
+  const isLoading = sales.loading;
+  const loadError = sales.error;
 
-  useEffect(() => {
-    void loadRows();
-  }, [loadRows]);
-
-  // Venda fechada, editada ou cancelada na balanca entra na lista na hora.
-  const refreshRows = useCallback(() => loadRows(true), [loadRows]);
-  useOnCadastroChange(refreshRows, CADASTRO_TABLES.operations);
+  // Venda fechada, editada ou cancelada na balanca entra na lista na hora (releitura calada).
+  useOnCadastroChange(sales.refresh, CADASTRO_TABLES.operations);
 
   const customerOptions = useMemo(() => {
     const map = new Map<string, string>();
@@ -288,55 +307,49 @@ export function Comercial() {
         </DeskPanel>
       </div>
       <DeskPanel>
-        <section className="comercial-panel" aria-labelledby="sales-report-title">
-          <div className="comercial-head">
-            <div>
-              <h1 id="sales-report-title" className="desk-title">
-                Relatório de vendas
-              </h1>
-              <p className="comercial-subtitle">
+        <section className="comercial-panel" aria-label="Relatório de vendas">
+          <PageHeader
+            kicker="Análise"
+            title="Relatório de vendas"
+            description={
+              <>
                 Visões por produto, cliente e período —{" "}
                 {resolvedPeriod?.label ?? "período inválido"}
                 {freightFilter === SALES_FREIGHT_ALL
                   ? ""
                   : ` · frete ${freightTypeLabel(freightFilter)}`}
-              </p>
-            </div>
-            <div className="comercial-actions comercial-no-print">
-              <button
-                type="button"
-                className="btn"
-                onClick={() => window.print()}
-                disabled={report.lines.length === 0}
-              >
-                Imprimir / PDF
-              </button>
-              <button
-                type="button"
-                className="btn primary"
-                onClick={handleExportCsv}
-                disabled={report.lines.length === 0}
-              >
-                Exportar CSV
-              </button>
-            </div>
-          </div>
+              </>
+            }
+            actions={
+              <>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => window.print()}
+                  disabled={report.lines.length === 0}
+                >
+                  Imprimir / PDF
+                </button>
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={handleExportCsv}
+                  disabled={report.lines.length === 0}
+                >
+                  Exportar CSV
+                </button>
+              </>
+            }
+          />
 
           <div className="comercial-controls comercial-no-print">
-            <div className="comercial-tabs" role="tablist" aria-label="Visão do relatório">
-              {GROUP_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="tab"
-                  aria-selected={groupBy === option.value}
-                  className={`comercial-tab${groupBy === option.value ? " is-active" : ""}`}
-                  onClick={() => setGroupBy(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
+            <Tabs<SalesGroupBy>
+              label="Visão do relatório"
+              variant="pill"
+              tabs={GROUP_OPTIONS}
+              active={groupBy}
+              onChange={setGroupBy}
+            />
 
             <label className="comercial-field">
               Período
@@ -424,25 +437,22 @@ export function Comercial() {
           </div>
 
           {loadError ? (
-            <div className="comercial-error comercial-no-print" role="alert">
-              <span>{loadError}</span>
-              <button type="button" className="btn" onClick={() => void loadRows()}>
-                Tentar novamente
-              </button>
+            <div className="comercial-no-print">
+              <ErrorState message={loadError} onRetry={() => void sales.reload()} />
             </div>
           ) : null}
 
           {truncated ? (
-            <p className="comercial-warning">
+            <Alert kind="warn">
               Período com mais de {MAX_PAGES * PAGE_SIZE} operações — reduza o período para ver
               tudo.
-            </p>
+            </Alert>
           ) : null}
 
           {isLoading ? (
-            <p className="comercial-empty">Carregando vendas…</p>
+            <SkeletonRows rows={6} columns={6} />
           ) : report.lines.length === 0 ? (
-            <p className="comercial-empty">Nenhuma venda concluída no período selecionado.</p>
+            <EmptyState title="Nenhuma venda concluída no período selecionado." />
           ) : (
             <div className="comercial-table-wrap">
               <table className="comercial-table">

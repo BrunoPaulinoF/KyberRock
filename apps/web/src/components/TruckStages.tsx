@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useUser } from "../lib/auth";
 import { formatPlate, todayIso } from "../lib/format";
 import { OPEN_STATUS } from "../lib/operation";
+import { readCache, writeCache } from "../lib/query-cache";
 import { supabase } from "../lib/supabase";
 import {
   BOARD_COLUMNS,
@@ -23,7 +24,7 @@ import {
   type TruckStage
 } from "../lib/truck-stages";
 import { CountBadge, PlateBadge } from "./desk";
-import { Alert, Modal } from "./ui";
+import { EmptyState, ErrorState, Modal, PageHeader, Pill, Skeleton, SkeletonRows } from "./ui";
 
 /*
  * Etapas do caminhao na pedreira (ENTRADA -> CARREGANDO -> SAIDA), em tempo real, a partir da
@@ -73,6 +74,15 @@ function toTruck(row: OperationRow, kind: RowKind): StageTruck {
     cancelledAt: kind === "cancelled" ? row.updated_at : null,
     cancelReason: kind === "cancelled" ? row.cancel_reason : null
   };
+}
+
+/**
+ * Memoria entre telas (`lib/query-cache.ts`): voltar a aba Comercial mostra na hora os
+ * caminhoes que ja estavam na tela e rele por tras. O dia entra na chave porque a leitura e
+ * "concluidas e canceladas HOJE".
+ */
+function cacheKey(companyId: string, unitId: string): string {
+  return `comercial:caminhoes:${companyId}:${unitId}:${todayIso()}`;
 }
 
 /** As operacoes em aberto da unidade, as concluidas hoje e as canceladas hoje. */
@@ -138,8 +148,12 @@ type RealtimeState = "connecting" | "live" | "down";
 
 export function TruckStages() {
   const user = useUser();
-  const [trucks, setTrucks] = useState<StageTruck[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const [trucks, setTrucks] = useState<StageTruck[]>(
+    () => readCache<StageTruck[]>(cacheKey(user.companyId, user.unitId)) ?? []
+  );
+  const [loaded, setLoaded] = useState(
+    () => readCache<StageTruck[]>(cacheKey(user.companyId, user.unitId)) !== undefined
+  );
   const [error, setError] = useState<string | null>(null);
   const [realtime, setRealtime] = useState<RealtimeState>("connecting");
   const [now, setNow] = useState(() => Date.now());
@@ -156,7 +170,9 @@ export function TruckStages() {
     }
     inFlight.current = true;
     try {
+      const key = cacheKey(user.companyId, user.unitId);
       const result = await loadTrucks(user.companyId, user.unitId);
+      writeCache(key, result);
       if (!mounted.current) return;
       setTrucks(result);
       setNow(Date.now());
@@ -267,31 +283,36 @@ export function TruckStages() {
   };
 
   return (
-    <section className="truck-stages" aria-labelledby="truck-stages-title">
-      <header className="ts-head">
-        <div>
-          <h2 id="truck-stages-title" className="ts-title">
-            Caminhões na pedreira
-          </h2>
-          <p className="ts-subtitle">
+    <section className="truck-stages" aria-label="Caminhões na pedreira">
+      <PageHeader
+        level={2}
+        title="Caminhões na pedreira"
+        description={
+          <>
             {insideCount === 1 ? "1 caminhão agora" : `${insideCount} caminhões agora`} ·{" "}
             {groups.saida.length === 1 ? "1 saiu hoje" : `${groups.saida.length} saíram hoje`} ·{" "}
             {groups.cancelada.length === 1
               ? "1 cancelada hoje"
               : `${groups.cancelada.length} canceladas hoje`}
-          </p>
-        </div>
-        <span className={`ts-live ${realtime}`} role="status">
-          <span aria-hidden="true" />
-          {realtime === "live"
-            ? "Ao vivo"
-            : realtime === "connecting"
-              ? "Conectando"
-              : "Atualizando a cada 30 s"}
-        </span>
-      </header>
+          </>
+        }
+        meta={
+          <span className={`ts-live ${realtime}`} role="status">
+            <Pill
+              tone={realtime === "live" ? "success" : realtime === "down" ? "warning" : "neutral"}
+            >
+              <span className="ts-live-dot" aria-hidden="true" />
+              {realtime === "live"
+                ? "Ao vivo"
+                : realtime === "connecting"
+                  ? "Conectando"
+                  : "Atualizando a cada 30 s"}
+            </Pill>
+          </span>
+        }
+      />
 
-      {error && <Alert kind="warn">{error}</Alert>}
+      {error && <ErrorState message={error} onRetry={() => void load()} />}
 
       <ol className="ts-flow" aria-label="Etapas do caminhão">
         {TRUCK_STAGES.map((stage, index) => {
@@ -326,44 +347,52 @@ export function TruckStages() {
               <strong>{STAGE_LABELS[stage]}</strong>
               <CountBadge>{groups[stage].length}</CountBadge>
             </div>
-            <ul className="ts-list" aria-label={`Caminhões na etapa ${STAGE_LABELS[stage]}`}>
-              {groups[stage].length === 0 && (
-                <li className="ts-empty">
-                  {loaded ? "Nenhum caminhão nesta etapa." : "Carregando..."}
-                </li>
-              )}
-              {groups[stage].map((truck) => (
-                <li key={truck.operationId}>
-                  <button
-                    type="button"
-                    className="ts-item"
-                    onClick={() => setDetail(truck)}
-                    title="Ver o tempo em cada etapa"
-                  >
-                    <PlateBadge plate={formatPlate(truck.plate)} />
-                    <span className="ts-item-text">
-                      <strong>{truck.customerName}</strong>
-                      <span>{truck.productDescription}</span>
-                      {truck.cancelledAt && (
-                        <span className="ts-item-reason" title={truck.cancelReason ?? undefined}>
-                          {truck.cancelReason || "Sem motivo registrado"}
-                        </span>
-                      )}
-                    </span>
-                    <span className="ts-item-time">
-                      <strong>{formatDuration(timeInCurrentStage(truck, now))}</strong>
-                      <span>
-                        {truck.cancelledAt
-                          ? `cancelou ${clock(truck.cancelledAt)}`
-                          : truck.exitAt
-                            ? `saiu ${clock(truck.exitAt)}`
-                            : `entrou ${clock(truck.entryAt)}`}
+            {groups[stage].length === 0 ? (
+              <div className="ts-list-state">
+                {loaded ? (
+                  <EmptyState title="Nenhum caminhão nesta etapa." />
+                ) : (
+                  <div className="ts-list-skeleton" role="status" aria-label="Carregando">
+                    <Skeleton height={58} radius={10} />
+                    <Skeleton height={58} radius={10} />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <ul className="ts-list" aria-label={`Caminhões na etapa ${STAGE_LABELS[stage]}`}>
+                {groups[stage].map((truck) => (
+                  <li key={truck.operationId}>
+                    <button
+                      type="button"
+                      className="ts-item"
+                      onClick={() => setDetail(truck)}
+                      title="Ver o tempo em cada etapa"
+                    >
+                      <PlateBadge plate={formatPlate(truck.plate)} />
+                      <span className="ts-item-text">
+                        <strong>{truck.customerName}</strong>
+                        <span>{truck.productDescription}</span>
+                        {truck.cancelledAt && (
+                          <span className="ts-item-reason" title={truck.cancelReason ?? undefined}>
+                            {truck.cancelReason || "Sem motivo registrado"}
+                          </span>
+                        )}
                       </span>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+                      <span className="ts-item-time">
+                        <strong>{formatDuration(timeInCurrentStage(truck, now))}</strong>
+                        <span>
+                          {truck.cancelledAt
+                            ? `cancelou ${clock(truck.cancelledAt)}`
+                            : truck.exitAt
+                              ? `saiu ${clock(truck.exitAt)}`
+                              : `entrou ${clock(truck.entryAt)}`}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         ))}
       </div>
@@ -376,9 +405,11 @@ export function TruckStages() {
           <span className="ts-finished-hint">Tempo de cada caminhão em cada etapa</span>
         </div>
         {groups.saida.length === 0 ? (
-          <p className="ts-empty">
-            {loaded ? "Nenhum caminhão saiu hoje ainda." : "Carregando..."}
-          </p>
+          loaded ? (
+            <EmptyState title="Nenhum caminhão saiu hoje ainda." />
+          ) : (
+            <SkeletonRows rows={3} columns={5} />
+          )
         ) : (
           <div className="ts-finished-scroll">
             <table className="ts-table">

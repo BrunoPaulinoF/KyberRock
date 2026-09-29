@@ -1,9 +1,17 @@
 import "./truck-control.css";
 
-import { FileText, Lightbulb, RefreshCw, Table } from "lucide-react";
+import { FileText, RefreshCw, Table } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { LoadMore, useShowMore } from "../components/ui";
+import {
+  EmptyState,
+  ErrorState,
+  LoadMore,
+  PageHeader,
+  SkeletonRows,
+  useShowMore,
+  useToast
+} from "../components/ui";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
@@ -33,6 +41,7 @@ const HELP =
  */
 export function TruckControl() {
   const user = useUser();
+  const toast = useToast();
   const today = todayIso();
   const [startDate, setStartDate] = useState(() => isoDaysBefore(today, 30));
   const [endDate, setEndDate] = useState(today);
@@ -40,8 +49,6 @@ export function TruckControl() {
   // Uma placa aberta por vez, como no desktop.
   const [openPlate, setOpenPlate] = useState<string | null>(null);
   const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
-  const [exportError, setExportError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   const {
     data: report,
@@ -51,7 +58,9 @@ export function TruckControl() {
     refresh
   } = useAsync(
     () => loadTruckControl(user.companyId, user.unitId, startDate, endDate),
-    [user.companyId, user.unitId, startDate, endDate]
+    [user.companyId, user.unitId, startDate, endDate],
+    // Memoria entre telas: empresa, unidade e o periodo. A busca filtra na tela, fora da chave.
+    { key: `controle-caminhoes:${user.companyId}:${user.unitId}:${startDate}:${endDate}` }
   );
   // Pesagem fechada, editada ou cancelada na balanca entra na tela na hora.
   useOnCadastroChange(refresh, CADASTRO_TABLES.operationsAndLoading);
@@ -75,21 +84,20 @@ export function TruckControl() {
   async function handleExport(format: "pdf" | "excel"): Promise<void> {
     if (!visible) return;
     setExporting(format);
-    setNotice(null);
-    setExportError(null);
     try {
       const file = truckControlDocument(format, visible);
       if (format === "pdf") {
         await printReportHtml(file.html, file.filename);
       } else {
         downloadSpreadsheet(file);
-        setNotice(`Excel salvo em: ${spreadsheetFileName(file.filename)}`);
+        toast.push(`Excel salvo em: ${spreadsheetFileName(file.filename)}`);
       }
     } catch (err) {
-      setExportError(
+      toast.push(
         err instanceof Error
           ? err.message
-          : `Falha ao gerar o ${format === "pdf" ? "PDF" : "Excel"}.`
+          : `Falha ao gerar o ${format === "pdf" ? "PDF" : "Excel"}.`,
+        "error"
       );
     } finally {
       setExporting(null);
@@ -98,48 +106,35 @@ export function TruckControl() {
 
   return (
     <section className="truck-control">
-      <header className="truck-control-header">
-        <div className="truck-control-title-row">
-          <h2 className="truck-control-title">Controle de caminhões</h2>
-          <span className="truck-control-help" role="img" aria-label="Dica" title={HELP}>
-            <Lightbulb size={14} />
-          </span>
-        </div>
-        <div className="truck-control-actions">
-          <button
-            type="button"
-            className="icon-action primary"
-            aria-label="Gerar PDF"
-            title={
-              exporting === "pdf"
-                ? "Gerando PDF..."
-                : filtered
-                  ? "Gerar PDF só com os caminhões da busca"
-                  : "Gerar PDF"
-            }
-            disabled={exporting !== null || loading || !visible}
-            onClick={() => void handleExport("pdf")}
-          >
-            <FileText size={16} />
-          </button>
-          <button
-            type="button"
-            className="icon-action primary"
-            aria-label="Baixar Excel"
-            title={
-              exporting === "excel"
-                ? "Gerando Excel..."
-                : filtered
-                  ? "Baixar Excel só com os caminhões da busca"
-                  : "Baixar Excel"
-            }
-            disabled={exporting !== null || loading || !visible}
-            onClick={() => void handleExport("excel")}
-          >
-            <Table size={16} />
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        kicker="Análise"
+        title="Controle de caminhões"
+        help={HELP}
+        actions={
+          <>
+            <button
+              type="button"
+              className="btn"
+              title={filtered ? "Gerar PDF só com os caminhões da busca" : undefined}
+              disabled={exporting !== null || loading || !visible}
+              onClick={() => void handleExport("pdf")}
+            >
+              <FileText size={16} />
+              {exporting === "pdf" ? "Gerando PDF..." : "Gerar PDF"}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              title={filtered ? "Baixar Excel só com os caminhões da busca" : undefined}
+              disabled={exporting !== null || loading || !visible}
+              onClick={() => void handleExport("excel")}
+            >
+              <Table size={16} />
+              {exporting === "excel" ? "Gerando Excel..." : "Baixar Excel"}
+            </button>
+          </>
+        }
+      />
 
       <div className="truck-control-filters">
         <label className="truck-control-field">
@@ -183,9 +178,7 @@ export function TruckControl() {
         </button>
       </div>
 
-      {error ? <p className="truck-control-error">{error}</p> : null}
-      {exportError ? <p className="truck-control-error">{exportError}</p> : null}
-      {notice ? <p className="truck-control-muted">{notice}</p> : null}
+      {error ? <ErrorState message={error} onRetry={() => void reload()} /> : null}
       {filtered ? (
         <p className="truck-control-muted">
           Busca &quot;{visible?.search}&quot;: {filteredTrucks.length} de{" "}
@@ -220,11 +213,13 @@ export function TruckControl() {
       </div>
 
       {loading ? (
-        <p className="truck-control-empty">Carregando...</p>
+        <div className="truck-control-loading">
+          <SkeletonRows rows={4} columns={5} />
+        </div>
       ) : filteredTrucks.length === 0 ? (
-        <p className="truck-control-empty">
-          {filtered ? "Nenhum caminhão para essa busca." : "Nenhum caminhão no período."}
-        </p>
+        <EmptyState
+          title={filtered ? "Nenhum caminhão para essa busca." : "Nenhum caminhão no período."}
+        />
       ) : (
         <div className="truck-control-list">
           {filteredTrucks.slice(0, page.limit).map((truck) => (
