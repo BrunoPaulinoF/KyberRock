@@ -174,7 +174,7 @@ export function ProductsSection() {
 
       <SectionHead
         title="Preco especial por cliente"
-        description="Escolha o cliente para ver o preco dele em cada produto. Sem preco especial, vale o padrao. Tambem da para abrir pela aba Clientes, no botao da etiqueta."
+        description="Escolha o cliente para ver o preco dele em cada produto. Sem preco especial, vale o padrao. Tambem da para abrir pela aba Clientes, no botao de ajustes do cliente."
       />
       <div style={{ maxWidth: 420, marginBottom: 10 }}>
         <CustomerPicker companyId={user.companyId} value={customerId} onChange={setCustomerId} />

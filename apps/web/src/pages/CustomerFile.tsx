@@ -1,7 +1,7 @@
-import { Car, FileText, Tag, Truck, type LucideIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Car, FileText, Tag, Truck, Wallet, type LucideIcon } from "lucide-react";
+import { useMemo, useState, type FormEvent } from "react";
 
-import { EmptyState, IconAction, IconTabs, Pill, PlateBadge } from "../components/desk";
+import { EmptyState, IconAction, Pill, PlateBadge } from "../components/desk";
 import { Picker } from "../components/Picker";
 import { PricePasswordField } from "../components/PricePassword";
 import { Alert, DataTable, Field, Modal, useToast } from "../components/ui";
@@ -16,7 +16,7 @@ import {
   parseTotalWeightKg,
   type CustomerFreightEntry
 } from "../lib/customer-cadastro";
-import { dedupeVehicles } from "../lib/dedupe";
+import { dedupePaymentMethods, dedupeVehicles, representativeIds } from "../lib/dedupe";
 import { FREIGHT_MODALITIES } from "../lib/desktop/freight";
 import { formatMoney, formatPlate, parseMoneyToCents } from "../lib/format";
 import { matchesSearch } from "../lib/operation";
@@ -24,15 +24,17 @@ import { q, type Customer, type Product } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
 
 /**
- * A ficha do cliente no site, com o que na balanca fica nas abas Precos, Frete, Transporte e
- * Fiscal do cadastro do cliente (`CustomersView` do desktop): preco especial por produto, valor
- * de frete combinado, transportadoras e placas dele, tipo de frete padrao e as notas de venda
- * para entrega futura. Tudo grava pela `web-api` e chega as balancas pelo pull de cadastro.
+ * A ficha do cliente no site, com o que na balanca fica nas abas Comercial, Credito, Precos,
+ * Frete, Transporte e Fiscal do cadastro do cliente (`CustomersView` do desktop): o bloco
+ * comercial/credito, preco especial por produto, valor de frete combinado, transportadoras e
+ * placas dele, tipo de frete padrao e as notas de venda para entrega futura. O cadastro em si
+ * (nome, documento, endereco) continua no lapis da lista. Tudo grava pela `web-api` e chega as balancas pelo pull de cadastro.
  */
 
-export type CustomerFileTab = "precos" | "frete" | "transporte" | "entrega";
+export type CustomerFileTab = "comercial" | "precos" | "frete" | "transporte" | "entrega";
 
 const TABS: Array<{ id: CustomerFileTab; label: string; icon: LucideIcon }> = [
+  { id: "comercial", label: "Comercial e credito", icon: Wallet },
   { id: "precos", label: "Precos especiais", icon: Tag },
   { id: "frete", label: "Frete", icon: Truck },
   { id: "transporte", label: "Transporte", icon: Car },
@@ -40,6 +42,8 @@ const TABS: Array<{ id: CustomerFileTab; label: string; icon: LucideIcon }> = [
 ];
 
 const TAB_HINTS: Record<CustomerFileTab, string> = {
+  comercial:
+    "Forma de pagamento e transportadora padrao, nota fiscal e conta de credito (fiado / pre-pago).",
   precos:
     "Preco especial do cliente em cada produto. Ele vale no lugar do preco padrao na pesagem.",
   frete:
@@ -52,7 +56,7 @@ const TAB_HINTS: Record<CustomerFileTab, string> = {
 
 export function CustomerFileModal({
   customer,
-  initialTab = "precos",
+  initialTab = "comercial",
   onClose
 }: {
   customer: Customer;
@@ -64,7 +68,7 @@ export function CustomerFileModal({
   return (
     <Modal
       wide
-      title={`Ficha do cliente — ${name}`}
+      title={name}
       description={TAB_HINTS[tab]}
       onClose={onClose}
       footer={
@@ -73,10 +77,21 @@ export function CustomerFileModal({
         </button>
       }
     >
-      <IconTabs label="Ficha do cliente" tabs={TABS} active={tab} onChange={setTab} />
-      <p className="desk-muted" style={{ margin: "8px 0 12px" }}>
-        {TABS.find((item) => item.id === tab)?.label}
-      </p>
+      <nav className="file-tabs" aria-label="Ficha do cliente">
+        {TABS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={`file-tab${item.id === tab ? " active" : ""}`}
+            aria-pressed={item.id === tab}
+            onClick={() => setTab(item.id)}
+          >
+            <item.icon size={15} />
+            {item.label}
+          </button>
+        ))}
+      </nav>
+      {tab === "comercial" && <CommercialTab customer={customer} />}
       {tab === "precos" && <SpecialPricesTab customer={customer} />}
       {tab === "frete" && <FreightTab customer={customer} />}
       {tab === "transporte" && <TransportTab customer={customer} />}
@@ -882,6 +897,238 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
           }
         ]}
       />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+const WEEKDAYS = ["Domingo", "Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado"];
+
+/**
+ * Bloco comercial e credito do cliente (forma de pagamento e transportadora padrao, exige NF,
+ * conta de credito). Tem dono: o que se publica aqui vale em todas as balancas.
+ */
+function CommercialTab({ customer }: { customer: Customer }) {
+  const user = useUser();
+  const toast = useToast();
+  const canEdit = user.canEditCustomers;
+  const lists = useAsync(
+    () => Promise.all([q.paymentMethods(user.companyId), q.carriers(user.companyId)]),
+    [user.companyId]
+  );
+  useOnCadastroChange(lists.refresh, [...CADASTRO_TABLES.payment, ...CADASTRO_TABLES.carriers]);
+  const [methods, carriers] = lists.data ?? [[], []];
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Cada balanca tem a sua copia de "Dinheiro", "Pix"...: o seletor mostra uma de cada, e a
+  // escolha atual (que pode ser a copia de outra maquina) aparece pela representante.
+  const methodGroups = useMemo(
+    () => dedupePaymentMethods(methods.filter((m) => m.is_active)),
+    [methods]
+  );
+  const methodRepresentative = useMemo(() => representativeIds(methodGroups), [methodGroups]);
+  const currentMethodId = customer.default_payment_method_id ?? "";
+  const [form, setForm] = useState({
+    defaultPaymentMethodId: currentMethodId,
+    defaultCarrierId: customer.default_carrier_id ?? "",
+    nfRequired: customer.nf_required ?? false,
+    creditAccountEnabled: customer.credit_account_enabled ?? false,
+    creditMode: customer.credit_mode ?? "normal",
+    creditPeriodicity: customer.credit_periodicity ?? "",
+    creditClosingDay: customer.credit_closing_day?.toString() ?? "",
+    creditSecondClosingDay: customer.credit_second_closing_day?.toString() ?? "",
+    creditBoletoDays: customer.credit_boleto_days?.toString() ?? "",
+    creditSecondBoletoDays: customer.credit_second_boleto_days?.toString() ?? "",
+    creditClosingWeekday: customer.credit_closing_weekday?.toString() ?? ""
+  });
+
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await callWebApi("set_customer_commercial", {
+        id: customer.id,
+        defaultPaymentMethodId: form.defaultPaymentMethodId || null,
+        defaultCarrierId: form.defaultCarrierId || null,
+        nfRequired: form.nfRequired,
+        creditAccountEnabled: form.creditAccountEnabled,
+        creditMode: form.creditMode,
+        creditPeriodicity: form.creditPeriodicity || null,
+        creditClosingDay: form.creditClosingDay || null,
+        creditSecondClosingDay: form.creditSecondClosingDay || null,
+        creditBoletoDays: form.creditBoletoDays || null,
+        creditSecondBoletoDays: form.creditSecondBoletoDays || null,
+        creditClosingWeekday: form.creditClosingWeekday || null
+      });
+      toast.push("Bloco comercial publicado para as balancas.");
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <p className="desk-muted" style={{ marginTop: 0 }}>
+        Estas configuracoes tem dono: o que voce publicar aqui vale em todas as balancas.
+      </p>
+      {error && <Alert kind="error">{error}</Alert>}
+      <form onSubmit={(e) => void onSubmit(e)}>
+        <div className="grid-2">
+          <Field label="Forma de pagamento padrao">
+            <Picker
+              // A escolha atual pode ser a copia de outra maquina: aparece pela representante.
+              value={
+                methodRepresentative.get(form.defaultPaymentMethodId) ?? form.defaultPaymentMethodId
+              }
+              loading={lists.loading}
+              options={methodGroups.map(({ row: m }) => ({
+                value: m.id,
+                label: m.alias || m.name
+              }))}
+              onChange={(id) => setForm((f) => ({ ...f, defaultPaymentMethodId: id }))}
+              placeholder="Buscar forma de pagamento..."
+              allowEmpty
+              emptyLabel="Sem forma padrao"
+            />
+          </Field>
+          <Field label="Transportadora padrao">
+            <Picker
+              value={form.defaultCarrierId}
+              loading={lists.loading}
+              options={carriers
+                .filter((c) => c.is_active)
+                .map((c) => ({ value: c.id, label: c.name }))}
+              onChange={(id) => setForm((f) => ({ ...f, defaultCarrierId: id }))}
+              placeholder="Buscar transportadora..."
+              allowEmpty
+              emptyLabel="Sem transportadora padrao"
+            />
+          </Field>
+        </div>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={form.nfRequired}
+            onChange={(e) => setForm((f) => ({ ...f, nfRequired: e.target.checked }))}
+          />
+          Exige nota fiscal
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={form.creditAccountEnabled}
+            onChange={(e) => setForm((f) => ({ ...f, creditAccountEnabled: e.target.checked }))}
+          />
+          Conta de credito habilitada (fiado / pre-pago)
+        </label>
+        {form.creditAccountEnabled && (
+          <>
+            <div className="grid-2">
+              <Field label="Modo">
+                <select
+                  className="select"
+                  value={form.creditMode}
+                  onChange={(e) => setForm((f) => ({ ...f, creditMode: e.target.value }))}
+                >
+                  <option value="normal">Fiado (fechamento periodico)</option>
+                  <option value="prepaid">Pre-pago (adiantamento no OMIE)</option>
+                </select>
+              </Field>
+              <Field label="Periodicidade do fechamento">
+                <select
+                  className="select"
+                  value={form.creditPeriodicity}
+                  onChange={(e) => setForm((f) => ({ ...f, creditPeriodicity: e.target.value }))}
+                >
+                  <option value="">—</option>
+                  <option value="monthly">Mensal</option>
+                  <option value="biweekly">Quinzenal</option>
+                  <option value="weekly">Semanal</option>
+                </select>
+              </Field>
+            </div>
+            <div className="grid-3">
+              <Field label="Dia do fechamento" hint="1 a 31">
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={31}
+                  value={form.creditClosingDay}
+                  onChange={(e) => setForm((f) => ({ ...f, creditClosingDay: e.target.value }))}
+                />
+              </Field>
+              <Field label="2o fechamento (quinzenal)">
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={31}
+                  value={form.creditSecondClosingDay}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, creditSecondClosingDay: e.target.value }))
+                  }
+                />
+              </Field>
+              <Field label="Prazo do boleto (dias)">
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  max={365}
+                  value={form.creditBoletoDays}
+                  onChange={(e) => setForm((f) => ({ ...f, creditBoletoDays: e.target.value }))}
+                />
+              </Field>
+            </div>
+            <div className="grid-2">
+              <Field
+                label="Dias p/ vencimento (2o fechamento)"
+                hint="Quinzenal: prazo do 2o boleto"
+              >
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  max={365}
+                  value={form.creditSecondBoletoDays}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, creditSecondBoletoDays: e.target.value }))
+                  }
+                />
+              </Field>
+              <Field label="Dia da semana (semanal)">
+                <select
+                  className="select"
+                  value={form.creditClosingWeekday}
+                  onChange={(e) => setForm((f) => ({ ...f, creditClosingWeekday: e.target.value }))}
+                >
+                  <option value="">—</option>
+                  {WEEKDAYS.map((label, index) => (
+                    <option key={label} value={String(index)}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+          </>
+        )}
+        {customer.credit_limit_cents != null && (
+          <p style={{ color: "var(--kr-muted)" }}>
+            Limite de credito (OMIE): {formatMoney(customer.credit_limit_cents)}
+          </p>
+        )}
+        {canEdit && (
+          <button className="btn primary" type="submit" disabled={busy}>
+            {busy ? "Publicando..." : "Publicar"}
+          </button>
+        )}
+      </form>
     </>
   );
 }

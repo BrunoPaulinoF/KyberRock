@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { ConditionLegend } from "../components/ConditionLegend";
 import { IconAction, NewButton, Pill, SearchBar, SectionHead } from "../components/desk";
-import { Picker } from "../components/Picker";
 import { DeleteDialog } from "../components/PricePassword";
 import {
   Alert,
@@ -20,25 +19,12 @@ import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
-import { dedupePaymentMethods, representativeIds } from "../lib/dedupe";
 import { conditionTextOf, describePaymentCondition } from "../lib/entry-freight";
-import {
-  documentKind,
-  formatDocument,
-  formatMoney,
-  isValidDocument,
-  normalizeDocument
-} from "../lib/format";
-import {
-  q,
-  type Carrier,
-  type Customer,
-  type PaymentMethod,
-  type PaymentTerm
-} from "../lib/queries";
+import { documentKind, formatDocument, isValidDocument, normalizeDocument } from "../lib/format";
+import { q, type Customer, type PaymentTerm } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
 import { usePaged } from "../lib/use-paged";
-import { CustomerFileModal, type CustomerFileTab } from "./CustomerFile";
+import { CustomerFileModal } from "./CustomerFile";
 
 /** O texto da busca so vira consulta quando a pessoa para de digitar. */
 export function useDebounced<T>(value: T, delayMs = 300): T {
@@ -73,28 +59,17 @@ export function CustomersSection() {
     PAGE_SIZE
   );
   const aux = useAsync(
-    () =>
-      Promise.all([
-        q.paymentTerms(user.companyId),
-        q.paymentMethods(user.companyId),
-        q.carriers(user.companyId),
-        q.activeCustomerCount(user.companyId)
-      ]),
+    () => Promise.all([q.paymentTerms(user.companyId), q.activeCustomerCount(user.companyId)]),
     [user.companyId]
   );
   // Cliente salvo, inativado ou excluido na balanca aparece aqui sem clicar em atualizar.
   useOnCadastroChange(list.refresh, CADASTRO_TABLES.customers);
-  useOnCadastroChange(aux.refresh, [
-    ...CADASTRO_TABLES.customers,
-    ...CADASTRO_TABLES.payment,
-    ...CADASTRO_TABLES.carriers
-  ]);
+  useOnCadastroChange(aux.refresh, [...CADASTRO_TABLES.customers, ...CADASTRO_TABLES.payment]);
   const [editing, setEditing] = useState<Customer | "new" | null>(null);
-  const [commercial, setCommercial] = useState<Customer | null>(null);
-  const [file, setFile] = useState<{ customer: Customer; tab: CustomerFileTab } | null>(null);
+  const [file, setFile] = useState<Customer | null>(null);
   const [removing, setRemoving] = useState<Customer | null>(null);
 
-  const [terms, methods, carriers, activeCount] = aux.data ?? [[], [], [], 0];
+  const [terms, activeCount] = aux.data ?? [[], 0];
   const error = list.error ?? aux.error;
 
   async function refresh() {
@@ -201,19 +176,9 @@ export function CustomersSection() {
                 <span className="row-actions">
                   <IconAction icon="edit" label="Editar cliente" onClick={() => setEditing(c)} />
                   <IconAction
-                    icon="wallet"
-                    label="Comercial e credito"
-                    onClick={() => setCommercial(c)}
-                  />
-                  <IconAction
-                    icon="tag"
-                    label="Precos especiais"
-                    onClick={() => setFile({ customer: c, tab: "precos" })}
-                  />
-                  <IconAction
-                    icon="truck"
-                    label="Frete, transporte e entrega futura"
-                    onClick={() => setFile({ customer: c, tab: "frete" })}
+                    icon="sliders"
+                    label="Comercial, precos, frete, transporte e entrega futura"
+                    onClick={() => setFile(c)}
                   />
                   <button className="btn small" onClick={() => void toggleActive(c)}>
                     {c.is_active ? "Inativar" : "Reativar"}
@@ -241,22 +206,9 @@ export function CustomersSection() {
           }}
         />
       )}
-      {commercial && (
-        <CommercialForm
-          customer={commercial}
-          methods={methods}
-          carriers={carriers}
-          onClose={() => setCommercial(null)}
-          onSaved={async () => {
-            setCommercial(null);
-            await refresh();
-          }}
-        />
-      )}
       {file && (
         <CustomerFileModal
-          customer={file.customer}
-          initialTab={file.tab}
+          customer={file}
           onClose={() => {
             setFile(null);
             void refresh();
@@ -544,241 +496,6 @@ function CustomerForm({
             onChange={set("observations")}
           />
         </Field>
-      </form>
-    </Modal>
-  );
-}
-
-// ---------------------------------------------------------------------------
-
-const WEEKDAYS = ["Domingo", "Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado"];
-
-function CommercialForm({
-  customer,
-  methods,
-  carriers,
-  onClose,
-  onSaved
-}: {
-  customer: Customer;
-  methods: PaymentMethod[];
-  carriers: Carrier[];
-  onClose: () => void;
-  onSaved: () => Promise<void>;
-}) {
-  const toast = useToast();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // Cada balanca tem a sua copia de "Dinheiro", "Pix"...: o seletor mostra uma de cada, e a
-  // escolha atual (que pode ser a copia de outra maquina) aparece pela representante.
-  const methodGroups = useMemo(
-    () => dedupePaymentMethods(methods.filter((m) => m.is_active)),
-    [methods]
-  );
-  const methodRepresentative = useMemo(() => representativeIds(methodGroups), [methodGroups]);
-  const currentMethodId = customer.default_payment_method_id ?? "";
-  const [form, setForm] = useState({
-    defaultPaymentMethodId: methodRepresentative.get(currentMethodId) ?? currentMethodId,
-    defaultCarrierId: customer.default_carrier_id ?? "",
-    nfRequired: customer.nf_required ?? false,
-    creditAccountEnabled: customer.credit_account_enabled ?? false,
-    creditMode: customer.credit_mode ?? "normal",
-    creditPeriodicity: customer.credit_periodicity ?? "",
-    creditClosingDay: customer.credit_closing_day?.toString() ?? "",
-    creditSecondClosingDay: customer.credit_second_closing_day?.toString() ?? "",
-    creditBoletoDays: customer.credit_boleto_days?.toString() ?? "",
-    creditSecondBoletoDays: customer.credit_second_boleto_days?.toString() ?? "",
-    creditClosingWeekday: customer.credit_closing_weekday?.toString() ?? ""
-  });
-
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await callWebApi("set_customer_commercial", {
-        id: customer.id,
-        defaultPaymentMethodId: form.defaultPaymentMethodId || null,
-        defaultCarrierId: form.defaultCarrierId || null,
-        nfRequired: form.nfRequired,
-        creditAccountEnabled: form.creditAccountEnabled,
-        creditMode: form.creditMode,
-        creditPeriodicity: form.creditPeriodicity || null,
-        creditClosingDay: form.creditClosingDay || null,
-        creditSecondClosingDay: form.creditSecondClosingDay || null,
-        creditBoletoDays: form.creditBoletoDays || null,
-        creditSecondBoletoDays: form.creditSecondBoletoDays || null,
-        creditClosingWeekday: form.creditClosingWeekday || null
-      });
-      toast.push("Bloco comercial publicado para as balancas.");
-      await onSaved();
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const formId = "commercial-form";
-  return (
-    <Modal
-      title={`Comercial e credito — ${customer.trade_name}`}
-      description="Estas configuracoes tem dono: o que voce salvar aqui vale em todas as balancas."
-      onClose={onClose}
-      footer={
-        <>
-          <button className="btn" onClick={onClose}>
-            Cancelar
-          </button>
-          <button className="btn primary" type="submit" form={formId} disabled={busy}>
-            {busy ? "Salvando..." : "Publicar"}
-          </button>
-        </>
-      }
-    >
-      {error && <Alert kind="error">{error}</Alert>}
-      <form id={formId} onSubmit={(e) => void onSubmit(e)}>
-        <div className="grid-2">
-          <Field label="Forma de pagamento padrao">
-            <Picker
-              value={form.defaultPaymentMethodId}
-              options={methodGroups.map(({ row: m }) => ({
-                value: m.id,
-                label: m.alias || m.name
-              }))}
-              onChange={(id) => setForm((f) => ({ ...f, defaultPaymentMethodId: id }))}
-              placeholder="Buscar forma de pagamento..."
-              allowEmpty
-              emptyLabel="Sem forma padrao"
-            />
-          </Field>
-          <Field label="Transportadora padrao">
-            <Picker
-              value={form.defaultCarrierId}
-              options={carriers
-                .filter((c) => c.is_active)
-                .map((c) => ({ value: c.id, label: c.name }))}
-              onChange={(id) => setForm((f) => ({ ...f, defaultCarrierId: id }))}
-              placeholder="Buscar transportadora..."
-              allowEmpty
-              emptyLabel="Sem transportadora padrao"
-            />
-          </Field>
-        </div>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={form.nfRequired}
-            onChange={(e) => setForm((f) => ({ ...f, nfRequired: e.target.checked }))}
-          />
-          Exige nota fiscal
-        </label>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={form.creditAccountEnabled}
-            onChange={(e) => setForm((f) => ({ ...f, creditAccountEnabled: e.target.checked }))}
-          />
-          Conta de credito habilitada (fiado / pre-pago)
-        </label>
-        {form.creditAccountEnabled && (
-          <>
-            <div className="grid-2">
-              <Field label="Modo">
-                <select
-                  className="select"
-                  value={form.creditMode}
-                  onChange={(e) => setForm((f) => ({ ...f, creditMode: e.target.value }))}
-                >
-                  <option value="normal">Fiado (fechamento periodico)</option>
-                  <option value="prepaid">Pre-pago (adiantamento no OMIE)</option>
-                </select>
-              </Field>
-              <Field label="Periodicidade do fechamento">
-                <select
-                  className="select"
-                  value={form.creditPeriodicity}
-                  onChange={(e) => setForm((f) => ({ ...f, creditPeriodicity: e.target.value }))}
-                >
-                  <option value="">—</option>
-                  <option value="monthly">Mensal</option>
-                  <option value="biweekly">Quinzenal</option>
-                  <option value="weekly">Semanal</option>
-                </select>
-              </Field>
-            </div>
-            <div className="grid-3">
-              <Field label="Dia do fechamento" hint="1 a 31">
-                <input
-                  className="input"
-                  type="number"
-                  min={1}
-                  max={31}
-                  value={form.creditClosingDay}
-                  onChange={(e) => setForm((f) => ({ ...f, creditClosingDay: e.target.value }))}
-                />
-              </Field>
-              <Field label="2o fechamento (quinzenal)">
-                <input
-                  className="input"
-                  type="number"
-                  min={1}
-                  max={31}
-                  value={form.creditSecondClosingDay}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, creditSecondClosingDay: e.target.value }))
-                  }
-                />
-              </Field>
-              <Field label="Prazo do boleto (dias)">
-                <input
-                  className="input"
-                  type="number"
-                  min={0}
-                  max={365}
-                  value={form.creditBoletoDays}
-                  onChange={(e) => setForm((f) => ({ ...f, creditBoletoDays: e.target.value }))}
-                />
-              </Field>
-            </div>
-            <div className="grid-2">
-              <Field
-                label="Dias p/ vencimento (2o fechamento)"
-                hint="Quinzenal: prazo do 2o boleto"
-              >
-                <input
-                  className="input"
-                  type="number"
-                  min={0}
-                  max={365}
-                  value={form.creditSecondBoletoDays}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, creditSecondBoletoDays: e.target.value }))
-                  }
-                />
-              </Field>
-              <Field label="Dia da semana (semanal)">
-                <select
-                  className="select"
-                  value={form.creditClosingWeekday}
-                  onChange={(e) => setForm((f) => ({ ...f, creditClosingWeekday: e.target.value }))}
-                >
-                  <option value="">—</option>
-                  {WEEKDAYS.map((label, index) => (
-                    <option key={label} value={String(index)}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-          </>
-        )}
-        {customer.credit_limit_cents != null && (
-          <p style={{ color: "var(--kr-muted)" }}>
-            Limite de credito (OMIE): {formatMoney(customer.credit_limit_cents)}
-          </p>
-        )}
       </form>
     </Modal>
   );

@@ -10,7 +10,7 @@ import {
   RefreshCw,
   Repeat2,
   Search,
-  Tag,
+  SlidersHorizontal,
   Trash2,
   Truck,
   Wallet,
@@ -182,7 +182,7 @@ const ACTION_ICONS = {
   close: X,
   clock: Clock,
   wallet: Wallet,
-  tag: Tag
+  sliders: SlidersHorizontal
 } satisfies Record<string, LucideIcon>;
 
 export type ActionIcon = keyof typeof ACTION_ICONS;
