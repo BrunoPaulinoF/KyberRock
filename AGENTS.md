@@ -584,6 +584,19 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   Do lado da balanca, tudo o que muda pesagem ou cadastro publica na hora: alem das edicoes,
   o resultado da fila OMIE e da conferencia de faturamento, a NF manual, o cupom impresso, o
   faturamento futuro, os adiantamentos e o pull do OMIE (`cadastroPulledFromOmie`).
+- **Texto de tela com acento** (etapa 1 do plano de UI do site): todo texto que a pessoa VE no
+  site esta em portugues correto — "Operações", "Relatórios", "Balança", "Não há" —, e plural de
+  verdade no lugar de "pedido(s)" (`plural` em `lib/dashboard.ts`). Continua SEM acento o que e
+  codigo: comentario, identificador, rota e valor de URL (`/relatorios`, `?aba=concluidas`),
+  chave de localStorage, valor comparado na logica ou gravado na nuvem. Tambem ficam como estao
+  as copias guardadas por teste (`lib/desktop/*`, `lib/portal/*`, `lib/documentation-*`) e os
+  textos dos ARQUIVOS exportados que o desktop gera igual (PDF/planilha do Insights, relatorios):
+  o desktop ainda escreve sem acento e os dois lados tem de bater. As abas (`IconTabs`,
+  `PillTabs` em `components/desk.tsx`) mostram o NOME ao lado do icone; a aba do navegador diz o
+  nome da tela ("Operações · KyberRock", `lib/page-title.ts`); a menor letra do site e 12px e o
+  texto normal 14px; link e botao-texto usam `--kr-link` (o ambar do acento nao passa no
+  contraste). O logo das telas e `public/logo-128.webp` (5 kB); o `logo.png` de 300 kB ficou so
+  para a previa do link (og:image), o manifest e o icone do iPhone.
 - **Listas de 50 em 50.** Desenhar os 2 mil clientes de uma vez era o que deixava o site
   pesado. `DataTable` mostra 50 linhas e o "Ver mais" (`LoadMore`, `useShowMore` em
   `components/ui.tsx`); a lista de clientes vai alem e pagina NO BANCO (`q.customersPage` +

@@ -121,7 +121,7 @@ function overview(overrides: Partial<SupportOverview> = {}): SupportOverview {
 }
 
 const diagnostics: SupportDiagnostics = {
-  build: "production · versao 2.3.0",
+  build: "production · versão 2.3.0",
   userName: "Suporte Kybernan",
   role: "administrador",
   companyId: "company-1",
@@ -154,10 +154,10 @@ describe("relogio", () => {
 
   it("diz ha quanto tempo, e denuncia relogio adiantado", () => {
     expect(formatAgo(minutesAgo(0.5), NOW)).toBe("agora");
-    expect(formatAgo(minutesAgo(3), NOW)).toBe("ha 3 min");
-    expect(formatAgo(minutesAgo(3.5), NOW)).toBe("ha 3 min");
-    expect(formatAgo(minutesAgo(125), NOW)).toBe("ha 2 h 05 min");
-    expect(formatAgo(minutesAgo(26 * 60), NOW)).toBe("ha 1 d 2 h");
+    expect(formatAgo(minutesAgo(3), NOW)).toBe("há 3 min");
+    expect(formatAgo(minutesAgo(3.5), NOW)).toBe("há 3 min");
+    expect(formatAgo(minutesAgo(125), NOW)).toBe("há 2 h 05 min");
+    expect(formatAgo(minutesAgo(26 * 60), NOW)).toBe("há 1 d 2 h");
     expect(formatAgo(minutesAgo(-10), NOW)).toBe("daqui a 10 min");
     expect(formatAgo(null, NOW)).toBe("—");
   });
@@ -315,7 +315,7 @@ describe("pedidos do site", () => {
       ).label
     ).toBe("Executando");
     expect(executionTime(list[0], NOW)).toEqual({ label: "1 min", tone: "neutral" });
-    expect(executionTime(list[2], NOW)).toEqual({ label: "esperando ha 8 min", tone: "warning" });
+    expect(executionTime(list[2], NOW)).toEqual({ label: "esperando há 8 min", tone: "warning" });
   });
 });
 
@@ -361,17 +361,17 @@ describe("envios OMIE", () => {
       "Cadastro incompleto no OMIE"
     );
     expect(omieReason(omie({ omieBillingStatus: "missing_in_omie" }), NOW)).toMatchObject({
-      label: "Nao encontrado no OMIE",
+      label: "Não encontrado no OMIE",
       severity: "danger"
     });
     expect(omieReason(omie({ omieBillingStatus: "failed" }), NOW).label).toBe("Erro no envio");
     expect(omieReason(omie({ status: "sync_error" }), NOW).key).toBe("sync_error");
     expect(omieReason(omie({ status: "pending_omie" }), NOW)).toMatchObject({
       key: "stuck_omie",
-      label: "Parado ha 4 h sem subir"
+      label: "Parado há 4 h sem subir"
     });
     expect(omieReason(omie({ closedAt: minutesAgo(3 * 24 * 60) }), NOW).label).toBe(
-      "Parado ha 3 d sem subir"
+      "Parado há 3 d sem subir"
     );
   });
 
@@ -386,7 +386,7 @@ describe("envios OMIE", () => {
     expect(countOmieReasons(list, NOW).map((item) => [item.label, item.count])).toEqual([
       ["erro no envio", 1],
       ["cadastro incompleto", 2],
-      ["parado sem subir a nuvem", 1]
+      ["parado sem subir à nuvem", 1]
     ]);
   });
 });
@@ -491,13 +491,13 @@ describe("resumo", () => {
     );
     expect(cards.offline).toMatchObject({
       value: "1 de 3",
-      detail: "PC PATIO · ha 2 h 05 min",
+      detail: "PC PATIO · há 2 h 05 min",
       severity: "danger"
     });
     expect(cards.desatualizadas).toMatchObject({ value: "1", severity: "warning" });
     expect(cards.fila).toMatchObject({
       value: "1",
-      detail: "2 envios parados · mais antiga ha 1 h 30 min",
+      detail: "2 envios parados · mais antiga há 1 h 30 min",
       severity: "danger"
     });
     expect(cards.pedidos).toMatchObject({
@@ -573,14 +573,14 @@ describe("buildSupportReport", () => {
   });
 
   it("traz diagnostico, resumo e as secoes", () => {
-    expect(report).toContain("KyberRock Web — relatorio para o suporte");
+    expect(report).toContain("KyberRock Web — relatório para o suporte");
     expect(report).toContain("Gerado em 25/09/2026 12:00");
-    expect(report).toContain("Usuario: Suporte Kybernan (Administrador)");
+    expect(report).toContain("Usuário: Suporte Kybernan (Administrador)");
     expect(report).toContain("web-api 182 ms · banco falhou em 5003 ms: timeout");
-    expect(report).toContain("Balancas offline: 1 de 2 — PC PATIO · ha 2 h 05 min [!!]");
-    expect(report).toContain("PC BALANCA 1 (No 1) · Pedreira Centro · v1.4.10");
+    expect(report).toContain("Balanças offline: 1 de 2 — PC PATIO · há 2 h 05 min [!!]");
+    expect(report).toContain("PC BALANCA 1 (Nº 1) · Pedreira Centro · v1.4.10");
     expect(report).toContain("executa o site");
-    expect(report).toContain("Nao encontrado no OMIE");
+    expect(report).toContain("Não encontrado no OMIE");
     expect(report).toContain("Joao · 1 tentativa");
     expect(report).toContain("[api] Recusado");
   });
@@ -603,12 +603,12 @@ describe("buildSupportReport", () => {
       overview: null,
       diagnostics,
       browserErrors: [],
-      loadError: "So o perfil Administrador ve os logs.",
+      loadError: "Só o perfil Administrador vê os logs.",
       now: NOW
     });
-    expect(offline).toContain("Nuvem: nao respondeu (So o perfil Administrador ve os logs.)");
-    expect(offline).toContain("Balancas offline: — — aguardando a nuvem");
+    expect(offline).toContain("Nuvem: não respondeu (Só o perfil Administrador vê os logs.)");
+    expect(offline).toContain("Balanças offline: — — aguardando a nuvem");
     expect(offline).toContain("== Erros deste navegador ==\nNenhum.");
-    expect(offline).not.toContain("== Balancas");
+    expect(offline).not.toContain("== Balanças");
   });
 });

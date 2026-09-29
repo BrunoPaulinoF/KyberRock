@@ -62,7 +62,7 @@ export function Receipts() {
         setDetail(next);
         setCopyIndex(0);
       } catch (loadError) {
-        setError(errorMessage(loadError, "Nao foi possivel abrir o cupom."));
+        setError(errorMessage(loadError, "Não foi possível abrir o cupom."));
       } finally {
         setSearching(false);
       }
@@ -86,7 +86,7 @@ export function Receipts() {
         setMatches(found);
         if (found.length === 1) await open(found[0].operation.id);
       } catch (searchError) {
-        setError(errorMessage(searchError, "Nao foi possivel buscar o cupom."));
+        setError(errorMessage(searchError, "Não foi possível buscar o cupom."));
       } finally {
         setSearching(false);
       }
@@ -117,8 +117,8 @@ export function Receipts() {
           <div>
             <h1 className="desk-title">Cupons</h1>
             <p className="rc-head-text">
-              Digite o <strong>COD</strong> que aparece no topo do cupom (ex.: 3249) ou o numero da
-              via (ex.: 4038-4) para ver o cupom e as informacoes da pesagem.
+              Digite o <strong>COD</strong> que aparece no topo do cupom (ex.: 3249) ou o número da
+              via (ex.: 4038-4) para ver o cupom e as informações da pesagem.
             </p>
           </div>
         </header>
@@ -131,7 +131,7 @@ export function Receipts() {
               value={text}
               onChange={(event) => setText(event.target.value)}
               placeholder="COD 003249 ou 000004038-4"
-              aria-label="Codigo do cupom"
+              aria-label="Código do cupom"
               inputMode="text"
               autoFocus
             />
@@ -145,15 +145,15 @@ export function Receipts() {
 
         {matches && matches.length === 0 && !error && (
           <EmptyState
-            title="Nenhum cupom com esse codigo"
-            hint="Confira o numero no papel. O cupom aparece aqui depois que a balanca envia a pesagem para a nuvem."
+            title="Nenhum cupom com esse código"
+            hint="Confira o número no papel. O cupom aparece aqui depois que a balança envia a pesagem para a nuvem."
           />
         )}
 
         {matches && matches.length > 1 && (
           <section className="rc-matches" aria-label="Pesagens encontradas">
             <p className="rc-matches-title">
-              {matches.length} pesagens com esse numero. Escolha uma:
+              {matches.length} pesagens com esse número. Escolha uma:
             </p>
             <div className="rc-match-list">
               {matches.map((match) => (
@@ -189,7 +189,7 @@ export function Receipts() {
         {!matches && !detail && !error && (
           <EmptyState
             title="Busque um cupom"
-            hint="O cupom aparece como saiu na impressora da balanca, com a pesagem, os valores e o pedido do OMIE."
+            hint="O cupom aparece como saiu na impressora da balança, com a pesagem, os valores e o pedido do OMIE."
           />
         )}
       </div>
@@ -252,7 +252,7 @@ function ReceiptView({
             {stamp.length > 0 && (
               <span
                 className="rc-paper-nf"
-                title="A nota fiscal saiu depois da impressao: o numero nao esta no papel."
+                title="A nota fiscal saiu depois da impressão: o número não está no papel."
               >
                 {`\n${stamp.join("\n")}`}
               </span>
@@ -261,8 +261,8 @@ function ReceiptView({
         ) : (
           <div className="rc-paper-empty">
             {copies.length === 0
-              ? "Esta pesagem ainda nao tem cupom impresso."
-              : "A balanca nao guardou a copia desta via. As informacoes ao lado sao da pesagem."}
+              ? "Esta pesagem ainda não tem cupom impresso."
+              : "A balança não guardou a cópia desta via. As informações ao lado são da pesagem."}
           </div>
         )}
       </section>
@@ -315,8 +315,8 @@ function ReceiptView({
 
         <InfoCard title="Pesagem">
           <Item label="Entrada" value={kg(operation.entry_weight_kg)} />
-          <Item label="Saida" value={kg(operation.exit_weight_kg)} />
-          <Item label="Peso liquido" value={kg(operation.net_weight_kg)} strong />
+          <Item label="Saída" value={kg(operation.exit_weight_kg)} />
+          <Item label="Peso líquido" value={kg(operation.net_weight_kg)} strong />
           <Item label="Chegou" value={formatDateTime(operation.created_at)} />
           <Item label="Saiu" value={formatDateTime(operation.closed_at)} />
           <Item
@@ -328,7 +328,7 @@ function ReceiptView({
 
         <InfoCard title="Valores">
           <Item
-            label="Preco por tonelada"
+            label="Preço por tonelada"
             value={
               operation.unit_price_cents === null ? null : formatMoney(operation.unit_price_cents)
             }
@@ -337,8 +337,8 @@ function ReceiptView({
           <Item label="Frete" value={formatMoney(operation.freight_total_cents)} />
           <Item label="Total" value={formatMoney(operation.total_cents)} strong />
           <Item label="Forma de pagamento" value={detail.paymentMethodName} />
-          <Item label="Condicao" value={detail.paymentTermName} />
-          <Item label="Tabela de preco" value={operation.applied_price_table_name} />
+          <Item label="Condição" value={detail.paymentTermName} />
+          <Item label="Tabela de preço" value={operation.applied_price_table_name} />
         </InfoCard>
 
         <InfoCard title="Nota e OMIE">
@@ -353,7 +353,7 @@ function ReceiptView({
         </InfoCard>
 
         {copies.length > 0 && (
-          <InfoCard title="Impressoes">
+          <InfoCard title="Impressões">
             <div className="rc-prints">
               {copies.map((item) => (
                 <div key={item.id} className="rc-print">

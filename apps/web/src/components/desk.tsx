@@ -32,7 +32,11 @@ export function DeskPanel({ children, fill }: { children: ReactNode; fill?: bool
   return <section className={`desk-panel${fill ? " fill" : ""}`}>{children}</section>;
 }
 
-/** Abas so com icone, sublinhadas em ambar (Cadastros, Transporte). */
+/**
+ * Abas sublinhadas em ambar (Cadastros, Transporte). O desktop mostra so o icone; aqui o nome
+ * vai escrito ao lado, porque quem abre o site pela primeira vez nao sabe o que cada desenho quer
+ * dizer.
+ */
 export function IconTabs<T extends string>({
   tabs,
   active,
@@ -51,19 +55,18 @@ export function IconTabs<T extends string>({
           key={tab.id}
           type="button"
           className={`icon-tab${tab.id === active ? " active" : ""}`}
-          aria-label={tab.label}
           aria-pressed={tab.id === active}
-          title={tab.label}
           onClick={() => onChange(tab.id)}
         >
-          <tab.icon size={16} />
+          <tab.icon size={16} aria-hidden="true" />
+          <span>{tab.label}</span>
         </button>
       ))}
     </nav>
   );
 }
 
-/** Abas redondas da tela Operacoes (abertas, canceladas, concluidas). */
+/** Abas redondas com icone e nome (Operacoes: abertas, canceladas, concluidas; Relatorios). */
 export function PillTabs<T extends string>({
   tabs,
   active,
@@ -80,12 +83,11 @@ export function PillTabs<T extends string>({
           key={tab.id}
           type="button"
           className={`pill-tab${tab.id === active ? " active" : ""}`}
-          aria-label={tab.label}
           aria-pressed={tab.id === active}
-          title={tab.label}
           onClick={() => onChange(tab.id)}
         >
-          <tab.icon size={16} strokeWidth={2} />
+          <tab.icon size={16} strokeWidth={2} aria-hidden="true" />
+          <span>{tab.label}</span>
         </button>
       ))}
     </div>
@@ -238,11 +240,11 @@ export function LoaderLight({ completedAt }: { completedAt: string | null | unde
     <span
       className={`loader-light${done ? " done" : ""}`}
       title={
-        done ? "Carga concluida pelo carregador." : "Aguardando o carregador concluir a carga."
+        done ? "Carga concluída pelo carregador." : "Aguardando o carregador concluir a carga."
       }
     >
       <span aria-hidden="true" />
-      {done ? "Concluida" : "Aguardando"}
+      {done ? "Concluída" : "Aguardando"}
     </span>
   );
 }

@@ -104,6 +104,7 @@ describe("periodo do fechamento", () => {
       start: "2026-09-16",
       end: "2026-09-30",
       label: "2a quinzena de setembro de 2026",
+      screenLabel: "2ª quinzena de setembro de 2026",
       cycle: "biweekly"
     });
     expect(resolveInvoiceClosingPeriod({ ...secondHalf, half: 1 })).toMatchObject({
@@ -113,6 +114,10 @@ describe("periodo do fechamento", () => {
     expect(
       resolveInvoiceClosingPeriod({ ...secondHalf, kind: "monthly", month: "2026-02" })
     ).toMatchObject({ start: "2026-02-01", end: "2026-02-28", cycle: "monthly" });
+    // O documento fica como o do desktop; so a tela ganha o acento.
+    expect(
+      resolveInvoiceClosingPeriod({ ...secondHalf, kind: "monthly", month: "2026-03" })
+    ).toMatchObject({ label: "Mes de marco de 2026", screenLabel: "Mês de março de 2026" });
     // 24/09/2026 e quinta: a semana comeca na segunda 21.
     expect(resolveInvoiceClosingPeriod({ ...secondHalf, kind: "weekly" })).toMatchObject({
       start: "2026-09-21",
@@ -341,7 +346,7 @@ describe("relatorio do fechamento", () => {
     );
     const [first, second] = report.rows;
     expect(isBillable(first)).toBe(false);
-    expect(lineSituation(first).label).toBe("Aguardando a balanca");
+    expect(lineSituation(first).label).toBe("Aguardando a balança");
     expect(isBillable(second)).toBe(false);
   });
 

@@ -57,22 +57,22 @@ import { ReportRecipients } from "./ReportRecipients";
 type ReportTab = "daily" | "period" | "pivot" | "monthly" | "recipients";
 
 const TABS: Array<{ id: ReportTab; label: string; icon: typeof CalendarDays }> = [
-  { id: "daily", label: "Fechamento diario", icon: CalendarDays },
-  { id: "period", label: "Carregamentos do periodo", icon: CalendarRange },
-  { id: "pivot", label: "Tabela dinamica de vendas", icon: Table2 },
-  { id: "monthly", label: "Relatorio mensal", icon: CalendarClock }
+  { id: "daily", label: "Fechamento diário", icon: CalendarDays },
+  { id: "period", label: "Carregamentos do período", icon: CalendarRange },
+  { id: "pivot", label: "Tabela dinâmica de vendas", icon: Table2 },
+  { id: "monthly", label: "Relatório mensal", icon: CalendarClock }
 ];
 
 /** Quem recebe o fechamento diario: so quem grava (gestor, operacao, administrador) ve e edita. */
-const RECIPIENTS_TAB = { id: "recipients" as const, label: "Destinatarios", icon: Users };
+const RECIPIENTS_TAB = { id: "recipients" as const, label: "Destinatários", icon: Users };
 
 const TAB_DESCRIPTION: Record<ReportTab, string> = {
-  daily: "As vendas do dia, pesagem a pesagem — o mesmo fechamento que a balanca envia.",
-  period: "Cada carregamento do periodo, com o valor por tonelada do material e do frete.",
+  daily: "As vendas do dia, pesagem a pesagem — o mesmo fechamento que a balança envia.",
+  period: "Cada carregamento do período, com o valor por tonelada do material e do frete.",
   pivot:
-    "Vendas agrupadas por cliente, produto ou dia. Clique no cliente para ver as pesagens; o olho (Info) mostra o cadastro e o preco medio.",
-  monthly: "Total do mes e a evolucao dia a dia.",
-  recipients: "Quem recebe o fechamento diario por e-mail ou WhatsApp."
+    "Vendas agrupadas por cliente, produto ou dia. Clique no cliente para ver as pesagens; o olho (Info) mostra o cadastro e o preço médio.",
+  monthly: "Total do mês e a evolução dia a dia.",
+  recipients: "Quem recebe o fechamento diário por e-mail ou WhatsApp."
 };
 
 /** O que abre ao clicar num cliente: as pesagens dele ou o cartao Info. */
@@ -240,8 +240,8 @@ export function SalesReport() {
       <div className="reports-page">
         <div className="desk-title-row">
           <div>
-            <p className="desk-kicker">Analise</p>
-            <h1 className="desk-title">Relatorios e fechamento diario</h1>
+            <p className="desk-kicker">Análise</p>
+            <h1 className="desk-title">Relatórios e fechamento diário</h1>
           </div>
           <div className="reports-actions reports-no-print" hidden={tab === "recipients"}>
             <IconAction icon="printer" label="Imprimir" onClick={() => window.print()} />
@@ -288,7 +288,7 @@ export function SalesReport() {
               )}
               {(tab === "period" || tab === "pivot") && (
                 <>
-                  <div className="reports-presets" role="group" aria-label="Atalhos de periodo">
+                  <div className="reports-presets" role="group" aria-label="Atalhos de período">
                     {PERIOD_PRESETS.map((preset) => {
                       const range = presetRange(preset.id, today);
                       const active = range.start === start && range.end === end;
@@ -318,7 +318,7 @@ export function SalesReport() {
                     />
                   </label>
                   <label className="op-filter">
-                    Ate
+                    Até
                     <input
                       className="input"
                       type="date"
@@ -330,7 +330,7 @@ export function SalesReport() {
               )}
               {tab === "monthly" && (
                 <label className="op-filter">
-                  Mes
+                  Mês
                   <input
                     className="input"
                     type="month"
@@ -417,7 +417,7 @@ export function SalesReport() {
             </div>
 
             {!validRange && (
-              <Alert kind="error">A data inicial precisa ser anterior a final.</Alert>
+              <Alert kind="error">A data inicial precisa ser anterior à final.</Alert>
             )}
             {ops.error && <Alert kind="error">{ops.error}</Alert>}
 
@@ -439,9 +439,9 @@ export function SalesReport() {
 
             <p className="reports-note reports-no-print">
               <Info size={14} />
-              Periodo pela data de FECHAMENTO da pesagem (a mesma que o OMIE usa na nota). Os
-              destinatarios ficam na aba Destinatarios (gestor); o horario dos envios automaticos e
-              os canais (e-mail e WhatsApp) sao configurados na tela Relatorios da balanca.
+              Período pela data de FECHAMENTO da pesagem (a mesma que o OMIE usa na nota). Os
+              destinatários ficam na aba Destinatários (gestor); o horário dos envios automáticos e
+              os canais (e-mail e WhatsApp) são configurados na tela Relatórios da balança.
             </p>
           </>
         )}
@@ -540,7 +540,7 @@ function DailyReport({
               <th>Cliente</th>
               <th>Produto</th>
               <th>Nota fiscal</th>
-              <th className="num">Peso liquido (kg)</th>
+              <th className="num">Peso líquido (kg)</th>
               <th className="num">Valor produto</th>
               <th className="num">Frete</th>
               <th className="num">Total</th>
@@ -605,7 +605,7 @@ function PeriodReport({
     <>
       <Kpis items={totalsKpis(totals)} />
       {lines.length === 0 ? (
-        <EmptyState title="Nenhum carregamento no periodo." />
+        <EmptyState title="Nenhum carregamento no período." />
       ) : (
         <ReportTable
           head={
@@ -678,16 +678,16 @@ function PivotReport({
     <>
       <Kpis
         items={[
-          { label: "Operacoes", value: pivot.totals.totalOperations.toLocaleString("pt-BR") },
+          { label: "Operações", value: pivot.totals.totalOperations.toLocaleString("pt-BR") },
           { label: "Quantidade", value: formatTons(pivot.totals.totalWeightKg) },
-          { label: "Preco medio", value: `${formatMoney(pivot.totals.avgPriceCentsPerTon)}/t` },
+          { label: "Preço médio", value: `${formatMoney(pivot.totals.avgPriceCentsPerTon)}/t` },
           { label: "Valor produto", value: formatMoney(pivot.totals.totalValueCents) },
           { label: "Frete", value: formatMoney(pivot.totals.freightCents) },
           { label: "Total", value: formatMoney(pivot.totals.grandTotalCents) }
         ]}
       />
       {pivot.rows.length === 0 ? (
-        <EmptyState title="Sem vendas no periodo com os filtros selecionados." />
+        <EmptyState title="Sem vendas no período com os filtros selecionados." />
       ) : (
         <ReportTable
           head={
@@ -695,12 +695,12 @@ function PivotReport({
               {columns.includes("day") && <th>Dia</th>}
               {columns.includes("customer") && <th>Cliente</th>}
               {columns.includes("product") && <th>Produto</th>}
-              <th className="num">Operacoes</th>
+              <th className="num">Operações</th>
               <th className="num">Quantidade</th>
               {byCustomer ? (
                 <th className="report-info-col">Info</th>
               ) : (
-                <th className="num">Preco medio</th>
+                <th className="num">Preço médio</th>
               )}
               <th className="num">Valor produto</th>
               <th className="num">Frete</th>
@@ -770,7 +770,7 @@ function InfoButton({
     <button
       type="button"
       className="btn small report-info-btn"
-      title="Ver as informacoes do cliente"
+      title="Ver as informações do cliente"
       aria-label={`Info de ${customer.name}`}
       onClick={() => onInfo(customer)}
     >
@@ -792,20 +792,20 @@ function MonthlyReport({
     <>
       <Kpis
         items={[
-          { label: "Operacoes", value: totals.operations.toLocaleString("pt-BR") },
-          { label: "Peso liquido", value: formatTons(totals.netWeightKg) },
+          { label: "Operações", value: totals.operations.toLocaleString("pt-BR") },
+          { label: "Peso líquido", value: formatTons(totals.netWeightKg) },
           { label: "Produto", value: formatMoney(totals.productTotalCents) },
           { label: "Frete", value: formatMoney(totals.freightTotalCents) },
           { label: "Total", value: formatMoney(totals.totalCents) },
-          { label: "Ticket medio", value: formatMoney(ticket) }
+          { label: "Ticket médio", value: formatMoney(ticket) }
         ]}
       />
       <ReportTable
         head={
           <tr>
             <th>Data</th>
-            <th className="num">Operacoes</th>
-            <th className="num">Peso liquido</th>
+            <th className="num">Operações</th>
+            <th className="num">Peso líquido</th>
             <th className="num">Produto</th>
             <th className="num">Frete</th>
             <th className="num">Total</th>

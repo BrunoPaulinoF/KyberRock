@@ -100,7 +100,7 @@ export function AiAssistantSettings({ onSessionExpired }: { onSessionExpired: ()
         }
       });
       setApiKey("");
-      setFeedback({ tone: "ok", text: "Configuracao salva. Vale para todas as pedreiras." });
+      setFeedback({ tone: "ok", text: "Configuração salva. Vale para todas as pedreiras." });
       await load();
     } catch (error) {
       if (error instanceof AdminSessionExpiredError) {
@@ -114,7 +114,7 @@ export function AiAssistantSettings({ onSessionExpired }: { onSessionExpired: ()
   }
 
   async function removeKey() {
-    if (!window.confirm("Remover a chave? O assistente volta a responder so com a documentacao.")) {
+    if (!window.confirm("Remover a chave? O assistente volta a responder só com a documentação.")) {
       return;
     }
     setIsSaving(true);
@@ -146,7 +146,7 @@ export function AiAssistantSettings({ onSessionExpired }: { onSessionExpired: ()
   if (isLoading) {
     return (
       <Panel>
-        <p className="adm-empty">Carregando configuracao da IA...</p>
+        <p className="adm-empty">Carregando configuração da IA...</p>
       </Panel>
     );
   }
@@ -155,7 +155,7 @@ export function AiAssistantSettings({ onSessionExpired }: { onSessionExpired: ()
     <>
       <PageHead
         title="Assistente de IA"
-        description="Credencial unica usada por todas as pedreiras. Alimenta o chat da tela de Documentacao do desktop, que responde com base na documentacao instalada e no funcionamento do sistema com o OMIE. Sem chave, o chat continua funcionando apenas com a documentacao local."
+        description="Credencial única usada por todas as pedreiras. Alimenta o chat da tela de Documentação do desktop, que responde com base na documentação instalada e no funcionamento do sistema com o OMIE. Sem chave, o chat continua funcionando apenas com a documentação local."
       />
 
       {feedback && <Note tone={feedback.tone === "ok" ? "ok" : "danger"}>{feedback.text}</Note>}
@@ -164,13 +164,13 @@ export function AiAssistantSettings({ onSessionExpired }: { onSessionExpired: ()
         title="Credencial e modelo"
         description={
           settings?.updatedAt
-            ? `Ultima alteracao: ${new Date(settings.updatedAt).toLocaleString("pt-BR")}`
+            ? `Última alteração: ${new Date(settings.updatedAt).toLocaleString("pt-BR")}`
             : undefined
         }
         actions={
           <>
             <Button variant="primary" onClick={() => void save()} disabled={isSaving}>
-              {isSaving ? "Salvando..." : "Salvar configuracao"}
+              {isSaving ? "Salvando..." : "Salvar configuração"}
             </Button>
             {settings?.hasApiKey && (
               <Button variant="danger" onClick={() => void removeKey()} disabled={isSaving}>
@@ -183,7 +183,7 @@ export function AiAssistantSettings({ onSessionExpired }: { onSessionExpired: ()
         <div className="adm-form">
           <Field
             label="Chave da API (OpenAI)"
-            hint="A chave fica somente no servidor: ela nunca volta para esta tela e nunca vai para o computador da balanca. Deixe em branco para manter a que ja esta gravada."
+            hint="A chave fica somente no servidor: ela nunca volta para esta tela e nunca vai para o computador da balança. Deixe em branco para manter a que já está gravada."
           >
             <input
               id="ai-api-key"
@@ -239,7 +239,7 @@ export function AiAssistantSettings({ onSessionExpired }: { onSessionExpired: ()
               <strong>Assistente ativo</strong>
               <span className="adm-field-hint" style={{ display: "block" }}>
                 Desmarque para pausar a IA em todas as pedreiras sem apagar a chave. O chat continua
-                respondendo com a documentacao instalada.
+                respondendo com a documentação instalada.
               </span>
             </span>
           </label>
@@ -249,18 +249,18 @@ export function AiAssistantSettings({ onSessionExpired }: { onSessionExpired: ()
       <Panel title="Como o assistente usa isto">
         <ul className="adm-list">
           <li>
-            O desktop procura na documentacao instalada e manda so os trechos relevantes junto com a
-            pergunta. Nenhum dado de operacao, cliente ou peso sai do computador da balanca.
+            O desktop procura na documentação instalada e manda só os trechos relevantes junto com a
+            pergunta. Nenhum dado de operação, cliente ou peso sai do computador da balança.
           </li>
           <li>
-            Quando a documentacao cobre a duvida, a resposta cita as fontes e o operador abre o guia
+            Quando a documentação cobre a dúvida, a resposta cita as fontes e o operador abre o guia
             com um clique.
           </li>
           <li>
-            Quando nao cobre, a IA responde pelo funcionamento do KyberRock e da integracao com o
-            OMIE, avisando que aquilo nao esta na documentacao.
+            Quando não cobre, a IA responde pelo funcionamento do KyberRock e da integração com o
+            OMIE, avisando que aquilo não está na documentação.
           </li>
-          <li>O que ela nao souber vira orientacao para falar com o suporte, nunca um palpite.</li>
+          <li>O que ela não souber vira orientação para falar com o suporte, nunca um palpite.</li>
         </ul>
       </Panel>
     </>

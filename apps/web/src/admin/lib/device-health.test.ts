@@ -68,7 +68,7 @@ describe("classifyDeviceHealth", () => {
     expect(verdict.level).toBe("down");
     expect(verdict.label).toBe("2 parados");
     expect(verdict.detail).toContain("Cliente sem CEP para a NF-e");
-    expect(verdict.detail).toContain("Ultimo contato ha 5 h.");
+    expect(verdict.detail).toContain("Último contato há 5 h.");
   });
 
   it("singular e plural do rotulo", () => {
@@ -162,17 +162,17 @@ describe("classifyDeviceHealth", () => {
 describe("formatElapsed", () => {
   it("aproxima pela ordem de grandeza", () => {
     expect(formatElapsed(new Date(NOW.getTime() - 30_000).toISOString(), NOW)).toBe(
-      "agora ha pouco"
+      "agora há pouco"
     );
-    expect(formatElapsed(new Date(NOW.getTime() - 5 * 60_000).toISOString(), NOW)).toBe("ha 5 min");
+    expect(formatElapsed(new Date(NOW.getTime() - 5 * 60_000).toISOString(), NOW)).toBe("há 5 min");
     expect(formatElapsed(new Date(NOW.getTime() - 3 * 3_600_000).toISOString(), NOW)).toBe(
-      "ha 3 h"
+      "há 3 h"
     );
     expect(formatElapsed(new Date(NOW.getTime() - 26 * 3_600_000).toISOString(), NOW)).toBe(
-      "ha 1 dia"
+      "há 1 dia"
     );
     expect(formatElapsed(new Date(NOW.getTime() - 72 * 3_600_000).toISOString(), NOW)).toBe(
-      "ha 3 dias"
+      "há 3 dias"
     );
   });
 

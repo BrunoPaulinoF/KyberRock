@@ -94,7 +94,7 @@ import {
  * pode ser vista com dados de exemplo sem login nem nuvem.
  */
 
-const FORBIDDEN_MESSAGE = "So o perfil Administrador ve os logs.";
+const FORBIDDEN_MESSAGE = "Só o perfil Administrador vê os logs.";
 
 const TAB_ICONS: Record<SupportTab, LucideIcon> = {
   balancas: Scale,
@@ -203,7 +203,7 @@ export function SupportLogs() {
 function loadErrorText(caught: unknown): string {
   if (caught instanceof WebApiError && caught.status === 403) return FORBIDDEN_MESSAGE;
   if (caught instanceof WebApiError && caught.status === 401) {
-    return "Sessao expirada. Entre de novo para ver os logs.";
+    return "Sessão expirada. Entre de novo para ver os logs.";
   }
   return errorMessage(caught, "Falha ao carregar os logs da nuvem.");
 }
@@ -261,7 +261,7 @@ function siteBuild(): string {
   const commit = envText(env, "VITE_COMMIT");
   return [
     envText(env, "MODE") ?? "desconhecido",
-    version ? `versao ${version}` : null,
+    version ? `versão ${version}` : null,
     commit ? `commit ${commit.slice(0, 12)}` : null
   ]
     .filter(Boolean)
@@ -339,10 +339,10 @@ export function SupportLogsView(props: SupportLogsViewProps) {
       now: Date.now()
     });
     try {
-      if (!navigator.clipboard?.writeText) throw new Error("Area de transferencia indisponivel");
+      if (!navigator.clipboard?.writeText) throw new Error("Área de transferência indisponível");
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      toast.push("Relatorio copiado. Cole na conversa com o suporte.");
+      toast.push("Relatório copiado. Cole na conversa com o suporte.");
     } catch {
       // Sem permissao (http, iframe, navegador antigo): o texto aparece para copiar a mao.
       setManualReport(text);
@@ -360,13 +360,13 @@ export function SupportLogsView(props: SupportLogsViewProps) {
               <Pill tone={severityTone(worst)}>
                 {attention === 0
                   ? "Tudo em ordem"
-                  : `${attention} ${attention === 1 ? "ponto" : "pontos"} de atencao`}
+                  : `${attention} ${attention === 1 ? "ponto" : "pontos"} de atenção`}
               </Pill>
             )}
           </div>
           <p className="support-lead">
-            Saude das balancas, pedidos do site, envios ao OMIE e erros deste navegador — para achar
-            a falha sem depender de ligacao.
+            Saúde das balanças, pedidos do site, envios ao OMIE e erros deste navegador — para achar
+            a falha sem depender de ligação.
           </p>
         </div>
         <div className="support-head-actions">
@@ -375,7 +375,7 @@ export function SupportLogsView(props: SupportLogsViewProps) {
             title={data ? formatStamp(data.generatedAt, true) : ""}
           >
             {data
-              ? `gerado as ${formatClock(data.generatedAt)}`
+              ? `gerado às ${formatClock(data.generatedAt)}`
               : loading
                 ? "carregando..."
                 : "sem dados da nuvem"}
@@ -392,7 +392,7 @@ export function SupportLogsView(props: SupportLogsViewProps) {
           </button>
           <button type="button" className="btn primary" onClick={() => void copyReport()}>
             {copied ? <Check size={15} /> : <ClipboardCopy size={15} />}
-            {copied ? "Copiado" : "Copiar relatorio para o suporte"}
+            {copied ? "Copiado" : "Copiar relatório para o suporte"}
           </button>
         </div>
       </header>
@@ -420,7 +420,7 @@ export function SupportLogsView(props: SupportLogsViewProps) {
           ) : (
             <EmptyState
               title="Sem dados da nuvem."
-              hint="A aba Navegador continua funcionando: ela le so este computador."
+              hint="A aba Navegador continua funcionando: ela lê só este computador."
             />
           )
         ) : tab === "balancas" ? (
@@ -440,8 +440,8 @@ export function SupportLogsView(props: SupportLogsViewProps) {
 
       {manualReport !== null && (
         <Modal
-          title="Copiar relatorio"
-          description="O navegador nao deixou copiar sozinho. Selecione o texto (Ctrl+A) e copie (Ctrl+C), ou baixe o arquivo."
+          title="Copiar relatório"
+          description="O navegador não deixou copiar sozinho. Selecione o texto (Ctrl+A) e copie (Ctrl+C), ou baixe o arquivo."
           wide
           onClose={() => setManualReport(null)}
           footer={
@@ -533,7 +533,7 @@ function SupportTabs({
     nav.scrollLeft = current.offsetLeft - (nav.clientWidth - current.offsetWidth) / 2;
   }, [active]);
   return (
-    <nav ref={navRef} className="tabs support-tabs" role="tablist" aria-label="Secoes dos logs">
+    <nav ref={navRef} className="tabs support-tabs" role="tablist" aria-label="Seções dos logs">
       {SUPPORT_TABS.map((tab) => {
         const Icon = TAB_ICONS[tab.id];
         const badge = badges[tab.id];
@@ -666,14 +666,14 @@ function DevicesTab({ data, now }: { data: SupportOverview; now: number }) {
   return (
     <>
       <SectionHead
-        title="Balancas"
+        title="Balanças"
         count={devices.length}
-        description={`${active} ativa(s) em ${data.units.length} unidade(s). Versao mais nova em uso: ${latest ?? "—"}. Offline e envio parado em vermelho; desatualizada e fila antiga (mais de 30 min) em amarelo.`}
+        description={`${active} ${active === 1 ? "ativa" : "ativas"} em ${data.units.length} ${data.units.length === 1 ? "unidade" : "unidades"}. Versão mais nova em uso: ${latest ?? "—"}. Offline e envio parado em vermelho; desatualizada e fila antiga (mais de 30 min) em amarelo.`}
       />
       {devices.length === 0 ? (
         <EmptyState
-          title="Nenhuma balanca ativada nesta empresa."
-          hint="A balanca aparece aqui depois de ativada no painel admin."
+          title="Nenhuma balança ativada nesta empresa."
+          hint="A balança aparece aqui depois de ativada no painel admin."
         />
       ) : (
         <DataTable
@@ -685,13 +685,13 @@ function DevicesTab({ data, now }: { data: SupportOverview; now: number }) {
           columns={[
             {
               key: "name",
-              header: "Balanca",
+              header: "Balança",
               render: (device) => (
                 <>
                   <strong>{device.name}</strong>
                   <span className="cell-sub">
                     {[
-                      device.deviceNumber ? `No ${device.deviceNumber}` : null,
+                      device.deviceNumber ? `Nº ${device.deviceNumber}` : null,
                       device.unitId ? (units.get(device.unitId) ?? shortId(device.unitId)) : null,
                       device.isActive ? null : "inativa"
                     ]
@@ -703,7 +703,7 @@ function DevicesTab({ data, now }: { data: SupportOverview; now: number }) {
             },
             {
               key: "version",
-              header: "Versao / canal",
+              header: "Versão / canal",
               render: (device) => {
                 const check = checkDevice(device, latest, now);
                 return (
@@ -716,7 +716,7 @@ function DevicesTab({ data, now }: { data: SupportOverview; now: number }) {
                       {device.updateChannel === "teste" ? (
                         <Pill tone="info">canal teste</Pill>
                       ) : (
-                        "canal producao"
+                        "canal produção"
                       )}
                     </span>
                   </>
@@ -725,7 +725,7 @@ function DevicesTab({ data, now }: { data: SupportOverview; now: number }) {
             },
             {
               key: "status",
-              header: "Situacao",
+              header: "Situação",
               render: (device) => (
                 <>
                   {!device.isActive ? (
@@ -745,13 +745,13 @@ function DevicesTab({ data, now }: { data: SupportOverview; now: number }) {
             },
             {
               key: "roles",
-              header: "Funcao",
+              header: "Função",
               render: (device) =>
                 device.executesWebOperations || device.isPriceMaster ? (
                   <>
                     <span className="support-stack">
                       {device.executesWebOperations && <Pill>Executa o site</Pill>}
-                      {device.isPriceMaster && <Pill>Principal de precos</Pill>}
+                      {device.isPriceMaster && <Pill>Principal de preços</Pill>}
                     </span>
                     {device.executesWebOperations && device.webExecutorSeenAt && (
                       <span
@@ -785,7 +785,7 @@ function DevicesTab({ data, now }: { data: SupportOverview; now: number }) {
                 if (queuePending === null && queueBlocked === null) {
                   return (
                     <>
-                      <span className="support-dim-text">nao informada</span>
+                      <span className="support-dim-text">não informada</span>
                       {informed}
                     </>
                   );
@@ -814,7 +814,7 @@ function DevicesTab({ data, now }: { data: SupportOverview; now: number }) {
             },
             {
               key: "error",
-              header: "Ultimo erro",
+              header: "Último erro",
               render: (device) => <LongText text={device.health.lastError} mono limit={40} />
             }
           ]}
@@ -839,12 +839,12 @@ function RequestsTab({ data, now }: { data: SupportOverview; now: number }) {
       <SectionHead
         title="Pedidos do site"
         count={rows.length}
-        description={`Pesagens pedidas pelo site e executadas pela balanca (7 dias, ${data.operationRequests.length} no total). Parado = na fila ha mais de 5 minutos.`}
+        description={`Pesagens pedidas pelo site e executadas pela balança (7 dias, ${data.operationRequests.length} no total). Parado = na fila há mais de 5 minutos.`}
       />
       <SearchBar
         value={search}
         onChange={setSearch}
-        placeholder="Buscar por quem pediu, mensagem, balanca ou id"
+        placeholder="Buscar por quem pediu, mensagem, balança ou id"
       >
         <select
           className="select support-filter"
@@ -863,7 +863,7 @@ function RequestsTab({ data, now }: { data: SupportOverview; now: number }) {
       </SearchBar>
       {rows.length === 0 ? (
         filter === "problemas" && !search.trim() ? (
-          <AllClear hint="Nenhum pedido do site falhou ou ficou parado nos ultimos 7 dias." />
+          <AllClear hint="Nenhum pedido do site falhou ou ficou parado nos últimos 7 dias." />
         ) : (
           <EmptyState title="Nenhum pedido neste filtro." />
         )
@@ -918,7 +918,7 @@ function RequestsTab({ data, now }: { data: SupportOverview; now: number }) {
             },
             {
               key: "device",
-              header: "Balanca",
+              header: "Balança",
               render: (request) =>
                 request.claimedByDeviceId ? (
                   <>
@@ -938,7 +938,7 @@ function RequestsTab({ data, now }: { data: SupportOverview; now: number }) {
             },
             {
               key: "print",
-              header: "Impressao",
+              header: "Impressão",
               render: (request) => {
                 const view = printView(request);
                 if (!view) return <span className="support-dim">—</span>;
@@ -976,10 +976,10 @@ function OmieTab({ data, now }: { data: SupportOverview; now: number }) {
       <SectionHead
         title="Envios OMIE com problema"
         count={rows.length}
-        description="Pesagens dos ultimos 30 dias com erro de envio, cadastro incompleto, nao encontradas no OMIE ou fechadas ha mais de 2 h sem subir."
+        description="Pesagens dos últimos 30 dias com erro de envio, cadastro incompleto, não encontradas no OMIE ou fechadas há mais de 2 h sem subir."
       />
       {rows.length === 0 ? (
-        <AllClear hint="Todas as pesagens dos ultimos 30 dias chegaram ao OMIE." />
+        <AllClear hint="Todas as pesagens dos últimos 30 dias chegaram ao OMIE." />
       ) : (
         <>
           <div className="support-chips" aria-label="Resumo por motivo">
@@ -1045,7 +1045,7 @@ function OmieTab({ data, now }: { data: SupportOverview; now: number }) {
               },
               {
                 key: "message",
-                header: "Mensagem / situacao",
+                header: "Mensagem / situação",
                 render: (problem) => (
                   <>
                     <LongText text={problem.omieBillingMessage} />
@@ -1085,10 +1085,10 @@ function BillingTab({ data, now }: { data: SupportOverview; now: number }) {
       <SectionHead
         title="Fechamentos de faturas"
         count={rows.length}
-        description="Pedidos de faturamento feitos pelo site nos ultimos 30 dias (a balanca executa). Falha e parado (mais de 15 min) primeiro."
+        description="Pedidos de faturamento feitos pelo site nos últimos 30 dias (a balança executa). Falha e parado (mais de 15 min) primeiro."
       />
       {rows.length === 0 ? (
-        <AllClear hint="Nenhum fechamento de faturas pedido pelo site nos ultimos 30 dias." />
+        <AllClear hint="Nenhum fechamento de faturas pedido pelo site nos últimos 30 dias." />
       ) : (
         <>
           {problems === 0 && (
@@ -1122,7 +1122,7 @@ function BillingTab({ data, now }: { data: SupportOverview; now: number }) {
               },
               {
                 key: "processed",
-                header: "Tempo ate executar",
+                header: "Tempo até executar",
                 render: (request) => {
                   const view = executionTime(request, now, BILLING_STUCK_MS);
                   return (
@@ -1139,7 +1139,7 @@ function BillingTab({ data, now }: { data: SupportOverview; now: number }) {
               },
               {
                 key: "ref",
-                header: "Referencia",
+                header: "Referência",
                 render: (request) => <IdText id={request.operationId} />
               },
               {
@@ -1166,18 +1166,18 @@ function DispatchesTab({ data, now }: { data: SupportOverview; now: number }) {
   return (
     <>
       <SectionHead
-        title="Relatorios automaticos"
+        title="Relatórios automáticos"
         count={rows.length}
-        description="Envios do fechamento diario e do relatorio financeiro por e-mail nos ultimos 30 dias, do mais novo ao mais antigo."
+        description="Envios do fechamento diário e do relatório financeiro por e-mail nos últimos 30 dias, do mais novo ao mais antigo."
       />
       {rows.length === 0 ? (
         <AllClear
-          title="Nenhum envio automatico"
-          hint="Nenhum relatorio automatico foi disparado nos ultimos 30 dias (ou nao ha destinatarios)."
+          title="Nenhum envio automático"
+          hint="Nenhum relatório automático foi disparado nos últimos 30 dias (ou não há destinatários)."
         />
       ) : (
         <>
-          {problems === 0 && <OkLine>Nada de errado aqui: todos os envios sairam.</OkLine>}
+          {problems === 0 && <OkLine>Nada de errado aqui: todos os envios saíram.</OkLine>}
           <DataTable
             rows={rows}
             rowKey={(dispatch) => `${dispatch.kind}-${dispatch.id}`}
@@ -1193,14 +1193,14 @@ function DispatchesTab({ data, now }: { data: SupportOverview; now: number }) {
             columns={[
               {
                 key: "kind",
-                header: "Relatorio",
+                header: "Relatório",
                 render: (dispatch) => (
                   <strong>{DISPATCH_KIND_LABELS[dispatch.kind] ?? dispatch.kind}</strong>
                 )
               },
               {
                 key: "day",
-                header: "Dia do relatorio",
+                header: "Dia do relatório",
                 render: (dispatch) => formatDay(dispatch.reportDate)
               },
               {
@@ -1213,7 +1213,7 @@ function DispatchesTab({ data, now }: { data: SupportOverview; now: number }) {
               },
               {
                 key: "recipients",
-                header: "Destinatarios",
+                header: "Destinatários",
                 numeric: true,
                 render: (dispatch) => dispatch.recipientsCount
               },
@@ -1248,12 +1248,12 @@ function AccessTab({ data, now }: { data: SupportOverview; now: number }) {
   return (
     <>
       <SectionHead
-        title="Senha de preco errada"
+        title="Senha de preço errada"
         count={data.pricePasswordFailures.length}
-        description={`Tentativas erradas nos ultimos 7 dias, por usuario. A partir de ${PASSWORD_ALERT_COUNT} vale uma conversa: senha esquecida ou alguem tentando adivinhar.`}
+        description={`Tentativas erradas nos últimos 7 dias, por usuário. A partir de ${PASSWORD_ALERT_COUNT} vale uma conversa: senha esquecida ou alguém tentando adivinhar.`}
       />
       {groups.length === 0 ? (
-        <OkLine>Nada de errado aqui: nenhuma tentativa errada nos ultimos 7 dias.</OkLine>
+        <OkLine>Nada de errado aqui: nenhuma tentativa errada nos últimos 7 dias.</OkLine>
       ) : (
         <DataTable
           rows={groups}
@@ -1264,9 +1264,9 @@ function AccessTab({ data, now }: { data: SupportOverview; now: number }) {
           columns={[
             {
               key: "user",
-              header: "Usuario",
+              header: "Usuário",
               render: (group) => (
-                <strong>{group.userName ?? `Usuario ${shortId(group.userId)}`}</strong>
+                <strong>{group.userName ?? `Usuário ${shortId(group.userId)}`}</strong>
               )
             },
             {
@@ -1287,7 +1287,7 @@ function AccessTab({ data, now }: { data: SupportOverview; now: number }) {
             },
             {
               key: "last",
-              header: "Ultima",
+              header: "Última",
               render: (group) => <When iso={group.lastAt} now={now} />
             }
           ]}
@@ -1295,12 +1295,12 @@ function AccessTab({ data, now }: { data: SupportOverview; now: number }) {
       )}
 
       <SectionHead
-        title="Usuarios do site"
+        title="Usuários do site"
         count={users.length}
-        description="Logins da empresa com o perfil de cada um e a maquina vinculada (quem usa a balanca pelo site)."
+        description="Logins da empresa com o perfil de cada um e a máquina vinculada (quem usa a balança pelo site)."
       />
       {users.length === 0 ? (
-        <EmptyState title="Nenhum usuario cadastrado." />
+        <EmptyState title="Nenhum usuário cadastrado." />
       ) : (
         <DataTable
           rows={users}
@@ -1309,7 +1309,7 @@ function AccessTab({ data, now }: { data: SupportOverview; now: number }) {
           columns={[
             {
               key: "name",
-              header: "Usuario",
+              header: "Usuário",
               render: (user) => (
                 <>
                   <strong>{user.name || "Sem nome"}</strong>
@@ -1328,23 +1328,23 @@ function AccessTab({ data, now }: { data: SupportOverview; now: number }) {
             },
             {
               key: "active",
-              header: "Situacao",
+              header: "Situação",
               render: (user) =>
                 user.isActive ? <Pill tone="success">Ativo</Pill> : <Pill>Inativo</Pill>
             },
             {
               key: "password",
-              header: "Senha de preco",
+              header: "Senha de preço",
               render: (user) =>
                 user.requiresPricePassword ? (
                   "Pede"
                 ) : (
-                  <span className="support-dim-text">Nao pede</span>
+                  <span className="support-dim-text">Não pede</span>
                 )
             },
             {
               key: "device",
-              header: "Maquina vinculada",
+              header: "Máquina vinculada",
               render: (user) =>
                 user.deviceId ? (
                   deviceLabel(devices, user.deviceId)
@@ -1407,7 +1407,7 @@ function BrowserTab({
         <SectionHead
           title="Erros deste navegador"
           count={browserErrors.length}
-          description="Chamadas recusadas pela web-api, erros de script e promessas sem tratamento, gravados so neste computador (ultimos 100)."
+          description="Chamadas recusadas pela web-api, erros de script e promessas sem tratamento, gravados só neste computador (últimos 100)."
           action={
             <button
               type="button"
@@ -1443,12 +1443,12 @@ function BrowserTab({
         )}
       </div>
 
-      <aside className="support-diag" aria-label="Diagnostico">
-        <h3>Diagnostico</h3>
+      <aside className="support-diag" aria-label="Diagnóstico">
+        <h3>Diagnóstico</h3>
         <dl>
           <dt>Site</dt>
           <dd>{diagnostics.build}</dd>
-          <dt>Usuario</dt>
+          <dt>Usuário</dt>
           <dd>
             {diagnostics.userName} · {roleLabel(diagnostics.role)}
           </dd>
@@ -1461,7 +1461,7 @@ function BrowserTab({
             {diagnostics.online ? (
               <Pill tone="success">Online</Pill>
             ) : (
-              <Pill tone="danger">Sem conexao</Pill>
+              <Pill tone="danger">Sem conexão</Pill>
             )}
           </dd>
           <dt>Fuso</dt>
@@ -1486,17 +1486,17 @@ function BrowserTab({
             onClick={onTestConnection}
           >
             <PlugZap size={15} />
-            {connection.running ? "Testando..." : "Testar conexao"}
+            {connection.running ? "Testando..." : "Testar conexão"}
           </button>
           {result ? (
             <ul>
               <ProbeLine label="web-api" probe={result.api} />
               <ProbeLine label="Banco (leitura)" probe={result.db} />
-              <li className="support-dim-text">Testado as {formatClock(result.at)}</li>
+              <li className="support-dim-text">Testado às {formatClock(result.at)}</li>
             </ul>
           ) : (
             <p className="support-dim-text">
-              Mede o tempo de ida e volta ate a web-api e ate o banco, com o login atual.
+              Mede o tempo de ida e volta até a web-api e até o banco, com o login atual.
             </p>
           )}
         </div>

@@ -11,6 +11,7 @@ import {
   formatOldDate,
   isOpenOperation,
   omieBacklog,
+  plural,
   recentOperations,
   requestBacklog,
   summarizeDay
@@ -178,6 +179,14 @@ describe("ultimas pesagens", () => {
   });
 });
 
+describe("plural", () => {
+  it("usa o singular so para um", () => {
+    expect(plural(1, "pedido", "pedidos")).toBe("pedido");
+    expect(plural(0, "pedido", "pedidos")).toBe("pedidos");
+    expect(plural(3, "pedido", "pedidos")).toBe("pedidos");
+  });
+});
+
 describe("buildHealthPills", () => {
   const fmt = (iso: string) => `fmt(${iso})`;
 
@@ -189,7 +198,7 @@ describe("buildHealthPills", () => {
       formatDateTime: fmt
     });
     expect(pills).toHaveLength(1);
-    expect(pills[0]).toMatchObject({ label: "Balanca", value: "Verificando...", tone: "neutral" });
+    expect(pills[0]).toMatchObject({ label: "Balança", value: "Verificando...", tone: "neutral" });
   });
 
   it("sem balanca executora e aviso", () => {
@@ -199,7 +208,7 @@ describe("buildHealthPills", () => {
       requests: null,
       formatDateTime: fmt
     });
-    expect(pill).toMatchObject({ value: "Nao definida", tone: "warning" });
+    expect(pill).toMatchObject({ value: "Não definida", tone: "warning" });
   });
 
   it("balanca fora do ar, OMIE com falha e pedidos esperando", () => {
@@ -210,8 +219,8 @@ describe("buildHealthPills", () => {
       formatDateTime: fmt
     });
     expect(pills.map((pill) => [pill.label, pill.value, pill.tone, pill.to])).toEqual([
-      ["Balanca", "Balanca 1 fora do ar", "danger", null],
-      ["Ultimo sinal", "fmt(2026-09-24T10:00:00Z)", "warning", null],
+      ["Balança", "Balanca 1 fora do ar", "danger", null],
+      ["Último sinal", "fmt(2026-09-24T10:00:00Z)", "warning", null],
       ["OMIE", "1 com falha", "danger", "/operacoes?aba=concluidas"],
       ["Pedidos do site", "2 aguardando", "warning", "/operacoes"]
     ]);

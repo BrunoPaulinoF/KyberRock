@@ -316,7 +316,7 @@ export function summarizeInvoiceList(invoices: BillingInvoice[]): {
 /** Frase do proximo fechamento na linha da pedreira. */
 export function describeNextClosing(company: BillingCompany): string {
   const plan = company.billing_plan;
-  if (!company.billing_enabled) return "Cobranca automatica desligada";
+  if (!company.billing_enabled) return "Cobrança automática desligada";
   if (!plan.nextPeriod) return "Informe a data de virada do sistema";
   const amount = plan.nextAmountCents === null ? "" : ` — ${formatCents(plan.nextAmountCents)}`;
   const proration = plan.nextPeriod.isProrated
@@ -376,22 +376,22 @@ const BILLING_EVENT_LABELS: Record<string, string> = {
   invoice_created: "Fatura criada",
   invoice_updated: "Fatura ajustada",
   invoice_canceled: "Fatura cancelada",
-  invoice_deleted: "Fatura excluida",
+  invoice_deleted: "Fatura excluída",
   invoice_paid: "Pagamento confirmado",
   invoice_sent: "Enviada por WhatsApp",
   invoice_send_failed: "Falha no envio",
   boleto_issued: "Boleto emitido",
-  boleto_failed: "Falha na emissao do boleto",
-  boleto_status_changed: "Situacao do boleto mudou",
+  boleto_failed: "Falha na emissão do boleto",
+  boleto_status_changed: "Situação do boleto mudou",
   company_blocked: "Pedreira bloqueada",
   company_released: "Pedreira liberada",
   company_blocked_manually: "Bloqueio manual",
-  company_released_manually: "Liberacao manual",
-  company_billing_updated: "Cadastro de cobranca alterado",
-  settings_updated: "Configuracao alterada",
-  billing_run_failed: "Passada automatica falhou",
-  webhook_orphan: "Notificacao sem fatura",
-  webhook_rejected: "Notificacao recusada"
+  company_released_manually: "Liberação manual",
+  company_billing_updated: "Cadastro de cobrança alterado",
+  settings_updated: "Configuração alterada",
+  billing_run_failed: "Passada automática falhou",
+  webhook_orphan: "Notificação sem fatura",
+  webhook_rejected: "Notificação recusada"
 };
 
 /** Rotulo do evento; tipo desconhecido aparece cru em vez de sumir. */
@@ -483,7 +483,7 @@ export function buildActivationChecklist(input: {
     title: "Credencial do Mercado Pago",
     detail: accessToken.configured
       ? `Secret ${accessToken.envVar} configurado (${accessToken.preview}).`
-      : `Grave o access token da conta que emite os boletos em Supabase > Edge Functions > Secrets, com o nome ${accessToken.envVar || "MERCADO_PAGO_ACCESS_TOKEN"}. Sem ele nenhum boleto e emitido.`,
+      : `Grave o access token da conta que emite os boletos em Supabase > Edge Functions > Secrets, com o nome ${accessToken.envVar || "MERCADO_PAGO_ACCESS_TOKEN"}. Sem ele nenhum boleto é emitido.`,
     items: [],
     status: accessToken.configured ? "ok" : "pending",
     target: "settings"
@@ -494,15 +494,15 @@ export function buildActivationChecklist(input: {
   if (!whatsappToken.configured) {
     whatsappMissing.push(`Secret ${whatsappToken.envVar || "UAZAPI_INSTANCE_TOKEN"} no Supabase`);
   }
-  if (!settings.whatsappUrl.trim()) whatsappMissing.push("URL da instancia UAZAPI");
-  if (!settings.whatsappInstanceName.trim()) whatsappMissing.push("Nome da instancia");
+  if (!settings.whatsappUrl.trim()) whatsappMissing.push("URL da instância UAZAPI");
+  if (!settings.whatsappInstanceName.trim()) whatsappMissing.push("Nome da instância");
   steps.push({
     id: "whatsapp",
-    title: "WhatsApp da cobranca",
+    title: "WhatsApp da cobrança",
     detail:
       whatsappMissing.length === 0
-        ? `Instancia ${settings.whatsappInstanceName} pronta para entregar fatura e boleto.`
-        : "Sem isso a fatura e gerada e o boleto sai, mas nada chega ao cliente.",
+        ? `Instância ${settings.whatsappInstanceName} pronta para entregar fatura e boleto.`
+        : "Sem isso a fatura é gerada e o boleto sai, mas nada chega ao cliente.",
     items: whatsappMissing,
     status: whatsappMissing.length === 0 ? "ok" : "pending",
     target: "settings"
@@ -522,7 +522,7 @@ export function buildActivationChecklist(input: {
     detail:
       issuerMissing.length === 0
         ? `${settings.issuerName} identificada na fatura, no boleto e na mensagem.`
-        : "Aparece no cabecalho do PDF, na descricao do boleto e na mensagem do WhatsApp.",
+        : "Aparece no cabeçalho do PDF, na descrição do boleto e na mensagem do WhatsApp.",
     items: issuerMissing,
     status: issuerMissing.length === 0 ? "ok" : "warn",
     target: "settings"
@@ -536,7 +536,7 @@ export function buildActivationChecklist(input: {
     title: "Assinatura do webhook (opcional)",
     detail: webhookSecret.configured
       ? `Secret ${webhookSecret.envVar} configurado.`
-      : "Sem ele a baixa continua funcionando: o webhook confirma o pagamento consultando a API do Mercado Pago. A assinatura so evita a consulta de um POST forjado.",
+      : "Sem ele a baixa continua funcionando: o webhook confirma o pagamento consultando a API do Mercado Pago. A assinatura só evita a consulta de um POST forjado.",
     items: [],
     status: webhookSecret.configured ? "ok" : "warn",
     target: "settings"
@@ -547,8 +547,8 @@ export function buildActivationChecklist(input: {
     id: "environment",
     title: "Ambiente do Mercado Pago",
     detail: isSandbox
-      ? "Sandbox: os boletos emitidos sao de teste e nao cobram ninguem. Troque para Producao antes de faturar de verdade."
-      : "Producao: os boletos emitidos cobram de verdade.",
+      ? "Sandbox: os boletos emitidos são de teste e não cobram ninguém. Troque para Produção antes de faturar de verdade."
+      : "Produção: os boletos emitidos cobram de verdade.",
     items: [],
     status: isSandbox ? "warn" : "ok",
     target: "settings"
@@ -563,7 +563,7 @@ function buildCompaniesStep(companies: BillingCompany[]): ActivationStep {
   if (companies.length === 0) {
     return {
       ...base,
-      detail: "Nenhuma pedreira cadastrada. Cadastre em Pedreiras antes de configurar a cobranca.",
+      detail: "Nenhuma pedreira cadastrada. Cadastre em Pedreiras antes de configurar a cobrança.",
       items: [],
       status: "pending"
     };
@@ -577,7 +577,7 @@ function buildCompaniesStep(companies: BillingCompany[]): ActivationStep {
     return {
       ...base,
       detail:
-        'Nenhuma pedreira com cobranca ativa. Abra "Cobranca" na pedreira, informe o valor acertado e a data de virada e marque "Cobrar automaticamente no fechamento".',
+        'Nenhuma pedreira com cobrança ativa. Abra "Cobrança" na pedreira, informe o valor acertado e a data de virada e marque "Cobrar automaticamente no fechamento".',
       items: companies.map(describeCompanyPending),
       status: "pending"
     };
@@ -588,8 +588,8 @@ function buildCompaniesStep(companies: BillingCompany[]): ActivationStep {
       ...base,
       detail:
         ready > 0
-          ? `${ready} pedreira(s) prontas; ${incomplete.length} ainda nao fecham por falta de cadastro.`
-          : "Cobranca ativa, mas o cadastro nao permite fechar o ciclo.",
+          ? `${ready} ${ready === 1 ? "pedreira pronta" : "pedreiras prontas"}; ${incomplete.length} ainda não ${incomplete.length === 1 ? "fecha" : "fecham"} por falta de cadastro.`
+          : "Cobrança ativa, mas o cadastro não permite fechar o ciclo.",
       items: incomplete.map(describeCompanyPending),
       status: ready > 0 ? "warn" : "pending"
     };
@@ -597,7 +597,7 @@ function buildCompaniesStep(companies: BillingCompany[]): ActivationStep {
 
   return {
     ...base,
-    detail: `${ready} pedreira(s) com cobranca ativa e cadastro completo.`,
+    detail: `${ready} ${ready === 1 ? "pedreira" : "pedreiras"} com cobrança ativa e cadastro completo.`,
     items: [],
     status: "ok"
   };
@@ -606,7 +606,7 @@ function buildCompaniesStep(companies: BillingCompany[]): ActivationStep {
 /** "Pedreira X: Valor acertado nao informado, CEP em falta". */
 function describeCompanyPending(company: BillingCompany): string {
   const pending = [...company.billing_plan.blockers];
-  if (!company.billing_enabled) pending.unshift("Cobranca automatica desligada");
+  if (!company.billing_enabled) pending.unshift("Cobrança automática desligada");
   return pending.length > 0 ? `${company.name}: ${pending.join(", ")}` : company.name;
 }
 

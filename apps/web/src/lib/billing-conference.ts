@@ -121,8 +121,8 @@ export const BILLING_PERIOD_OPTIONS: Array<{ id: BillingPeriod; label: string }>
   { id: "today", label: "Hoje" },
   { id: "7d", label: "7 dias" },
   { id: "30d", label: "30 dias" },
-  { id: "month", label: "Mes atual" },
-  { id: "lastMonth", label: "Mes anterior" },
+  { id: "month", label: "Mês atual" },
+  { id: "lastMonth", label: "Mês anterior" },
   { id: "custom", label: "Personalizado" }
 ];
 

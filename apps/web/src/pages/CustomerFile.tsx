@@ -42,8 +42,8 @@ import { useAsync } from "../lib/use-async";
 export type CustomerFileTab = "comercial" | "precos" | "frete" | "transporte" | "entrega";
 
 const TABS: Array<{ id: CustomerFileTab; label: string; icon: LucideIcon }> = [
-  { id: "comercial", label: "Comercial e credito", icon: Wallet },
-  { id: "precos", label: "Precos especiais", icon: Tag },
+  { id: "comercial", label: "Comercial e crédito", icon: Wallet },
+  { id: "precos", label: "Preços especiais", icon: Tag },
   { id: "frete", label: "Frete", icon: Truck },
   { id: "transporte", label: "Transporte", icon: Car },
   { id: "entrega", label: "Entrega futura", icon: FileText }
@@ -51,15 +51,15 @@ const TABS: Array<{ id: CustomerFileTab; label: string; icon: LucideIcon }> = [
 
 const TAB_HINTS: Record<CustomerFileTab, string> = {
   comercial:
-    "Saldo do cliente, forma e condicao de pagamento, transportadora padrao, nota fiscal e conta de credito (fiado / pre-pago).",
+    "Saldo do cliente, forma e condição de pagamento, transportadora padrão, nota fiscal e conta de crédito (fiado / pré-pago).",
   precos:
-    "Preco especial do cliente em cada produto. Ele vale no lugar do preco padrao na pesagem.",
+    "Preço especial do cliente em cada produto. Ele vale no lugar do preço padrão na pesagem.",
   frete:
     "Valor de frete por tonelada combinado com o cliente — para todos os produtos ou por produto.",
   transporte:
-    "Tipo de frete padrao, transportadoras e placas do cliente. A nova entrada ja abre com eles.",
+    "Tipo de frete padrão, transportadoras e placas do cliente. A nova entrada já abre com eles.",
   entrega:
-    "Notas de venda para entrega futura (CFOP 5.922): cada pesagem do produto sai com a referencia da nota."
+    "Notas de venda para entrega futura (CFOP 5.922): cada pesagem do produto sai com a referência da nota."
 };
 
 export function CustomerFileModal({
@@ -128,7 +128,7 @@ function productOptions(products: Product[]) {
   return products.map((p) => ({
     value: p.id,
     label: p.description,
-    hint: p.code ? `Codigo ${p.code}` : undefined
+    hint: p.code ? `Código ${p.code}` : undefined
   }));
 }
 
@@ -179,7 +179,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
   function passwordOrError(): string | undefined | false {
     if (!askPassword) return undefined;
     if (!password.trim()) {
-      setFormError("Digite a senha de preco que o comercial passou.");
+      setFormError("Digite a senha de preço que o comercial passou.");
       return false;
     }
     return password.trim();
@@ -192,7 +192,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
     }
     const cents = parseMoneyToCents(value);
     if (cents == null || cents <= 0) {
-      setFormError("Informe um preco valido, ex.: 65,00");
+      setFormError("Informe um preço válido, ex.: 65,00");
       return;
     }
     const pricePassword = passwordOrError();
@@ -206,7 +206,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
         unitPriceCents: cents,
         pricePassword
       });
-      toast.push("Preco especial publicado para as balancas.");
+      toast.push("Preço especial publicado para as balanças.");
       setProductId("");
       setValue("");
       setPassword("");
@@ -228,7 +228,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
         productId: product.id,
         pricePassword
       });
-      toast.push("Preco especial removido; volta a valer o padrao.");
+      toast.push("Preço especial removido; volta a valer o padrão.");
       setPassword("");
       await special.reload();
     } catch (caught) {
@@ -257,10 +257,10 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
               />
             </Field>
             <Field
-              label="Preco especial (R$ / ton)"
+              label="Preço especial (R$ / ton)"
               hint={
                 productId && defaultByProduct.has(productId)
-                  ? `Preco padrao: ${formatMoney(defaultByProduct.get(productId))}/ton`
+                  ? `Preço padrão: ${formatMoney(defaultByProduct.get(productId))}/ton`
                   : undefined
               }
             >
@@ -275,7 +275,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
           </div>
           {askPassword && <PricePasswordField value={password} onChange={setPassword} />}
           <button className="btn primary" disabled={busy} onClick={() => void save()}>
-            {busy ? "Publicando..." : "Salvar preco especial"}
+            {busy ? "Publicando..." : "Salvar preço especial"}
           </button>
         </div>
       )}
@@ -294,7 +294,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
             checked={onlySpecial}
             onChange={(e) => setOnlySpecial(e.target.checked)}
           />
-          So com preco especial ({specialByProduct.size})
+          Só com preço especial ({specialByProduct.size})
         </label>
       </div>
       <DataTable
@@ -305,7 +305,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
           loading || special.loading
             ? "Carregando..."
             : onlySpecial
-              ? "Este cliente nao tem preco especial."
+              ? "Este cliente não tem preço especial."
               : "Nenhum produto encontrado."
         }
         columns={[
@@ -315,13 +315,13 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
             render: (p) => (
               <>
                 <strong>{p.description}</strong>
-                {p.code && <span className="cell-sub">Codigo {p.code}</span>}
+                {p.code && <span className="cell-sub">Código {p.code}</span>}
               </>
             )
           },
           {
             key: "default",
-            header: "Padrao",
+            header: "Padrão",
             numeric: true,
             render: (p) =>
               defaultByProduct.has(p.id) ? formatMoney(defaultByProduct.get(p.id)) : "—"
@@ -339,7 +339,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
           },
           {
             key: "actions",
-            header: "Acoes",
+            header: "Ações",
             numeric: true,
             render: (p) =>
               canEdit && (
@@ -348,15 +348,15 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
                     icon="edit"
                     label={
                       specialByProduct.has(p.id)
-                        ? "Editar preco especial"
-                        : "Definir preco especial"
+                        ? "Editar preço especial"
+                        : "Definir preço especial"
                     }
                     onClick={() => pick(p)}
                   />
                   {specialByProduct.has(p.id) && (
                     <IconAction
                       icon="trash"
-                      label="Remover preco especial"
+                      label="Remover preço especial"
                       tone="danger"
                       onClick={() => void remove(p)}
                     />
@@ -403,7 +403,7 @@ function FreightTab({ customer }: { customer: Customer }) {
   function passwordOrError(): string | undefined | false {
     if (!askPassword) return undefined;
     if (!password.trim()) {
-      setFormError("Digite a senha de preco que o comercial passou.");
+      setFormError("Digite a senha de preço que o comercial passou.");
       return false;
     }
     return password.trim();
@@ -426,7 +426,7 @@ function FreightTab({ customer }: { customer: Customer }) {
         baseValueCents: cents,
         pricePassword
       });
-      toast.push("Frete publicado para as balancas.");
+      toast.push("Frete publicado para as balanças.");
       setValue("");
       setPassword("");
       await rules.reload();
@@ -489,8 +489,8 @@ function FreightTab({ customer }: { customer: Customer }) {
             {busy ? "Publicando..." : "Salvar frete"}
           </button>
           <p className="desk-muted" style={{ marginTop: 8 }}>
-            Vale quando a pesagem e com frete (valor na nota ou valor so no sistema). O valor
-            combinado aqui vence o que o cliente usou na ultima venda.
+            Vale quando a pesagem é com frete (valor na nota ou valor só no sistema). O valor
+            combinado aqui vence o que o cliente usou na última venda.
           </p>
         </div>
       )}
@@ -512,7 +512,7 @@ function FreightTab({ customer }: { customer: Customer }) {
               <>
                 {entry.modalityLabel}
                 {entry.source === "last_used" && (
-                  <span className="cell-sub">Memoria da ultima venda</span>
+                  <span className="cell-sub">Memória da última venda</span>
                 )}
               </>
             )
@@ -525,7 +525,7 @@ function FreightTab({ customer }: { customer: Customer }) {
           },
           {
             key: "actions",
-            header: "Acoes",
+            header: "Ações",
             numeric: true,
             render: (entry) =>
               canEdit && (
@@ -605,7 +605,7 @@ function TransportTab({ customer }: { customer: Customer }) {
           setModality(previous);
           throw caught;
         }),
-      "Tipo de frete padrao salvo."
+      "Tipo de frete padrão salvo."
     );
   }
 
@@ -624,8 +624,8 @@ function TransportTab({ customer }: { customer: Customer }) {
     <>
       {(error ?? data.error) && <Alert kind="error">{error ?? data.error}</Alert>}
       <Field
-        label="Tipo de frete padrao"
-        hint="Preenche a nova entrada quando este cliente e escolhido. O operador ainda pode trocar."
+        label="Tipo de frete padrão"
+        hint="Preenche a nova entrada quando este cliente é escolhido. O operador ainda pode trocar."
       >
         <select
           className="select"
@@ -633,7 +633,7 @@ function TransportTab({ customer }: { customer: Customer }) {
           disabled={!canEdit || busy}
           onChange={(e) => saveModality(e.target.value)}
         >
-          <option value="">Sem padrao (escolher na entrada)</option>
+          <option value="">Sem padrão (escolher na entrada)</option>
           <optgroup label="Com frete">
             {FREIGHT_MODALITIES.filter((m) => m.group === "with_freight").map((m) => (
               <option key={m.key} value={m.key}>
@@ -674,7 +674,7 @@ function TransportTab({ customer }: { customer: Customer }) {
             <li key={carrier.id}>
               <span>
                 <strong>{carrier.name}</strong>
-                {carrier.id === customer.default_carrier_id && <Pill tone="success">PADRAO</Pill>}
+                {carrier.id === customer.default_carrier_id && <Pill tone="success">PADRÃO</Pill>}
               </span>
               {canEdit && (
                 <button
@@ -694,7 +694,7 @@ function TransportTab({ customer }: { customer: Customer }) {
       {canEdit && (
         <Field
           label="Vincular placa"
-          hint="A nova entrada abre o campo Placa ja com estas. A placa precisa estar cadastrada em Transporte > Placas."
+          hint="A nova entrada abre o campo Placa já com estas. A placa precisa estar cadastrada em Transporte > Placas."
         >
           <Picker
             value=""
@@ -787,7 +787,7 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
   async function lookupInvoice() {
     const number = normalizeNfeNumber(nfeNumber);
     if (!number) {
-      setFormError("Digite o numero da NF-e para buscar no OMIE.");
+      setFormError("Digite o número da NF-e para buscar no OMIE.");
       return;
     }
     setLookupBusy(true);
@@ -817,7 +817,7 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
       return;
     }
     if (!normalizeNfeNumber(nfeNumber)) {
-      setFormError("Informe o numero da NF-e.");
+      setFormError("Informe o número da NF-e.");
       return;
     }
     setBusy(true);
@@ -860,8 +860,8 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
         <div className="file-form">
           {formError && <Alert kind="error">{formError}</Alert>}
           <Field
-            label="Numero da NF-e"
-            hint="Numero da nota ja emitida. Buscar no OMIE traz o produto e o total da propria nota."
+            label="Número da NF-e"
+            hint="Número da nota já emitida. Buscar no OMIE traz o produto e o total da própria nota."
           >
             <div className="input-with-action">
               <input
@@ -931,8 +931,8 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
             {busy ? "Salvando..." : "Salvar nota"}
           </button>
           <p className="desk-muted" style={{ marginTop: 8 }}>
-            As notas sao usadas da mais antiga para a mais nova: quando o saldo de uma acaba, a
-            proxima do mesmo produto assume. O saldo e baixado pela balanca a cada pesagem.
+            As notas são usadas da mais antiga para a mais nova: quando o saldo de uma acaba, a
+            próxima do mesmo produto assume. O saldo é baixado pela balança a cada pesagem.
           </p>
         </div>
       )}
@@ -966,7 +966,7 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
           },
           {
             key: "actions",
-            header: "Acoes",
+            header: "Ações",
             numeric: true,
             render: (invoice) =>
               canEdit && (
@@ -1007,13 +1007,13 @@ function FutureInvoiceLookup({
           <p className="future-lookup-title">
             <strong>
               NF-e {invoice.invoiceNumber}
-              {invoice.series ? ` · serie ${invoice.series}` : ""}
+              {invoice.series ? ` · série ${invoice.series}` : ""}
             </strong>
             {invoice.issueDate && ` · emitida em ${formatDate(invoice.issueDate)}`}
             {invoice.customerName && ` · ${invoice.customerName}`}
           </p>
           {invoice.items.length === 0 ? (
-            <p className="desk-muted">A nota nao tem itens de produto.</p>
+            <p className="desk-muted">A nota não tem itens de produto.</p>
           ) : (
             <div className="table-wrap">
               <table className="data">
@@ -1032,7 +1032,7 @@ function FutureInvoiceLookup({
                       <td>{item.invoiceDescription}</td>
                       <td>
                         {item.productDescription ?? (
-                          <span className="desk-muted">Nao casou — escolha abaixo</span>
+                          <span className="desk-muted">Não casou — escolha abaixo</span>
                         )}
                       </td>
                       <td className="num">{quantityLabel(item)}</td>
@@ -1062,7 +1062,7 @@ function FutureInvoiceLookup({
   );
 }
 
-const WEEKDAYS = ["Domingo", "Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado"];
+const WEEKDAYS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
 /**
  * Bloco comercial e credito do cliente (forma de pagamento e transportadora padrao, exige NF,
@@ -1128,7 +1128,7 @@ function CommercialTab({ customer }: { customer: Customer }) {
     // So confere o que foi digitado: a condicao guardada pode ter um nome antigo do OMIE que o
     // leitor nao reconhece, e isso nao pode travar o resto do bloco comercial.
     if (conditionChanged && describePaymentCondition(condition).status === "invalid") {
-      setError('Condicao de pagamento padrao invalida. Veja os formatos em "Como escrever".');
+      setError('Condição de pagamento padrão inválida. Veja os formatos em "Como escrever".');
       return;
     }
     setBusy(true);
@@ -1158,7 +1158,7 @@ function CommercialTab({ customer }: { customer: Customer }) {
         creditSecondBoletoDays: form.creditSecondBoletoDays || null,
         creditClosingWeekday: form.creditClosingWeekday || null
       });
-      toast.push("Bloco comercial publicado para as balancas.");
+      toast.push("Bloco comercial publicado para as balanças.");
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -1172,13 +1172,13 @@ function CommercialTab({ customer }: { customer: Customer }) {
         <CustomerBalanceCard customer={customer} />
       </div>
       <p className="desk-muted" style={{ marginTop: 0 }}>
-        Estas configuracoes tem dono: o que voce publicar aqui vale em todas as balancas.
+        Estas configurações têm dono: o que você publicar aqui vale em todas as balanças.
       </p>
       {error && <Alert kind="error">{error}</Alert>}
       <Warnings items={warnings} />
       <form onSubmit={(e) => void onSubmit(e)}>
         <div className="grid-2">
-          <Field label="Forma de pagamento padrao">
+          <Field label="Forma de pagamento padrão">
             <Picker
               // A escolha atual pode ser a copia de outra maquina: aparece pela representante.
               value={
@@ -1192,12 +1192,12 @@ function CommercialTab({ customer }: { customer: Customer }) {
               onChange={(id) => setForm((f) => ({ ...f, defaultPaymentMethodId: id }))}
               placeholder="Buscar forma de pagamento..."
               allowEmpty
-              emptyLabel="Sem forma padrao"
+              emptyLabel="Sem forma padrão"
             />
           </Field>
           <Field
-            label="Condicao de pagamento padrao"
-            hint="Vazio = sem padrao. Se nao existir no OMIE, e criada no envio."
+            label="Condição de pagamento padrão"
+            hint="Vazio = sem padrão. Se não existir no OMIE, é criada no envio."
           >
             <input
               className="input"
@@ -1210,7 +1210,7 @@ function CommercialTab({ customer }: { customer: Customer }) {
         </div>
         <ConditionLegend value={condition} />
         <div className="grid-2">
-          <Field label="Transportadora padrao">
+          <Field label="Transportadora padrão">
             <Picker
               value={form.defaultCarrierId}
               loading={lists.loading}
@@ -1220,7 +1220,7 @@ function CommercialTab({ customer }: { customer: Customer }) {
               onChange={(id) => setForm((f) => ({ ...f, defaultCarrierId: id }))}
               placeholder="Buscar transportadora..."
               allowEmpty
-              emptyLabel="Sem transportadora padrao"
+              emptyLabel="Sem transportadora padrão"
             />
           </Field>
         </div>
@@ -1238,7 +1238,7 @@ function CommercialTab({ customer }: { customer: Customer }) {
             checked={form.creditAccountEnabled}
             onChange={(e) => setForm((f) => ({ ...f, creditAccountEnabled: e.target.checked }))}
           />
-          Conta de credito habilitada (fiado / pre-pago)
+          Conta de crédito habilitada (fiado / pré-pago)
         </label>
         {form.creditAccountEnabled && (
           <>
@@ -1249,8 +1249,8 @@ function CommercialTab({ customer }: { customer: Customer }) {
                   value={form.creditMode}
                   onChange={(e) => setForm((f) => ({ ...f, creditMode: e.target.value }))}
                 >
-                  <option value="normal">Fiado (fechamento periodico)</option>
-                  <option value="prepaid">Pre-pago (adiantamento no OMIE)</option>
+                  <option value="normal">Fiado (fechamento periódico)</option>
+                  <option value="prepaid">Pré-pago (adiantamento no OMIE)</option>
                 </select>
               </Field>
               <Field label="Periodicidade do fechamento">
@@ -1277,7 +1277,7 @@ function CommercialTab({ customer }: { customer: Customer }) {
                   onChange={(e) => setForm((f) => ({ ...f, creditClosingDay: e.target.value }))}
                 />
               </Field>
-              <Field label="2o fechamento (quinzenal)">
+              <Field label="2º fechamento (quinzenal)">
                 <input
                   className="input"
                   type="number"
@@ -1302,8 +1302,8 @@ function CommercialTab({ customer }: { customer: Customer }) {
             </div>
             <div className="grid-2">
               <Field
-                label="Dias p/ vencimento (2o fechamento)"
-                hint="Quinzenal: prazo do 2o boleto"
+                label="Dias p/ vencimento (2º fechamento)"
+                hint="Quinzenal: prazo do 2º boleto"
               >
                 <input
                   className="input"
@@ -1335,7 +1335,7 @@ function CommercialTab({ customer }: { customer: Customer }) {
         )}
         {customer.credit_limit_cents != null && (
           <p style={{ color: "var(--kr-muted)" }}>
-            Limite de credito (OMIE): {formatMoney(customer.credit_limit_cents)}
+            Limite de crédito (OMIE): {formatMoney(customer.credit_limit_cents)}
           </p>
         )}
         {canEdit && (

@@ -113,11 +113,11 @@ export const PERIOD_OPTIONS: Array<{ id: PeriodPreset; label: string }> = [
   { id: "today", label: "Hoje" },
   { id: "7d", label: "7 dias" },
   { id: "30d", label: "30 dias" },
-  { id: "month", label: "Mes atual" },
-  { id: "lastMonth", label: "Mes anterior" },
+  { id: "month", label: "Mês atual" },
+  { id: "lastMonth", label: "Mês anterior" },
   { id: "year", label: "Ano atual" },
-  { id: "next30d", label: "Proximos 30 dias" },
-  { id: "next90d", label: "Proximos 90 dias" },
+  { id: "next30d", label: "Próximos 30 dias" },
+  { id: "next90d", label: "Próximos 90 dias" },
   { id: "custom", label: "Personalizado" }
 ];
 
@@ -352,9 +352,20 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: "Cancelada"
 };
 
+/**
+ * O status como a TELA mostra. O `STATUS_LABELS` acima e o que vai para o PDF e a planilha, igual
+ * ao do desktop; aqui so muda a grafia.
+ */
+const STATUS_SCREEN_LABELS: Record<string, string> = {
+  ...STATUS_LABELS,
+  awaiting_exit: "Aguardando saída",
+  closed_local: "Concluída (local)",
+  sync_error: "Erro de sincronização"
+};
+
 /** O status da pesagem em portugues ("Sincronizada", "Cancelada"...). */
 export function operationStatusLabel(status: string): string {
-  return STATUS_LABELS[status] ?? status;
+  return STATUS_SCREEN_LABELS[status] ?? status;
 }
 
 export function isClosedStatus(status: string): boolean {
@@ -953,7 +964,7 @@ export function buildCustomerHeader(
   lookups: ReportLookups
 ): CustomerReportCustomer {
   const row = lookups.customers.find((customer) => customer.id === customerId);
-  if (!row) throw new Error("Cliente nao encontrado.");
+  if (!row) throw new Error("Cliente não encontrado.");
   const term = row.default_payment_term_id
     ? lookups.paymentTerms.find((item) => item.id === row.default_payment_term_id)
     : undefined;
@@ -1176,8 +1187,8 @@ export function customerReportTables(
 ): ReportTable[] {
   const tables: ReportTable[] = [
     {
-      title: "Vencimentos no periodo",
-      headers: ["Mes", "Parcelas", "Valor"],
+      title: "Vencimentos no período",
+      headers: ["Mês", "Parcelas", "Valor"],
       rows: report.installmentsByMonth.map((row) => [
         formatMonthLabel(row.period),
         formatNumber(row.installments),
@@ -1185,19 +1196,19 @@ export function customerReportTables(
       ]),
       footNote: INSTALLMENT_NOTE,
       emptyMessage:
-        "Nenhuma parcela vence neste periodo. Escolha datas futuras para ver os proximos vencimentos."
+        "Nenhuma parcela vence neste período. Escolha datas futuras para ver os próximos vencimentos."
     },
     {
       title: "Parcelas a pagar",
       headers: [
         "Vencimento",
-        "Situacao",
+        "Situação",
         "Parcela",
         "Valor",
         "Data da compra",
         "Produto",
         "Placa",
-        "Condicao",
+        "Condição",
         "Forma"
       ],
       rows: report.installments.map((installment) => [
@@ -1211,18 +1222,18 @@ export function customerReportTables(
         installment.paymentTermName ?? "-",
         installment.paymentMethodName ?? "-"
       ]),
-      emptyMessage: "Nenhuma parcela vence neste periodo."
+      emptyMessage: "Nenhuma parcela vence neste período."
     },
     {
       title: "Produtos comprados",
       headers: [
         "Produto",
-        "Codigo",
+        "Código",
         "Carregamentos",
         "Datas",
         "Peso",
         "Valor produto",
-        "Preco medio",
+        "Preço médio",
         "Total"
       ],
       rows: report.byProduct.map((row) => [
@@ -1238,7 +1249,7 @@ export function customerReportTables(
     },
     {
       title: "Materiais por dia",
-      headers: ["Produto", "Dia", "Carregamentos", "Peso", "Valor produto", "Preco medio", "Total"],
+      headers: ["Produto", "Dia", "Carregamentos", "Peso", "Valor produto", "Preço médio", "Total"],
       rows: report.byProductDay.map((row) => [
         row.productDescription,
         formatDayLabel(row.date),
@@ -1248,7 +1259,7 @@ export function customerReportTables(
         `${formatBRL(row.avgPriceCentsPerTon)}/t`,
         formatBRL(row.totalCents)
       ]),
-      emptyMessage: "Nenhum carregamento neste periodo."
+      emptyMessage: "Nenhum carregamento neste período."
     },
     // O quadro "Placas" (o total por placa) saiu: a lista abaixo ja traz cada viagem com placa,
     // motorista e transportadora.
@@ -1262,7 +1273,7 @@ export function customerReportTables(
         "Cupom",
         "Produto",
         "Peso",
-        "Preco/t",
+        "Preço/t",
         "Produto (R$)",
         "Frete (R$)",
         "Total",
@@ -1284,11 +1295,11 @@ export function customerReportTables(
         invoiceNumberText(operation.omieInvoiceNumber, operation.operationType),
         operation.minutesInside === null ? "-" : formatMinutes(operation.minutesInside)
       ]),
-      emptyMessage: "Nenhuma viagem neste periodo."
+      emptyMessage: "Nenhuma viagem neste período."
     },
     {
-      title: "Compras por mes",
-      headers: ["Mes", "Carregamentos", "Peso", "Produto", "Frete", "Total"],
+      title: "Compras por mês",
+      headers: ["Mês", "Carregamentos", "Peso", "Produto", "Frete", "Total"],
       rows: report.byMonth.map((row) => [
         formatMonthLabel(row.period),
         formatNumber(row.operations),
@@ -1325,12 +1336,12 @@ export function customerReportTables(
       rows: paymentRows(report.byPaymentMethod)
     },
     {
-      title: "Pagamentos por condicao",
-      headers: ["Condicao de pagamento", "Carregamentos", "Peso", "Total"],
+      title: "Pagamentos por condição",
+      headers: ["Condição de pagamento", "Carregamentos", "Peso", "Total"],
       rows: paymentRows(report.byPaymentTerm)
     },
     {
-      title: "Operacoes (detalhado)",
+      title: "Operações (detalhado)",
       headers: [
         "Data",
         "Cupom",
@@ -1339,14 +1350,14 @@ export function customerReportTables(
         "Motorista",
         "Transportadora",
         "Frete",
-        "Liquido",
+        "Líquido",
         "Tempo",
-        "Preco/t",
+        "Preço/t",
         "Produto",
         "Frete (R$)",
         "Total",
         "Forma",
-        "Condicao",
+        "Condição",
         "Nota fiscal",
         "Pedido OMIE",
         "Status"
@@ -1369,12 +1380,12 @@ export function customerReportTables(
         operation.paymentTermName ?? "-",
         invoiceNumberText(operation.omieInvoiceNumber, operation.operationType),
         operation.omieSalesOrderId === null ? "-" : String(operation.omieSalesOrderId),
-        operation.statusLabel
+        operationStatusLabel(operation.status)
       ])
     },
     {
-      title: "Operacoes canceladas",
-      headers: ["Data", "Cupom", "Produto", "Placa", "Motorista", "Liquido", "Motivo"],
+      title: "Operações canceladas",
+      headers: ["Data", "Cupom", "Produto", "Placa", "Motorista", "Líquido", "Motivo"],
       rows: report.cancelledOperations.map((operation) => [
         formatDayLabel(operation.date),
         formatCouponNumber(operation.couponNumber),
@@ -1402,12 +1413,12 @@ export function overviewTables(overview: CustomersOverview): ReportTable[] {
   const { totals, installmentTotals } = overview;
   return [
     {
-      title: "Clientes no periodo",
+      title: "Clientes no período",
       headers: [
         "Cliente",
         "Carregamentos",
         "Tonelagem",
-        "Preco medio/t",
+        "Preço médio/t",
         "Total comprado",
         "A vencer",
         "Vencidas"
@@ -1437,7 +1448,7 @@ export function overviewTables(overview: CustomersOverview): ReportTable[] {
                 formatBRL(installmentTotals.overdueCents)
               ]
             ],
-      emptyMessage: "Nenhum cliente com movimento no periodo.",
+      emptyMessage: "Nenhum cliente com movimento no período.",
       footNote: INSTALLMENT_NOTE
     },
     {
@@ -1445,11 +1456,11 @@ export function overviewTables(overview: CustomersOverview): ReportTable[] {
       headers: [
         "Cliente",
         "Produto",
-        "Codigo",
+        "Código",
         "Carregamentos",
         "Datas",
         "Peso",
-        "Preco medio/t",
+        "Preço médio/t",
         "Total"
       ],
       rows: overview.customers.flatMap((row) =>
@@ -1464,7 +1475,7 @@ export function overviewTables(overview: CustomersOverview): ReportTable[] {
           formatBRL(product.totalCents)
         ])
       ),
-      emptyMessage: "Nenhum carregamento no periodo."
+      emptyMessage: "Nenhum carregamento no período."
     }
   ];
 }

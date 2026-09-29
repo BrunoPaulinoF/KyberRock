@@ -57,7 +57,7 @@ export function Loading() {
       .eq("status", "open")
       .order("created_at", { ascending: true });
     if (loadError) {
-      setError("Nao foi possivel carregar a fila. Confira a internet e tente de novo.");
+      setError("Não foi possível carregar a fila. Confira a internet e tente de novo.");
       setLoading(false);
       return;
     }
@@ -129,8 +129,8 @@ export function Loading() {
       );
       setError(
         completedAt
-          ? "Nao foi possivel concluir a carga. Tente de novo."
-          : "Nao foi possivel devolver a carga para a fila. Tente de novo."
+          ? "Não foi possível concluir a carga. Tente de novo."
+          : "Não foi possível devolver a carga para a fila. Tente de novo."
       );
     }
     setBusy((current) => {
@@ -196,7 +196,7 @@ export function Loading() {
           </div>
           <button type="button" className="loading-history" onClick={() => setShowCompleted(true)}>
             <History size={18} />
-            Concluidas ha pouco
+            Concluídas há pouco
             <span className="loading-history-count">{completed.length}</span>
           </button>
         </section>
@@ -228,7 +228,7 @@ export function Loading() {
 
         {late.length > 0 && (
           <div className="loading-late" role="alert">
-            <strong>Acima do tempo medio ({Math.round(avgMinutes ?? 0)} min):</strong>
+            <strong>Acima do tempo médio ({Math.round(avgMinutes ?? 0)} min):</strong>
             <span>
               {late.map((item) => (
                 <span key={item.id} className="loading-plate small">
@@ -255,7 +255,7 @@ export function Loading() {
         ) : queue.length === 0 ? (
           <div className="loading-empty">
             <strong>Nenhuma carga aguardando</strong>
-            <span>Quando uma operacao entrar na fila, ela aparecera aqui.</span>
+            <span>Quando uma operação entrar na fila, ela aparecerá aqui.</span>
           </div>
         ) : (
           <ol className="loading-list">
@@ -267,7 +267,7 @@ export function Loading() {
                   <span className="loading-time" title="Chegada">
                     {formatArrival(item.createdAt, timeZone, now)}
                   </span>
-                  {lateIds.has(item.id) && <span className="badge warn">Acima da media</span>}
+                  {lateIds.has(item.id) && <span className="badge warn">Acima da média</span>}
                 </div>
                 <strong className="loading-customer" title={item.customerName}>
                   {item.customerName}
@@ -295,7 +295,7 @@ export function Loading() {
 
       {showCompleted && (
         <Modal
-          title="Concluidas nos ultimos 30 min"
+          title="Concluídas nos últimos 30 min"
           description="Concluiu sem querer? Cancele e a carga volta para a fila em andamento."
           onClose={() => setShowCompleted(false)}
           footer={
@@ -306,7 +306,7 @@ export function Loading() {
         >
           {completed.length === 0 ? (
             <div className="empty">
-              Nenhuma carga concluida nos ultimos 30 minutos. As cargas que voce concluir aparecem
+              Nenhuma carga concluída nos últimos 30 minutos. As cargas que você concluir aparecem
               aqui por meia hora.
             </div>
           ) : (
@@ -316,7 +316,7 @@ export function Loading() {
                   <div className="loading-completed-info">
                     <div className="loading-card-top">
                       <span className="loading-plate">{item.plate || "SEM PLACA"}</span>
-                      <span className="loading-time" title="Concluida em">
+                      <span className="loading-time" title="Concluída em">
                         {formatArrival(item.loaderCompletedAt, timeZone, now)}
                       </span>
                     </div>
@@ -355,14 +355,14 @@ export function Loading() {
           {isIosDevice() ? (
             <ol className="loading-install-steps">
               <li>
-                Toque no botao <strong>Compartilhar</strong> do Safari (quadrado com seta para
+                Toque no botão <strong>Compartilhar</strong> do Safari (quadrado com seta para
                 cima).
               </li>
               <li>
-                Role a lista e toque em <strong>Adicionar a Tela de Inicio</strong>.
+                Role a lista e toque em <strong>Adicionar à Tela de Início</strong>.
               </li>
               <li>
-                Confirme em <strong>Adicionar</strong>. O KyberRock vira um icone na tela inicial.
+                Confirme em <strong>Adicionar</strong>. O KyberRock vira um ícone na tela inicial.
               </li>
             </ol>
           ) : (
@@ -372,7 +372,7 @@ export function Loading() {
               </li>
               <li>
                 Toque em <strong>Instalar aplicativo</strong> (ou{" "}
-                <strong>Adicionar a tela inicial</strong>).
+                <strong>Adicionar à tela inicial</strong>).
               </li>
               <li>Confirme. O KyberRock abre em tela cheia, como um app.</li>
             </ol>

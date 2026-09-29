@@ -22,7 +22,7 @@ import {
 import { useAsync } from "../lib/use-async";
 
 const HELP =
-  "Tempo dentro da pedreira, numero de operacoes, clientes atendidos e peso por produto de cada caminhao no periodo. Em 'Cargas' voce ve carga a carga: data, cliente, produto, peso e horarios. Caminhoes acima do tempo medio do periodo ficam destacados. O PDF e o Excel saem com os caminhoes que estao na lista (e com as mesmas cargas e clientes): com a busca preenchida, o arquivo traz so eles.";
+  "Tempo dentro da pedreira, número de operações, clientes atendidos e peso por produto de cada caminhão no período. Em 'Cargas' você vê carga a carga: data, cliente, produto, peso e horários. Caminhões acima do tempo médio do período ficam destacados. O PDF e o Excel saem com os caminhões que estão na lista (e com as mesmas cargas e clientes): com a busca preenchida, o arquivo traz só eles.";
 
 /**
  * Controle de caminhoes — a tela `TruckControlView` do desktop, lendo a nuvem. O periodo e
@@ -100,7 +100,7 @@ export function TruckControl() {
     <section className="truck-control">
       <header className="truck-control-header">
         <div className="truck-control-title-row">
-          <h2 className="truck-control-title">Controle de caminhoes</h2>
+          <h2 className="truck-control-title">Controle de caminhões</h2>
           <span className="truck-control-help" role="img" aria-label="Dica" title={HELP}>
             <Lightbulb size={14} />
           </span>
@@ -114,7 +114,7 @@ export function TruckControl() {
               exporting === "pdf"
                 ? "Gerando PDF..."
                 : filtered
-                  ? "Gerar PDF so com os caminhoes da busca"
+                  ? "Gerar PDF só com os caminhões da busca"
                   : "Gerar PDF"
             }
             disabled={exporting !== null || loading || !visible}
@@ -130,7 +130,7 @@ export function TruckControl() {
               exporting === "excel"
                 ? "Gerando Excel..."
                 : filtered
-                  ? "Baixar Excel so com os caminhoes da busca"
+                  ? "Baixar Excel só com os caminhões da busca"
                   : "Baixar Excel"
             }
             disabled={exporting !== null || loading || !visible}
@@ -153,7 +153,7 @@ export function TruckControl() {
           />
         </label>
         <label className="truck-control-field">
-          Ate
+          Até
           <input
             type="date"
             className="truck-control-input"
@@ -163,7 +163,7 @@ export function TruckControl() {
           />
         </label>
         <label className="truck-control-field truck-control-search">
-          Buscar caminhao (placa ou motorista) — vale para o PDF e o Excel
+          Buscar caminhão (placa ou motorista) — vale para o PDF e o Excel
           <input
             type="search"
             className="truck-control-input"
@@ -189,23 +189,23 @@ export function TruckControl() {
       {filtered ? (
         <p className="truck-control-muted">
           Busca &quot;{visible?.search}&quot;: {filteredTrucks.length} de{" "}
-          {report?.trucks.length ?? 0} caminhoes. Os cartoes e os arquivos (PDF/Excel) usam so
-          esses. Tempo medio do periodo, com todos os caminhoes:{" "}
+          {report?.trucks.length ?? 0} caminhões. Os cartões e os arquivos (PDF/Excel) usam só
+          esses. Tempo médio do período, com todos os caminhões:{" "}
           {formatMinutes(periodAverageMinutes)}.
         </p>
       ) : null}
 
       <div className="truck-control-summary">
         <div className="truck-control-card">
-          <span className="truck-control-card-label">Caminhoes</span>
+          <span className="truck-control-card-label">Caminhões</span>
           <span className="truck-control-card-value">{filteredTrucks.length}</span>
         </div>
         <div className="truck-control-card">
-          <span className="truck-control-card-label">Operacoes</span>
+          <span className="truck-control-card-label">Operações</span>
           <span className="truck-control-card-value">{visible?.totalOperations ?? 0}</span>
         </div>
         <div className="truck-control-card">
-          <span className="truck-control-card-label">Tempo medio na pedreira</span>
+          <span className="truck-control-card-label">Tempo médio na pedreira</span>
           <span className="truck-control-card-value">{formatMinutes(averageMinutes)}</span>
         </div>
         <div className="truck-control-card">
@@ -223,7 +223,7 @@ export function TruckControl() {
         <p className="truck-control-empty">Carregando...</p>
       ) : filteredTrucks.length === 0 ? (
         <p className="truck-control-empty">
-          {filtered ? "Nenhum caminhao para essa busca." : "Nenhum caminhao no periodo."}
+          {filtered ? "Nenhum caminhão para essa busca." : "Nenhum caminhão no período."}
         </p>
       ) : (
         <div className="truck-control-list">
@@ -333,19 +333,19 @@ function TruckCard({
       <header className="tc-card-head">
         <div className="tc-card-id">
           <span className="truck-control-plate">{truck.plate}</span>
-          <span className="tc-card-driver">{truck.driverName ?? "Motorista nao informado"}</span>
+          <span className="tc-card-driver">{truck.driverName ?? "Motorista não informado"}</span>
         </div>
         <dl className="tc-stats">
           <div>
-            <dt>Operacoes</dt>
+            <dt>Operações</dt>
             <dd>{truck.operations}</dd>
           </div>
           <div className={aboveAverage ? "tc-stat-alert" : undefined}>
-            <dt>Tempo medio</dt>
+            <dt>Tempo médio</dt>
             <dd>
               {formatMinutes(truck.avgMinutes)}
               {aboveAverage && (
-                <small title="Acima do tempo medio do periodo"> ▲ acima da media</small>
+                <small title="Acima do tempo médio do período"> ▲ acima da média</small>
               )}
             </dd>
           </div>
@@ -359,7 +359,9 @@ function TruckCard({
           </div>
         </dl>
         <button type="button" className="truck-control-link" onClick={onToggle}>
-          {open ? "Ocultar cargas" : `Ver ${truck.trips.length} carga(s)`}
+          {open
+            ? "Ocultar cargas"
+            : `Ver ${truck.trips.length} ${truck.trips.length === 1 ? "carga" : "cargas"}`}
         </button>
       </header>
 
@@ -393,14 +395,14 @@ function TruckCard({
                 <th>Produto</th>
                 <th className="num">Peso (kg)</th>
                 <th className="num">Entrada</th>
-                <th className="num">Saida</th>
+                <th className="num">Saída</th>
                 <th className="num">Tempo</th>
               </tr>
             </thead>
             <tbody>
               {truck.trips.length === 0 ? (
                 <tr>
-                  <td colSpan={7}>Sem cargas no periodo.</td>
+                  <td colSpan={7}>Sem cargas no período.</td>
                 </tr>
               ) : (
                 truck.trips.map((trip) => (

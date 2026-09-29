@@ -322,8 +322,8 @@ export const PERIOD_PRESETS: Array<{ id: PeriodPreset; label: string }> = [
   { id: "today", label: "Hoje" },
   { id: "7d", label: "7 dias" },
   { id: "30d", label: "30 dias" },
-  { id: "month", label: "Este mes" },
-  { id: "lastMonth", label: "Mes passado" }
+  { id: "month", label: "Este mês" },
+  { id: "lastMonth", label: "Mês passado" }
 ];
 
 function shiftDay(iso: string, days: number): string {
@@ -536,9 +536,9 @@ export function pivotCsv(result: SalesPivotResult, groupBy: SalesPivotGroupBy): 
   return toCsv([
     [
       ...columns.map((column) => PIVOT_COLUMN_LABEL[column]),
-      "Operacoes",
+      "Operações",
       "Quantidade (t)",
-      "Preco medio (R$/t)",
+      "Preço médio (R$/t)",
       "Valor produto (R$)",
       "Frete (R$)",
       "Total (R$)"
@@ -572,7 +572,7 @@ export function pivotCsv(result: SalesPivotResult, groupBy: SalesPivotGroupBy): 
 export function monthlyCsv(series: DailySeriesPoint[]): string {
   const totals = sumSeries(series);
   return toCsv([
-    ["Data", "Operacoes", "Peso Liquido (kg)", "Valor Produto (R$)", "Frete (R$)", "Total (R$)"],
+    ["Data", "Operações", "Peso Líquido (kg)", "Valor Produto (R$)", "Frete (R$)", "Total (R$)"],
     ...series.map((point) => [
       formatDayLabel(point.date),
       String(point.operations),

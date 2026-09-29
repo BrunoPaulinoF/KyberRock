@@ -105,7 +105,7 @@
 }
 .support-card-label {
   color: var(--kr-muted);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -198,7 +198,7 @@
   border: 1px solid var(--kr-border);
   background: var(--kr-surface-soft);
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   line-height: 16px;
   text-align: center;
@@ -520,7 +520,7 @@
 }
 .support-ua {
   color: var(--kr-muted) !important;
-  font-size: 11px;
+  font-size: 12px;
 }
 .support-probe {
   display: flex;

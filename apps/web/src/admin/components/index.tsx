@@ -431,7 +431,7 @@ export function ConfirmDialog({
     >
       <p style={{ margin: 0, fontSize: "13px", color: "#334155" }}>{message}</p>
       <p style={{ margin: "10px 0 0", fontSize: "12px", color: "#b91c1c" }}>
-        Esta acao nao pode ser desfeita.
+        Esta ação não pode ser desfeita.
       </p>
     </Modal>
   );
@@ -480,10 +480,10 @@ export function AdminShell({
     <div className="adm adm-shell">
       <header className="adm-topbar">
         <div className="adm-brand">
-          <img src={publicAsset("logo.png")} alt="" />
+          <img src={publicAsset("logo-128.webp")} alt="" />
           <div>
             <p className="adm-brand-name">KyberRock Console</p>
-            <p className="adm-brand-sub">Administracao da plataforma</p>
+            <p className="adm-brand-sub">Administração da plataforma</p>
           </div>
         </div>
         <div className="adm-topbar-actions">
@@ -493,7 +493,7 @@ export function AdminShell({
       </header>
 
       <div className="adm-body">
-        <nav className="adm-nav" aria-label="Secoes administrativas">
+        <nav className="adm-nav" aria-label="Seções administrativas">
           {groups.map(([group, items]) => (
             <div key={group} className="adm-nav-section">
               <p className="adm-nav-group">{group}</p>
@@ -510,7 +510,7 @@ export function AdminShell({
                     <span>{section.label}</span>
                   </span>
                   {section.alert ? (
-                    <span className="adm-nav-count adm-nav-alert" title="Precisam de atencao">
+                    <span className="adm-nav-count adm-nav-alert" title="Precisam de atenção">
                       {section.alert}
                     </span>
                   ) : section.count !== undefined ? (
@@ -645,7 +645,7 @@ export interface MenuItem {
  * A lista abre em `position: fixed`, calculada pelo botao: dentro da tabela (que rola na
  * horizontal) um menu absoluto seria cortado nas ultimas linhas.
  */
-export function RowMenu({ items, label = "Mais acoes" }: { items: MenuItem[]; label?: string }) {
+export function RowMenu({ items, label = "Mais ações" }: { items: MenuItem[]; label?: string }) {
   const [style, setStyle] = useState<CSSProperties | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);

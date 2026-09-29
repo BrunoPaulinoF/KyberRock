@@ -49,7 +49,12 @@ import { deliverReports, spreadsheetFileName } from "../lib/report-output";
 import { useAsync } from "../lib/use-async";
 
 const HELP =
-  "Puxa de uma vez a fatura de todos os clientes de um periodo. Escolha o periodo (quinzena, mes, semana ou datas livres) e a tela monta uma fatura por cliente com tudo o que ele carregou nele — inclusive as vendas EM CARTEIRA e as de cliente sem credito no cadastro. Em 'Base do fechamento' voce troca para 'Cadastro do cliente' se preferir a periodicidade cadastrada em cada um; ai o cliente sem credito fica fora das faturas e aparece na lista 'Clientes fora do fechamento'. O botao 'Fazer fechamento' pede o faturamento no OMIE, de uma vez, das cargas do periodo que ainda nao tem nota — quem fatura e a balanca da unidade, que recebe o pedido e emite a nota de cada cliente; carga ja faturada nunca e reenviada. Marcando placas no filtro de Placa, o fechamento sai separado por placa — uma fatura por caminhao dentro de cada cliente. No fim da tela, a lista pesagem a pesagem traz TODAS as cargas do periodo numa tabela so, com a operacao inteira em cada linha. O Excel e o PDF saem com as mesmas faturas que estao na tela.";
+  "Puxa de uma vez a fatura de todos os clientes de um período. Escolha o período (quinzena, mês, semana ou datas livres) e a tela monta uma fatura por cliente com tudo o que ele carregou nele — inclusive as vendas EM CARTEIRA e as de cliente sem crédito no cadastro. Em 'Base do fechamento' você troca para 'Cadastro do cliente' se preferir a periodicidade cadastrada em cada um; aí o cliente sem crédito fica fora das faturas e aparece na lista 'Clientes fora do fechamento'. O botão 'Fazer fechamento' pede o faturamento no OMIE, de uma vez, das cargas do período que ainda não têm nota — quem fatura é a balança da unidade, que recebe o pedido e emite a nota de cada cliente; carga já faturada nunca é reenviada. Marcando placas no filtro de Placa, o fechamento sai separado por placa — uma fatura por caminhão dentro de cada cliente. No fim da tela, a lista pesagem a pesagem traz TODAS as cargas do período numa tabela só, com a operação inteira em cada linha. O Excel e o PDF saem com as mesmas faturas que estão na tela.";
+
+/** "1 carga" / "3 cargas". */
+function loadCount(count: number): string {
+  return `${formatCount(count)} ${count === 1 ? "carga" : "cargas"}`;
+}
 
 /** A busca espera a palavra antes de virar filtro (o `useDebouncedValue` do desktop). */
 function useDebounced<T>(value: T, delay = 300): T {
@@ -349,7 +354,7 @@ export function InvoiceClosing() {
                   ? `Gerar ${selectedFormats.length} arquivos`
                   : "Gerar arquivo"
             }
-            title="Gera os arquivos escolhidos com as faturas filtradas. O Excel e baixado como planilha e o PDF abre na impressao do navegador, onde se escolhe Salvar como PDF."
+            title="Gera os arquivos escolhidos com as faturas filtradas. O Excel é baixado como planilha e o PDF abre na impressão do navegador, onde se escolhe Salvar como PDF."
             disabled={exporting || loading || running || !report}
             onClick={() => void handleExport()}
           >
@@ -359,7 +364,7 @@ export function InvoiceClosing() {
             type="button"
             className="icon-action primary"
             aria-label={running ? "Enviando..." : "Fazer fechamento"}
-            title="Pede o faturamento no OMIE de todas as pesagens do periodo que estao na tela; a balanca da unidade emite a nota de cada cliente. Pesagem que ja tem nota nao e reenviada. O site pede confirmacao antes."
+            title="Pede o faturamento no OMIE de todas as pesagens do período que estão na tela; a balança da unidade emite a nota de cada cliente. Pesagem que já tem nota não é reenviada. O site pede confirmação antes."
             disabled={running || loading || (report?.rows.length ?? 0) === 0}
             onClick={openRunConfirmation}
           >
@@ -371,7 +376,7 @@ export function InvoiceClosing() {
       <div className="closing-card closing-filters">
         <div className="closing-filter-grid">
           <div className="closing-filter-block">
-            <span className="closing-filter-label">Periodo do fechamento</span>
+            <span className="closing-filter-label">Período do fechamento</span>
             <div className="closing-chip-row">
               {INVOICE_CLOSING_PERIOD_KINDS.map((kind) => (
                 <button
@@ -386,7 +391,7 @@ export function InvoiceClosing() {
             </div>
             {period.kind === "biweekly" || period.kind === "monthly" ? (
               <label className="closing-date-field">
-                Mes
+                Mês
                 <input
                   type="month"
                   className="closing-input"
@@ -402,14 +407,14 @@ export function InvoiceClosing() {
                   className={`closing-chip${period.half === 1 ? " active" : ""}`}
                   onClick={() => setPeriodField("half", 1)}
                 >
-                  1a quinzena (01 a 15)
+                  1ª quinzena (01 a 15)
                 </button>
                 <button
                   type="button"
                   className={`closing-chip${period.half === 2 ? " active" : ""}`}
                   onClick={() => setPeriodField("half", 2)}
                 >
-                  2a quinzena (16 ao fim)
+                  2ª quinzena (16 ao fim)
                 </button>
               </div>
             ) : null}
@@ -436,7 +441,7 @@ export function InvoiceClosing() {
                   />
                 </label>
                 <label className="closing-date-field">
-                  Ate
+                  Até
                   <input
                     type="date"
                     className="closing-input"
@@ -447,7 +452,7 @@ export function InvoiceClosing() {
               </div>
             ) : null}
             <p className="closing-hint">
-              {range.label} — {formatDayLabel(range.start)} a {formatDayLabel(range.end)}
+              {range.screenLabel} — {formatDayLabel(range.start)} a {formatDayLabel(range.end)}
             </p>
           </div>
 
@@ -459,7 +464,7 @@ export function InvoiceClosing() {
                 className={`closing-chip${basis === "period" ? " active" : ""}`}
                 onClick={() => setBasis("period")}
               >
-                Periodo escolhido
+                Período escolhido
               </button>
               <button
                 type="button"
@@ -471,8 +476,8 @@ export function InvoiceClosing() {
             </div>
             {basis === "period" ? (
               <p className="closing-hint">
-                TODA carga do periodo entra na fatura do cliente dela — inclusive as em carteira e
-                as de cliente sem credito no cadastro. A fatura fecha no ultimo dia do periodo.
+                TODA carga do período entra na fatura do cliente dela — inclusive as em carteira e
+                as de cliente sem crédito no cadastro. A fatura fecha no último dia do período.
               </p>
             ) : (
               <>
@@ -498,7 +503,7 @@ export function InvoiceClosing() {
                 </div>
                 <p className="closing-hint">
                   A data de fechamento vem de Cadastros &gt; Clientes, em &quot;Periodicidade do
-                  fechamento&quot;. Cliente sem credito habilitado fica FORA das faturas.
+                  fechamento&quot;. Cliente sem crédito habilitado fica FORA das faturas.
                 </p>
               </>
             )}
@@ -558,7 +563,7 @@ export function InvoiceClosing() {
               {visiblePlates.length === 0 ? (
                 <p className="closing-hint">
                   {plateOptions.length === 0
-                    ? "Nenhuma placa rodou no periodo."
+                    ? "Nenhuma placa rodou no período."
                     : "Nenhuma placa com esse texto."}
                 </p>
               ) : (
@@ -576,7 +581,7 @@ export function InvoiceClosing() {
             </div>
             <p className="closing-hint">
               {splitByPlate
-                ? "Uma fatura por placa: o mesmo cliente aparece uma vez para cada caminhao escolhido."
+                ? "Uma fatura por placa: o mesmo cliente aparece uma vez para cada caminhão escolhido."
                 : "Vazio: uma fatura por cliente, com todas as placas juntas."}
             </p>
           </div>
@@ -602,7 +607,7 @@ export function InvoiceClosing() {
               </label>
             </div>
             <p className="closing-foot-note">
-              A nota fiscal e o boleto sao emitidos no OMIE, a partir do pedido que o KyberRock ja
+              A nota fiscal e o boleto são emitidos no OMIE, a partir do pedido que o KyberRock já
               enviou.
             </p>
           </div>
@@ -617,14 +622,14 @@ export function InvoiceClosing() {
         <RunConfirmation
           billable={billable.length}
           total={report?.rows.length ?? 0}
-          periodLabel={range.label}
+          periodLabel={range.screenLabel}
           customerLabel={customerLabel}
           onCancel={() => setConfirmingRun(false)}
           onConfirm={() => void handleRunClosing()}
         />
       ) : null}
 
-      {running ? <p className="closing-info">Enviando o fechamento para a balanca...</p> : null}
+      {running ? <p className="closing-info">Enviando o fechamento para a balança...</p> : null}
 
       {runResult ? (
         <RunResultCard
@@ -648,7 +653,7 @@ export function InvoiceClosing() {
             <Kpi
               label="Sem nota emitida"
               value={formatBRL(report.withoutInvoice.totalCents)}
-              hint={`${formatCount(report.withoutInvoice.operations)} carga(s) esperando a emissao no OMIE`}
+              hint={`${loadCount(report.withoutInvoice.operations)} esperando a emissão no OMIE`}
               tone={report.withoutInvoice.operations > 0 ? "danger" : "success"}
             />
           </div>
@@ -661,8 +666,8 @@ export function InvoiceClosing() {
                 Clientes fora do fechamento ({formatCount(report.pendingSetup.length)})
               </h3>
               <p className="closing-hint">
-                Tiveram carga no periodo mas nao entraram em fatura nenhuma: falta habilitar o
-                credito do cliente e escolher a periodicidade do fechamento no cadastro deles.
+                Tiveram carga no período mas não entraram em fatura nenhuma: falta habilitar o
+                crédito do cliente e escolher a periodicidade do fechamento no cadastro deles.
               </p>
               <div className="closing-scroll">
                 <table className="closing-table">
@@ -695,8 +700,8 @@ export function InvoiceClosing() {
             {report.invoices.length === 0 ? (
               <p className="closing-hint">
                 {splitByPlate
-                  ? "Nenhuma carga das placas escolhidas nos ciclos e no periodo."
-                  : "Nenhum cliente com fechamento no periodo e nos ciclos escolhidos."}
+                  ? "Nenhuma carga das placas escolhidas nos ciclos e no período."
+                  : "Nenhum cliente com fechamento no período e nos ciclos escolhidos."}
               </p>
             ) : (
               <div className="closing-scroll tall">
@@ -756,7 +761,7 @@ export function InvoiceClosing() {
               sair da mesma lista que foi cobrada do cliente.
             </p>
             {report.byCarrier.length === 0 ? (
-              <p className="closing-hint">Sem viagens no periodo.</p>
+              <p className="closing-hint">Sem viagens no período.</p>
             ) : (
               <div className="closing-scroll">
                 <table className="closing-table">
@@ -801,28 +806,28 @@ export function InvoiceClosing() {
               Pesagem a pesagem ({formatCount(report.rows.length)})
             </h3>
             <p className="closing-hint">
-              TODAS as cargas do periodo, na ordem em que foram feitas — inclusive as dos clientes
-              que ficaram fora do fechamento. Cada linha traz a operacao inteira: vale, cliente,
-              produto, quem levou, valores, situacao no OMIE e em qual fatura ela caiu.
+              TODAS as cargas do período, na ordem em que foram feitas — inclusive as dos clientes
+              que ficaram fora do fechamento. Cada linha traz a operação inteira: vale, cliente,
+              produto, quem levou, valores, situação no OMIE e em qual fatura ela caiu.
             </p>
             {outsideClosing > 0 ? (
               <p className="closing-hint">
                 <strong className="closing-warning-text">
-                  {formatCount(outsideClosing)} carga(s) fora do fechamento
+                  {loadCount(outsideClosing)} fora do fechamento
                 </strong>{" "}
-                — aparecem na lista com &quot;Fora do fechamento&quot; no lugar da data, e nao
-                entram no total a faturar. Sao dos clientes listados acima, que ainda nao tem
-                credito e periodicidade no cadastro.
+                — aparecem na lista com &quot;Fora do fechamento&quot; no lugar da data, e não
+                entram no total a faturar. São dos clientes listados acima, que ainda não têm
+                crédito e periodicidade no cadastro.
               </p>
             ) : null}
             {report.rows.length === 0 ? (
-              <p className="closing-hint">Nenhuma pesagem no periodo e nos filtros escolhidos.</p>
+              <p className="closing-hint">Nenhuma pesagem no período e nos filtros escolhidos.</p>
             ) : (
               <div className="closing-scroll tall">
                 <WeighingLinesTable
                   lines={report.rows}
                   totals={report.rowTotals}
-                  totalLabel="TOTAL DO PERIODO"
+                  totalLabel="TOTAL DO PERÍODO"
                 />
               </div>
             )}
@@ -878,18 +883,19 @@ function RunConfirmation({
       <h3 className="closing-card-title">Confirmar o fechamento no OMIE</h3>
       {nothingToBill ? (
         <p className="closing-hint">
-          Nenhuma das {formatCount(total)} carga(s) deste periodo precisa ser faturada: elas ja tem
-          nota emitida, ja estao na fila da balanca, sao repetidas, ou sao vendas internas (que
-          geram ordem de servico, e nao nota fiscal).
+          {total === 1
+            ? "A carga deste período não precisa ser faturada: ela já tem nota emitida, já está na fila da balança, é repetida, ou é venda interna (que gera ordem de serviço, e não nota fiscal)."
+            : `Nenhuma das ${formatCount(total)} cargas deste período precisa ser faturada: elas já têm nota emitida, já estão na fila da balança, são repetidas, ou são vendas internas (que geram ordem de serviço, e não nota fiscal).`}
         </p>
       ) : (
         <p className="closing-hint">
-          Vao ser faturadas <strong>{formatCount(billable)}</strong> de {formatCount(total)}{" "}
-          carga(s) de <strong>{customerLabel}</strong> em <strong>{periodLabel}</strong>. O pedido
-          vai para a balanca da unidade, que fatura cada uma no OMIE — o OMIE emite a nota fiscal
-          para o cliente daquela carga.
-          {"\n"}As cargas que ja tem nota NAO sao reenviadas, e as notas NAO sao impressas aqui —
-          elas ficam no OMIE. Emitir nota nao se desfaz pelo site: cancelar depois e feito no OMIE,
+          {billable === 1 ? "Vai ser faturada" : "Vão ser faturadas"}{" "}
+          <strong>{formatCount(billable)}</strong> de {loadCount(total)} de{" "}
+          <strong>{customerLabel}</strong> em <strong>{periodLabel}</strong>. O pedido vai para a
+          balança da unidade, que fatura cada uma no OMIE — o OMIE emite a nota fiscal para o
+          cliente daquela carga.
+          {"\n"}As cargas que já têm nota NÃO são reenviadas, e as notas NÃO são impressas aqui —
+          elas ficam no OMIE. Emitir nota não se desfaz pelo site: cancelar depois é feito no OMIE,
           com prazo e justificativa.
         </p>
       )}
@@ -899,7 +905,7 @@ function RunConfirmation({
         </button>
         {nothingToBill ? null : (
           <button type="button" className="closing-danger-button" onClick={onConfirm}>
-            Faturar {formatCount(billable)} carga(s) no OMIE
+            Faturar {loadCount(billable)} no OMIE
           </button>
         )}
       </div>
@@ -920,17 +926,18 @@ function DuplicatesCard({ report }: { report: InvoiceClosingReport }) {
       </h3>
       <p className="closing-hint">
         A mesma carga (mesmo cliente, mesma placa, mesmo produto e os dois pesos iguais) registrada
-        mais de uma vez — o relancamento feito para corrigir preco ou tipo de venda, com a errada
-        esquecida no lugar. Elas <strong>ja estao fora das faturas</strong> (
+        mais de uma vez — o relançamento feito para corrigir preço ou tipo de venda, com a errada
+        esquecida no lugar. Elas <strong>já estão fora das faturas</strong> (
         {formatBRL(report.duplicateTotals.totalCents)} em{" "}
-        {formatCount(report.duplicateTotals.operations)} carga(s)): cobrar as duas seria cobrar a
-        mesma carga duas vezes, e e essa soma a mais que faz o total daqui nao bater com o do OMIE.
+        {loadCount(report.duplicateTotals.operations)}): cobrar as duas seria cobrar a mesma carga
+        duas vezes, e é essa soma a mais que faz o total daqui não bater com o do OMIE.
       </p>
       {billedTwice.length > 0 ? (
         <p className="closing-error">
-          {formatCount(billedTwice.length)} carga(s) tem DUAS notas fiscais emitidas no OMIE. Essas
-          continuam nas faturas — a nota existe e o cliente vai receber a cobranca dela —, e o
-          cancelamento da nota so pode ser feito no OMIE.
+          {loadCount(billedTwice.length)} {billedTwice.length === 1 ? "tem" : "têm"} DUAS notas
+          fiscais emitidas no OMIE. {billedTwice.length === 1 ? "Essa continua" : "Essas continuam"}{" "}
+          nas faturas — a nota existe e o cliente vai receber a cobrança dela —, e o cancelamento da
+          nota só pode ser feito no OMIE.
         </p>
       ) : null}
       <div className="closing-scroll">
@@ -940,9 +947,9 @@ function DuplicatesCard({ report }: { report: InvoiceClosingReport }) {
               <th className="left">Cliente</th>
               <th className="left">Placa</th>
               <th className="left">Produto</th>
-              <th>Entrada / Saida</th>
+              <th>Entrada / Saída</th>
               <th>Vale que vale</th>
-              <th>Vale(s) repetido(s)</th>
+              <th>Vales repetidos</th>
               <th>Fora da fatura</th>
             </tr>
           </thead>
@@ -978,8 +985,8 @@ function DuplicatesCard({ report }: { report: InvoiceClosingReport }) {
         </table>
       </div>
       <p className="closing-foot-note">
-        Para cancelar a repetida de vez, use Operacoes &gt; Concluidas (Venda cancelada) ou o botao
-        &quot;Cancelar pesagens repetidas&quot; do Fechamento de faturas na balanca.
+        Para cancelar a repetida de vez, use Operações &gt; Concluídas (Venda cancelada) ou o botão
+        &quot;Cancelar pesagens repetidas&quot; do Fechamento de faturas na balança.
       </p>
     </div>
   );
@@ -1015,7 +1022,7 @@ function RunResultCard({
   const problems = [
     ...failed.map((request) => ({
       operationId: request.operation_id,
-      message: request.result_message ?? "A balanca nao conseguiu faturar."
+      message: request.result_message ?? "A balança não conseguiu faturar."
     })),
     ...result.skipped.map((item) => ({ operationId: item.operationId, message: item.reason }))
   ];
@@ -1029,15 +1036,17 @@ function RunResultCard({
         </button>
       </div>
       <p className={problems.length > 0 ? "closing-error" : "closing-info"}>
-        {formatCount(result.requested)} pedido(s) de faturamento enviado(s) para a balanca.
+        {result.requested === 1
+          ? "1 pedido de faturamento enviado para a balança."
+          : `${formatCount(result.requested)} pedidos de faturamento enviados para a balança.`}
         {done.length > 0
-          ? ` ${formatCount(done.length)} carga(s) faturada(s) no OMIE — ${formatBRL(billedCents)}.`
+          ? ` ${loadCount(done.length)} ${done.length === 1 ? "faturada" : "faturadas"} no OMIE — ${formatBRL(billedCents)}.`
           : ""}
         {waiting > 0
-          ? ` ${formatCount(waiting)} aguardando a balanca (a tela se atualiza sozinha).`
+          ? ` ${formatCount(waiting)} aguardando a balança (a tela se atualiza sozinha).`
           : ""}
         {problems.length > 0
-          ? ` ${formatCount(problems.length)} carga(s) NAO foram faturadas — veja abaixo.`
+          ? ` ${loadCount(problems.length)} NÃO ${problems.length === 1 ? "foi faturada" : "foram faturadas"} — veja abaixo.`
           : ""}
       </p>
       {problems.length > 0 ? (
@@ -1048,7 +1057,7 @@ function RunResultCard({
                 <th className="left">Vale</th>
                 <th className="left">Cliente</th>
                 <th>Valor</th>
-                <th className="left">Por que nao faturou</th>
+                <th className="left">Por que não faturou</th>
               </tr>
             </thead>
             <tbody>
@@ -1129,7 +1138,7 @@ function InvoiceRows({
                     <th>Peso</th>
                     <th>Frete</th>
                     <th>Total</th>
-                    <th className="left">Situacao</th>
+                    <th className="left">Situação</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1199,12 +1208,12 @@ function WeighingLinesTable({
           <th className="left">Transportador</th>
           <th className="left">Motorista</th>
           <th>Peso</th>
-          <th>Preco unit.</th>
+          <th>Preço unit.</th>
           <th>Produto</th>
           <th>Frete</th>
           <th>Total</th>
           <th className="left">Tipo</th>
-          <th className="left">Situacao</th>
+          <th className="left">Situação</th>
           <th className="left">Nota fiscal</th>
           <th className="left">Pedido/OS OMIE</th>
           <th className="left">Fechamento</th>
@@ -1223,7 +1232,7 @@ function WeighingLinesTable({
               <td className="left">{formatCouponNumber(line.couponNumber)}</td>
               <td
                 className="left"
-                title={line.closedAt ? `Saida: ${formatDateTime(line.closedAt)}` : ""}
+                title={line.closedAt ? `Saída: ${formatDateTime(line.closedAt)}` : ""}
               >
                 {formatDayLabel(line.date)}
               </td>
@@ -1263,8 +1272,8 @@ function WeighingLinesTable({
                   colSpan={2}
                   title={
                     line.isDuplicate
-                      ? "Esta carga ja esta no fechamento em outro vale: a mesma pesagem foi registrada duas vezes. Cobrar as duas seria cobrar a carga duas vezes."
-                      : "Esta carga nao entrou em fatura nenhuma: o cliente nao tem credito e periodicidade do fechamento no cadastro."
+                      ? "Esta carga já está no fechamento em outro vale: a mesma pesagem foi registrada duas vezes. Cobrar as duas seria cobrar a carga duas vezes."
+                      : "Esta carga não entrou em fatura nenhuma: o cliente não tem crédito e periodicidade do fechamento no cadastro."
                   }
                 >
                   {line.isDuplicate

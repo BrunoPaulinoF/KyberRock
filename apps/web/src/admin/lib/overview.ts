@@ -176,8 +176,8 @@ export function buildOverview(
       pending.push({
         ...base,
         kind: "no-device",
-        title: "Nenhuma balanca ativada",
-        detail: "Gere o codigo de ativacao e instale o KyberRock Desktop no computador da balanca.",
+        title: "Nenhuma balança ativada",
+        detail: "Gere o código de ativação e instale o KyberRock Desktop no computador da balança.",
         tone: "warn",
         target: "devices"
       });
@@ -187,8 +187,8 @@ export function buildOverview(
       pending.push({
         ...base,
         kind: "no-omie",
-        title: "OMIE nao configurado",
-        detail: "Sem a chave do OMIE os pedidos das pesagens nao chegam ao ERP.",
+        title: "OMIE não configurado",
+        detail: "Sem a chave do OMIE os pedidos das pesagens não chegam ao ERP.",
         tone: "warn",
         target: "companies"
       });
@@ -200,8 +200,8 @@ export function buildOverview(
       pending.push({
         ...base,
         kind: "no-price-master",
-        title: "Sem balanca principal de precos",
-        detail: `${companyDevices.length} balancas e nenhuma define os precos: cada uma pode ficar com um preco diferente.`,
+        title: "Sem balança principal de preços",
+        detail: `${companyDevices.length} balanças e nenhuma define os preços: cada uma pode ficar com um preço diferente.`,
         tone: "warn",
         target: "devices"
       });
@@ -214,9 +214,9 @@ export function buildOverview(
         pending.push({
           ...base,
           kind: "no-web-executor",
-          title: `${unit.name}: ninguem executa as pesagens do site`,
+          title: `${unit.name}: ninguém executa as pesagens do site`,
           detail:
-            "Pedido de pesagem feito pelo site fica esperando ate uma balanca da unidade executar.",
+            "Pedido de pesagem feito pelo site fica esperando até uma balança da unidade executar.",
           tone: "info",
           target: "devices"
         });
@@ -230,8 +230,8 @@ export function buildOverview(
       pending.push({
         ...base,
         kind: "no-login",
-        title: `${withoutLogin} balanca${withoutLogin > 1 ? "s" : ""} sem login do site`,
-        detail: "Quem usa o computador ainda nao tem e-mail e senha para entrar no KyberRock Web.",
+        title: `${withoutLogin} balança${withoutLogin > 1 ? "s" : ""} sem login do site`,
+        detail: "Quem usa o computador ainda não tem e-mail e senha para entrar no KyberRock Web.",
         tone: "info",
         target: "devices"
       });
@@ -278,9 +278,9 @@ export function sinceLabel(value: string | null, now: Date = new Date()): string
   if (Number.isNaN(parsed)) return "—";
   const minutes = Math.max(0, Math.floor((now.getTime() - parsed) / 60_000));
   if (minutes < 1) return "agora";
-  if (minutes < 60) return `ha ${minutes} min`;
+  if (minutes < 60) return `há ${minutes} min`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `ha ${hours} h`;
+  if (hours < 24) return `há ${hours} h`;
   const days = Math.floor(hours / 24);
-  return `ha ${days} dia${days > 1 ? "s" : ""}`;
+  return `há ${days} dia${days > 1 ? "s" : ""}`;
 }

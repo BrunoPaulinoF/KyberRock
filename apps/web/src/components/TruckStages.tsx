@@ -63,8 +63,8 @@ function toTruck(row: OperationRow, kind: RowKind): StageTruck {
   return {
     operationId: row.id,
     plate: row.plate ?? "",
-    customerName: row.customer_name || "Cliente nao informado",
-    productDescription: row.product_description || "Produto nao informado",
+    customerName: row.customer_name || "Cliente não informado",
+    productDescription: row.product_description || "Produto não informado",
     driverName: row.driver_name || "",
     entryAt: row.created_at,
     exitAt: kind === "closed" ? (row.closed_at ?? null) : null,
@@ -163,7 +163,7 @@ export function TruckStages() {
       setError(null);
     } catch {
       if (mounted.current) {
-        setError("Nao foi possivel atualizar os caminhoes. Confira a internet; tentamos de novo.");
+        setError("Não foi possível atualizar os caminhões. Confira a internet; tentamos de novo.");
       }
     } finally {
       inFlight.current = false;
@@ -260,10 +260,10 @@ export function TruckStages() {
   const averages = useMemo(() => averageDurations(groups.saida, now), [groups, now]);
   const insideCount = groups.entrada.length + groups.carregando.length;
   const stageNote: Record<TruckStage, string> = {
-    entrada: `Chegaram nos ultimos ${ENTRY_WINDOW_MINUTES} min`,
-    carregando: `Espera media hoje: ${formatDuration(averages.carregando)}`,
-    saida: `Tempo medio na pedreira: ${formatDuration(averages.total)}`,
-    cancelada: "Canceladas hoje na balanca"
+    entrada: `Chegaram nos últimos ${ENTRY_WINDOW_MINUTES} min`,
+    carregando: `Espera média hoje: ${formatDuration(averages.carregando)}`,
+    saida: `Tempo médio na pedreira: ${formatDuration(averages.total)}`,
+    cancelada: "Canceladas hoje na balança"
   };
 
   return (
@@ -271,11 +271,11 @@ export function TruckStages() {
       <header className="ts-head">
         <div>
           <h2 id="truck-stages-title" className="ts-title">
-            Caminhoes na pedreira
+            Caminhões na pedreira
           </h2>
           <p className="ts-subtitle">
-            {insideCount === 1 ? "1 caminhao agora" : `${insideCount} caminhoes agora`} ·{" "}
-            {groups.saida.length === 1 ? "1 saiu hoje" : `${groups.saida.length} sairam hoje`} ·{" "}
+            {insideCount === 1 ? "1 caminhão agora" : `${insideCount} caminhões agora`} ·{" "}
+            {groups.saida.length === 1 ? "1 saiu hoje" : `${groups.saida.length} saíram hoje`} ·{" "}
             {groups.cancelada.length === 1
               ? "1 cancelada hoje"
               : `${groups.cancelada.length} canceladas hoje`}
@@ -293,7 +293,7 @@ export function TruckStages() {
 
       {error && <Alert kind="warn">{error}</Alert>}
 
-      <ol className="ts-flow" aria-label="Etapas do caminhao">
+      <ol className="ts-flow" aria-label="Etapas do caminhão">
         {TRUCK_STAGES.map((stage, index) => {
           const Icon = STAGE_ICONS[stage];
           const count = groups[stage].length;
@@ -308,7 +308,7 @@ export function TruckStages() {
                 {index + 1}. {STAGE_LABELS[stage]}
               </span>
               <strong className="ts-count">{count}</strong>
-              <span className="ts-count-label">{count === 1 ? "caminhao" : "caminhoes"}</span>
+              <span className="ts-count-label">{count === 1 ? "caminhão" : "caminhões"}</span>
               <span className="ts-avg">
                 <Clock size={13} aria-hidden="true" /> {stageNote[stage]}
               </span>
@@ -326,10 +326,10 @@ export function TruckStages() {
               <strong>{STAGE_LABELS[stage]}</strong>
               <CountBadge>{groups[stage].length}</CountBadge>
             </div>
-            <ul className="ts-list" aria-label={`Caminhoes na etapa ${STAGE_LABELS[stage]}`}>
+            <ul className="ts-list" aria-label={`Caminhões na etapa ${STAGE_LABELS[stage]}`}>
               {groups[stage].length === 0 && (
                 <li className="ts-empty">
-                  {loaded ? "Nenhum caminhao nesta etapa." : "Carregando..."}
+                  {loaded ? "Nenhum caminhão nesta etapa." : "Carregando..."}
                 </li>
               )}
               {groups[stage].map((truck) => (
@@ -371,13 +371,13 @@ export function TruckStages() {
       <div className="ts-finished">
         <div className="ts-column-head">
           <LogOut size={16} aria-hidden="true" />
-          <strong>Sairam hoje</strong>
+          <strong>Saíram hoje</strong>
           <CountBadge>{groups.saida.length}</CountBadge>
-          <span className="ts-finished-hint">Tempo de cada caminhao em cada etapa</span>
+          <span className="ts-finished-hint">Tempo de cada caminhão em cada etapa</span>
         </div>
         {groups.saida.length === 0 ? (
           <p className="ts-empty">
-            {loaded ? "Nenhum caminhao saiu hoje ainda." : "Carregando..."}
+            {loaded ? "Nenhum caminhão saiu hoje ainda." : "Carregando..."}
           </p>
         ) : (
           <div className="ts-finished-scroll">
@@ -462,7 +462,7 @@ function TruckTimeline({
           </div>
           <span className="ts-timeline-duration">
             {formatDuration(durations.entrada)}
-            {current === "entrada" && <small>ate agora</small>}
+            {current === "entrada" && <small>até agora</small>}
           </span>
         </li>
         <li
@@ -479,7 +479,7 @@ function TruckTimeline({
           </div>
           <span className="ts-timeline-duration">
             {formatDuration(durations.carregando)}
-            {current === "carregando" && <small>ate agora</small>}
+            {current === "carregando" && <small>até agora</small>}
           </span>
         </li>
         {truck.cancelledAt ? (
@@ -490,12 +490,12 @@ function TruckTimeline({
             <div>
               <strong>Cancelada</strong>
               <span>
-                As {clock(truck.cancelledAt)} — {truck.cancelReason || "sem motivo registrado"}
+                Às {clock(truck.cancelledAt)} — {truck.cancelReason || "sem motivo registrado"}
               </span>
             </div>
             <span className="ts-timeline-duration total">
               {formatDuration(durations.total)}
-              <small>ate cancelar</small>
+              <small>até cancelar</small>
             </span>
           </li>
         ) : (
@@ -507,21 +507,21 @@ function TruckTimeline({
               <strong>{STAGE_LABELS.saida}</strong>
               <span>
                 {truck.exitAt
-                  ? `Operacao concluida: pesou a saida as ${clock(truck.exitAt)}`
-                  : "Ainda nao pesou a saida"}
+                  ? `Operação concluída: pesou a saída às ${clock(truck.exitAt)}`
+                  : "Ainda não pesou a saída"}
               </span>
             </div>
             <span className="ts-timeline-duration total">
               {formatDuration(durations.total)}
-              <small>{truck.exitAt ? "na pedreira" : "ate agora"}</small>
+              <small>{truck.exitAt ? "na pedreira" : "até agora"}</small>
             </span>
           </li>
         )}
       </ol>
       <p className="ts-note">
-        As etapas saem da pesagem da balanca: a entrada vale nos primeiros {ENTRY_WINDOW_MINUTES}{" "}
-        minutos; depois, enquanto a operacao estiver em aberto, o caminhao esta carregando; ao pesar
-        a saida, a operacao conclui.
+        As etapas saem da pesagem da balança: a entrada vale nos primeiros {ENTRY_WINDOW_MINUTES}{" "}
+        minutos; depois, enquanto a operação estiver em aberto, o caminhão está carregando; ao pesar
+        a saída, a operação conclui.
       </p>
     </Modal>
   );

@@ -239,8 +239,8 @@ describe("buildCustomerReport", () => {
   it("o modelo completo acrescenta as tabelas de transporte e operacoes", () => {
     expect(customerReportTables(report, "simplified")).toHaveLength(6);
     const complete = customerReportTables(report, "complete").map((table) => table.title);
-    expect(complete).toContain("Operacoes (detalhado)");
-    expect(complete).toContain("Operacoes canceladas");
+    expect(complete).toContain("Operações (detalhado)");
+    expect(complete).toContain("Operações canceladas");
   });
 
   it("gera um arquivo por modelo x formato, com os nomes do desktop", () => {

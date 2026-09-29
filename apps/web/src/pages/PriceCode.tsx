@@ -55,7 +55,7 @@ export function PriceCodePage() {
       setState(next);
       setError(null);
     } catch (loadError) {
-      setError(errorMessage(loadError, "Nao foi possivel buscar a senha."));
+      setError(errorMessage(loadError, "Não foi possível buscar a senha."));
       retryAt.current = Date.now() + RETRY_MS;
     } finally {
       fetching.current = false;
@@ -87,7 +87,7 @@ export function PriceCodePage() {
       await navigator.clipboard.writeText(state.code);
       toast.push("Senha copiada.");
     } catch {
-      toast.push("Nao foi possivel copiar. Leia os numeros na tela.", "error");
+      toast.push("Não foi possível copiar. Leia os números na tela.", "error");
     }
   }
 
@@ -99,9 +99,9 @@ export function PriceCodePage() {
             <KeyRound size={20} />
           </span>
           <div>
-            <h1 className="desk-title">Senha de preco</h1>
+            <h1 className="desk-title">Senha de preço</h1>
             <p className="pc-head-text">
-              O codigo que libera mudar preco e excluir cadastro para quem nao e do comercial. Ele
+              O código que libera mudar preço e excluir cadastro para quem não é do comercial. Ele
               troca sozinho a cada {period} segundos.
             </p>
           </div>
@@ -142,7 +142,7 @@ export function PriceCodePage() {
                 aria-valuemin={0}
                 aria-valuemax={period}
                 aria-valuenow={left}
-                aria-label="Tempo ate a senha trocar"
+                aria-label="Tempo até a senha trocar"
               >
                 <circle className="pc-ring-track" cx="66" cy="66" r={RING_RADIUS} />
                 <circle
@@ -166,8 +166,8 @@ export function PriceCodePage() {
                 </strong>
                 <span>
                   {ending
-                    ? "Se for ditar agora, espere a proxima senha aparecer."
-                    : "Passe os 6 numeros para quem pediu. A senha vencida nao funciona mais."}
+                    ? "Se for ditar agora, espere a próxima senha aparecer."
+                    : "Passe os 6 números para quem pediu. A senha vencida não funciona mais."}
                 </span>
                 <button
                   type="button"
@@ -188,8 +188,8 @@ export function PriceCodePage() {
                 <ListChecks size={16} aria-hidden="true" /> Como usar
               </h2>
               <ol className="pc-steps">
-                <li>A pessoa pede a senha na balanca ou no site.</li>
-                <li>Voce le os 6 numeros desta tela para ela.</li>
+                <li>A pessoa pede a senha na balança ou no site.</li>
+                <li>Você lê os 6 números desta tela para ela.</li>
                 <li>Ela digita antes do anel acabar. Trocou? Passe a nova.</li>
               </ol>
             </section>
@@ -200,16 +200,16 @@ export function PriceCodePage() {
               </h2>
               <ul className="pc-list">
                 <li>
-                  <Tag size={15} aria-hidden="true" /> Mudar preco — padrao, especial do cliente e o
-                  preco da pesagem. Preco especial mudado fica no historico abaixo.
+                  <Tag size={15} aria-hidden="true" /> Mudar preço — padrão, especial do cliente e o
+                  preço da pesagem. Preço especial mudado fica no histórico abaixo.
                 </li>
                 <li>
                   <Trash2 size={15} aria-hidden="true" /> Excluir cliente, transportadora, motorista
                   e placa no site.
                 </li>
                 <li>
-                  <Ban size={15} aria-hidden="true" /> Na balanca: limpar operacoes e liberar o
-                  relatorio financeiro.
+                  <Ban size={15} aria-hidden="true" /> Na balança: limpar operações e liberar o
+                  relatório financeiro.
                 </li>
               </ul>
             </section>
@@ -220,7 +220,7 @@ export function PriceCodePage() {
               </h2>
               <ul className="pc-roles">
                 <li>
-                  <span>Operacao</span>
+                  <span>Operação</span>
                   <strong className="pc-tag ask">Sempre pede</strong>
                 </li>
                 <li>
@@ -229,18 +229,18 @@ export function PriceCodePage() {
                 </li>
                 <li>
                   <span>Comercial e Administrador</span>
-                  <strong className="pc-tag free">Nao precisam</strong>
+                  <strong className="pc-tag free">Não precisam</strong>
                 </li>
               </ul>
             </section>
 
             <section className="pc-card pc-safety">
               <h2>
-                <ShieldCheck size={16} aria-hidden="true" /> Seguranca
+                <ShieldCheck size={16} aria-hidden="true" /> Segurança
               </h2>
               <p>
-                So vale a senha que esta na tela agora. Cinco tentativas erradas travam quem digitou
-                por 15 minutos. Nao precisa anotar nem mandar por mensagem: ela muda sozinha.
+                Só vale a senha que está na tela agora. Cinco tentativas erradas travam quem digitou
+                por 15 minutos. Não precisa anotar nem mandar por mensagem: ela muda sozinha.
               </p>
             </section>
           </div>

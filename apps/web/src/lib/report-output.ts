@@ -45,7 +45,7 @@ export function printReportHtml(html: string, filename?: string): Promise<void> 
     const win = frame.contentWindow;
     if (!doc || !win) {
       frame.remove();
-      reject(new Error("O navegador bloqueou a impressao."));
+      reject(new Error("O navegador bloqueou a impressão."));
       return;
     }
     doc.open();

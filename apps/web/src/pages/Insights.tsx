@@ -50,11 +50,11 @@ const CHART_PALETTE = [
 ] as const;
 
 const TIPS = {
-  title: "Acompanhe o andamento da operacao com KPIs, graficos e status de sincronizacao.",
+  title: "Acompanhe o andamento da operação com KPIs, gráficos e status de sincronização.",
   period:
-    "Muda o periodo dos KPIs, graficos e relatorios exportados. Em 'Personalizado', escolha a data inicial e a final.",
-  exportPdf: "Exporta um relatorio em PDF para o periodo selecionado.",
-  exportExcel: "Exporta a planilha detalhada em Excel para o periodo selecionado."
+    "Muda o período dos KPIs, gráficos e relatórios exportados. Em 'Personalizado', escolha a data inicial e a final.",
+  exportPdf: "Exporta um relatório em PDF para o período selecionado.",
+  exportExcel: "Exporta a planilha detalhada em Excel para o período selecionado."
 };
 
 /** Tela Insights do desktop (`InsightsView.tsx`), com as contas feitas sobre a nuvem. */
@@ -141,7 +141,7 @@ export function Insights() {
         });
       }
     } catch (caught) {
-      setExportMessage(errorMessage(caught, "Falha ao exportar relatorio."));
+      setExportMessage(errorMessage(caught, "Falha ao exportar relatório."));
     } finally {
       setExporting(null);
     }
@@ -204,7 +204,7 @@ export function Insights() {
                 />
               </label>
               <label>
-                Ate
+                Até
                 <input
                   type="date"
                   className="input"
@@ -226,24 +226,24 @@ export function Insights() {
 
       <div className="insights-kpis">
         <KpiCard
-          label="Operacoes"
+          label="Operações"
           value={loading ? "-" : totals.operations.toLocaleString("pt-BR")}
           hint={range.label}
         />
         <KpiCard
-          label="Peso liquido"
+          label="Peso líquido"
           value={loading ? "-" : formatTonsShort(totals.weightKg)}
           hint={formatKg(totals.weightKg)}
         />
         <KpiCard
           label="Faturamento"
           value={loading ? "-" : formatBRL(totals.totalCents)}
-          hint="Operacoes fechadas"
+          hint="Operações fechadas"
         />
         <KpiCard
-          label="Ticket medio"
+          label="Ticket médio"
           value={loading ? "-" : formatBRL(totals.ticketCents)}
-          hint="Por operacao fechada"
+          hint="Por operação fechada"
         />
         <KpiCard
           label="Em aberto"
@@ -253,23 +253,23 @@ export function Insights() {
       </div>
 
       <div className="insights-charts">
-        <ChartCard title="Peso liquido por dia" hint={range.label}>
+        <ChartCard title="Peso líquido por dia" hint={range.label}>
           {series.length === 0 ? (
-            <p className="insights-muted">Sem dados no periodo.</p>
+            <p className="insights-muted">Sem dados no período.</p>
           ) : (
             <WeightAreaChart series={series} />
           )}
         </ChartCard>
         <ChartCard title="Top 5 produtos por peso" hint={range.label}>
           {topProducts.length === 0 ? (
-            <p className="insights-muted">Sem produtos vendidos no periodo.</p>
+            <p className="insights-muted">Sem produtos vendidos no período.</p>
           ) : (
             <ProductBarChart products={topProducts} />
           )}
         </ChartCard>
-        <ChartCard title="Mix de operacoes" hint={range.label}>
+        <ChartCard title="Mix de operações" hint={range.label}>
           {mixData.length === 0 || mixTotal === 0 ? (
-            <p className="insights-muted">Sem operacoes no periodo.</p>
+            <p className="insights-muted">Sem operações no período.</p>
           ) : (
             <MixDonut data={mixData} total={mixTotal} />
           )}
@@ -284,13 +284,13 @@ export function Insights() {
           </header>
           <div className="insights-sync-row">
             <div>
-              <p className="insights-sync-label">Operacoes em aberto na balanca</p>
+              <p className="insights-sync-label">Operações em aberto na balança</p>
               <p className="insights-sync-value">
                 {openOperations.loading
                   ? "-"
                   : openCount === 0
                     ? "Nenhuma em aberto"
-                    : `${openCount} aguardando saida`}
+                    : `${openCount} aguardando saída`}
               </p>
             </div>
             <button
@@ -313,7 +313,7 @@ export function Insights() {
 
         <article className="insights-card insights-pivot">
           <header className="insights-card-head">
-            <h3>Tabela dinamica de vendas</h3>
+            <h3>Tabela dinâmica de vendas</h3>
             <span>{range.label}</span>
           </header>
           <div className="insights-pivot-controls">
@@ -360,9 +360,9 @@ export function Insights() {
                   {pivotGroupBy === "day" && <th>Dia</th>}
                   {showCustomer && <th>Cliente</th>}
                   {showProduct && <th>Produto</th>}
-                  <th className="num">Operacoes</th>
+                  <th className="num">Operações</th>
                   <th className="num">Quantidade</th>
-                  <th className="num">Preco medio</th>
+                  <th className="num">Preço médio</th>
                   <th className="num">Total</th>
                 </tr>
               </thead>
@@ -372,7 +372,7 @@ export function Insights() {
                     <td colSpan={6} className="insights-pivot-empty">
                       {loading
                         ? "Carregando..."
-                        : "Sem vendas no periodo com os filtros selecionados."}
+                        : "Sem vendas no período com os filtros selecionados."}
                     </td>
                   </tr>
                 ) : (
@@ -606,7 +606,7 @@ function WeightAreaChart({ series }: { series: DailySeriesPoint[] }) {
                 label: `Dia ${formatShortDate(point.date)}`,
                 lines: [
                   {
-                    text: `Peso liquido : ${formatKg(point.totalNetWeightKg)}`,
+                    text: `Peso líquido : ${formatKg(point.totalNetWeightKg)}`,
                     color: "var(--kr-chart-1)"
                   }
                 ]

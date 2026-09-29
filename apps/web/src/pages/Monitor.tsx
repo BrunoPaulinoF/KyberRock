@@ -369,7 +369,7 @@ export function Monitor() {
       }
     } catch {
       if (mountedRef.current && params.fetchKey === paramsRef.current.fetchKey) {
-        setError("Nao foi possivel atualizar as vendas. Confira a internet; tentamos de novo.");
+        setError("Não foi possível atualizar as vendas. Confira a internet; tentamos de novo.");
       }
     } finally {
       inFlightRef.current = false;
@@ -577,14 +577,14 @@ export interface MonitorViewProps {
 
 const LEVEL_TEXT: Record<YardLevel, string> = {
   normal: "No tempo",
-  attention: "Atencao",
+  attention: "Atenção",
   late: "Atrasado"
 };
 
 const BASIS_TEXT: Record<YardThresholds["basis"], string> = {
-  unit: "media da unidade",
-  period: "media do periodo",
-  default: "limite padrao"
+  unit: "média da unidade",
+  period: "média do período",
+  default: "limite padrão"
 };
 
 const METRIC_TEXT: Record<MonitorMetric, string> = {
@@ -692,7 +692,7 @@ export function MonitorView(props: MonitorViewProps) {
   return (
     <div className={`mon${fit ? " is-fit" : ""}`}>
       <header className="mon-top">
-        <img src={publicAsset("logo.png")} alt="" className="mon-logo" />
+        <img src={publicAsset("logo-128.webp")} alt="" className="mon-logo" />
         <div className="mon-title">
           <h1>Monitoramento</h1>
           <span>{props.unitName || "Unidade"}</span>
@@ -703,14 +703,14 @@ export function MonitorView(props: MonitorViewProps) {
             type="button"
             className="mon-chip mon-chip-period"
             onClick={() => setDrawerOpen(true)}
-            title="Trocar o periodo"
+            title="Trocar o período"
           >
             <CalendarDays size={14} aria-hidden="true" />
             {periodWindow.label}
           </button>
           {widgets.kpis && (
-            <span className="mon-top-caption" title={`Variacao ${periodWindow.deltaLabel}`}>
-              Variacao {periodWindow.deltaLabel}
+            <span className="mon-top-caption" title={`Variação ${periodWindow.deltaLabel}`}>
+              Variação {periodWindow.deltaLabel}
             </span>
           )}
           {topChips.visible.map((chip) => (
@@ -747,7 +747,7 @@ export function MonitorView(props: MonitorViewProps) {
           )}
           <Segmented
             className="mon-filterbar-metric"
-            label="Medida dos graficos"
+            label="Medida dos gráficos"
             value={filters.metric}
             options={[
               { value: "tons", label: "Toneladas" },
@@ -764,7 +764,7 @@ export function MonitorView(props: MonitorViewProps) {
             onClick={() => setDrawerOpen(true)}
             aria-haspopup="dialog"
             aria-expanded={drawerOpen}
-            title="Filtros e paineis"
+            title="Filtros e painéis"
           >
             <SlidersHorizontal size={18} aria-hidden="true" />
             <span className="mon-top-label">Filtros</span>
@@ -875,7 +875,7 @@ export function MonitorView(props: MonitorViewProps) {
                             keyOf={productKeyOf}
                             labelOf={productLabelOf}
                             metric={filters.metric}
-                            emptyText="Nenhum produto vendido no periodo."
+                            emptyText="Nenhum produto vendido no período."
                           />
                         )}
                         {widgets.customers && (
@@ -888,7 +888,7 @@ export function MonitorView(props: MonitorViewProps) {
                             labelOf={customerLabelOf}
                             metric={filters.metric}
                             numbered
-                            emptyText="Nenhum cliente comprou no periodo."
+                            emptyText="Nenhum cliente comprou no período."
                           />
                         )}
                       </div>
@@ -915,7 +915,7 @@ export function MonitorView(props: MonitorViewProps) {
                 <strong>Nenhum painel ligado</strong>
                 <span>Abra os filtros e escolha o que aparece nesta tela.</span>
                 <button type="button" className="mon-btn" onClick={() => setDrawerOpen(true)}>
-                  Escolher paineis
+                  Escolher painéis
                 </button>
               </div>
             )}
@@ -1066,8 +1066,8 @@ function LiveIndicator({ status, now }: { status: MonitorViewStatus; now: number
       : `atualizado ${formatAgo(now - status.lastSuccessAt)}`;
   const title =
     status.realtime === "live"
-      ? "Recebendo avisos da balanca em tempo real"
-      : "Aviso em tempo real indisponivel: a tela confere a cada 30 s";
+      ? "Recebendo avisos da balança em tempo real"
+      : "Aviso em tempo real indisponível: a tela confere a cada 30 s";
   const Icon = state === "offline" ? WifiOff : state === "stale" ? TriangleAlert : null;
   return (
     <div className={`mon-live is-${state}`} title={`${text}, ${detail}. ${title}`}>
@@ -1128,7 +1128,7 @@ function Delta({
   const tone = deltaTone(value, higherIsBetter);
   if (tone === "none" || value === null) {
     return (
-      <span className="mon-delta is-none" title={`Sem base de comparacao (${context})`}>
+      <span className="mon-delta is-none" title={`Sem base de comparação (${context})`}>
         sem base
       </span>
     );
@@ -1187,7 +1187,7 @@ function KpiRow({ kpis, period }: { kpis: MonitorKpis; period: PeriodWindow }) {
   const ticket = current.loads > 0 ? Math.round(current.totalCents / current.loads) : 0;
   const yardTone = kpis.yardLate > 0 ? "danger" : kpis.yardAttention > 0 ? "warning" : undefined;
   return (
-    <section className="mon-kpis" aria-label={`Indicadores do periodo (variacao ${context})`}>
+    <section className="mon-kpis" aria-label={`Indicadores do período (variação ${context})`}>
       <div className="mon-kpi-grid">
         <KpiTile
           hero
@@ -1218,14 +1218,14 @@ function KpiRow({ kpis, period }: { kpis: MonitorKpis; period: PeriodWindow }) {
         />
         <KpiTile
           icon={Scale}
-          label="Preco medio / t"
+          label="Preço médio / t"
           value={current.pricePerTonCents === null ? "--" : formatMoney(current.pricePerTonCents)}
           delta={<Delta value={deltas.pricePerTon} context={context} />}
-          foot="So material"
+          foot="Só material"
         />
         <KpiTile
           icon={Hourglass}
-          label="No patio agora"
+          label="No pátio agora"
           value={kpis.yardNow.toLocaleString("pt-BR")}
           tone={yardTone}
           foot={
@@ -1237,21 +1237,21 @@ function KpiRow({ kpis, period }: { kpis: MonitorKpis; period: PeriodWindow }) {
             ) : kpis.yardAttention > 0 ? (
               <span className="mon-kpi-alert is-warning">
                 <Clock size={13} aria-hidden="true" />
-                {kpis.yardAttention} em atencao
+                {kpis.yardAttention} em atenção
               </span>
             ) : kpis.yardNow > 0 ? (
               "Todos no tempo"
             ) : (
-              "Patio vazio"
+              "Pátio vazio"
             )
           }
         />
         <KpiTile
           icon={Timer}
-          label="Media no patio"
+          label="Média no pátio"
           value={formatDuration(current.avgYardMinutes)}
           delta={<Delta value={deltas.avgYardMinutes} higherIsBetter={false} context={context} />}
-          foot="Quem saiu no periodo"
+          foot="Quem saiu no período"
         />
       </div>
     </section>
@@ -1340,17 +1340,17 @@ function FeedPanel({
     <section className="mon-card mon-w-feed" aria-labelledby={headingId}>
       <PanelHead
         id={headingId}
-        title="Ultimas vendas"
+        title="Últimas vendas"
         count={sales.length}
         sub="Mais nova primeiro"
       />
       {sales.length === 0 ? (
         <EmptyState
-          title={hasFilters ? "Nenhuma venda com estes filtros" : "Nenhuma venda no periodo"}
+          title={hasFilters ? "Nenhuma venda com estes filtros" : "Nenhuma venda no período"}
           text={
             hasFilters
               ? "Tire um filtro para ver mais vendas."
-              : "Cada pesagem fechada na balanca aparece aqui na hora."
+              : "Cada pesagem fechada na balança aparece aqui na hora."
           }
           action={
             hasFilters ? (
@@ -1436,13 +1436,13 @@ function YardPanel({
     <section className="mon-card mon-w-yard" aria-labelledby={headingId}>
       <PanelHead
         id={headingId}
-        title="No patio agora"
+        title="No pátio agora"
         count={tickets.length}
         sub="Mais antigo primeiro"
         below={
           <ul
             className="mon-legend mon-levels"
-            aria-label={`Limites do patio (${BASIS_TEXT[thresholds.basis]})`}
+            aria-label={`Limites do pátio (${BASIS_TEXT[thresholds.basis]})`}
             title={`Limites pela ${BASIS_TEXT[thresholds.basis]}`}
           >
             <li className="is-normal">
@@ -1451,7 +1451,7 @@ function YardPanel({
             </li>
             <li className="is-attention">
               <Hourglass size={13} aria-hidden="true" />
-              Atencao +{thresholds.attention} min
+              Atenção +{thresholds.attention} min
             </li>
             <li className="is-late">
               <TriangleAlert size={13} aria-hidden="true" />
@@ -1461,7 +1461,7 @@ function YardPanel({
         }
       />
       {tickets.length === 0 ? (
-        <EmptyState title="Patio vazio" text="Nenhum caminhao aguardando carga agora." />
+        <EmptyState title="Pátio vazio" text="Nenhum caminhão aguardando carga agora." />
       ) : (
         <div ref={ref} className="mon-fit">
           <ol className="mon-list">
@@ -1486,7 +1486,7 @@ function YardPanel({
                   <div
                     className="mon-meter"
                     role="meter"
-                    aria-label="Tempo no patio em relacao ao limite de atraso"
+                    aria-label="Tempo no pátio em relação ao limite de atraso"
                     aria-valuemin={0}
                     aria-valuemax={thresholds.late}
                     aria-valuenow={Math.round(Math.min(ticket.minutes, thresholds.late))}
@@ -1511,7 +1511,7 @@ function YardPanel({
           </ol>
           <MoreFooter
             hidden={hidden}
-            text={hidden === 1 ? "caminhao que chegou depois" : "caminhoes que chegaram depois"}
+            text={hidden === 1 ? "caminhão que chegou depois" : "caminhões que chegaram depois"}
           />
         </div>
       )}
@@ -1609,7 +1609,7 @@ function SalesChart({
           ? `, pico de ${formatMetric(currentValues[peak] ?? 0, metric)} em ${buckets[peak].label}`
           : ""
       }.`
-    : `${title}: sem vendas no periodo.`;
+    : `${title}: sem vendas no período.`;
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (buckets.length === 0) return;
@@ -1650,8 +1650,8 @@ function SalesChart({
           className="mon-icon-btn"
           onClick={() => setShowTable((value) => !value)}
           aria-pressed={showTable}
-          title={showTable ? "Ver como grafico" : "Ver como tabela"}
-          aria-label={showTable ? "Ver como grafico" : "Ver como tabela"}
+          title={showTable ? "Ver como gráfico" : "Ver como tabela"}
+          aria-label={showTable ? "Ver como gráfico" : "Ver como tabela"}
         >
           {showTable ? (
             <ChartColumn size={16} aria-hidden="true" />
@@ -1822,7 +1822,7 @@ function SalesChart({
             </svg>
           )}
           {!hasData && drawable && (
-            <div className="mon-chart-empty">Sem vendas para mostrar no periodo.</div>
+            <div className="mon-chart-empty">Sem vendas para mostrar no período.</div>
           )}
           {activeBucket && drawable && (
             <div
@@ -1844,7 +1844,7 @@ function SalesChart({
                   {period.seriesLabel}
                   {activeBucket.current
                     ? ` · ${activeBucket.current.loads} carga${activeBucket.current.loads === 1 ? "" : "s"}`
-                    : " · ainda nao chegou"}
+                    : " · ainda não chegou"}
                 </span>
               </div>
               <div className="mon-tip-row">
@@ -1965,7 +1965,7 @@ function PaymentsPanel({
         sub={`por ${METRIC_TEXT[metric].toLowerCase()}`}
       />
       {segments.length === 0 ? (
-        <p className="mon-pay-empty">Nenhuma venda no periodo.</p>
+        <p className="mon-pay-empty">Nenhuma venda no período.</p>
       ) : (
         <>
           <div className="mon-stack" aria-hidden="true" onPointerLeave={() => setActive(null)}>
@@ -2095,7 +2095,7 @@ function FiltersDrawer({
         </header>
         <div className="mon-drawer-body">
           <fieldset className="mon-fieldset">
-            <legend>Periodo</legend>
+            <legend>Período</legend>
             <div className="mon-options">
               {MONITOR_PERIODS.map((option) => (
                 <button
@@ -2134,7 +2134,7 @@ function FiltersDrawer({
           <fieldset className="mon-fieldset">
             <legend>Produtos</legend>
             {productChoices.length === 0 ? (
-              <p className="mon-hint">Os produtos aparecem aqui quando houver venda no periodo.</p>
+              <p className="mon-hint">Os produtos aparecem aqui quando houver venda no período.</p>
             ) : (
               <div className="mon-options">
                 {productChoices.map((product) => (
@@ -2173,7 +2173,7 @@ function FiltersDrawer({
           <fieldset className="mon-fieldset">
             <legend>Formas de pagamento</legend>
             {paymentChoices.length === 0 ? (
-              <p className="mon-hint">As formas aparecem aqui quando houver venda no periodo.</p>
+              <p className="mon-hint">As formas aparecem aqui quando houver venda no período.</p>
             ) : (
               <div className="mon-options">
                 {paymentChoices.map((payment) => (
@@ -2196,9 +2196,9 @@ function FiltersDrawer({
           </fieldset>
 
           <fieldset className="mon-fieldset">
-            <legend>Medida dos graficos</legend>
+            <legend>Medida dos gráficos</legend>
             <Segmented
-              label="Medida dos graficos"
+              label="Medida dos gráficos"
               value={filters.metric}
               options={[
                 { value: "tons", label: "Toneladas" },

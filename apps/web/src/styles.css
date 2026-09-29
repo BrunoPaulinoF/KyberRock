@@ -28,6 +28,9 @@
   --kr-accent: #d97706;
   --kr-accent-soft: #fef3c7;
   --kr-accent-border: #fcd34d;
+  /* So do site: o ambar do acento (#d97706) em texto sobre branco fica em 3,2:1, abaixo do
+     minimo de leitura (4,5:1). Link e botao-texto usam este tom mais escuro. */
+  --kr-link: #b45309;
   --kr-focus-ring: rgba(217, 119, 6, 0.4);
   --kr-selection-bg: #fde68a;
   --kr-selection-text: #1c1917;
@@ -79,6 +82,7 @@
   --kr-accent: #fbbf24;
   --kr-accent-soft: #451a03;
   --kr-accent-border: #92400e;
+  --kr-link: #fbbf24;
   --kr-focus-ring: rgba(251, 191, 36, 0.5);
   --kr-selection-bg: #b45309;
   --kr-selection-text: #fffbeb;
@@ -131,7 +135,7 @@ body {
     Roboto,
     Arial,
     sans-serif;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.45;
   color: var(--kr-text);
   background: var(--kr-bg);
@@ -209,7 +213,7 @@ h3 {
   padding: 10px;
 }
 .sidebar {
-  width: 224px;
+  width: 252px;
   flex-shrink: 0;
   position: sticky;
   top: 10px;
@@ -242,7 +246,7 @@ h3 {
   color: var(--kr-text-strong);
 }
 .sidebar-meta {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
   margin-left: 2px;
 }
@@ -256,7 +260,7 @@ h3 {
   padding-right: 4px;
 }
 .nav-section {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--kr-muted);
   text-transform: uppercase;
@@ -270,7 +274,7 @@ h3 {
   width: 100%;
   padding: 8px 12px;
   min-height: 32px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--kr-muted);
   background: transparent;
@@ -388,7 +392,7 @@ h3 {
   padding: 8px 10px;
   background: transparent;
   color: var(--kr-text);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   text-align: left;
   cursor: pointer;
@@ -441,7 +445,7 @@ h3 {
 .page-head p {
   margin: 0;
   color: var(--kr-muted);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.35;
 }
 .actions {
@@ -493,7 +497,7 @@ h3 {
 }
 .kpi span {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--kr-muted);
   text-transform: uppercase;
@@ -530,7 +534,7 @@ table.data td {
   border-bottom: 1px solid var(--kr-border);
   vertical-align: middle;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 14px;
 }
 table.data tbody tr:last-child td {
   border-bottom: none;
@@ -539,7 +543,7 @@ table.data th {
   position: sticky;
   top: 0;
   z-index: 1;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -608,7 +612,7 @@ table.data th.num {
   border: 1px solid var(--kr-input-border);
   border-radius: 10px;
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: 14px;
   background: var(--kr-input-bg);
   color: var(--kr-text-strong);
   min-width: 0;
@@ -672,7 +676,7 @@ input[type="radio"] {
   color: var(--kr-text-strong);
   cursor: pointer;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.2;
   white-space: nowrap;
 }
@@ -699,7 +703,7 @@ input[type="radio"] {
 .btn.link {
   border: none;
   background: none;
-  color: var(--kr-accent);
+  color: var(--kr-link);
   padding: 2px 4px;
   font-weight: 700;
 }
@@ -714,7 +718,7 @@ input[type="radio"] {
   align-items: center;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
   background: var(--kr-surface-soft);
@@ -748,7 +752,7 @@ input[type="radio"] {
   border-radius: 12px;
   padding: 10px 14px;
   border: 1px solid;
-  font-size: 13px;
+  font-size: 14px;
 }
 .alert.error {
   background: var(--kr-danger-soft);
@@ -789,7 +793,7 @@ input[type="radio"] {
   color: var(--kr-text-strong);
   border: 1px solid var(--kr-border);
   box-shadow: var(--kr-shadow);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   max-width: 100%;
 }
@@ -856,58 +860,172 @@ input[type="radio"] {
 }
 
 /* ---------- login ---------- */
+/*
+ * A mesma cara do cartao de login da pagina de apresentacao (`landing.css`, `.lp-login`): pedra
+ * escura com brilho ambar atras, cartao da cor da superficie do tema e botao ambar com texto
+ * escuro (o ambar com texto branco nao passa no contraste). O fundo e escuro nos dois temas,
+ * como o topo da pagina de apresentacao.
+ */
 .login {
+  --login-night: #0c0a09;
+  --login-glow: rgba(245, 158, 11, 0.22);
+  --login-line: rgba(250, 250, 249, 0.06);
+  --login-amber: #f59e0b;
+  --login-amber-hi: #fbbf24;
+  --login-amber-text: #1c1206;
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
-  padding: 16px;
-  background: var(--kr-bg);
+  padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  background:
+    radial-gradient(60rem 30rem at 15% -10%, var(--login-glow), transparent 60%),
+    linear-gradient(var(--login-line) 1px, transparent 1px) 0 0 / 48px 48px,
+    linear-gradient(90deg, var(--login-line) 1px, transparent 1px) 0 0 / 48px 48px,
+    var(--login-night);
 }
-.login .panel {
+.login-card {
   width: 100%;
-  max-width: 380px;
+  max-width: 400px;
+  display: grid;
+  gap: 14px;
+  padding: 28px;
+  border-radius: 20px;
+  background: var(--kr-surface);
+  border: 1px solid var(--kr-border);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
 }
 .login-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 12px;
 }
 .login-brand img {
-  height: 36px;
-  width: auto;
-  border-radius: 8px;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  border: 1px solid var(--kr-border);
 }
-.login-brand h1 {
-  margin: 0;
-  font-size: 22px;
-  line-height: 1.1;
-}
-.login-brand small {
+.login-brand strong {
   display: block;
-  color: var(--kr-muted);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 18px;
+  line-height: 1.2;
+  color: var(--kr-text-strong);
 }
-.login .sub {
+.login-brand span {
+  display: block;
+  font-size: 13px;
   color: var(--kr-muted);
-  margin: 0 0 16px;
 }
-.login .alert {
-  margin-bottom: 12px;
+.login-card h1 {
+  margin: 6px 0 0;
+  font-size: 26px;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+.login-sub {
+  margin: 0;
+  color: var(--kr-muted);
+  font-size: 15px;
+}
+.login-card .alert {
+  margin: 0;
+}
+.login-form {
+  display: grid;
+  gap: 14px;
+}
+.login-field {
+  display: grid;
+  gap: 6px;
+}
+.login-field > span:first-child {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--kr-text-strong);
+}
+.login-field .input {
+  width: 100%;
+  min-height: 46px;
+  font-size: 16px;
+  border-radius: 12px;
+  padding: 10px 14px;
+}
+.login-password {
+  position: relative;
+  display: block;
+}
+.login-password .input {
+  padding-right: 48px;
+}
+.login-reveal {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--kr-muted);
+  cursor: pointer;
+}
+.login-reveal:hover {
+  color: var(--kr-text-strong);
+  background: var(--kr-surface-soft);
+}
+.login-reveal:not(:disabled):active {
+  transform: translateY(-50%);
+}
+.login-submit {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: none;
+  border-radius: 999px;
+  background: var(--login-amber);
+  color: var(--login-amber-text);
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(245, 158, 11, 0.28);
+}
+.login-submit:not(:disabled):hover {
+  background: var(--login-amber-hi);
+  filter: none;
+}
+.login-submit:disabled {
+  opacity: 0.7;
+}
+.login-roles {
+  margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--kr-border);
+  font-size: 13px;
+  color: var(--kr-muted);
 }
 .login-foot {
-  margin: 14px 0 0;
+  margin: 0;
   text-align: center;
-  font-size: 12px;
+  font-size: 14px;
 }
 .login-foot a {
-  color: var(--kr-accent);
-  font-weight: 600;
+  color: var(--kr-link);
+  font-weight: 700;
   text-decoration: none;
 }
 .login-foot a:hover {
   text-decoration: underline;
+}
+@media (max-width: 480px) {
+  .login-card {
+    padding: 22px 18px;
+  }
 }
 
 /* ---------- sub-abas (o subTabs do desktop) ---------- */
@@ -924,7 +1042,7 @@ input[type="radio"] {
   cursor: pointer;
   color: var(--kr-muted);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   border-radius: 8px 8px 0 0;
@@ -997,7 +1115,7 @@ input[type="radio"] {
 }
 .picker-list li small {
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .picker-empty,
 .picker-none {
@@ -1491,7 +1609,7 @@ input[type="radio"] {
 }
 .desk-muted {
   color: var(--kr-muted);
-  font-size: 13px;
+  font-size: 14px;
   margin: 12px 0 0;
 }
 .desk-title-row {
@@ -1515,11 +1633,15 @@ input[type="radio"] {
   border: none;
   border-bottom: 2px solid transparent;
   border-radius: 0;
-  padding: 8px 16px;
+  padding: 9px 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  line-height: 0;
+  gap: 7px;
+  line-height: 1.2;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
   background: transparent;
   color: var(--kr-muted);
   cursor: pointer;
@@ -1533,6 +1655,7 @@ input[type="radio"] {
 }
 .pill-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
 }
@@ -1543,7 +1666,11 @@ input[type="radio"] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  line-height: 0;
+  gap: 7px;
+  line-height: 1.2;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
   background: var(--kr-surface);
   color: var(--kr-text-strong);
   cursor: pointer;
@@ -1583,7 +1710,7 @@ input[type="radio"] {
   border: 1px solid var(--kr-border);
   background: var(--kr-surface-soft);
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
 }
 .new-btn {
@@ -1618,7 +1745,7 @@ input[type="radio"] {
   outline: none;
   background: transparent;
   padding: 8px 0;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--kr-text-strong);
 }
 .icon-action {
@@ -1690,7 +1817,7 @@ input[type="radio"] {
   gap: 5px;
   padding: 2px 8px 2px 6px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -1746,7 +1873,7 @@ input[type="radio"] {
   border: 1px solid var(--kr-border);
   background: var(--kr-surface-soft);
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
 }
@@ -1847,7 +1974,7 @@ input[type="radio"] {
   gap: 10px;
   padding: 8px 10px;
   border-top: 1px solid var(--kr-border);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--kr-text);
   min-width: 720px;
 }
@@ -1867,7 +1994,7 @@ input[type="radio"] {
   border-top: none;
   background: var(--kr-surface-soft);
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -1894,7 +2021,7 @@ input[type="radio"] {
   color: var(--kr-text-strong);
 }
 .op-cell small {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
 }
 .op-plate {
@@ -1930,7 +2057,7 @@ input[type="radio"] {
   border-radius: 10px;
   background: var(--kr-surface-soft);
   padding: 8px 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
   line-height: 1.45;
   margin-bottom: 6px;

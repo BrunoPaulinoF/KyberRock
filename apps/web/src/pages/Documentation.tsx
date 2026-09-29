@@ -106,19 +106,19 @@ function storeJson(key: string, value: unknown): void {
 // ---------------------------------------------------------------------------
 
 const documentationTabs: Array<{ id: DocumentationTabId; label: string; icon: LucideIcon }> = [
-  { id: "start", label: "Comecar", icon: Rocket },
+  { id: "start", label: "Começar", icon: Rocket },
   { id: "guides", label: "Guias", icon: BookOpen },
-  { id: "faq", label: "Duvidas", icon: HelpCircle },
-  { id: "troubleshoot", label: "Diagnostico", icon: Wrench },
-  { id: "glossary", label: "Glossario", icon: BookMarked },
+  { id: "faq", label: "Dúvidas", icon: HelpCircle },
+  { id: "troubleshoot", label: "Diagnóstico", icon: Wrench },
+  { id: "glossary", label: "Glossário", icon: BookMarked },
   { id: "support", label: "Suporte", icon: LifeBuoy }
 ];
 
 const RESULT_KIND_LABEL: Record<DocumentationSearchResult["kind"], string> = {
   section: "Guia",
-  faq: "Duvida",
-  flow: "Diagnostico",
-  glossary: "Glossario"
+  faq: "Dúvida",
+  flow: "Diagnóstico",
+  glossary: "Glossário"
 };
 
 const RESULT_KIND_ICON: Record<DocumentationSearchResult["kind"], LucideIcon> = {
@@ -218,7 +218,7 @@ export function Documentation() {
       <div className="krdoc-search-bar">
         <label className="krdoc-search-label" htmlFor="documentation-search">
           <Search size={15} />
-          <span id="documentation-title">Buscar na documentacao</span>
+          <span id="documentation-title">Buscar na documentação</span>
         </label>
         <input
           id="documentation-search"
@@ -226,7 +226,7 @@ export function Documentation() {
           className="krdoc-input"
           type="search"
           value={searchQuery}
-          placeholder='Digite sua duvida: "como emitir nota fiscal", "a balanca nao conecta"...'
+          placeholder='Digite sua dúvida: "como emitir nota fiscal", "a balança não conecta"...'
           autoComplete="off"
           onChange={(event) => setSearchQuery(event.target.value)}
           onKeyDown={(event) => {
@@ -256,7 +256,7 @@ export function Documentation() {
         ) : null}
       </div>
 
-      <nav aria-label="Areas da documentacao" className="krdoc-tab-bar" role="tablist">
+      <nav aria-label="Áreas da documentação" className="krdoc-tab-bar" role="tablist">
         {documentationTabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = !searching && activeTab === tab.id;
@@ -462,8 +462,8 @@ function StartTab({
         <PanelHeader
           icon={Rocket}
           titleId="quickstart-title"
-          title="Preparacao da unidade"
-          description="Marque cada etapa concluida. O progresso fica salvo neste computador."
+          title="Preparação da unidade"
+          description="Marque cada etapa concluída. O progresso fica salvo neste computador."
         >
           <span className="krdoc-progress-badge">
             {doneCount}/{quickStartTasks.length}
@@ -475,7 +475,7 @@ function StartTab({
           aria-valuenow={progressPercent}
           aria-valuemin={0}
           aria-valuemax={100}
-          aria-label="Progresso da preparacao"
+          aria-label="Progresso da preparação"
         >
           <div className="krdoc-progress-fill" style={{ width: `${progressPercent}%` }} />
         </div>
@@ -517,7 +517,7 @@ function StartTab({
           icon={Truck}
           titleId="flow-title"
           title="Ciclo de uma pesagem"
-          description="Toda operacao passa por estas etapas. Clique em uma etapa para abrir o guia."
+          description="Toda operação passa por estas etapas. Clique em uma etapa para abrir o guia."
         />
         <ol className="krdoc-flow-list">
           {operationFlowStages.map((stage, index) => {
@@ -548,7 +548,7 @@ function StartTab({
         <div className="krdoc-hint-card">
           <CheckCircle2 size={16} />
           <span>
-            Com problema agora? Abra a aba <strong>Diagnostico</strong> e siga as verificacoes
+            Com problema agora? Abra a aba <strong>Diagnóstico</strong> e siga as verificações
             guiadas antes de chamar o suporte.
           </span>
         </div>
@@ -586,7 +586,7 @@ function GuidesTab({
 
   return (
     <div className="krdoc-guides-grid">
-      <nav aria-label="Guias disponiveis" className="krdoc-guide-nav">
+      <nav aria-label="Guias disponíveis" className="krdoc-guide-nav">
         {documentationSections.map((section) => {
           const SectionIcon = section.icon;
           const isActive = section.id === activeSection.id;
@@ -725,11 +725,11 @@ function FaqTab({
       <PanelHeader
         icon={HelpCircle}
         titleId="faq-title"
-        title="Duvidas comuns"
-        description="Clique em uma pergunta para ver a resposta. Filtre por assunto, ou use a busca la em cima para procurar pela frase inteira."
+        title="Dúvidas comuns"
+        description="Clique em uma pergunta para ver a resposta. Filtre por assunto, ou use a busca lá em cima para procurar pela frase inteira."
       />
 
-      <div className="krdoc-category-row" role="group" aria-label="Filtrar duvidas por assunto">
+      <div className="krdoc-category-row" role="group" aria-label="Filtrar dúvidas por assunto">
         {documentationFaqCategories.map((option) => (
           <button
             key={option.id}
@@ -805,8 +805,8 @@ function TroubleshootTab({
         <PanelHeader
           icon={Wrench}
           titleId="troubleshoot-title"
-          title="Diagnostico guiado"
-          description="Escolha o problema que esta acontecendo para seguir as verificacoes na ordem certa."
+          title="Diagnóstico guiado"
+          description="Escolha o problema que está acontecendo para seguir as verificações na ordem certa."
         />
         <div className="krdoc-flow-grid">
           {troubleshootingFlows.map((flow) => {
@@ -863,7 +863,7 @@ function TroubleshootTab({
       />
 
       <p className="krdoc-troubleshoot-hint">
-        Siga as verificacoes na ordem e marque as que ja fez. Teste o sistema apos cada passo.
+        Siga as verificações na ordem e marque as que já fez. Teste o sistema após cada passo.
       </p>
 
       <ol className="krdoc-step-list">
@@ -889,7 +889,7 @@ function TroubleshootTab({
       <div className="krdoc-escalation-box">
         <AlertTriangle size={16} className="krdoc-escalation-icon" />
         <div className="krdoc-panel-header-text">
-          <strong className="krdoc-escalation-title">Nao resolveu?</strong>
+          <strong className="krdoc-escalation-title">Não resolveu?</strong>
           <p className="krdoc-escalation-text">{activeFlow.escalation}</p>
           <button type="button" className="krdoc-ghost-btn" onClick={onOpenSupport}>
             <LifeBuoy size={14} />
@@ -911,7 +911,7 @@ function GlossaryTab({ onOpenGuide }: { onOpenGuide: (sectionId: string) => void
       <PanelHeader
         icon={BookMarked}
         titleId="glossary-title"
-        title="Glossario"
+        title="Glossário"
         description="O que cada termo do sistema quer dizer, na linguagem da pedreira."
       />
       <div className="krdoc-glossary-grid">
@@ -977,7 +977,7 @@ function SupportTab() {
           icon={LifeBuoy}
           titleId="support-title"
           title="Antes de chamar o suporte"
-          description="Colete estas informacoes para acelerar o diagnostico do problema."
+          description="Colete estas informações para acelerar o diagnóstico do problema."
         >
           <button type="button" className="krdoc-ghost-btn" onClick={() => void copyChecklist()}>
             {copied ? <CheckCircle2 size={14} /> : <Copy size={14} />}
@@ -993,7 +993,7 @@ function SupportTab() {
           ))}
         </div>
         <p className="krdoc-support-footnote">
-          O botao Copiar modelo gera um texto pronto para preencher e enviar ao suporte por e-mail
+          O botão Copiar modelo gera um texto pronto para preencher e enviar ao suporte por e-mail
           ou mensagem.
         </p>
       </section>
@@ -1007,19 +1007,19 @@ function SupportTab() {
         />
         <ul className="krdoc-detail-list">
           <li>
-            <strong>Erros recentes:</strong> use o botao de logs no menu da engrenagem (F10) para
-            ver falhas de sincronizacao, balanca e impressao.
+            <strong>Erros recentes:</strong> use o botão de logs no menu da engrenagem (F10) para
+            ver falhas de sincronização, balança e impressão.
           </li>
           <li>
-            <strong>Desktop nao abre:</strong> consulte o arquivo startup.log em AppData Local, na
+            <strong>Desktop não abre:</strong> consulte o arquivo startup.log em AppData Local, na
             pasta do KyberRock Desktop.
           </li>
           <li>
-            <strong>Faturamento recusado:</strong> copie tambem a mensagem exibida pelo OMIE — e ela
+            <strong>Faturamento recusado:</strong> copie também a mensagem exibida pelo OMIE — é ela
             que nomeia o campo que faltou no cadastro.
           </li>
           <li>
-            <strong>Antes de reinstalar:</strong> sempre faca backup do banco local. A operacao
+            <strong>Antes de reinstalar:</strong> sempre faça backup do banco local. A operação
             fechada nunca deve ser perdida.
           </li>
         </ul>

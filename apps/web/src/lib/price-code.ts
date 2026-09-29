@@ -9,7 +9,7 @@
 
 /** A senha e o codigo rotativo que so o comercial ve (tela "Senha de preco", `lib/price-code.ts`). */
 export const PRICE_CODE_HINT =
-  "Troca a cada 45 segundos. Peca ao comercial a senha que esta na tela dele agora.";
+  "Troca a cada 45 segundos. Peça ao comercial a senha que está na tela dele agora.";
 
 export interface PriceCodeResponse {
   code: string;

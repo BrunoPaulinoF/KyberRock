@@ -91,31 +91,31 @@ function ScaleSettings() {
     <div className="settings-grid">
       <DeskPanel>
         <div className="desk-title-row">
-          <h1 className="desk-title">Balancas da unidade</h1>
+          <h1 className="desk-title">Balanças da unidade</h1>
           <RefreshButton onClick={() => void devices.reload()} />
         </div>
         <p className="desk-muted" style={{ marginTop: 0, marginBottom: 12 }}>
-          Os computadores de balanca desta pedreira. A conexao com a balanca (rede, USB ou serial) e
-          configurada em cada computador, na tela Balanca do KyberRock Desktop.
+          Os computadores de balança desta pedreira. A conexão com a balança (rede, USB ou serial) é
+          configurada em cada computador, na tela Balança do KyberRock Desktop.
         </p>
         {devices.error && <Alert kind="error">{devices.error}</Alert>}
         {rows.length === 0 && !devices.loading ? (
-          <EmptyState title="Nenhuma balanca ativada nesta unidade." />
+          <EmptyState title="Nenhuma balança ativada nesta unidade." />
         ) : (
           <DataTable
             rows={rows}
             rowKey={(row) => row.id}
-            empty={devices.loading ? "Carregando..." : "Nenhuma balanca."}
+            empty={devices.loading ? "Carregando..." : "Nenhuma balança."}
             columns={[
               {
                 key: "name",
-                header: "Balanca",
+                header: "Balança",
                 render: (row) => (
                   <>
                     <strong>{row.name}</strong>
                     <span className="cell-sub">
-                      {row.deviceNumber ? `No ${row.deviceNumber}` : ""}
-                      {row.appVersion ? ` · versao ${row.appVersion}` : ""}
+                      {row.deviceNumber ? `Nº ${row.deviceNumber}` : ""}
+                      {row.appVersion ? ` · versão ${row.appVersion}` : ""}
                       {row.updateChannel === "teste" ? " · anel de teste" : ""}
                     </span>
                   </>
@@ -123,7 +123,7 @@ function ScaleSettings() {
               },
               {
                 key: "status",
-                header: "Situacao",
+                header: "Situação",
                 render: (row) =>
                   row.online ? (
                     <Pill tone="success">Ligada</Pill>
@@ -133,7 +133,7 @@ function ScaleSettings() {
               },
               {
                 key: "seen",
-                header: "Ultimo sinal",
+                header: "Último sinal",
                 render: (row) =>
                   row.lastSeenAt ? (
                     <span title={formatDateTime(row.lastSeenAt)}>
@@ -145,11 +145,11 @@ function ScaleSettings() {
               },
               {
                 key: "roles",
-                header: "Funcao",
+                header: "Função",
                 render: (row) => (
                   <span className="row-actions" style={{ justifyContent: "flex-start" }}>
                     {row.executesWebOperations && <Pill tone="info">Executa o site</Pill>}
-                    {row.isPriceMaster && <Pill tone="info">Principal de precos</Pill>}
+                    {row.isPriceMaster && <Pill tone="info">Principal de preços</Pill>}
                     {!row.executesWebOperations && !row.isPriceMaster && "—"}
                   </span>
                 )
@@ -166,22 +166,22 @@ function ScaleSettings() {
             {!executor
               ? "Verificando..."
               : !executor.executor
-                ? "Nenhuma balanca executa o site"
+                ? "Nenhuma balança executa o site"
                 : executor.executor.needsUpdate
-                  ? `${executor.executor.name} precisa ser atualizada (versao ${executor.executor.minVersion ?? "mais nova"})`
+                  ? `${executor.executor.name} precisa ser atualizada (versão ${executor.executor.minVersion ?? "mais nova"})`
                   : executor.executor.online
                     ? `${executor.executor.name} conectada`
                     : `${executor.executor.name} fora do ar`}
           </strong>
           <span>
-            O site nao le o peso da balanca: no fechamento pelo site o peso e digitado, e a balanca
-            executora registra a pesagem com as mesmas regras do botao "Capturar peso". A Nova
-            entrada so e feita no KyberRock Desktop.
+            O site não lê o peso da balança: no fechamento pelo site o peso é digitado, e a balança
+            executora registra a pesagem com as mesmas regras do botão "Capturar peso". A Nova
+            entrada só é feita no KyberRock Desktop.
           </span>
         </div>
         <p className="desk-muted">
-          Quem executa os pedidos do site e marcado no painel admin (Acessos do sistema → "Pesagem
-          do site"), uma balanca por unidade.
+          Quem executa os pedidos do site é marcado no painel admin (Acessos do sistema → "Pesagem
+          do site"), uma balança por unidade.
         </p>
       </DeskPanel>
     </div>
@@ -216,11 +216,11 @@ function PrintingSettings() {
           <h1 className="desk-title">Perfil de cupom 80 mm</h1>
         </div>
         <div className="settings-live" style={{ minHeight: 0 }}>
-          <strong>Impressora da balanca {executor?.executor?.name ?? "executora"}</strong>
+          <strong>Impressora da balança {executor?.executor?.name ?? "executora"}</strong>
           <span>
             O cupom das pesagens feitas pelo site sai na impressora do computador que executa os
-            pedidos, com o perfil dele: tipo de impressora, numero de vias (1 ou 2), logo e
-            telefone. Para mudar, use Configuracoes → Impressao no KyberRock Desktop desse
+            pedidos, com o perfil dele: tipo de impressora, número de vias (1 ou 2), logo e
+            telefone. Para mudar, use Configurações → Impressão no KyberRock Desktop desse
             computador.
           </span>
         </div>
@@ -232,7 +232,7 @@ function PrintingSettings() {
           <RefreshButton onClick={() => void requests.reload()} />
         </div>
         <p className="desk-muted" style={{ marginTop: 0, marginBottom: 12 }}>
-          Ultimos 7 dias. Cupom que nao imprimiu aparece em vermelho, com o motivo que a balanca
+          Últimos 7 dias. Cupom que não imprimiu aparece em vermelho, com o motivo que a balança
           devolveu.
         </p>
         {requests.error && <Alert kind="error">{requests.error}</Alert>}
@@ -258,7 +258,7 @@ function PrintingSettings() {
                     <>
                       <strong>{REQUEST_KIND_LABELS[row.kind]}</strong>
                       <span className="cell-sub">
-                        {result?.operationCode ? `No ${result.operationCode}` : ""}
+                        {result?.operationCode ? `Nº ${result.operationCode}` : ""}
                         {result?.plate ? ` · ${formatPlate(result.plate)}` : ""}
                       </span>
                     </>
@@ -272,9 +272,9 @@ function PrintingSettings() {
                   row.print_status === "printed" ? (
                     <Pill tone="success">Impresso</Pill>
                   ) : row.print_status === "failed" ? (
-                    <Pill tone="danger">Nao imprimiu</Pill>
+                    <Pill tone="danger">Não imprimiu</Pill>
                   ) : (
-                    <Pill>Nao precisou</Pill>
+                    <Pill>Não precisou</Pill>
                   )
               },
               {
@@ -289,7 +289,7 @@ function PrintingSettings() {
               },
               {
                 key: "actions",
-                header: "Acoes",
+                header: "Ações",
                 numeric: true,
                 render: (row) =>
                   user.canOperate &&
@@ -349,13 +349,13 @@ function CloudSettings() {
     <div className="settings-grid">
       <div className="settings-stack">
         <DeskPanel>
-          <h1 className="desk-title">Sincronizacao Supabase</h1>
+          <h1 className="desk-title">Sincronização Supabase</h1>
           <p className="settings-status">
             <strong>Status:</strong> Conectado
           </p>
           <p className="desk-muted" style={{ marginTop: 0 }}>
-            O site trabalha direto na nuvem: nao tem fila propria. Quem sincroniza e cada balanca —
-            a saude da fila de cada uma aparece ao lado.
+            O site trabalha direto na nuvem: não tem fila própria. Quem sincroniza é cada balança —
+            a saúde da fila de cada uma aparece ao lado.
           </p>
         </DeskPanel>
         <DeskPanel>
@@ -368,7 +368,7 @@ function CloudSettings() {
             <p className="desk-muted" style={{ marginTop: 0 }}>
               {closed.loading
                 ? "Carregando..."
-                : "Nenhum item na fila: todos os fechamentos dos ultimos 30 dias chegaram ao OMIE."}
+                : "Nenhum item na fila: todos os fechamentos dos últimos 30 dias chegaram ao OMIE."}
             </p>
           ) : (
             <DataTable
@@ -398,7 +398,7 @@ function CloudSettings() {
                 },
                 {
                   key: "status",
-                  header: "Situacao",
+                  header: "Situação",
                   render: ({ fiscal }) => (
                     <>
                       <Pill tone={fiscal.tone}>{fiscal.label}</Pill>
@@ -417,7 +417,7 @@ function CloudSettings() {
         {devices.error && <Alert kind="error">{devices.error}</Alert>}
         {(devices.data ?? []).length === 0 ? (
           <p className="desk-muted">
-            {devices.loading ? "Carregando status OMIE..." : "Nenhuma balanca nesta unidade."}
+            {devices.loading ? "Carregando status OMIE..." : "Nenhuma balança nesta unidade."}
           </p>
         ) : (
           <div className="settings-devices">
@@ -434,7 +434,7 @@ function CloudSettings() {
                 <dl>
                   <dt>Envios pendentes</dt>
                   <dd>{device.health.queuePending ?? "—"}</dd>
-                  <dt>Parados (precisam de correcao)</dt>
+                  <dt>Parados (precisam de correção)</dt>
                   <dd>{device.health.queueBlocked ?? "—"}</dd>
                   <dt>Mais antigo na fila</dt>
                   <dd>
@@ -442,7 +442,7 @@ function CloudSettings() {
                       ? formatDateTime(device.health.oldestPendingAt)
                       : "—"}
                   </dd>
-                  <dt>Ultimo erro</dt>
+                  <dt>Último erro</dt>
                   <dd>{device.health.lastError ?? "Nenhum"}</dd>
                   <dt>Informado em</dt>
                   <dd>
@@ -454,8 +454,8 @@ function CloudSettings() {
           </div>
         )}
         <p className="desk-muted">
-          As credenciais do OMIE e o envio ficam na balanca principal. Estes numeros sao os que cada
-          balanca informou na ultima conversa com a nuvem.
+          As credenciais do OMIE e o envio ficam na balança principal. Estes números são os que cada
+          balança informou na última conversa com a nuvem.
         </p>
       </DeskPanel>
     </div>

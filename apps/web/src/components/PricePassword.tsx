@@ -14,7 +14,7 @@ export function PricePasswordField({
   autoFocus?: boolean;
 }) {
   return (
-    <Field label="Senha de preco (do comercial)" hint={PRICE_CODE_HINT}>
+    <Field label="Senha de preço (do comercial)" hint={PRICE_CODE_HINT}>
       <input
         className="input"
         type="password"
@@ -66,7 +66,7 @@ export function DeleteDialog({
             disabled={busy}
             onClick={async () => {
               if (askPassword && !password.trim()) {
-                setError("Digite a senha de preco que o comercial passou.");
+                setError("Digite a senha de preço que o comercial passou.");
                 return;
               }
               setBusy(true);
@@ -85,7 +85,7 @@ export function DeleteDialog({
         <PricePasswordField value={password} onChange={setPassword} autoFocus />
       ) : (
         <p className="desk-muted" style={{ margin: 0 }}>
-          Esta acao nao pode ser desfeita pelo site.
+          Esta ação não pode ser desfeita pelo site.
         </p>
       )}
     </Modal>

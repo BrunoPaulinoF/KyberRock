@@ -112,8 +112,8 @@ function parsePositiveNumber(value: string): number | null {
 export function validateEntryFreight(form: EntryFreightForm, conditionText: string): string | null {
   if (conditionText.trim() && !tryParsePaymentCondition(conditionText)) {
     return (
-      'Condicao personalizada invalida. Use "30" (dias), "7 14 21", "7/14/21", "3 parcelas" ' +
-      'ou periodo ("s+20" semana, "d+20" dezena, "q+20" quinzena, "m+20" mes).'
+      'Condição personalizada inválida. Use "30" (dias), "7 14 21", "7/14/21", "3 parcelas" ' +
+      'ou período ("s+20" semana, "d+20" dezena, "q+20" quinzena, "m+20" mês).'
     );
   }
   if (hasFreightValue(form)) {
@@ -124,7 +124,7 @@ export function validateEntryFreight(form: EntryFreightForm, conditionText: stri
       form.freightCalculationType === "per_ton_km" &&
       parsePositiveNumber(form.freightDistanceKm) === null
     ) {
-      return "Informe a distancia do frete em km.";
+      return "Informe a distância do frete em km.";
     }
   }
   return null;
@@ -271,22 +271,22 @@ export function resolveCustomerFreight(
 export type PaymentConditionPreviewStatus = "empty" | "ok" | "invalid";
 
 export const PAYMENT_CONDITION_FORMATS: ReadonlyArray<{ example: string; meaning: string }> = [
-  { example: "30", meaning: "so o numero = 1 parcela 30 dias apos a venda" },
+  { example: "30", meaning: "só o número = 1 parcela 30 dias após a venda" },
   { example: "7 14 21", meaning: "3 parcelas nesses prazos (igual a 7/14/21)" },
   { example: "3 parcelas", meaning: "3 parcelas mensais (30, 60 e 90 dias)" },
   { example: "s + 20", meaning: "semana (7) + 20 dias = 1 parcela em 27 dias" },
   { example: "d + 20", meaning: "dezena (10) + 20 dias = 1 parcela em 30 dias" },
   { example: "q + 20", meaning: "quinzena (15) + 20 dias = 1 parcela em 35 dias" },
-  { example: "m + 20", meaning: "mes (30) + 20 dias = 1 parcela em 50 dias" },
-  { example: "2s / 3m", meaning: "multiplo do periodo: 2 semanas (14) e 3 meses (90)" },
-  { example: "s+20/d+20", meaning: "periodos na lista = 2 parcelas (27 e 30 dias)" },
-  { example: "A Vista", meaning: "sem prazo; o campo vazio tambem vale a vista" }
+  { example: "m + 20", meaning: "mês (30) + 20 dias = 1 parcela em 50 dias" },
+  { example: "2s / 3m", meaning: "múltiplo do período: 2 semanas (14) e 3 meses (90)" },
+  { example: "s+20/d+20", meaning: "períodos na lista = 2 parcelas (27 e 30 dias)" },
+  { example: "A Vista", meaning: "sem prazo; o campo vazio também vale à vista" }
 ];
 
 const PREVIEW_MAX_DAYS = 6;
 
 function formatDayLabel(days: number): string {
-  return days === 0 ? "a vista" : String(days);
+  return days === 0 ? "à vista" : String(days);
 }
 
 function formatDayList(days: number[]): string {
@@ -304,10 +304,10 @@ export function describePaymentCondition(text: string): {
   message: string;
 } {
   const value = (text ?? "").trim();
-  if (!value) return { status: "empty", message: "Vazio = a vista (vencimento no dia da venda)." };
+  if (!value) return { status: "empty", message: "Vazio = à vista (vencimento no dia da venda)." };
   const parsed = tryParsePaymentCondition(value);
   if (!parsed) {
-    return { status: "invalid", message: "Condicao nao reconhecida. Use um dos formatos abaixo." };
+    return { status: "invalid", message: "Condição não reconhecida. Use um dos formatos abaixo." };
   }
   const days = parsed.installments.map((installment) => installment.dueDays);
   if (days.length === 1) {
@@ -315,13 +315,13 @@ export function describePaymentCondition(text: string): {
       status: "ok",
       message:
         days[0] === 0
-          ? "1 parcela a vista (vencimento no dia da venda)."
-          : `1 parcela em ${days[0]} dias apos a venda.`
+          ? "1 parcela à vista (vencimento no dia da venda)."
+          : `1 parcela em ${days[0]} dias após a venda.`
     };
   }
   return {
     status: "ok",
-    message: `${days.length} parcelas: ${formatDayList(days)} dias apos a venda.`
+    message: `${days.length} parcelas: ${formatDayList(days)} dias após a venda.`
   };
 }
 

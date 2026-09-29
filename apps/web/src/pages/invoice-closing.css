@@ -74,7 +74,7 @@
   gap: 8px;
 }
 .closing-filter-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -84,7 +84,7 @@
   border: none;
   background: none;
   color: var(--kr-primary-strong);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   cursor: pointer;
   padding: 0;
@@ -169,7 +169,7 @@
   white-space: pre-line;
 }
 .closing-foot-note {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
   font-style: italic;
   margin: 8px 0 0;
@@ -183,7 +183,7 @@
   gap: 10px;
 }
 .closing-kpi-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--kr-muted);
   text-transform: uppercase;
@@ -218,7 +218,7 @@
   padding: 7px 10px;
   border-bottom: 2px solid var(--kr-card-border);
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   position: sticky;
@@ -333,7 +333,7 @@
   align-items: center;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
 }

@@ -43,8 +43,24 @@ import { useAsync } from "../lib/use-async";
  */
 const ALL_CUSTOMERS = "__all__";
 
+/**
+ * O nome do periodo na tela. O `range.label` fica como o do desktop porque sai no cabecalho do
+ * PDF e da planilha, e o arquivo do site tem de ser o mesmo documento da balanca.
+ */
+const PERIOD_SCREEN_LABEL: Record<PeriodPreset, string> = {
+  today: "Hoje",
+  "7d": "Últimos 7 dias",
+  "30d": "Últimos 30 dias",
+  month: "Mês atual",
+  lastMonth: "Mês anterior",
+  year: "Ano atual",
+  next30d: "Próximos 30 dias",
+  next90d: "Próximos 90 dias",
+  custom: "Período personalizado"
+};
+
 const HELP =
-  "Gera o relatorio de um cliente no periodo escolhido, com transporte, compras, pagamentos, quanto ele carregou de cada material e em que dias, tonelagem, as viagens de cada placa/motorista em sequencia e as parcelas a vencer. Use datas futuras para ver os dias em que o cliente ainda tem parcelas a pagar. Escolha os modelos (simplificado e/ou completo) e os formatos (PDF e/ou Excel). Em 'Todos os clientes', sai a lista comparativa do periodo: um cliente por linha, do que mais faturou para o que menos faturou, e os materiais que cada um carregou.";
+  "Gera o relatório de um cliente no período escolhido, com transporte, compras, pagamentos, quanto ele carregou de cada material e em que dias, tonelagem, as viagens de cada placa/motorista em sequência e as parcelas a vencer. Use datas futuras para ver os dias em que o cliente ainda tem parcelas a pagar. Escolha os modelos (simplificado e/ou completo) e os formatos (PDF e/ou Excel). Em 'Todos os clientes', sai a lista comparativa do período: um cliente por linha, do que mais faturou para o que menos faturou, e os materiais que cada um carregou.";
 
 /**
  * Relatorio por cliente: o usuario escolhe o cliente, o periodo (atalhos ou datas
@@ -95,7 +111,7 @@ export function CustomerReport() {
   );
   const pickerOptions = useMemo<PickerOption[]>(
     () => [
-      { value: ALL_CUSTOMERS, label: "Todos os clientes (resumo do periodo)" },
+      { value: ALL_CUSTOMERS, label: "Todos os clientes (resumo do período)" },
       ...customers.map((customer) => ({
         value: customer.id,
         label: customer.name,
@@ -180,14 +196,14 @@ export function CustomerReport() {
           names.length === 1
             ? `Arquivo gerado: ${names[0]}`
             : `${names.length} arquivos gerados:\n${names.join("\n")}`,
-          files.pdf.length > 0 ? 'PDF: na janela de impressao, escolha "Salvar como PDF".' : null
+          files.pdf.length > 0 ? 'PDF: na janela de impressão, escolha "Salvar como PDF".' : null
         ]
           .filter(Boolean)
           .join("\n")
       );
       await deliverReports(files);
     } catch (caught) {
-      setExportMessage(errorMessage(caught, "Falha ao gerar o relatorio."));
+      setExportMessage(errorMessage(caught, "Falha ao gerar o relatório."));
     } finally {
       setExporting(false);
     }
@@ -202,7 +218,7 @@ export function CustomerReport() {
     <section className="cr-page">
       <header className="cr-header">
         <div className="cr-title-row">
-          <h2 className="cr-title">Relatorio por cliente</h2>
+          <h2 className="cr-title">Relatório por cliente</h2>
           <span className="cr-help" title={HELP} aria-label={HELP} role="img">
             <CircleHelp size={14} />
           </span>
@@ -216,9 +232,9 @@ export function CustomerReport() {
                 ? "Gerando..."
                 : fileCount > 1
                   ? `Gerar ${fileCount} arquivos`
-                  : "Gerar relatorio"
+                  : "Gerar relatório"
             }
-            title="Gera os arquivos escolhidos: o Excel e baixado como planilha (.xlsx) e cada PDF abre a janela de impressao, um depois do outro."
+            title="Gera os arquivos escolhidos: o Excel é baixado como planilha (.xlsx) e cada PDF abre a janela de impressão, um depois do outro."
             disabled={exporting || !customerId || loading || !result.data}
             onClick={() => void handleExport()}
           >
@@ -245,14 +261,14 @@ export function CustomerReport() {
             ) : null}
             {allCustomers ? (
               <p className="cr-hint">
-                Uma linha por cliente com movimento no periodo, do que mais faturou para o que menos
+                Uma linha por cliente com movimento no período, do que mais faturou para o que menos
                 faturou, mais o que cada um carregou de cada material.
               </p>
             ) : null}
           </div>
 
           <div className="cr-filter-block">
-            <span className="cr-filter-label">Periodo</span>
+            <span className="cr-filter-label">Período</span>
             <div className="cr-chip-row">
               {PERIOD_OPTIONS.map((option) => (
                 <button
@@ -277,7 +293,7 @@ export function CustomerReport() {
                   />
                 </label>
                 <label className="cr-date-field">
-                  Ate
+                  Até
                   <input
                     className="input"
                     type="date"
@@ -291,7 +307,7 @@ export function CustomerReport() {
               {formatDayLabel(range.start)} a {formatDayLabel(range.end)}
             </p>
             <p className="cr-hint">
-              Datas futuras sao aceitas: os carregamentos ficam vazios e o relatorio mostra as
+              Datas futuras são aceitas: os carregamentos ficam vazios e o relatório mostra as
               parcelas que o cliente ainda tem a pagar naqueles dias.
             </p>
           </div>
@@ -299,7 +315,7 @@ export function CustomerReport() {
           {/* O resumo de todos os clientes tem um formato so: a lista comparativa. */}
           {allCustomers ? null : (
             <div className="cr-filter-block">
-              <span className="cr-filter-label">Modelo do relatorio</span>
+              <span className="cr-filter-label">Modelo do relatório</span>
               <label className="cr-checkbox">
                 <input
                   type="checkbox"
@@ -312,7 +328,7 @@ export function CustomerReport() {
                   Simplificado
                   <span className="cr-checkbox-hint">
                     Dados principais: cadastro, KPIs, vencimentos, produtos, materiais por dia,
-                    viagens por placa e motorista (com a transportadora) e compras por mes.
+                    viagens por placa e motorista (com a transportadora) e compras por mês.
                   </span>
                 </span>
               </label>
@@ -327,8 +343,8 @@ export function CustomerReport() {
                 <span>
                   Completo
                   <span className="cr-checkbox-hint">
-                    Tudo do simplificado + transporte, pagamentos, compras por dia, operacao a
-                    operacao e canceladas.
+                    Tudo do simplificado + transporte, pagamentos, compras por dia, operação a
+                    operação e canceladas.
                   </span>
                 </span>
               </label>
@@ -363,8 +379,8 @@ export function CustomerReport() {
                   ? "Selecione ao menos um formato."
                   : "Selecione ao menos um modelo e um formato."
                 : fileCount === 1
-                  ? "1 arquivo sera gerado."
-                  : `${fileCount} arquivos serao gerados.`}
+                  ? "1 arquivo será gerado."
+                  : `${fileCount} arquivos serão gerados.`}
             </p>
           </div>
         </div>
@@ -376,13 +392,13 @@ export function CustomerReport() {
       {!customerId ? (
         <div className="cr-card">
           <p className="cr-hint">
-            Selecione um cliente — ou &quot;Todos os clientes&quot; — para ver a previa do
-            relatorio.
+            Selecione um cliente — ou &quot;Todos os clientes&quot; — para ver a prévia do
+            relatório.
           </p>
         </div>
       ) : loading ? (
         <div className="cr-card">
-          <p className="cr-hint">Carregando relatorio...</p>
+          <p className="cr-hint">Carregando relatório...</p>
         </div>
       ) : overview ? (
         <CustomersOverviewPreview overview={overview} />
@@ -393,7 +409,7 @@ export function CustomerReport() {
               {report.customer.tradeName || report.customer.legalName}
             </h3>
             <div className="cr-identity-grid">
-              <IdentityItem label="Razao social" value={report.customer.legalName || "-"} />
+              <IdentityItem label="Razão social" value={report.customer.legalName || "-"} />
               <IdentityItem label="CNPJ / CPF" value={report.customer.document ?? "-"} />
               <IdentityItem label="Telefone" value={report.customer.phone ?? "-"} />
               <IdentityItem label="E-mail" value={report.customer.email ?? "-"} />
@@ -404,22 +420,26 @@ export function CustomerReport() {
                 }
               />
               <IdentityItem
-                label="Condicao padrao"
+                label="Condição padrão"
                 value={report.customer.defaultPaymentTermName ?? "-"}
               />
               <IdentityItem
-                label="Transportadora padrao"
+                label="Transportadora padrão"
                 value={report.customer.defaultCarrierName ?? "-"}
               />
               <IdentityItem
-                label="Titulos em aberto"
+                label="Títulos em aberto"
                 value={formatBRL(report.customer.openReceivablesCents)}
               />
             </div>
           </div>
 
           <div className="cr-kpi-grid">
-            <Kpi label="Carregamentos" value={formatNumber(totals.operations)} hint={range.label} />
+            <Kpi
+              label="Carregamentos"
+              value={formatNumber(totals.operations)}
+              hint={PERIOD_SCREEN_LABEL[period]}
+            />
             <Kpi
               label="Tonelagem"
               value={formatReportTons(totals.netWeightKg)}
@@ -431,27 +451,27 @@ export function CustomerReport() {
               hint={`Produto ${formatBRL(totals.productCents)} + frete ${formatBRL(totals.freightCents)}`}
             />
             <Kpi
-              label="Preco medio"
+              label="Preço médio"
               value={`${formatBRL(totals.avgPriceCentsPerTon)}/t`}
-              hint={`Ticket medio ${formatBRL(totals.avgTicketCents)}`}
+              hint={`Ticket médio ${formatBRL(totals.avgTicketCents)}`}
             />
             <Kpi
-              label="A vencer no periodo"
+              label="A vencer no período"
               value={formatBRL(dues.upcomingCents)}
-              hint={`${formatNumber(dues.upcomingInstallments)} parcela(s)`}
+              hint={`${formatNumber(dues.upcomingInstallments)} ${dues.upcomingInstallments === 1 ? "parcela" : "parcelas"}`}
             />
             <Kpi
-              label="Proximo vencimento"
+              label="Próximo vencimento"
               value={dues.nextDueDate ? formatDayLabel(dues.nextDueDate) : "-"}
-              hint={dues.nextDueDate ? formatBRL(dues.nextDueCents) : "Sem parcelas no periodo"}
+              hint={dues.nextDueDate ? formatBRL(dues.nextDueCents) : "Sem parcelas no período"}
             />
             <Kpi
-              label="Vencidas no periodo"
+              label="Vencidas no período"
               value={formatBRL(dues.overdueCents)}
-              hint={`${formatNumber(dues.overdueInstallments)} parcela(s)`}
+              hint={`${formatNumber(dues.overdueInstallments)} ${dues.overdueInstallments === 1 ? "parcela" : "parcelas"}`}
             />
             <Kpi
-              label="Parcelas no periodo"
+              label="Parcelas no período"
               value={formatNumber(dues.installments)}
               hint={formatBRL(dues.amountCents)}
             />
@@ -524,7 +544,7 @@ function DataCard({ table }: { table: ReportTable }): ReactNode {
     <div className="cr-card cr-data-card">
       <h3 className="cr-card-title">{table.title}</h3>
       {table.rows.length === 0 ? (
-        <p className="cr-hint">{table.emptyMessage ?? "Sem dados no periodo."}</p>
+        <p className="cr-hint">{table.emptyMessage ?? "Sem dados no período."}</p>
       ) : (
         <div className="cr-table-scroll">
           <table className="cr-table">

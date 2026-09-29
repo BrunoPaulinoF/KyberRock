@@ -78,15 +78,15 @@ function DeleteGroup({
       title={`Excluir ${label}`}
       description={
         ids.length > 1
-          ? `Este cadastro esta repetido em ${ids.length} balancas: todas as copias saem. As pesagens antigas continuam com o nome/placa gravados.`
-          : "O cadastro sai das telas do site e das balancas. As pesagens antigas continuam com o nome/placa gravados."
+          ? `Este cadastro está repetido em ${ids.length} balanças: todas as cópias saem. As pesagens antigas continuam com o nome/placa gravados.`
+          : "O cadastro sai das telas do site e das balanças. As pesagens antigas continuam com o nome/placa gravados."
       }
       askPassword={user.requiresPricePassword}
       onClose={onClose}
       onConfirm={async (pricePassword) => {
         try {
           for (const id of ids) await callWebApi(action, { id, pricePassword });
-          toast.push("Cadastro excluido.");
+          toast.push("Cadastro excluído.");
           onClose();
           await onDeleted();
           return null;
@@ -129,7 +129,7 @@ export function DriversSection() {
       <SectionHead
         title="Motoristas"
         count={groups.filter((g) => g.row.is_active).length}
-        description="Motoristas usados na identificacao do caminhao e impressos no cupom."
+        description="Motoristas usados na identificação do caminhão e impressos no cupom."
         action={
           user.canEditFleet && (
             <NewButton onClick={() => setDriver("new")}>Novo motorista</NewButton>
@@ -160,7 +160,7 @@ export function DriversSection() {
               [
                 d.document ? `CPF: ${d.document}` : null,
                 d.phone ? `Tel: ${d.phone}` : null,
-                d.is_independent ? "Autonomo" : null,
+                d.is_independent ? "Autônomo" : null,
                 d.is_active ? null : "Inativo"
               ]
                 .filter(Boolean)
@@ -168,7 +168,7 @@ export function DriversSection() {
           },
           {
             key: "actions",
-            header: "Acoes",
+            header: "Ações",
             numeric: true,
             render: (group) =>
               user.canEditFleet && (
@@ -257,9 +257,9 @@ export function VehiclesSection() {
       <SectionHead
         title="Placas"
         count={groups.filter((g) => g.row.is_active).length}
-        description="Caminhoes identificados pela placa. A mesma placa pode atender varios clientes e transportadoras."
+        description="Caminhões identificados pela placa. A mesma placa pode atender vários clientes e transportadoras."
         action={
-          user.canEditFleet && <NewButton onClick={() => setVehicle("new")}>Novo veiculo</NewButton>
+          user.canEditFleet && <NewButton onClick={() => setVehicle("new")}>Novo veículo</NewButton>
         }
       />
       {error && <Alert kind="error">{error}</Alert>}
@@ -275,7 +275,7 @@ export function VehiclesSection() {
         rows={rows}
         rowKey={(g) => g.row.id}
         rowClassName={(g) => (g.row.is_active ? undefined : "inactive")}
-        empty={loading ? "Carregando..." : "Nenhum veiculo."}
+        empty={loading ? "Carregando..." : "Nenhum veículo."}
         pageKey={`${needle}|${showInactive}`}
         columns={[
           {
@@ -283,7 +283,7 @@ export function VehiclesSection() {
             header: "Placa",
             render: ({ row: v }) => <strong className="plate-badge">{formatPlate(v.plate)}</strong>
           },
-          { key: "desc", header: "Descricao", render: ({ row: v }) => v.description || "—" },
+          { key: "desc", header: "Descrição", render: ({ row: v }) => v.description || "—" },
           {
             key: "carrier",
             header: "Transportadora",
@@ -296,14 +296,14 @@ export function VehiclesSection() {
           },
           {
             key: "actions",
-            header: "Acoes",
+            header: "Ações",
             numeric: true,
             render: (group) =>
               user.canEditFleet && (
                 <span className="row-actions">
                   <IconAction
                     icon="edit"
-                    label="Editar veiculo"
+                    label="Editar veículo"
                     onClick={() => setVehicle(group.row)}
                   />
                   <IconAction
@@ -316,7 +316,7 @@ export function VehiclesSection() {
                   />
                   <IconAction
                     icon="trash"
-                    label="Excluir veiculo"
+                    label="Excluir veículo"
                     tone="danger"
                     onClick={() => setRemoving(group)}
                   />
@@ -378,7 +378,7 @@ function VehicleForm({
         description: description.trim() || null,
         carrierId: carrierId || null
       });
-      toast.push("Veiculo salvo.");
+      toast.push("Veículo salvo.");
       await onSaved();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -389,7 +389,7 @@ function VehicleForm({
   const formId = "vehicle-form";
   return (
     <Modal
-      title={vehicle ? `Editar ${formatPlate(vehicle.plate)}` : "Novo veiculo"}
+      title={vehicle ? `Editar ${formatPlate(vehicle.plate)}` : "Novo veículo"}
       onClose={onClose}
       footer={
         <>
@@ -414,7 +414,7 @@ function VehicleForm({
             placeholder="ABC1D23"
           />
         </Field>
-        <Field label="Descricao" hint="Ex.: Truck, Carreta, Toco">
+        <Field label="Descrição" hint="Ex.: Truck, Carreta, Toco">
           <input
             className="input"
             value={description}
@@ -520,7 +520,7 @@ function DriverForm({
             checked={isIndependent}
             onChange={(e) => setIsIndependent(e.target.checked)}
           />
-          Motorista autonomo
+          Motorista autônomo
         </label>
       </form>
     </Modal>
@@ -612,7 +612,7 @@ export function CarriersSection() {
           },
           {
             key: "actions",
-            header: "Acoes",
+            header: "Ações",
             numeric: true,
             render: (group) =>
               user.canEditFleet && (
@@ -683,7 +683,7 @@ function CarrierForm({
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (document.trim() && !isValidDocument(document)) {
-      setError("CNPJ/CPF invalido.");
+      setError("CNPJ/CPF inválido.");
       return;
     }
     setBusy(true);
@@ -739,7 +739,7 @@ function CarrierForm({
         </Field>
         <Field
           label="CNPJ/CPF"
-          hint="Sem documento a transportadora fica so aqui; com ele vai ao OMIE."
+          hint="Sem documento a transportadora fica só aqui; com ele vai ao OMIE."
         >
           <input className="input" value={document} onChange={(e) => setDocument(e.target.value)} />
         </Field>

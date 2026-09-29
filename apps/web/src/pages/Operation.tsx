@@ -311,7 +311,7 @@ export async function sendRequest(
   try {
     const result = await callWebApi("request_operation", { kind, ...body });
     for (const warning of result.warnings) toast.push(warning, "error");
-    toast.push(`${REQUEST_KIND_LABELS[kind]} enviada para a balanca.`);
+    toast.push(`Pedido de ${REQUEST_KIND_LABELS[kind].toLowerCase()} enviado para a balança.`);
     return true;
   } catch (caught) {
     toast.push(errorMessage(caught), "error");
@@ -351,14 +351,14 @@ export function submitOnCtrlEnter(event: ReactKeyboardEvent<HTMLFormElement>) {
 // ---------------------------------------------------------------------------
 
 export function ExecutorBadge({ status }: { status: ExecutorStatus | null }) {
-  if (!status) return <Badge>Balanca: verificando...</Badge>;
+  if (!status) return <Badge>Balança: verificando...</Badge>;
   if (!status.executor) {
-    return <Badge kind="warn">Nenhuma balanca executa os pedidos do site</Badge>;
+    return <Badge kind="warn">Nenhuma balança executa os pedidos do site</Badge>;
   }
   return status.executor.online ? (
-    <Badge kind="ok">Balanca: {status.executor.name} conectada</Badge>
+    <Badge kind="ok">Balança: {status.executor.name} conectada</Badge>
   ) : (
-    <Badge kind="err">Balanca: {status.executor.name} fora do ar</Badge>
+    <Badge kind="err">Balança: {status.executor.name} fora do ar</Badge>
   );
 }
 
@@ -413,9 +413,9 @@ type OperationsTab = "abertas" | "canceladas" | "concluidas";
 type CanceledPeriod = "day" | "week" | "month";
 
 const OPERATIONS_TABS: Array<{ id: OperationsTab; label: string; icon: LucideIcon }> = [
-  { id: "abertas", label: "Operacoes abertas", icon: Clock },
-  { id: "canceladas", label: "Operacoes canceladas", icon: Ban },
-  { id: "concluidas", label: "Operacoes concluidas", icon: Check }
+  { id: "abertas", label: "Abertas", icon: Clock },
+  { id: "canceladas", label: "Canceladas", icon: Ban },
+  { id: "concluidas", label: "Concluídas", icon: Check }
 ];
 
 function isOperationsTab(value: string | null): value is OperationsTab {
@@ -579,7 +579,7 @@ export function Operations() {
         : `${openRows.length} abertas`
       : tab === "canceladas"
         ? `${canceledRows.length} canceladas`
-        : `${closed.total.toLocaleString("pt-BR")} concluidas`;
+        : `${closed.total.toLocaleString("pt-BR")} concluídas`;
 
   async function reprint(operation: Operation) {
     await sendRequest(toast, "reprint", { operationId: operation.id });
@@ -591,7 +591,7 @@ export function Operations() {
     if (pendingOps.has(operation.id)) {
       return (
         <span className="row-actions">
-          <Pill tone="warning">Aguardando a balanca</Pill>
+          <Pill tone="warning">Aguardando a balança</Pill>
         </span>
       );
     }
@@ -605,7 +605,7 @@ export function Operations() {
       <div className="desk-title-row">
         <div>
           <p className="desk-kicker">Fila operacional</p>
-          <h1 className="desk-title">Operacoes</h1>
+          <h1 className="desk-title">Operações</h1>
         </div>
         <span className="executor-line">
           <ExecutorBadge status={executor} />
@@ -627,8 +627,8 @@ export function Operations() {
                 className="input"
                 type="search"
                 value={plateSearch}
-                placeholder="Placa do caminhao"
-                aria-label="Buscar operacao aberta pela placa"
+                placeholder="Placa do caminhão"
+                aria-label="Buscar operação aberta pela placa"
                 style={{ minWidth: 240 }}
                 onChange={(event) => setPlateSearch(event.target.value)}
               />
@@ -638,7 +638,7 @@ export function Operations() {
         {tab === "canceladas" && (
           <div className="op-filters">
             <label className="op-filter">
-              Periodo
+              Período
               <select
                 className="select"
                 value={canceledPeriod}
@@ -646,8 +646,8 @@ export function Operations() {
                 onChange={(event) => setCanceledPeriod(event.target.value as CanceledPeriod)}
               >
                 <option value="day">Hoje</option>
-                <option value="week">Ultimos 7 dias</option>
-                <option value="month">Este mes</option>
+                <option value="week">Últimos 7 dias</option>
+                <option value="month">Este mês</option>
               </select>
             </label>
           </div>
@@ -665,7 +665,7 @@ export function Operations() {
               />
             </label>
             <label className="op-filter">
-              Ate
+              Até
               <input
                 className="input"
                 type="date"
@@ -719,15 +719,15 @@ export function Operations() {
       {tab === "abertas" &&
         (openRows.length === 0 ? (
           <EmptyState
-            title={open.loading ? "Carregando..." : "Nenhuma operacao aberta"}
-            hint="As entradas registradas pela balanca aparecem aqui para fechamento."
+            title={open.loading ? "Carregando..." : "Nenhuma operação aberta"}
+            hint="As entradas registradas pela balança aparecem aqui para fechamento."
           />
         ) : (
           <>
             <div
               className="product-counters"
               role="list"
-              aria-label="Operacoes abertas por produto"
+              aria-label="Operações abertas por produto"
             >
               {productCounts.map((product) => (
                 <span key={product.label} role="listitem" className="product-counter">
@@ -740,12 +740,12 @@ export function Operations() {
               <div className="op-row open head">
                 <span>Placa / Carregador</span>
                 <span>Cliente / Produto</span>
-                <span>Entrada / Preco</span>
-                <span>Acoes</span>
+                <span>Entrada / Preço</span>
+                <span>Ações</span>
               </div>
               {visibleOpen.length === 0 && (
                 <EmptyState
-                  title="Nenhuma operacao aberta com essa placa"
+                  title="Nenhuma operação aberta com essa placa"
                   hint="Confira a placa digitada ou limpe a busca para ver a fila inteira."
                 />
               )}
@@ -759,8 +759,8 @@ export function Operations() {
                     <LoaderLight completedAt={loaderDone.get(row.id)} />
                   </span>
                   <span className="op-cell">
-                    <strong>{row.customer_name || "Cliente nao informado"}</strong>
-                    <span>{row.product_description || "Produto nao informado"}</span>
+                    <strong>{row.customer_name || "Cliente não informado"}</strong>
+                    <span>{row.product_description || "Produto não informado"}</span>
                     <small>Motorista: {row.driver_name || "—"}</small>
                   </span>
                   <span className="op-cell">
@@ -775,7 +775,7 @@ export function Operations() {
                     <>
                       <IconAction
                         icon="file-text"
-                        label="Ver / editar operacao"
+                        label="Ver / editar operação"
                         onClick={() => setDialog({ kind: "edit", operation: row })}
                       />
                       <IconAction
@@ -801,13 +801,13 @@ export function Operations() {
                       />
                       <IconAction
                         icon="check"
-                        label="Fechar operacao"
+                        label="Fechar operação"
                         tone="primary"
                         onClick={() => setDialog({ kind: "close", operation: row })}
                       />
                       <IconAction
                         icon="ban"
-                        label="Cancelar operacao"
+                        label="Cancelar operação"
                         tone="danger"
                         onClick={() => setDialog({ kind: "cancel", operation: row })}
                       />
@@ -827,8 +827,8 @@ export function Operations() {
       {tab === "canceladas" &&
         (canceledRows.length === 0 ? (
           <EmptyState
-            title={canceled.loading ? "Carregando..." : "Nenhuma operacao cancelada"}
-            hint="Altere o periodo no filtro para consultar outros cancelamentos."
+            title={canceled.loading ? "Carregando..." : "Nenhuma operação cancelada"}
+            hint="Altere o período no filtro para consultar outros cancelamentos."
           />
         ) : (
           <div className="op-table">
@@ -842,8 +842,8 @@ export function Operations() {
               <div key={row.id} className="op-row canceled">
                 <PlateBadge plate={formatPlate(row.plate ?? "")} />
                 <span className="op-cell">
-                  <strong>{row.customer_name || "Cliente nao informado"}</strong>
-                  <span>{row.product_description || "Produto nao informado"}</span>
+                  <strong>{row.customer_name || "Cliente não informado"}</strong>
+                  <span>{row.product_description || "Produto não informado"}</span>
                 </span>
                 <span>{formatDateTime(row.updated_at)}</span>
                 <span>{row.cancel_reason || "Sem motivo registrado"}</span>
@@ -860,11 +860,11 @@ export function Operations() {
       {tab === "concluidas" &&
         (visibleClosed.length === 0 ? (
           <EmptyState
-            title={closed.loading ? "Carregando..." : "Nenhuma operacao concluida"}
+            title={closed.loading ? "Carregando..." : "Nenhuma operação concluída"}
             hint={
               closedStart || closedEnd
-                ? "Nenhuma operacao fechada no periodo escolhido."
-                : "As operacoes fechadas aparecem aqui, da mais nova para a mais antiga."
+                ? "Nenhuma operação fechada no período escolhido."
+                : "As operações fechadas aparecem aqui, da mais nova para a mais antiga."
             }
           />
         ) : (
@@ -872,11 +872,11 @@ export function Operations() {
             <div className="op-row closed head">
               <span>Placa</span>
               <span>Cliente / Produto</span>
-              <span>Peso liquido / Receita</span>
-              <span>Concluida em</span>
+              <span>Peso líquido / Receita</span>
+              <span>Concluída em</span>
               <span>Nota fiscal</span>
               <span>Fiscal OMIE</span>
-              <span>Acoes</span>
+              <span>Ações</span>
             </div>
             {visibleClosed.map((row) => {
               const fiscal = fiscalStatus(row);
@@ -887,8 +887,8 @@ export function Operations() {
                 >
                   <PlateBadge plate={formatPlate(row.plate ?? "")} />
                   <span className="op-cell">
-                    <strong>{row.customer_name || "Cliente nao informado"}</strong>
-                    <span>{row.product_description || "Produto nao informado"}</span>
+                    <strong>{row.customer_name || "Cliente não informado"}</strong>
+                    <span>{row.product_description || "Produto não informado"}</span>
                     <small>Motorista: {row.driver_name || "—"}</small>
                   </span>
                   <span className="op-cell">
@@ -1011,7 +1011,7 @@ function ExitModal({ operation, onClose, onSent, toast }: ModalProps & { operati
     event.preventDefault();
     setError(null);
     if (exitKg === null) {
-      setError("Digite o peso de saida em kg.");
+      setError("Digite o peso de saída em kg.");
       return;
     }
     setBusy(true);
@@ -1024,7 +1024,7 @@ function ExitModal({ operation, onClose, onSent, toast }: ModalProps & { operati
 
   return (
     <Modal
-      title={`Fechar saida — ${operationLabel(operation)}`}
+      title={`Fechar saída — ${operationLabel(operation)}`}
       description={`${operation.customer_name ?? ""} · ${operation.product_description ?? ""}`}
       onClose={onClose}
       footer={
@@ -1044,7 +1044,7 @@ function ExitModal({ operation, onClose, onSent, toast }: ModalProps & { operati
           <Field label="Peso de entrada">
             <input className="input" value={formatTons(operation.entry_weight_kg)} disabled />
           </Field>
-          <Field label="Peso de saida (kg)" hint="Ex.: 40.120">
+          <Field label="Peso de saída (kg)" hint="Ex.: 40.120">
             <input
               className="input weight-input"
               inputMode="numeric"
@@ -1068,7 +1068,7 @@ function ExitModal({ operation, onClose, onSent, toast }: ModalProps & { operati
         {estimate && (
           <div className="kpis">
             <div className="kpi">
-              <span>Liquido</span>
+              <span>Líquido</span>
               <strong>{formatTons(estimate.netKg)}</strong>
             </div>
             <div className="kpi">
@@ -1082,7 +1082,7 @@ function ExitModal({ operation, onClose, onSent, toast }: ModalProps & { operati
           </div>
         )}
         <p className="cell-sub">
-          Frete, credito e o valor final a balanca calcula no fechamento. O cupom sai na impressora
+          Frete, crédito e o valor final a balança calcula no fechamento. O cupom sai na impressora
           dela.
         </p>
       </form>
@@ -1159,7 +1159,7 @@ function EditModal({
       return;
     }
     if (priceChanged && requiresPricePassword && !password) {
-      setError("Digite a senha de preco que o comercial passou.");
+      setError("Digite a senha de preço que o comercial passou.");
       return;
     }
     setBusy(true);
@@ -1174,13 +1174,13 @@ function EditModal({
 
   return (
     <Modal
-      title={`${only ? SINGLE_EDIT_TITLES[only] : "Ver / editar operacao"} — ${operationLabel(operation)}`}
+      title={`${only ? SINGLE_EDIT_TITLES[only] : "Ver / editar operação"} — ${operationLabel(operation)}`}
       description={
         only
           ? `${operation.customer_name ?? ""} · ${operation.product_description ?? ""}`
           : open
-            ? "Mude o que precisar. So o que for alterado vai para a balanca."
-            : "Pesagem concluida: da para trocar cliente, produto ou transportadora."
+            ? "Mude o que precisar. Só o que for alterado vai para a balança."
+            : "Pesagem concluída: dá para trocar cliente, produto ou transportadora."
       }
       wide={!only}
       onClose={onClose}
@@ -1190,7 +1190,7 @@ function EditModal({
             Voltar
           </button>
           <button className="btn primary" type="submit" form={formId} disabled={busy}>
-            {busy ? "Enviando..." : "Salvar alteracao (Ctrl+Enter)"}
+            {busy ? "Enviando..." : "Salvar alteração (Ctrl+Enter)"}
           </button>
         </>
       }
@@ -1291,16 +1291,16 @@ function EditModal({
                     emptyLabel="Sem forma"
                   />
                 </Field>
-                <Field label="Condicao de pagamento">
+                <Field label="Condição de pagamento">
                   <Picker
                     value={fields.paymentTermId}
                     options={catalog.paymentTerms}
                     onChange={set("paymentTermId")}
                     allowEmpty
-                    emptyLabel="A vista"
+                    emptyLabel="À vista"
                   />
                 </Field>
-                <Field label="Preco por tonelada (R$)">
+                <Field label="Preço por tonelada (R$)">
                   <input
                     className="input"
                     inputMode="decimal"
@@ -1309,7 +1309,7 @@ function EditModal({
                   />
                 </Field>
                 {priceChanged && requiresPricePassword && (
-                  <Field label="Senha de preco (do comercial)" hint={PRICE_CODE_HINT}>
+                  <Field label="Senha de preço (do comercial)" hint={PRICE_CODE_HINT}>
                     <input
                       className="input"
                       type="password"
@@ -1356,8 +1356,8 @@ function CancelModal({ operation, onClose, onSent, toast }: ModalProps & { opera
       title={`Cancelar — ${operationLabel(operation)}`}
       description={
         operation.status === OPEN_STATUS
-          ? "O caminhao sai do patio."
-          : "Se o pedido ja foi para o OMIE, a balanca pede o cancelamento la tambem."
+          ? "O caminhão sai do pátio."
+          : "Se o pedido já foi para o OMIE, a balança pede o cancelamento lá também."
       }
       onClose={onClose}
       footer={

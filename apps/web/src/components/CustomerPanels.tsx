@@ -61,7 +61,7 @@ function TotalsStrip({ totals }: { totals: WeighingTotals }) {
   const items = [
     { label: "Pesagens", value: totals.operations.toLocaleString("pt-BR") },
     { label: "Toneladas", value: formatTons(totals.netWeightKg) },
-    { label: "Preco medio", value: perTon(totals.avgPriceCentsPerTon) },
+    { label: "Preço médio", value: perTon(totals.avgPriceCentsPerTon) },
     { label: "Produto", value: formatMoney(totals.productTotalCents) },
     { label: "Frete", value: formatMoney(totals.freightTotalCents) },
     { label: "Total", value: formatMoney(totals.totalCents) }
@@ -145,7 +145,7 @@ export function CustomerWeighingsModal({
     <Modal
       wide
       title={customer.name}
-      description="Pesagens concluidas do cliente, separadas por produto (pela data de fechamento)."
+      description="Pesagens concluídas do cliente, separadas por produto (pela data de fechamento)."
       onClose={onClose}
       footer={
         <>
@@ -170,7 +170,7 @@ export function CustomerWeighingsModal({
             />
           </label>
           <label className="op-filter">
-            Ate
+            Até
             <input
               className="input"
               type="date"
@@ -181,13 +181,13 @@ export function CustomerWeighingsModal({
           {ops.loading && <span className="cp-muted">Carregando...</span>}
         </div>
 
-        {!validRange && <Alert kind="error">A data inicial precisa ser anterior a final.</Alert>}
+        {!validRange && <Alert kind="error">A data inicial precisa ser anterior à final.</Alert>}
         {ops.error && <Alert kind="error">{ops.error}</Alert>}
 
         <TotalsStrip totals={totals} />
 
         {!ops.loading && groups.length === 0 && validRange && (
-          <EmptyState title="Nenhuma pesagem deste cliente no periodo." />
+          <EmptyState title="Nenhuma pesagem deste cliente no período." />
         )}
 
         {groups.map((group) => (
@@ -205,7 +205,9 @@ export function CustomerWeighingsModal({
                 {group.productDescription}
               </span>
               <span className="cp-product-sum">
-                <span>{group.totals.operations} pesagens</span>
+                <span>
+                  {group.totals.operations} {group.totals.operations === 1 ? "pesagem" : "pesagens"}
+                </span>
                 <span>{formatTons(group.totals.netWeightKg)}</span>
                 <span>{perTon(group.totals.avgPriceCentsPerTon)}</span>
                 <strong>{formatMoney(group.totals.totalCents)}</strong>
@@ -346,7 +348,7 @@ export function CustomerInfoModal({
         {info.loading && <p className="cp-muted">Carregando cadastro...</p>}
         {!info.loading && !row && !info.error && (
           <Alert kind="info">
-            Esta venda foi feita sem cadastro de cliente (so o nome ficou na pesagem).
+            Esta venda foi feita sem cadastro de cliente (só o nome ficou na pesagem).
           </Alert>
         )}
 
@@ -355,7 +357,7 @@ export function CustomerInfoModal({
             <h3>Resumo · {summary.periodLabel}</h3>
             <TotalsStrip totals={summary.totals} />
             <p className="cp-muted">
-              Ultima pesagem no periodo: {summary.lastSale ? formatDateTime(summary.lastSale) : "—"}
+              Última pesagem no período: {summary.lastSale ? formatDateTime(summary.lastSale) : "—"}
             </p>
           </section>
         )}
@@ -365,12 +367,12 @@ export function CustomerInfoModal({
             <CustomerBalanceCard customer={row} />
 
             <InfoSection title="Cadastro">
-              <InfoItem label="Razao social" value={row.legal_name} wide />
+              <InfoItem label="Razão social" value={row.legal_name} wide />
               <InfoItem label="Nome fantasia" value={row.trade_name} wide />
               <InfoItem label="Documento" value={formatDocument(row.document)} />
-              <InfoItem label="Tipo" value={row.is_individual ? "Pessoa fisica" : "Empresa"} />
-              <InfoItem label="Inscricao estadual" value={row.state_registration} />
-              <InfoItem label="Inscricao municipal" value={row.municipal_registration} />
+              <InfoItem label="Tipo" value={row.is_individual ? "Pessoa física" : "Empresa"} />
+              <InfoItem label="Inscrição estadual" value={row.state_registration} />
+              <InfoItem label="Inscrição municipal" value={row.municipal_registration} />
               <InfoItem label="Cliente desde" value={formatDate(row.created_at)} />
             </InfoSection>
 
@@ -379,30 +381,30 @@ export function CustomerInfoModal({
               <InfoItem label="Telefone" value={row.phone} />
               <InfoItem label="Telefone 2" value={row.phone_secondary} />
               <InfoItem label="E-mail" value={row.email} />
-              <InfoItem label="Endereco" value={customerAddress(row)} wide />
+              <InfoItem label="Endereço" value={customerAddress(row)} wide />
               <InfoItem label="Cidade" value={customerCityLine(row)} wide />
             </InfoSection>
 
             <InfoSection title="Comercial">
               <InfoItem label="Forma de pagamento" value={info.data?.paymentMethodName} />
-              <InfoItem label="Condicao" value={info.data?.paymentTermName} />
+              <InfoItem label="Condição" value={info.data?.paymentTermName} />
               <InfoItem label="Transportadora" value={info.data?.carrierName} />
               <InfoItem
                 label="Exige nota"
-                value={row.nf_required === null ? null : row.nf_required ? "Sim" : "Nao"}
+                value={row.nf_required === null ? null : row.nf_required ? "Sim" : "Não"}
               />
-              <InfoItem label="Conta de credito" value={creditLabel(row)} />
+              <InfoItem label="Conta de crédito" value={creditLabel(row)} />
               <InfoItem
-                label="Limite de credito"
+                label="Limite de crédito"
                 value={row.credit_limit_cents ? formatMoney(row.credit_limit_cents) : null}
               />
             </InfoSection>
 
             <section className="cp-card">
-              <h3>Precos especiais ({specialPrices.length})</h3>
+              <h3>Preços especiais ({specialPrices.length})</h3>
               {specialPrices.length === 0 ? (
                 <p className="cp-muted">
-                  Sem preco especial: o cliente paga o preco padrao de cada produto.
+                  Sem preço especial: o cliente paga o preço padrão de cada produto.
                 </p>
               ) : (
                 <div className="table-wrap cp-table">
@@ -411,8 +413,8 @@ export function CustomerInfoModal({
                       <tr>
                         <th>Produto</th>
                         <th className="num">Especial</th>
-                        <th className="num">Padrao</th>
-                        <th className="num">Diferenca</th>
+                        <th className="num">Padrão</th>
+                        <th className="num">Diferença</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -421,7 +423,7 @@ export function CustomerInfoModal({
                           <td>
                             <strong>{price.productDescription}</strong>
                             {price.productCode && (
-                              <span className="cell-sub">Codigo {price.productCode}</span>
+                              <span className="cell-sub">Código {price.productCode}</span>
                             )}
                           </td>
                           <td className="num">
@@ -440,7 +442,7 @@ export function CustomerInfoModal({
             </section>
 
             {row.observations && (
-              <InfoSection title="Observacoes">
+              <InfoSection title="Observações">
                 <InfoItem label="" value={row.observations} wide />
               </InfoSection>
             )}
@@ -509,7 +511,7 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
                 <>
                   {formatMoney(omieData.openCents)}
                   <span className="cell-sub">
-                    {omieData.openTitles === 1 ? "1 titulo" : `${omieData.openTitles} titulos`}
+                    {omieData.openTitles === 1 ? "1 título" : `${omieData.openTitles} títulos`}
                   </span>
                 </>
               }
@@ -522,8 +524,8 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
                     {formatMoney(omieData.overdueCents)}
                     <span className="cell-sub">
                       {omieData.overdueTitles === 1
-                        ? "1 titulo"
-                        : `${omieData.overdueTitles} titulos`}
+                        ? "1 título"
+                        : `${omieData.overdueTitles} títulos`}
                     </span>
                   </span>
                 ) : (
@@ -532,14 +534,14 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
               }
             />
             <InfoItem
-              label="Proximo vencimento"
+              label="Próximo vencimento"
               value={omieData.nextDueDate ? formatDate(omieData.nextDueDate) : null}
             />
           </>
         ) : omieData?.status === "not_linked" ? (
           <InfoItem
             label="Em aberto no OMIE"
-            value="Cliente ainda sem codigo no OMIE"
+            value="Cliente ainda sem código no OMIE"
             wide={!showCredit}
           />
         ) : (
@@ -551,7 +553,7 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
         )}
         {showCredit && (
           <InfoItem
-            label="Credito no KyberRock"
+            label="Crédito no KyberRock"
             value={
               credit.error ? (
                 credit.error
@@ -559,7 +561,7 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
                 <span className={credit.data.balanceCents < 0 ? "cp-danger" : undefined}>
                   {formatMoney(credit.data.balanceCents)}
                   <span className="cell-sub">
-                    {credit.data.balanceCents < 0 ? "utilizado do limite" : "disponivel"}
+                    {credit.data.balanceCents < 0 ? "utilizado do limite" : "disponível"}
                   </span>
                 </span>
               ) : (
@@ -572,7 +574,7 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
       {omieData?.status === "ok" && (
         <p className="cp-muted">
           Consultado no OMIE em {formatDateTime(omieData.checkedAt)}.
-          {omieData.truncated && " O cliente tem mais de mil titulos em aberto: o total e parcial."}
+          {omieData.truncated && " O cliente tem mais de mil títulos em aberto: o total é parcial."}
         </p>
       )}
     </section>

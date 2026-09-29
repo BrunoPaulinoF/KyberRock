@@ -28,22 +28,22 @@ export interface OperationRequest {
 export const REQUEST_KIND_LABELS: Record<RequestKind, string> = {
   entry: "Entrada",
   exit: "Fechamento",
-  update: "Alteracao",
+  update: "Alteração",
   cancel: "Cancelamento",
-  reprint: "Reimpressao"
+  reprint: "Reimpressão"
 };
 
 /** O texto que muda sozinho enquanto a balanca trabalha. */
 export function requestStatusText(request: Pick<OperationRequest, "status">): string {
   switch (request.status) {
     case "pending":
-      return "Enviando para a balanca...";
+      return "Enviando para a balança...";
     case "processing":
-      return "Balanca registrando...";
+      return "Balança registrando...";
     case "done":
       return "Pronto";
     case "failed":
-      return "Nao registrado";
+      return "Não registrado";
   }
 }
 
@@ -53,7 +53,7 @@ export function printWarning(
 ): string | null {
   if (request.print_status !== "failed") return null;
   const detail = request.print_message?.trim();
-  return `Pesagem registrada, mas o cupom nao imprimiu${detail ? `: ${detail}` : "."}`;
+  return `Pesagem registrada, mas o cupom não imprimiu${detail ? `: ${detail}` : "."}`;
 }
 
 export function isFinished(request: Pick<OperationRequest, "status">): boolean {
@@ -196,11 +196,11 @@ export function formatElapsedSince(
   const diffMs = now - then;
   const totalMinutes = Math.floor(diffMs / 60_000);
   if (diffMs < 0 || totalMinutes < 1) return "agora mesmo";
-  if (totalMinutes < 60) return `ha ${totalMinutes} min`;
+  if (totalMinutes < 60) return `há ${totalMinutes} min`;
   const totalHours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
-  if (totalHours < 24) return `ha ${totalHours} h ${String(minutes).padStart(2, "0")} min`;
-  return `ha ${Math.floor(totalHours / 24)} d ${totalHours % 24} h`;
+  if (totalHours < 24) return `há ${totalHours} h ${String(minutes).padStart(2, "0")} min`;
+  return `há ${Math.floor(totalHours / 24)} d ${totalHours % 24} h`;
 }
 
 /** Quanto de cada produto esta no patio (os contadores acima da fila do desktop). */
@@ -237,7 +237,7 @@ export function fiscalStatus(operation: {
 }): FiscalStatus {
   const message = operation.omie_billing_message?.trim() || null;
   const pending = (fallback: string) =>
-    message ? `${message} — nova tentativa automatica em andamento.` : fallback;
+    message ? `${message} — nova tentativa automática em andamento.` : fallback;
   if (operation.omie_billing_status === "billed") {
     const document = operation.omie_invoice_number ? `NF ${operation.omie_invoice_number}` : null;
     return {
@@ -250,7 +250,7 @@ export function fiscalStatus(operation: {
     if (operation.omie_service_order_id) {
       return {
         label: "OS enviada",
-        detail: `Ordem de servico OMIE ${operation.omie_service_order_id} — fature na etapa "Faturar" do OMIE.`,
+        detail: `Ordem de serviço OMIE ${operation.omie_service_order_id} — fature na etapa "Faturar" do OMIE.`,
         tone: "success"
       };
     }
@@ -259,20 +259,20 @@ export function fiscalStatus(operation: {
         label: "Cadastro incompleto",
         detail:
           message ??
-          "Falta o CNPJ/CPF do cliente para cadastra-lo no OMIE e enviar a ordem de servico.",
+          "Falta o CNPJ/CPF do cliente para cadastrá-lo no OMIE e enviar a ordem de serviço.",
         tone: "warning"
       };
     }
     if (operation.omie_billing_status === "service_order_failed") {
       return {
         label: "OS falhou",
-        detail: message ?? "O OMIE recusou a ordem de servico. Corrija o cadastro e reenvie.",
+        detail: message ?? "O OMIE recusou a ordem de serviço. Corrija o cadastro e reenvie.",
         tone: "danger"
       };
     }
     return {
       label: "Enviando OS",
-      detail: pending("Ordem de servico sera enviada ao OMIE na proxima sincronizacao."),
+      detail: pending("Ordem de serviço será enviada ao OMIE na próxima sincronização."),
       tone: "neutral"
     };
   }
@@ -286,20 +286,20 @@ export function fiscalStatus(operation: {
   if (operation.omie_billing_status === "cadastro_incompleto") {
     return {
       label: "Cadastro incompleto",
-      detail: message ?? "Falta Numero do Endereco e E-mail do cliente para emitir a NF-e.",
+      detail: message ?? "Falta Número do Endereço e E-mail do cliente para emitir a NF-e.",
       tone: "warning"
     };
   }
   if (operation.omie_billing_status === "failed") {
     return {
       label: "Falhou",
-      detail: message ?? "Envio do pedido nao confirmado.",
+      detail: message ?? "Envio do pedido não confirmado.",
       tone: "danger"
     };
   }
   return {
     label: "Enviando ao OMIE",
-    detail: pending("Pedido sera enviado ao OMIE na proxima sincronizacao."),
+    detail: pending("Pedido será enviado ao OMIE na próxima sincronização."),
     tone: "neutral"
   };
 }

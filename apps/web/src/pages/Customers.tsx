@@ -93,7 +93,7 @@ export function CustomersSection() {
       <SectionHead
         title="Clientes"
         count={activeCount}
-        description="Clientes sincronizados do OMIE ou criados aqui. Clientes novos sao enviados ao OMIE na hora. Dois cliques no cliente mostram os dados dele."
+        description="Clientes sincronizados do OMIE ou criados aqui. Clientes novos são enviados ao OMIE na hora. Dois cliques no cliente mostram os dados dele."
         action={
           user.canEditCustomers && (
             <NewButton onClick={() => setEditing("new")}>Novo cliente</NewButton>
@@ -164,7 +164,7 @@ export function CustomersSection() {
                   <Pill tone="success">LOCAL</Pill>
                 )}
                 {c.credit_account_enabled && (
-                  <Badge kind="accent">{c.credit_mode === "prepaid" ? "pre-pago" : "fiado"}</Badge>
+                  <Badge kind="accent">{c.credit_mode === "prepaid" ? "pré-pago" : "fiado"}</Badge>
                 )}
                 {!c.is_active && <Pill>INATIVO</Pill>}
               </span>
@@ -172,7 +172,7 @@ export function CustomersSection() {
           },
           {
             key: "actions",
-            header: "Acoes",
+            header: "Ações",
             numeric: true,
             render: (c) => (
               <span className="row-actions">
@@ -186,7 +186,7 @@ export function CustomersSection() {
                     <IconAction icon="edit" label="Editar cliente" onClick={() => setEditing(c)} />
                     <IconAction
                       icon="sliders"
-                      label="Comercial, precos, frete, transporte e entrega futura"
+                      label="Comercial, preços, frete, transporte e entrega futura"
                       onClick={() => setFile(c)}
                     />
                     <button className="btn small" onClick={() => void toggleActive(c)}>
@@ -241,7 +241,7 @@ export function CustomersSection() {
                     setViewing(null);
                   }}
                 >
-                  Comercial, precos e mais
+                  Comercial, preços e mais
                 </button>
               </>
             )
@@ -261,13 +261,13 @@ export function CustomersSection() {
       {removing && (
         <DeleteDialog
           title={`Excluir ${removing.trade_name || removing.legal_name}`}
-          description="So sai o cliente sem historico (nenhuma pesagem nem lancamento de credito). Quem ja comprou deve ser inativado."
+          description="Só sai o cliente sem histórico (nenhuma pesagem nem lançamento de crédito). Quem já comprou deve ser inativado."
           askPassword={user.requiresPricePassword}
           onClose={() => setRemoving(null)}
           onConfirm={async (pricePassword) => {
             try {
               await callWebApi("delete_customer", { id: removing.id, pricePassword });
-              toast.push("Cliente excluido.");
+              toast.push("Cliente excluído.");
               setRemoving(null);
               await refresh();
               return null;
@@ -330,13 +330,13 @@ function CustomerForm({
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (form.document.trim() && !isValidDocument(form.document)) {
-      setError("CNPJ/CPF invalido. Confira os digitos.");
+      setError("CNPJ/CPF inválido. Confira os dígitos.");
       return;
     }
     // Cliente que ja existe nao mexe na condicao aqui (ela fica na ficha): a guardada, mesmo
     // num formato antigo do OMIE, nao pode travar a edicao do endereco.
     if (!customer && describePaymentCondition(conditionText).status === "invalid") {
-      setError('Condicao de pagamento padrao invalida. Veja os formatos em "Como escrever".');
+      setError('Condição de pagamento padrão inválida. Veja os formatos em "Como escrever".');
       return;
     }
     setBusy(true);
@@ -364,7 +364,7 @@ function CustomerForm({
   // apaga o que ja esta preenchido quando a Receita nao tem o campo.
   async function lookupCnpj() {
     if (documentKind(normalizeDocument(form.document)) !== "cnpj") {
-      setError("Informe um CNPJ com 14 posicoes para buscar.");
+      setError("Informe um CNPJ com 14 posições para buscar.");
       return;
     }
     setCnpjBusy(true);
@@ -375,7 +375,7 @@ function CustomerForm({
         [key: string]: unknown;
       };
       if (!data.found) {
-        toast.push("CNPJ nao encontrado na base da Receita.", "error");
+        toast.push("CNPJ não encontrado na base da Receita.", "error");
         return;
       }
       const text = (key: string) => (typeof data[key] === "string" ? (data[key] as string) : "");
@@ -396,7 +396,7 @@ function CustomerForm({
       toast.push(
         text("email")
           ? "Dados do CNPJ preenchidos. Revise e salve."
-          : "Dados do CNPJ preenchidos. E-mail nao consta na Receita — informe manualmente."
+          : "Dados do CNPJ preenchidos. E-mail não consta na Receita — informe manualmente."
       );
     } catch (caught) {
       toast.push(errorMessage(caught), "error");
@@ -409,7 +409,7 @@ function CustomerForm({
   return (
     <Modal
       title={customer ? `Editar ${customer.trade_name}` : "Novo cliente"}
-      description="Nome, documento e endereco sobem para o OMIE ao salvar."
+      description="Nome, documento e endereço sobem para o OMIE ao salvar."
       onClose={onClose}
       wide
       footer={
@@ -435,7 +435,7 @@ function CustomerForm({
       <Warnings items={warnings} />
       <form id={formId} onSubmit={(e) => void onSubmit(e)}>
         <div className="grid-2">
-          <Field label="Razao social">
+          <Field label="Razão social">
             <input
               className="input"
               value={form.legalName}
@@ -444,10 +444,10 @@ function CustomerForm({
               autoFocus
             />
           </Field>
-          <Field label="Nome fantasia" hint="Vazio = usa a razao social.">
+          <Field label="Nome fantasia" hint="Vazio = usa a razão social.">
             <input className="input" value={form.tradeName} onChange={set("tradeName")} />
           </Field>
-          <Field label="CNPJ/CPF" hint="CNPJ novo pode ter letras; digite como esta no documento.">
+          <Field label="CNPJ/CPF" hint="CNPJ novo pode ter letras; digite como está no documento.">
             <div className="input-with-action">
               <input className="input" value={form.document} onChange={set("document")} />
               <button
@@ -462,7 +462,7 @@ function CustomerForm({
               </button>
             </div>
           </Field>
-          <Field label="Inscricao estadual">
+          <Field label="Inscrição estadual">
             <input
               className="input"
               value={form.stateRegistration}
@@ -498,15 +498,15 @@ function CustomerForm({
         */}
         {customer ? (
           <p className="desk-muted">
-            Condicao de pagamento padrao: <strong>{initialCondition || "sem padrao"}</strong>. Para
-            mudar, use o botao de ficha do cliente (aba Comercial e credito), junto da forma de
+            Condição de pagamento padrão: <strong>{initialCondition || "sem padrão"}</strong>. Para
+            mudar, use o botão de ficha do cliente (aba Comercial e crédito), junto da forma de
             pagamento.
           </p>
         ) : (
           <>
             <Field
-              label="Condicao de pagamento padrao"
-              hint="Vazio = sem padrao. Se nao existir no OMIE, e criada automaticamente no envio."
+              label="Condição de pagamento padrão"
+              hint="Vazio = sem padrão. Se não existir no OMIE, é criada automaticamente no envio."
             >
               <input
                 className="input"
@@ -533,7 +533,7 @@ function CustomerForm({
           <Field label="Logradouro">
             <input className="input" value={form.addressStreet} onChange={set("addressStreet")} />
           </Field>
-          <Field label="Numero">
+          <Field label="Número">
             <input className="input" value={form.addressNumber} onChange={set("addressNumber")} />
           </Field>
           <Field label="Bairro">
@@ -547,7 +547,7 @@ function CustomerForm({
             onChange={set("addressComplement")}
           />
         </Field>
-        <Field label="Observacoes internas">
+        <Field label="Observações internas">
           <textarea
             className="textarea"
             rows={3}

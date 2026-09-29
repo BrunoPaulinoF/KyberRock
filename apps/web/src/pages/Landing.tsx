@@ -368,7 +368,7 @@ function LoginCard() {
   return (
     <section id="entrar" className="lp-login" aria-labelledby="lp-login-title">
       <div className="lp-login-head">
-        <img src={publicAsset("logo.png")} alt="" />
+        <img src={publicAsset("logo-128.webp")} alt="" />
         <div>
           <h2 id="lp-login-title">Já é cliente?</h2>
           <p>Entre com o e-mail e a senha cadastrados pela Kybernan.</p>
@@ -469,7 +469,7 @@ export function Landing() {
     <div className="lp">
       <header className="lp-nav">
         <a className="lp-brand" href="#inicio">
-          <img src={publicAsset("logo.png")} alt="" />
+          <img src={publicAsset("logo-128.webp")} alt="" />
           <strong>KyberRock</strong>
         </a>
         <nav className="lp-nav-links" aria-label="Seções da página">
@@ -641,7 +641,7 @@ export function Landing() {
 
       <footer className="lp-footer">
         <div className="lp-footer-brand">
-          <img src={publicAsset("logo.png")} alt="" />
+          <img src={publicAsset("logo-128.webp")} alt="" />
           <span>
             <strong>KyberRock</strong> — pesagem, carregamento e faturamento para pedreiras. Um
             produto Kybernan.

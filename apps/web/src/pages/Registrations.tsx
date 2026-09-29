@@ -68,9 +68,6 @@ export function Registrations() {
         active={tab}
         onChange={(next) => navigate(`/cadastros/${next}`)}
       />
-      <p className="desk-muted">
-        Cadastros: clientes, produtos, condicoes de pagamento e transporte.
-      </p>
       {tab === "clientes" && <CustomersSection />}
       {tab === "produtos" && <ProductsSection />}
       {tab === "pagamento" && <PaymentSection />}
@@ -128,7 +125,7 @@ function PaymentSection() {
       <SectionHead
         title="Formas de pagamento"
         count={methods.length}
-        description="As formas vem do OMIE na sincronizacao (nome e codigo). Ativar, apelidar e vincular a conta e feito na balanca principal."
+        description="As formas vêm do OMIE na sincronização (nome e código). Ativar, apelidar e vincular a conta é feito na balança principal."
       />
       <DataTable
         rows={methods}
@@ -146,7 +143,7 @@ function PaymentSection() {
                   {row.is_wallet
                     ? "Em carteira | recebimento definido no fechamento"
                     : row.is_customer_credit
-                      ? "Credito do cliente"
+                      ? "Crédito do cliente"
                       : row.alias
                         ? row.name
                         : "-"}
@@ -154,14 +151,14 @@ function PaymentSection() {
               </>
             )
           },
-          { key: "omie", header: "Cod. OMIE", render: (row) => row.omie_code || "-" },
+          { key: "omie", header: "Cód. OMIE", render: (row) => row.omie_code || "-" },
           { key: "status", header: "Status", render: (row) => status(row.is_active) }
         ]}
       />
       <SectionHead
         title="Contas"
         count={accounts.length}
-        description="As contas correntes vem do OMIE na sincronizacao (nome e codigo)."
+        description="As contas correntes vêm do OMIE na sincronização (nome e código)."
       />
       <DataTable
         rows={accounts}
@@ -170,22 +167,22 @@ function PaymentSection() {
         empty={loading ? "Carregando..." : "Nenhuma conta."}
         columns={[
           { key: "name", header: "Conta", render: (row) => <strong>{row.name}</strong> },
-          { key: "omie", header: "Cod. OMIE", render: (row) => row.omie_code || "-" },
+          { key: "omie", header: "Cód. OMIE", render: (row) => row.omie_code || "-" },
           { key: "status", header: "Status", render: (row) => status(row.is_active) }
         ]}
       />
       <SectionHead
-        title="Condicoes de pagamento"
+        title="Condições de pagamento"
         count={terms.length}
-        description="Cadastradas no padrao de parcelas do OMIE: 10/20/30/40, A Vista/40/60, Para 93 dias, 50 Parcelas ou periodo (s+20, d+20, q+20, m+20)."
+        description="Cadastradas no padrão de parcelas do OMIE: 10/20/30/40, A Vista/40/60, Para 93 dias, 50 Parcelas ou período (s+20, d+20, q+20, m+20)."
       />
       <DataTable
         rows={terms}
         rowKey={(row) => row.id}
-        empty={loading ? "Carregando..." : "Nenhuma condicao."}
+        empty={loading ? "Carregando..." : "Nenhuma condição."}
         columns={[
-          { key: "name", header: "Condicao", render: (row) => <strong>{row.name}</strong> },
-          { key: "omie", header: "Cod. OMIE", render: (row) => row.omie_code || "-" },
+          { key: "name", header: "Condição", render: (row) => <strong>{row.name}</strong> },
+          { key: "omie", header: "Cód. OMIE", render: (row) => row.omie_code || "-" },
           { key: "status", header: "Status", render: (row) => status(row.is_active) }
         ]}
       />

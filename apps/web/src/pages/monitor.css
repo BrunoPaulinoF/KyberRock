@@ -160,7 +160,7 @@
   border-radius: 999px;
   background: var(--kr-accent);
   color: #1c1206;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -787,7 +787,7 @@
   border-radius: 999px;
   background: var(--kr-accent);
   color: #1c1206;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.6;
   font-weight: 800;
   letter-spacing: 0.04em;
@@ -853,7 +853,7 @@
   border: 1px solid var(--kr-border);
   background: var(--kr-surface);
   color: var(--kr-text);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -897,7 +897,7 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -1022,7 +1022,7 @@
 }
 .mon-axis-text text {
   fill: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -1054,7 +1054,7 @@
 }
 .mon-peak {
   fill: var(--kr-text-strong);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
 }
 .mon-hit {
@@ -1231,7 +1231,7 @@
   flex-shrink: 0;
   max-width: 55%;
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.3;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -1798,7 +1798,7 @@ label.mon-fieldset .mon-legend-text {
 .mon.is-fit .mon-levels {
   flex-wrap: nowrap;
   gap: 0 9px;
-  font-size: 11px;
+  font-size: 12px;
   overflow: hidden;
 }
 .mon.is-fit .mon-w-hourly .mon-card-sub {
@@ -1920,7 +1920,7 @@ label.mon-fieldset .mon-legend-text {
   }
   .mon.is-fit .mon-kpi-label,
   .mon.is-fit .mon-kpi-foot {
-    font-size: 11px;
+    font-size: 12px;
   }
   /* cartao estreito: a variacao em cima e a nota embaixo, inteira, em vez de "Ontem: ..." */
   .mon.is-fit .mon-kpi-foot {

@@ -98,7 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const profile = await loadProfile(data.user.id);
     if (!profile) {
       await supabase.auth.signOut();
-      const message = "Este login nao tem perfil de acesso ativo. Fale com o suporte da Kybernan.";
+      const message = "Este login não tem perfil de acesso ativo. Fale com o suporte da Kybernan.";
       setError(message);
       throw new Error(message);
     }
@@ -126,6 +126,6 @@ export function useAuth(): AuthState {
 /** O usuario logado, garantido (as telas so montam depois do guard de rota). */
 export function useUser(): SessionUser {
   const { user } = useAuth();
-  if (!user) throw new Error("Sem usuario logado");
+  if (!user) throw new Error("Sem usuário logado");
   return user;
 }

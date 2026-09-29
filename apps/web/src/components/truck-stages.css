@@ -297,7 +297,7 @@
 .ts-item-text span,
 .ts-item-time span {
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .ts-item-time {
   grid-area: time;
@@ -339,7 +339,7 @@
   border-bottom: 1px solid var(--kr-border);
   background: var(--kr-surface-soft);
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-align: left;
@@ -408,7 +408,7 @@
 }
 .ts-timeline-duration small {
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -428,7 +428,7 @@
     font-size: 24px;
   }
   .ts-step-name {
-    font-size: 11px;
+    font-size: 12px;
     letter-spacing: 0.03em;
   }
   .ts-avg {

@@ -209,7 +209,7 @@
   text-align: left;
   color: var(--kr-muted);
   border-bottom: 1px solid var(--kr-border);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -237,7 +237,7 @@
 }
 .wallet-settled-tag {
   display: inline-block;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   color: var(--kr-primary-text);
   background: var(--kr-primary-strong);

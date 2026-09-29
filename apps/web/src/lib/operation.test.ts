@@ -75,7 +75,7 @@ describe("pesagem pelo site: regras de tela", () => {
     expect(requestStatusText({ status: "pending" })).toContain("Enviando");
     expect(requestStatusText({ status: "processing" })).toContain("registrando");
     expect(printWarning({ print_status: "failed", print_message: "Sem papel" })).toBe(
-      "Pesagem registrada, mas o cupom nao imprimiu: Sem papel"
+      "Pesagem registrada, mas o cupom não imprimiu: Sem papel"
     );
     expect(printWarning({ print_status: "printed", print_message: null })).toBeNull();
     expect(formatDuration(45)).toBe("45 min");
@@ -95,9 +95,9 @@ describe("tela Operacoes no molde do desktop", () => {
 
   it("tempo no patio com o mesmo texto do desktop", () => {
     expect(formatElapsedSince("2026-09-24T14:59:40.000Z", now)).toBe("agora mesmo");
-    expect(formatElapsedSince("2026-09-24T14:48:00.000Z", now)).toBe("ha 12 min");
-    expect(formatElapsedSince("2026-09-24T12:55:00.000Z", now)).toBe("ha 2 h 05 min");
-    expect(formatElapsedSince("2026-09-23T12:00:00.000Z", now)).toBe("ha 1 d 3 h");
+    expect(formatElapsedSince("2026-09-24T14:48:00.000Z", now)).toBe("há 12 min");
+    expect(formatElapsedSince("2026-09-24T12:55:00.000Z", now)).toBe("há 2 h 05 min");
+    expect(formatElapsedSince("2026-09-23T12:00:00.000Z", now)).toBe("há 1 d 3 h");
     expect(formatElapsedSince(null, now)).toBe("-");
   });
 
@@ -146,7 +146,7 @@ describe("tela Operacoes no molde do desktop", () => {
       label: "Enviando OS"
     });
     expect(fiscalStatus({ ...base, omie_billing_message: "OMIE fora do ar" }).detail).toContain(
-      "nova tentativa automatica"
+      "nova tentativa automática"
     );
   });
 });

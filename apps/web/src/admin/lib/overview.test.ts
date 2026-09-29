@@ -184,8 +184,8 @@ describe("isOnline / sinceLabel", () => {
   it("diz ha quanto tempo em palavras", () => {
     expect(sinceLabel(null, NOW)).toBe("nunca");
     expect(sinceLabel(minutesAgo(0), NOW)).toBe("agora");
-    expect(sinceLabel(minutesAgo(5), NOW)).toBe("ha 5 min");
-    expect(sinceLabel(minutesAgo(180), NOW)).toBe("ha 3 h");
-    expect(sinceLabel(minutesAgo(60 * 50), NOW)).toBe("ha 2 dias");
+    expect(sinceLabel(minutesAgo(5), NOW)).toBe("há 5 min");
+    expect(sinceLabel(minutesAgo(180), NOW)).toBe("há 3 h");
+    expect(sinceLabel(minutesAgo(60 * 50), NOW)).toBe("há 2 dias");
   });
 });

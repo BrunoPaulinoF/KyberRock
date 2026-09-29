@@ -19,9 +19,9 @@ import { Pill, SearchBar, SectionHead } from "./desk";
 import { Alert, DataTable, LoadMore } from "./ui";
 
 const SOURCE_OPTIONS: Array<{ value: PriceHistorySource; label: string }> = [
-  { value: "todas", label: "Balanca e site" },
-  { value: "balanca", label: "So balanca" },
-  { value: "site", label: "So site" }
+  { value: "todas", label: "Balança e site" },
+  { value: "balanca", label: "Só balança" },
+  { value: "site", label: "Só site" }
 ];
 
 function priceOrDash(cents: number | null): string {
@@ -47,11 +47,11 @@ export function PriceHistory() {
   useOnCadastroChange(list.refresh, PRICE_HISTORY_TABLES);
 
   return (
-    <section className="price-history" aria-label="Alteracoes de preco especial">
+    <section className="price-history" aria-label="Alterações de preço especial">
       <SectionHead
-        title="Alteracoes de preco especial"
+        title="Alterações de preço especial"
         count={list.total}
-        description="Tudo o que foi adicionado, trocado ou excluido — na balanca (com a senha de preco) e no site. Atualiza sozinho."
+        description="Tudo o que foi adicionado, trocado ou excluído — na balança (com a senha de preço) e no site. Atualiza sozinho."
       />
       {list.error && <Alert kind="error">{list.error}</Alert>}
       <SearchBar
@@ -61,7 +61,7 @@ export function PriceHistory() {
         onRefresh={() => void list.refresh()}
       >
         <select
-          aria-label="Origem da alteracao"
+          aria-label="Origem da alteração"
           value={source}
           onChange={(event) => setSource(event.target.value as PriceHistorySource)}
         >
@@ -75,7 +75,7 @@ export function PriceHistory() {
       <DataTable<PriceChange>
         rows={list.rows}
         rowKey={(row) => row.id}
-        empty={list.loading ? "Carregando..." : "Nenhuma alteracao de preco especial registrada."}
+        empty={list.loading ? "Carregando..." : "Nenhuma alteração de preço especial registrada."}
         pageSize={0}
         footer={
           <LoadMore
@@ -103,9 +103,9 @@ export function PriceHistory() {
             header: "Cliente / produto",
             render: (row) => (
               <>
-                <strong>{row.customer_name ?? "Cliente nao identificado"}</strong>
+                <strong>{row.customer_name ?? "Cliente não identificado"}</strong>
                 <span className="cell-sub">
-                  {row.product_description ?? "Produto nao identificado"}
+                  {row.product_description ?? "Produto não identificado"}
                 </span>
               </>
             )

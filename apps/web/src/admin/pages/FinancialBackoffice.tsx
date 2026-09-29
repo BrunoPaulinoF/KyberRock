@@ -155,7 +155,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
     try {
       setData(await callAdminFunction<FinancialData>("admin-billing", { action: "list" }));
     } catch (error) {
-      handleError(error, "Nao foi possivel carregar o financeiro.");
+      handleError(error, "Não foi possível carregar o financeiro.");
     } finally {
       setIsLoading(false);
     }
@@ -194,7 +194,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
         await load();
         return true;
       } catch (error) {
-        handleError(error, "A acao falhou.");
+        handleError(error, "A ação falhou.");
         return false;
       } finally {
         setBusy(null);
@@ -247,7 +247,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
         }
         setInvoiceEvents({
           status: "error",
-          message: error instanceof Error ? error.message : "Nao foi possivel ler o historico."
+          message: error instanceof Error ? error.message : "Não foi possível ler o histórico."
         });
       }
     },
@@ -280,7 +280,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
       });
       setGeneration({ company, preview });
     } catch (error) {
-      handleError(error, "Nao foi possivel calcular a previa do fechamento.");
+      handleError(error, "Não foi possível calcular a prévia do fechamento.");
     } finally {
       setBusy(null);
     }
@@ -292,8 +292,8 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
   ): Promise<void> {
     const steps = [
       options.force ? "Fechamento antecipado: fatura gerada." : "Fatura gerada.",
-      options.issueBoleto ? "Boleto emitido." : "Boleto nao emitido (opcao desmarcada).",
-      options.sendWhatsapp ? "Envio disparado." : "Envio nao disparado (opcao desmarcada)."
+      options.issueBoleto ? "Boleto emitido." : "Boleto não emitido (opção desmarcada).",
+      options.sendWhatsapp ? "Envio disparado." : "Envio não disparado (opção desmarcada)."
     ];
     const ok = await run(
       `gen:${company.id}`,
@@ -318,7 +318,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
       );
       downloadBase64Pdf(response.base64, response.fileName);
     } catch (error) {
-      handleError(error, "Nao foi possivel gerar o PDF da fatura.");
+      handleError(error, "Não foi possível gerar o PDF da fatura.");
     } finally {
       setBusy(null);
     }
@@ -335,8 +335,8 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
     return (
       <Panel>
         <Note tone="danger">
-          Nao foi possivel carregar o financeiro. Verifique se a Edge Function{" "}
-          <code>admin-billing</code> esta implantada e se as migracoes do backoffice foram
+          Não foi possível carregar o financeiro. Verifique se a Edge Function{" "}
+          <code>admin-billing</code> está implantada e se as migrações do backoffice foram
           aplicadas.
         </Note>
         <div style={{ marginTop: "16px" }}>
@@ -368,7 +368,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
     },
     {
       key: "period",
-      header: "Periodo",
+      header: "Período",
       render: (invoice) => (
         <>
           <span className="adm-mono">
@@ -390,7 +390,8 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
           <span className="adm-mono">{formatDateBr(invoice.due_date)}</span>
           {invoice.status === "overdue" && (
             <p className="adm-cell-sub adm-text-danger">
-              {Math.max(0, daysOverdue(invoice.due_date, data.today))} dia(s) de atraso
+              {countLabel(Math.max(0, daysOverdue(invoice.due_date, data.today)), "dia", "dias")} de
+              atraso
             </p>
           )}
         </>
@@ -411,14 +412,14 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
             {invoice.boleto_payment_id ? "Boleto" : "Sem boleto"}
           </Badge>
           <Badge tone={invoice.whatsapp_sent_at ? "ok" : "neutral"} dot>
-            {invoice.whatsapp_sent_at ? "Enviada" : "Nao enviada"}
+            {invoice.whatsapp_sent_at ? "Enviada" : "Não enviada"}
           </Badge>
         </ButtonGroup>
       )
     },
     {
       key: "status",
-      header: "Situacao",
+      header: "Situação",
       render: (invoice) => (
         <Badge tone={invoiceStatusTone(invoice.status)} dot>
           {invoiceStatusLabel(invoice.status)}
@@ -476,17 +477,17 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
     },
     {
       key: "grace",
-      header: "Bloqueio apos",
+      header: "Bloqueio após",
       numeric: true,
       render: (company) => `${company.billing_plan.graceDays} d`
     },
     {
       key: "status",
-      header: "Situacao",
+      header: "Situação",
       render: (company) => (
         <ButtonGroup>
           <Badge tone={company.billing_enabled ? "ok" : "neutral"} dot>
-            {company.billing_enabled ? "Cobranca ativa" : "Sem cobranca"}
+            {company.billing_enabled ? "Cobrança ativa" : "Sem cobrança"}
           </Badge>
           {company.payment_blocked && (
             <Badge tone="danger" dot>
@@ -507,7 +508,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
       render: (company) => (
         <ButtonGroup>
           <Button size="sm" onClick={() => setEditingCompany(company)}>
-            Cobranca
+            Cobrança
           </Button>
           <Button
             size="sm"
@@ -535,7 +536,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
                 : setConfirming({
                     title: `Bloquear ${company.name}`,
                     message:
-                      "A balanca desta pedreira para de operar ate a liberacao. O bloqueio manual nao e desfeito pela passada automatica.",
+                      "A balança desta pedreira para de operar até a liberação. O bloqueio manual não é desfeito pela passada automática.",
                     confirmLabel: "Bloquear acesso",
                     onConfirm: () => {
                       void run(
@@ -563,7 +564,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
     <>
       <PageHead
         title="Financeiro"
-        description="Mensalidade da plataforma por pedreira: fechamento, fatura, boleto do Mercado Pago, envio por WhatsApp e bloqueio por inadimplencia."
+        description="Mensalidade da plataforma por pedreira: fechamento, fatura, boleto do Mercado Pago, envio por WhatsApp e bloqueio por inadimplência."
         actions={
           <Button
             variant="primary"
@@ -573,11 +574,11 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
                 "run-cycle",
                 "run_cycle",
                 {},
-                "Passada de cobranca executada. Confira as faturas."
+                "Passada de cobrança executada. Confira as faturas."
               )
             }
           >
-            {busy === "run-cycle" ? "Processando..." : "Rodar cobranca agora"}
+            {busy === "run-cycle" ? "Processando..." : "Rodar cobrança agora"}
           </Button>
         }
       />
@@ -590,32 +591,32 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
 
       <StatGrid>
         <Stat
-          label="Recorrencia mensal"
+          label="Recorrência mensal"
           value={formatCents(summary.monthlyRecurringCents)}
-          hint={`${summary.billedCompanies} pedreira(s) com cobranca ativa`}
+          hint={`${countLabel(summary.billedCompanies, "pedreira", "pedreiras")} com cobrança ativa`}
           tone="accent"
         />
         <Stat
           label="Em aberto"
           value={formatCents(summary.openAmountCents)}
-          hint={`${summary.openCount} fatura(s)`}
+          hint={countLabel(summary.openCount, "fatura", "faturas")}
         />
         <Stat
           label="Vencidas"
           value={formatCents(summary.overdueAmountCents)}
-          hint={`${summary.overdueCount} fatura(s)`}
+          hint={countLabel(summary.overdueCount, "fatura", "faturas")}
           tone={summary.overdueCount > 0 ? "danger" : "neutral"}
         />
         <Stat
           label="Recebido"
           value={formatCents(summary.paidAmountCents)}
-          hint={`${summary.paidCount} fatura(s) paga(s)`}
+          hint={countLabel(summary.paidCount, "fatura paga", "faturas pagas")}
           tone="ok"
         />
         <Stat
           label="Bloqueadas"
           value={String(summary.blockedCompanies)}
-          hint="Pedreiras sem acesso a balanca"
+          hint="Pedreiras sem acesso à balança"
           tone={summary.blockedCompanies > 0 ? "danger" : "neutral"}
         />
       </StatGrid>
@@ -624,8 +625,8 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
         {(
           [
             ["invoices", "Faturas"],
-            ["companies", "Cobranca por pedreira"],
-            ["settings", "Configuracoes"]
+            ["companies", "Cobrança por pedreira"],
+            ["settings", "Configurações"]
           ] as Array<[FinancialTab, string]>
         ).map(([id, label]) => (
           <Button key={id} variant={tab === id ? "primary" : "default"} onClick={() => setTab(id)}>
@@ -654,11 +655,11 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
               </select>
               <select
                 className="adm-select adm-toolbar-grow"
-                aria-label="Filtrar por situacao"
+                aria-label="Filtrar por situação"
                 value={filterStatus}
                 onChange={(event) => setFilterStatus(event.target.value)}
               >
-                <option value="">Todas as situacoes</option>
+                <option value="">Todas as situações</option>
                 <option value="open">Em aberto</option>
                 <option value="overdue">Vencidas</option>
                 <option value="paid">Pagas</option>
@@ -669,14 +670,14 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
                 aria-label="Buscar fatura"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Buscar por numero, referencia ou pedreira"
+                placeholder="Buscar por número, referência ou pedreira"
               />
             </>
           }
           footer={
             visibleInvoices.length > 0 ? (
               <>
-                <span>{totals.count} fatura(s)</span>
+                <span>{countLabel(totals.count, "fatura", "faturas")}</span>
                 <span>Em aberto: {formatCents(totals.openCents)}</span>
                 <span>Vencidas: {formatCents(totals.overdueCents)}</span>
                 <span>Recebido: {formatCents(totals.paidCents)}</span>
@@ -695,15 +696,15 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
                   ? "adm-row-muted"
                   : undefined
             }
-            empty='Nenhuma fatura encontrada. Faturas nascem no fechamento do ciclo — use "Faturar" na aba de cobranca por pedreira para antecipar.'
+            empty='Nenhuma fatura encontrada. Faturas nascem no fechamento do ciclo — use "Faturar" na aba de cobrança por pedreira para antecipar.'
           />
         </Panel>
       )}
 
       {tab === "companies" && (
         <Panel
-          title="Cobranca por pedreira"
-          description="Cada pedreira tem o seu valor acertado, a data de virada do sistema e o proprio calendario de fechamento e vencimento."
+          title="Cobrança por pedreira"
+          description="Cada pedreira tem o seu valor acertado, a data de virada do sistema e o próprio calendário de fechamento e vencimento."
           flush
         >
           <DataTable
@@ -723,7 +724,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
             settings={settings}
             busy={busy === "settings"}
             onSave={(payload) =>
-              void run("settings", "update_settings", payload, "Configuracao salva.")
+              void run("settings", "update_settings", payload, "Configuração salva.")
             }
           />
         </>
@@ -761,7 +762,7 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
               `company:${editingCompany.id}`,
               "update_company_billing",
               { companyId: editingCompany.id, ...payload },
-              "Cadastro de cobranca salvo."
+              "Cadastro de cobrança salvo."
             );
             if (ok) setEditingCompany(null);
           }}
@@ -847,20 +848,20 @@ function ActivationPanel({
 
   return (
     <Panel
-      title="Para a cobranca funcionar"
-      description="Credencial, emitente e cadastro de cada pedreira. Item pendente aqui vira fatura sem boleto — ou ciclo que nao fecha — la na frente."
+      title="Para a cobrança funcionar"
+      description="Credencial, emitente e cadastro de cada pedreira. Item pendente aqui vira fatura sem boleto — ou ciclo que não fecha — lá na frente."
     >
       {complete ? (
         <Note tone="ok">
-          Tudo configurado. O fechamento roda sozinho no dia marcado e o painel so precisa de voce
+          Tudo configurado. O fechamento roda sozinho no dia marcado e o painel só precisa de você
           para acompanhar.
         </Note>
       ) : (
         <>
           <Note tone={blockers > 0 ? "danger" : "warn"}>
             {blockers > 0
-              ? `${blockers} item(ns) impedem a cobranca de rodar.`
-              : "Nada impede a cobranca de rodar; os itens abaixo sao recomendacoes."}
+              ? `${countLabel(blockers, "item impede", "itens impedem")} a cobrança de rodar.`
+              : "Nada impede a cobrança de rodar; os itens abaixo são recomendações."}
           </Note>
           {steps.map((step) => {
             const badge = ACTIVATION_BADGE[step.status];
@@ -885,7 +886,7 @@ function ActivationPanel({
                   </Badge>
                   {step.status !== "ok" && (
                     <Button size="sm" onClick={() => onGo(step.target)}>
-                      {step.target === "companies" ? "Abrir pedreiras" : "Abrir configuracoes"}
+                      {step.target === "companies" ? "Abrir pedreiras" : "Abrir configurações"}
                     </Button>
                   )}
                 </ButtonGroup>
@@ -951,7 +952,7 @@ function InvoiceGenerationModal({
   return (
     <Modal
       title={`Faturar — ${company.name}`}
-      description={`Valor acertado ${formatCents(preview.monthlyAmountCents)} por mes. A primeira fatura sai proporcional aos dias usados.`}
+      description={`Valor acertado ${formatCents(preview.monthlyAmountCents)} por mês. A primeira fatura sai proporcional aos dias usados.`}
       onClose={onClose}
       footer={
         <>
@@ -959,11 +960,11 @@ function InvoiceGenerationModal({
           {nextPeriod && (
             <Button
               disabled={busy}
-              title="Fecha o proximo ciclo antes da data — para pedreira que entrou fora do calendario."
+              title="Fecha o próximo ciclo antes da data — para pedreira que entrou fora do calendário."
               onClick={() =>
                 onConfirm({
                   title: `Antecipar o fechamento de ${company.name}`,
-                  message: `Fecha agora o ciclo ${describePeriod(nextPeriod)}, no valor de ${formatCents(nextAmountCents)}, mesmo sem ter chegado a data. O proximo ciclo passa a contar a partir dele.`,
+                  message: `Fecha agora o ciclo ${describePeriod(nextPeriod)}, no valor de ${formatCents(nextAmountCents)}, mesmo sem ter chegado a data. O próximo ciclo passa a contar a partir dele.`,
                   confirmLabel: "Antecipar e faturar",
                   onConfirm: () => fire(true)
                 })
@@ -976,7 +977,7 @@ function InvoiceGenerationModal({
             {busy
               ? "Gerando..."
               : hasDue
-                ? `Gerar ${duePeriods.length} fatura(s) — ${formatCents(dueTotalCents)}`
+                ? `Gerar ${countLabel(duePeriods.length, "fatura", "faturas")} — ${formatCents(dueTotalCents)}`
                 : "Nenhum ciclo fechado"}
           </Button>
         </>
@@ -986,17 +987,17 @@ function InvoiceGenerationModal({
         {preview.missing.boleto.length > 0 && (
           <Note tone="warn">
             Falta no cadastro para o boleto: {preview.missing.boleto.join(", ")}. O Mercado Pago
-            recusa a emissao inteira faltando um deles — a fatura ate sai, o boleto nao.
+            recusa a emissão inteira faltando um deles — a fatura até sai, o boleto não.
           </Note>
         )}
         {preview.missing.whatsapp.length > 0 && (
           <Note tone="warn">
             Falta para o envio: {preview.missing.whatsapp.join(", ")}. A fatura e o boleto ficam
-            prontos, mas nao chegam ao cliente.
+            prontos, mas não chegam ao cliente.
           </Note>
         )}
 
-        <Fieldset legend="Ciclos ja fechados">
+        <Fieldset legend="Ciclos já fechados">
           {hasDue ? (
             <>
               <ul className="adm-list">
@@ -1013,9 +1014,9 @@ function InvoiceGenerationModal({
             </>
           ) : (
             <p className="adm-field-hint">
-              Nenhum ciclo fechou ate hoje ({formatDateBr(preview.today)}).
+              Nenhum ciclo fechou até hoje ({formatDateBr(preview.today)}).
               {nextPeriod
-                ? ` O proximo fechamento e ${describePeriod(nextPeriod)}, no valor de ${formatCents(nextAmountCents)} — use "Antecipar fechamento" para cobrar assim mesmo.`
+                ? ` O próximo fechamento é ${describePeriod(nextPeriod)}, no valor de ${formatCents(nextAmountCents)} — use "Antecipar fechamento" para cobrar assim mesmo.`
                 : ""}
             </p>
           )}
@@ -1041,8 +1042,8 @@ function InvoiceGenerationModal({
             </label>
           </div>
           <p className="adm-field-hint">
-            Desmarcar as duas gera so a fatura — util para conferir valor antes de mandar cobranca
-            ao cliente. Boleto e envio continuam disponiveis no detalhe da fatura.
+            Desmarcar as duas gera só a fatura — útil para conferir valor antes de mandar cobrança
+            ao cliente. Boleto e envio continuam disponíveis no detalhe da fatura.
           </p>
         </Fieldset>
       </div>
@@ -1090,7 +1091,7 @@ function InvoiceDetailModal({
   return (
     <Modal
       title={`${invoice.number} — ${companyName}`}
-      description={`Referencia ${invoice.reference_label} · ${formatDateBr(invoice.period_start)} a ${formatDateBr(invoice.period_end)}`}
+      description={`Referência ${invoice.reference_label} · ${formatDateBr(invoice.period_start)} a ${formatDateBr(invoice.period_end)}`}
       onClose={onClose}
       footer={
         <>
@@ -1109,13 +1110,13 @@ function InvoiceDetailModal({
               onClick={() =>
                 onConfirm({
                   title: `Confirmar recebimento de ${invoice.number}`,
-                  message: `Dar baixa em ${formatCents(invoice.amount_cents)}. Se nao restar fatura vencida, o acesso da pedreira e liberado.`,
+                  message: `Dar baixa em ${formatCents(invoice.amount_cents)}. Se não restar fatura vencida, o acesso da pedreira é liberado.`,
                   confirmLabel: "Confirmar recebimento",
                   onConfirm: () =>
                     onAction(
                       "mark_invoice_paid",
                       { invoiceId: invoice.id },
-                      "Fatura quitada. O acesso e liberado se nao houver outra pendencia."
+                      "Fatura quitada. O acesso é liberado se não houver outra pendência."
                     )
                 })
               }
@@ -1129,14 +1130,15 @@ function InvoiceDetailModal({
       <div className="adm-form">
         <dl className="adm-kv">
           <div className="adm-kv-item">
-            <dt>Situacao</dt>
+            <dt>Situação</dt>
             <dd>
               <Badge tone={invoiceStatusTone(invoice.status)} dot>
                 {invoiceStatusLabel(invoice.status)}
               </Badge>
               {invoice.status === "overdue" && (
                 <span className="adm-text-danger" style={{ marginLeft: "8px", fontSize: "12px" }}>
-                  {Math.max(0, daysOverdue(invoice.due_date, today))} dia(s) de atraso
+                  {countLabel(Math.max(0, daysOverdue(invoice.due_date, today)), "dia", "dias")} de
+                  atraso
                 </span>
               )}
             </dd>
@@ -1154,12 +1156,12 @@ function InvoiceDetailModal({
             <dd className="adm-mono">{formatDateBr(invoice.due_date)}</dd>
           </div>
           <div className="adm-kv-item">
-            <dt>Valor do periodo</dt>
+            <dt>Valor do período</dt>
             <dd className="adm-mono">{formatCents(invoice.base_amount_cents)}</dd>
           </div>
           {invoice.addition_cents > 0 && (
             <div className="adm-kv-item">
-              <dt>Acrescimo</dt>
+              <dt>Acréscimo</dt>
               <dd className="adm-mono">{formatCents(invoice.addition_cents)}</dd>
             </div>
           )}
@@ -1191,14 +1193,14 @@ function InvoiceDetailModal({
           <div className="adm-form">
             <p className="adm-field-hint">
               {invoice.boleto_payment_id
-                ? `Mercado Pago ${invoice.boleto_payment_id} · situacao "${invoice.boleto_status ?? "emitido"}"`
+                ? `Mercado Pago ${invoice.boleto_payment_id} · situação "${invoice.boleto_status ?? "emitido"}"`
                 : "Nenhum boleto emitido para esta fatura."}
             </p>
             {invoice.boleto_barcode && (
               <div>
-                <p className="adm-field-label">Linha digitavel</p>
+                <p className="adm-field-label">Linha digitável</p>
                 <p className="adm-mono adm-barcode">{invoice.boleto_barcode}</p>
-                <CopyButton value={invoice.boleto_barcode} label="Copiar linha digitavel" />
+                <CopyButton value={invoice.boleto_barcode} label="Copiar linha digitável" />
               </div>
             )}
             {invoice.boleto_error && <Note tone="danger">{invoice.boleto_error}</Note>}
@@ -1230,11 +1232,11 @@ function InvoiceDetailModal({
                       onAction(
                         "refresh_invoice",
                         { invoiceId: invoice.id },
-                        "Situacao do boleto atualizada."
+                        "Situação do boleto atualizada."
                       )
                     }
                   >
-                    Consultar situacao
+                    Consultar situação
                   </Button>
                 )}
               </ButtonGroup>
@@ -1247,7 +1249,7 @@ function InvoiceDetailModal({
             <p className="adm-field-hint">
               {invoice.whatsapp_sent_at
                 ? `Enviada em ${formatDateTimeBr(invoice.whatsapp_sent_at)} para ${invoice.whatsapp_to ?? "—"}.`
-                : "Ainda nao enviada."}
+                : "Ainda não enviada."}
             </p>
             {invoice.whatsapp_error && <Note tone="warn">{invoice.whatsapp_error}</Note>}
             {!isClosed && (
@@ -1273,16 +1275,16 @@ function InvoiceDetailModal({
         {invoice.notes && <Note>{invoice.notes}</Note>}
         {invoice.cancel_reason && <Note tone="warn">Cancelamento: {invoice.cancel_reason}</Note>}
 
-        <Fieldset legend="Historico">
+        <Fieldset legend="Histórico">
           <div className="adm-form">
             {events === null || events.status === "loading" ? (
-              <p className="adm-field-hint">Carregando o historico...</p>
+              <p className="adm-field-hint">Carregando o histórico...</p>
             ) : events.status === "error" ? (
               <Note tone="warn">{events.message}</Note>
             ) : events.items.length === 0 ? (
               <p className="adm-field-hint">
-                Nada registrado ainda. A trilha e best-effort: perder um registro nao derruba a
-                cobranca.
+                Nada registrado ainda. A trilha é best-effort: perder um registro não derruba a
+                cobrança.
               </p>
             ) : (
               <ul className="adm-timeline">
@@ -1301,7 +1303,7 @@ function InvoiceDetailModal({
             )}
             <ButtonGroup>
               <Button size="sm" onClick={onReloadEvents}>
-                Atualizar historico
+                Atualizar histórico
               </Button>
             </ButtonGroup>
           </div>
@@ -1336,10 +1338,10 @@ function InvoiceDetailModal({
                   onConfirm({
                     title: `Excluir ${invoice.number}`,
                     message:
-                      "A fatura some do historico. Para manter o registro e apenas encerra-la, cancele em vez de excluir.",
+                      "A fatura some do histórico. Para manter o registro e apenas encerrá-la, cancele em vez de excluir.",
                     confirmLabel: "Excluir fatura",
                     onConfirm: () =>
-                      onAction("delete_invoice", { invoiceId: invoice.id }, "Fatura excluida.")
+                      onAction("delete_invoice", { invoiceId: invoice.id }, "Fatura excluída.")
                   })
                 }
               >
@@ -1388,7 +1390,7 @@ function CompanyBillingModal({
     const form = new FormData(event.currentTarget);
     const monthlyAmountCents = amountInput.trim() ? parseMoneyToCents(amountInput) : null;
     if (amountInput.trim() && monthlyAmountCents === null) {
-      setAmountError("Valor invalido. Use o formato 1.234,56.");
+      setAmountError("Valor inválido. Use o formato 1.234,56.");
       return;
     }
     setAmountError(null);
@@ -1419,14 +1421,14 @@ function CompanyBillingModal({
 
   return (
     <Modal
-      title={`Cobranca — ${company.name}`}
-      description="Valor acertado, calendario do ciclo e os dados que o boleto do Mercado Pago exige."
+      title={`Cobrança — ${company.name}`}
+      description="Valor acertado, calendário do ciclo e os dados que o boleto do Mercado Pago exige."
       onClose={onClose}
       footer={
         <>
           <Button onClick={onClose}>Cancelar</Button>
           <Button type="submit" variant="primary" form={formId} disabled={busy}>
-            {busy ? "Salvando..." : "Salvar cobranca"}
+            {busy ? "Salvando..." : "Salvar cobrança"}
           </Button>
         </>
       }
@@ -1434,20 +1436,20 @@ function CompanyBillingModal({
       <form id={formId} className="adm-form" onSubmit={handleSubmit}>
         {contractPending.length > 0 && (
           <Note tone="danger">
-            Falta no contrato: {contractPending.join(" e ")}. Sem isso o ciclo nao fecha.
+            Falta no contrato: {contractPending.join(" e ")}. Sem isso o ciclo não fecha.
           </Note>
         )}
         {company.billing_plan.missing.boleto.length > 0 && (
           <Note tone="warn">
             Falta para o boleto: {company.billing_plan.missing.boleto.join(", ")}. O Mercado Pago
-            exige documento, e-mail e endereco completo do pagador — faltando um deles, a emissao
-            inteira e recusada.
+            exige documento, e-mail e endereço completo do pagador — faltando um deles, a emissão
+            inteira é recusada.
           </Note>
         )}
         {company.billing_plan.missing.whatsapp.length > 0 && (
           <Note tone="warn">
             Falta para o envio: {company.billing_plan.missing.whatsapp.join(", ")}. A fatura sai,
-            mas nao chega ao cliente.
+            mas não chega ao cliente.
           </Note>
         )}
 
@@ -1479,7 +1481,7 @@ function CompanyBillingModal({
             </Field>
             <Field
               label="Dia do fechamento"
-              hint={`Vazio usa o padrao (${settings.defaultClosingDay}).`}
+              hint={`Vazio usa o padrão (${settings.defaultClosingDay}).`}
             >
               <input
                 className="adm-input"
@@ -1492,7 +1494,7 @@ function CompanyBillingModal({
             </Field>
             <Field
               label="Dia do vencimento"
-              hint={`Vazio usa o padrao (${settings.defaultDueDay}).`}
+              hint={`Vazio usa o padrão (${settings.defaultDueDay}).`}
             >
               <input
                 className="adm-input"
@@ -1504,8 +1506,8 @@ function CompanyBillingModal({
               />
             </Field>
             <Field
-              label="Dias de inadimplencia ate o bloqueio"
-              hint={`Vazio usa o padrao (${settings.defaultGraceDays}).`}
+              label="Dias de inadimplência até o bloqueio"
+              hint={`Vazio usa o padrão (${settings.defaultGraceDays}).`}
             >
               <input
                 className="adm-input"
@@ -1526,18 +1528,18 @@ function CompanyBillingModal({
             <Checkbox
               name="billingBlockExempt"
               defaultChecked={company.billing_block_exempt}
-              label="Isenta do bloqueio automatico"
+              label="Isenta do bloqueio automático"
             />
           </div>
         </Fieldset>
 
         <Fieldset legend="Dados do boleto">
           <p className="adm-field-hint">
-            O Mercado Pago exige documento, e-mail e endereco completo do pagador. Faltando um
-            deles, a emissao inteira e recusada.
+            O Mercado Pago exige documento, e-mail e endereço completo do pagador. Faltando um
+            deles, a emissão inteira é recusada.
           </p>
           <div className="adm-grid">
-            <Field label="Razao social (cobranca)" hint="Vazio usa a razao social do cadastro.">
+            <Field label="Razão social (cobrança)" hint="Vazio usa a razão social do cadastro.">
               <input
                 className="adm-input"
                 name="billingLegalName"
@@ -1545,7 +1547,7 @@ function CompanyBillingModal({
                 placeholder={company.legal_name ?? ""}
               />
             </Field>
-            <Field label="CNPJ/CPF (cobranca)" hint="Vazio usa o documento do cadastro.">
+            <Field label="CNPJ/CPF (cobrança)" hint="Vazio usa o documento do cadastro.">
               <input
                 className="adm-input adm-input-mono"
                 name="billingDocument"
@@ -1553,7 +1555,7 @@ function CompanyBillingModal({
                 placeholder={company.document ?? ""}
               />
             </Field>
-            <Field label="E-mail de cobranca">
+            <Field label="E-mail de cobrança">
               <input
                 className="adm-input"
                 name="billingEmail"
@@ -1561,7 +1563,7 @@ function CompanyBillingModal({
                 defaultValue={company.billing_email ?? ""}
               />
             </Field>
-            <Field label="WhatsApp de cobranca" hint="Para onde a fatura e o boleto sao enviados.">
+            <Field label="WhatsApp de cobrança" hint="Para onde a fatura e o boleto são enviados.">
               <input
                 className="adm-input adm-input-mono"
                 name="billingPhone"
@@ -1583,14 +1585,14 @@ function CompanyBillingModal({
                 defaultValue={company.billing_zipcode ?? ""}
               />
             </Field>
-            <Field label="Endereco">
+            <Field label="Endereço">
               <input
                 className="adm-input"
                 name="billingAddressStreet"
                 defaultValue={company.billing_address_street ?? ""}
               />
             </Field>
-            <Field label="Numero">
+            <Field label="Número">
               <input
                 className="adm-input"
                 name="billingAddressNumber"
@@ -1629,7 +1631,7 @@ function CompanyBillingModal({
           </div>
         </Fieldset>
 
-        <Field label="Observacoes internas">
+        <Field label="Observações internas">
           <textarea
             className="adm-textarea"
             name="billingNotes"
@@ -1673,7 +1675,7 @@ function InvoiceEditModal({
   return (
     <Modal
       title={`Ajustar ${invoice.number}`}
-      description={`Referencia ${invoice.reference_label}. O total e sempre valor do periodo + acrescimo - desconto.`}
+      description={`Referência ${invoice.reference_label}. O total é sempre valor do período + acréscimo - desconto.`}
       onClose={onClose}
       footer={
         <>
@@ -1691,7 +1693,7 @@ function InvoiceEditModal({
           event.preventDefault();
           const baseCents = parseMoneyToCents(base);
           if (baseCents === null) {
-            setError("Valor do periodo invalido.");
+            setError("Valor do período inválido.");
             return;
           }
           setError(null);
@@ -1706,7 +1708,7 @@ function InvoiceEditModal({
         }}
       >
         <div className="adm-grid">
-          <Field label="Valor do periodo" error={error}>
+          <Field label="Valor do período" error={error}>
             <input
               className="adm-input adm-input-mono"
               value={base}
@@ -1714,7 +1716,7 @@ function InvoiceEditModal({
               inputMode="decimal"
             />
           </Field>
-          <Field label="Acrescimo">
+          <Field label="Acréscimo">
             <input
               className="adm-input adm-input-mono"
               value={addition}
@@ -1746,12 +1748,12 @@ function InvoiceEditModal({
 
         {invoice.boleto_payment_id && (
           <Note tone="warn">
-            Ja existe boleto emitido com o valor e o vencimento antigos. Depois de salvar, use
-            &quot;Reemitir boleto&quot; — o papel que o cliente recebeu nao muda sozinho.
+            Já existe boleto emitido com o valor e o vencimento antigos. Depois de salvar, use
+            &quot;Reemitir boleto&quot; — o papel que o cliente recebeu não muda sozinho.
           </Note>
         )}
 
-        <Field label="Observacoes">
+        <Field label="Observações">
           <textarea
             className="adm-textarea"
             name="notes"
@@ -1837,7 +1839,7 @@ function BillingSettingsForm({
     <form id={formId} className="adm-form" onSubmit={handleSubmit}>
       <Panel
         title="Credenciais"
-        description="Vem sempre dos secrets do Supabase — nao ha o que preencher aqui. Grave o valor em Supabase > Edge Functions > Secrets (ou `supabase secrets set NOME=valor`) com o nome indicado."
+        description="Vêm sempre dos secrets do Supabase — não há o que preencher aqui. Grave o valor em Supabase > Edge Functions > Secrets (ou `supabase secrets set NOME=valor`) com o nome indicado."
       >
         <SecretStatusRow secret={findSecret(settings, "mercadoPagoAccessToken")} />
         <SecretStatusRow secret={findSecret(settings, "mercadoPagoWebhookSecret")} />
@@ -1846,13 +1848,13 @@ function BillingSettingsForm({
 
       <Panel
         title="Webhook do Mercado Pago"
-        description="Cole esta URL no painel do Mercado Pago, evento Pagamentos. Cada boleto emitido ja carrega o endereco; a configuracao cobre as notificacoes posteriores a emissao."
+        description="Cole esta URL no painel do Mercado Pago, evento Pagamentos. Cada boleto emitido já carrega o endereço; a configuração cobre as notificações posteriores à emissão."
       >
         <div className="adm-secret-row">
           <div>
             <code className="adm-secret-var">{BILLING_WEBHOOK_URL}</code>
             <p className="adm-field-hint">
-              E por aqui que a fatura vira &quot;paga&quot; sozinha e o acesso da pedreira e
+              É por aqui que a fatura vira &quot;paga&quot; sozinha e o acesso da pedreira é
               liberado.
             </p>
           </div>
@@ -1870,7 +1872,7 @@ function BillingSettingsForm({
               name="mercadoPagoEnvironment"
               defaultValue={settings.mercadoPagoEnvironment}
             >
-              <option value="production">Producao</option>
+              <option value="production">Produção</option>
               <option value="sandbox">Sandbox (teste)</option>
             </select>
           </Field>
@@ -1878,11 +1880,11 @@ function BillingSettingsForm({
       </Panel>
 
       <Panel
-        title="WhatsApp da cobranca"
-        description="Instancia UAZAPI da Kybernan, usada para mandar fatura e boleto a todas as pedreiras. E diferente da instancia que cada pedreira configura para os relatorios dela."
+        title="WhatsApp da cobrança"
+        description="Instância UAZAPI da Kybernan, usada para mandar fatura e boleto a todas as pedreiras. É diferente da instância que cada pedreira configura para os relatórios dela."
       >
         <div className="adm-grid">
-          <Field label="URL da instancia">
+          <Field label="URL da instância">
             <input
               className="adm-input"
               name="whatsappUrl"
@@ -1890,7 +1892,7 @@ function BillingSettingsForm({
               placeholder="https://sua-instancia.uazapi.com"
             />
           </Field>
-          <Field label="Nome da instancia">
+          <Field label="Nome da instância">
             <input
               className="adm-input"
               name="whatsappInstanceName"
@@ -1900,18 +1902,18 @@ function BillingSettingsForm({
         </div>
         {settings.whatsappStatus && (
           <p className="adm-field-hint">
-            Situacao registrada da instancia:{" "}
+            Situação registrada da instância:{" "}
             <span className="adm-mono">{settings.whatsappStatus}</span>
           </p>
         )}
       </Panel>
 
       <Panel
-        title="Padroes do ciclo"
-        description="Valem para a pedreira que nao definiu o proprio calendario."
+        title="Padrões do ciclo"
+        description="Valem para a pedreira que não definiu o próprio calendário."
       >
         <div className="adm-grid">
-          <Field label="Dia do fechamento" hint="Meses curtos fecham no ultimo dia.">
+          <Field label="Dia do fechamento" hint="Meses curtos fecham no último dia.">
             <input
               className="adm-input"
               name="defaultClosingDay"
@@ -1923,7 +1925,7 @@ function BillingSettingsForm({
           </Field>
           <Field
             label="Dia do vencimento"
-            hint="Menor ou igual ao fechamento vence no mes seguinte."
+            hint="Menor ou igual ao fechamento vence no mês seguinte."
           >
             <input
               className="adm-input"
@@ -1935,8 +1937,8 @@ function BillingSettingsForm({
             />
           </Field>
           <Field
-            label="Dias de inadimplencia ate o bloqueio"
-            hint="Passados esses dias apos o vencimento, o acesso a balanca e bloqueado automaticamente."
+            label="Dias de inadimplência até o bloqueio"
+            hint="Passados esses dias após o vencimento, o acesso à balança é bloqueado automaticamente."
           >
             <input
               className="adm-input"
@@ -1967,14 +1969,14 @@ function BillingSettingsForm({
           <Checkbox
             name="autoBlockEnabled"
             defaultChecked={settings.autoBlockEnabled}
-            label="Bloquear por inadimplencia"
+            label="Bloquear por inadimplência"
           />
         </div>
       </Panel>
 
       <Panel
         title="Emitente e textos"
-        description="Aparecem na fatura em PDF, na descricao do boleto e na mensagem enviada ao cliente."
+        description="Aparecem na fatura em PDF, na descrição do boleto e na mensagem enviada ao cliente."
       >
         <div className="adm-grid">
           <Field label="Nome do emitente">
@@ -2002,8 +2004,8 @@ function BillingSettingsForm({
         </div>
         <div className="adm-form adm-grid-spaced">
           <Field
-            label="Descricao do boleto"
-            hint="Marcadores: {emitente} {pedreira} {referencia} {periodo}. Vazio usa o texto padrao."
+            label="Descrição do boleto"
+            hint="Marcadores: {emitente} {pedreira} {referencia} {periodo}. Vazio usa o texto padrão."
           >
             <input
               className="adm-input"
@@ -2014,7 +2016,7 @@ function BillingSettingsForm({
           </Field>
           <Field
             label="Mensagem do WhatsApp"
-            hint="Marcadores: {pedreira} {numero} {referencia} {valor} {vencimento} {boleto} {linha_digitavel} {pix}. Vazio usa a mensagem padrao."
+            hint="Marcadores: {pedreira} {numero} {referencia} {valor} {vencimento} {boleto} {linha_digitavel} {pix}. Vazio usa a mensagem padrão."
           >
             <textarea
               className="adm-textarea"
@@ -2028,11 +2030,16 @@ function BillingSettingsForm({
 
       <div>
         <Button type="submit" variant="primary" form={formId} disabled={busy}>
-          {busy ? "Salvando..." : "Salvar configuracoes"}
+          {busy ? "Salvando..." : "Salvar configurações"}
         </Button>
       </div>
     </form>
   );
+}
+
+/** "1 fatura" / "3 faturas": o numero junto da palavra no plural certo. */
+function countLabel(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`;
 }
 
 function emptyToNull(value: FormDataEntryValue | null): number | null {

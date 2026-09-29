@@ -30,7 +30,7 @@ import {
 } from "../lib/wallet";
 
 const HELP =
-  "Vendas fechadas na forma de pagamento 'Em carteira': elas saem da balanca sem forma de recebimento definida e ficam aqui ate o fechamento, quando voce escolhe como o cliente vai pagar e para quando. Quem pagou adiantado ja chega com a compra abatida do deposito: 'A receber' mostra so o que passou do adiantamento. O filtro de periodo comeca em 'Tudo em aberto' para nao esconder venda antiga sem receber; escolha a quinzena (ou o mes, a semana, datas livres) quando estiver fechando um periodo com o cliente. O recorte usa a data da OPERACAO, a mesma do Fechamento de faturas, para as duas telas mostrarem a mesma quinzena.";
+  "Vendas fechadas na forma de pagamento 'Em carteira': elas saem da balança sem forma de recebimento definida e ficam aqui até o fechamento, quando você escolhe como o cliente vai pagar e para quando. Quem pagou adiantado já chega com a compra abatida do depósito: 'A receber' mostra só o que passou do adiantamento. O filtro de período começa em 'Tudo em aberto' para não esconder venda antiga sem receber; escolha a quinzena (ou o mês, a semana, datas livres) quando estiver fechando um período com o cliente. O recorte usa a data da OPERAÇÃO, a mesma do Fechamento de faturas, para as duas telas mostrarem a mesma quinzena.";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
@@ -188,7 +188,7 @@ export function Wallet() {
       });
       const method = settlementMethods.find((m) => m.id === settlementMethodId);
       setNotice(
-        `${String(result.settled)} venda(s) fechada(s) em ${
+        `${String(result.settled)} ${result.settled === 1 ? "venda fechada" : "vendas fechadas"} em ${
           method ? paymentMethodDisplayName(method) : "forma escolhida"
         }.`
       );
@@ -204,7 +204,7 @@ export function Wallet() {
 
   async function handleReopen(): Promise<void> {
     if (reopenIds.length === 0) {
-      setActionError("Selecione ao menos uma venda ja fechada para reabrir.");
+      setActionError("Selecione ao menos uma venda já fechada para reabrir.");
       return;
     }
     setSaving(true);
@@ -212,7 +212,9 @@ export function Wallet() {
     setNotice(null);
     try {
       const result = await callWebApi("reopen_wallet", { operationIds: reopenIds });
-      setNotice(`${String(result.reopened)} venda(s) de volta para a carteira.`);
+      setNotice(
+        `${String(result.reopened)} ${result.reopened === 1 ? "venda" : "vendas"} de volta para a carteira.`
+      );
       setSelected(new Set());
       await ops.reload();
     } catch (caught) {
@@ -248,7 +250,7 @@ export function Wallet() {
 
       <div className="wallet-filters">
         <label className="wallet-field">
-          Situacao
+          Situação
           <select
             className="wallet-input"
             value={status}
@@ -270,7 +272,7 @@ export function Wallet() {
           />
         </label>
         <div className="wallet-field wallet-period">
-          Periodo
+          Período
           <div className="wallet-chip-row">
             <button
               type="button"
@@ -300,7 +302,7 @@ export function Wallet() {
                   <input
                     type="month"
                     className="wallet-input"
-                    aria-label="Mes do periodo"
+                    aria-label="Mês do período"
                     value={period.month}
                     onChange={(event) =>
                       setPeriod((current) => ({ ...current, month: event.target.value }))
@@ -314,14 +316,14 @@ export function Wallet() {
                       className={`wallet-chip${period.half === 1 ? " active" : ""}`}
                       onClick={() => setPeriod((current) => ({ ...current, half: 1 }))}
                     >
-                      1a
+                      1ª
                     </button>
                     <button
                       type="button"
                       className={`wallet-chip${period.half === 2 ? " active" : ""}`}
                       onClick={() => setPeriod((current) => ({ ...current, half: 2 }))}
                     >
-                      2a
+                      2ª
                     </button>
                   </>
                 ) : null}
@@ -360,13 +362,13 @@ export function Wallet() {
                 ) : null}
               </div>
               <span className="wallet-muted">
-                {formatDayLabel(range.start)} a {formatDayLabel(range.end)} — pela data da operacao,
+                {formatDayLabel(range.start)} a {formatDayLabel(range.end)} — pela data da operação,
                 a mesma do Fechamento de faturas.
               </span>
             </>
           ) : (
             <span className="wallet-muted">
-              Sem recorte: mostra tambem as vendas antigas ainda em aberto.
+              Sem recorte: mostra também as vendas antigas ainda em aberto.
             </span>
           )}
         </div>
@@ -376,7 +378,7 @@ export function Wallet() {
       {notice ? <p className="wallet-muted">{notice}</p> : null}
       {methods.data && walletIds.length === 0 ? (
         <p className="wallet-muted">
-          Esta pedreira nao tem forma de pagamento &quot;em carteira&quot; cadastrada.
+          Esta pedreira não tem forma de pagamento &quot;em carteira&quot; cadastrada.
         </p>
       ) : null}
 
@@ -428,7 +430,7 @@ export function Wallet() {
           />
         </label>
         <label className="wallet-field wallet-note">
-          Observacao
+          Observação
           <input
             type="text"
             className="wallet-input"
@@ -443,7 +445,10 @@ export function Wallet() {
           disabled={saving || openIds.length === 0}
           onClick={() => void handleSettle()}
         >
-          Fechar {openIds.length > 0 ? `${openIds.length} venda(s)` : "selecionadas"}
+          Fechar{" "}
+          {openIds.length > 0
+            ? `${openIds.length} ${openIds.length === 1 ? "venda" : "vendas"}`
+            : "selecionadas"}
         </button>
         <button
           type="button"
@@ -486,7 +491,8 @@ export function Wallet() {
                     <span className="wallet-group-name">{group.customerName}</span>
                   </label>
                   <span className="wallet-group-total">
-                    {group.operations.length} venda(s) · {formatBRL(group.totalCents)}
+                    {group.operations.length} {group.operations.length === 1 ? "venda" : "vendas"} ·{" "}
+                    {formatBRL(group.totalCents)}
                     {group.openTotalCents !== group.totalCents
                       ? ` · a receber ${formatBRL(group.openTotalCents)}`
                       : ""}
@@ -496,9 +502,9 @@ export function Wallet() {
                   <table className="wallet-table">
                     <thead>
                       <tr>
-                        <th aria-label="Selecao" />
-                        <th>Operacao</th>
-                        <th>Saida</th>
+                        <th aria-label="Seleção" />
+                        <th>Operação</th>
+                        <th>Saída</th>
                         <th>Placa</th>
                         <th>Produto</th>
                         <th className="num">Peso</th>

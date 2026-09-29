@@ -108,7 +108,7 @@ function logged(action: WebApiAction, error: WebApiError): WebApiError {
   recordError({
     source: "api",
     message: error.message,
-    detail: `HTTP ${error.status} · acao ${action}`,
+    detail: `HTTP ${error.status} · ação ${action}`,
     path: typeof location === "undefined" ? undefined : location.pathname
   });
   return error;

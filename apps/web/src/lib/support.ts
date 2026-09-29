@@ -202,11 +202,11 @@ export type SupportTab =
   | "navegador";
 
 export const SUPPORT_TABS: ReadonlyArray<{ id: SupportTab; label: string }> = [
-  { id: "balancas", label: "Balancas" },
+  { id: "balancas", label: "Balanças" },
   { id: "pedidos", label: "Pedidos do site" },
   { id: "omie", label: "Envios OMIE" },
   { id: "fechamentos", label: "Fechamentos" },
-  { id: "relatorios", label: "Relatorios" },
+  { id: "relatorios", label: "Relatórios" },
   { id: "acessos", label: "Acessos" },
   { id: "navegador", label: "Navegador" }
 ];
@@ -329,7 +329,7 @@ export function formatAgo(iso: string | null | undefined, now: number): string {
   if (diff === null) return "—";
   if (diff < -60_000) return `daqui a ${formatSpan(-diff).replace(/ \d+ s$/, "")}`;
   if (diff < 60_000) return "agora";
-  return `ha ${formatSpan(diff).replace(/ \d+ s$/, "")}`;
+  return `há ${formatSpan(diff).replace(/ \d+ s$/, "")}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -456,10 +456,10 @@ export const BILLING_STUCK_MS = 15 * 60_000;
 
 export const REQUEST_KIND_LABELS: Record<RequestKind, string> = {
   entry: "Entrada",
-  exit: "Saida",
-  update: "Alteracao",
+  exit: "Saída",
+  update: "Alteração",
   cancel: "Cancelamento",
-  reprint: "Reimpressao"
+  reprint: "Reimpressão"
 };
 
 export function isWaiting(status: string): boolean {
@@ -486,7 +486,7 @@ export function requestStatusView(
     case "failed":
       return { label: "Falhou", tone: "danger" };
     case "done":
-      return { label: "Concluido", tone: "success" };
+      return { label: "Concluído", tone: "success" };
     case "pending":
       return stuck
         ? { label: "Parado na fila", tone: "warning" }
@@ -535,9 +535,9 @@ export function printView(
     case "printed":
       return { label: "Impresso", tone: "success" };
     case "failed":
-      return { label: "Nao imprimiu", tone: "danger" };
+      return { label: "Não imprimiu", tone: "danger" };
     case "skipped":
-      return { label: "Nao precisou", tone: "neutral" };
+      return { label: "Não precisou", tone: "neutral" };
     default:
       return null;
   }
@@ -553,10 +553,10 @@ export type RequestFilter =
 
 export const REQUEST_FILTERS: ReadonlyArray<{ id: RequestFilter; label: string }> = [
   { id: "problemas", label: "Falhas e parados" },
-  { id: "falhas", label: "So falhas" },
-  { id: "aguardando", label: "Aguardando a balanca" },
-  { id: "cupom", label: "Cupom nao impresso" },
-  { id: "concluidos", label: "Concluidos" },
+  { id: "falhas", label: "Só falhas" },
+  { id: "aguardando", label: "Aguardando a balança" },
+  { id: "cupom", label: "Cupom não impresso" },
+  { id: "concluidos", label: "Concluídos" },
   { id: "todos", label: "Todos (7 dias)" }
 ];
 
@@ -654,37 +654,37 @@ export function omieReason(problem: SupportOmieProblem, now: number): OmieReason
     case "missing_in_omie":
       return {
         key: "missing_in_omie",
-        label: "Nao encontrado no OMIE",
-        hint: "O pedido/OS foi apagado ou nao existe mais no OMIE; a balanca parou de reenviar.",
+        label: "Não encontrado no OMIE",
+        hint: "O pedido/OS foi apagado ou não existe mais no OMIE; a balança parou de reenviar.",
         severity: "danger"
       };
     case "service_order_failed":
       return {
         key: "service_order_failed",
         label: "OMIE recusou a OS",
-        hint: "A ordem de servico foi recusada. Corrija o cadastro e reenvie pela balanca.",
+        hint: "A ordem de serviço foi recusada. Corrija o cadastro e reenvie pela balança.",
         severity: "danger"
       };
     case "failed":
       return {
         key: "failed",
         label: "Erro no envio",
-        hint: "O envio parou de tentar sozinho (dead letter). Reenviar pela balanca.",
+        hint: "O envio parou de tentar sozinho (dead letter). Reenviar pela balança.",
         severity: "danger"
       };
     case "cadastro_incompleto":
       return {
         key: "cadastro_incompleto",
         label: "Cadastro incompleto no OMIE",
-        hint: "Falta dado obrigatorio do cliente (documento, endereco ou e-mail).",
+        hint: "Falta dado obrigatório do cliente (documento, endereço ou e-mail).",
         severity: "warning"
       };
   }
   if (problem.status === "sync_error") {
     return {
       key: "sync_error",
-      label: "Erro na sincronizacao",
-      hint: "A balanca marcou a pesagem com erro de sincronizacao.",
+      label: "Erro na sincronização",
+      hint: "A balança marcou a pesagem com erro de sincronização.",
       severity: "danger"
     };
   }
@@ -695,17 +695,17 @@ export function omieReason(problem: SupportOmieProblem, now: number): OmieReason
     const toOmie = problem.status === "pending_omie";
     return {
       key: toOmie ? "stuck_omie" : "stuck_cloud",
-      label: `Parado ha ${span} sem subir`,
+      label: `Parado há ${span} sem subir`,
       hint: toOmie
-        ? "Ja esta na nuvem, esperando a balanca enviar ao OMIE."
-        : "Fechada na balanca; a sincronizacao com a nuvem nao terminou.",
+        ? "Já está na nuvem, esperando a balança enviar ao OMIE."
+        : "Fechada na balança; a sincronização com a nuvem não terminou.",
       severity: "warning"
     };
   }
   return {
     key: "other",
     label: problem.omieBillingStatus ?? problem.status,
-    hint: "Situacao fora das conhecidas.",
+    hint: "Situação fora das conhecidas.",
     severity: "warning"
   };
 }
@@ -732,14 +732,14 @@ export interface ReasonCount {
 }
 
 const OMIE_REASON_SHORT: Record<OmieReasonKey, string> = {
-  missing_in_omie: "nao encontrado no OMIE",
+  missing_in_omie: "não encontrado no OMIE",
   service_order_failed: "OS recusada",
   failed: "erro no envio",
-  sync_error: "erro de sincronizacao",
+  sync_error: "erro de sincronização",
   cadastro_incompleto: "cadastro incompleto",
-  stuck_cloud: "parado sem subir a nuvem",
+  stuck_cloud: "parado sem subir à nuvem",
   stuck_omie: "parado sem subir ao OMIE",
-  other: "outra situacao"
+  other: "outra situação"
 };
 
 /** "3 cadastro incompleto · 1 erro no envio" — o resumo por motivo acima da tabela. */
@@ -771,8 +771,8 @@ export function countOmieReasons(problems: SupportOmieProblem[], now: number): R
 // ---------------------------------------------------------------------------
 
 export const DISPATCH_KIND_LABELS: Record<SupportReportDispatch["kind"], string> = {
-  diario: "Fechamento diario",
-  financeiro: "Relatorio financeiro"
+  diario: "Fechamento diário",
+  financeiro: "Relatório financeiro"
 };
 
 export function dispatchStatusView(dispatch: Pick<SupportReportDispatch, "status">): StatusView {
@@ -911,7 +911,7 @@ export function summarizeSupport(
     label: "Erros deste navegador",
     value: String(browserErrors.length),
     detail: lastBrowserError
-      ? `ultimo ${formatAgo(lastBrowserError.at, now)}`
+      ? `último ${formatAgo(lastBrowserError.at, now)}`
       : "nenhum erro registrado",
     severity: browserErrors.length > 0 ? "warning" : "ok"
   };
@@ -925,13 +925,13 @@ export function summarizeSupport(
       severity: "unknown"
     });
     return [
-      pending("offline", "balancas", "Balancas offline"),
-      pending("desatualizadas", "balancas", "Balancas desatualizadas"),
-      pending("fila", "balancas", "Fila das balancas"),
+      pending("offline", "balancas", "Balanças offline"),
+      pending("desatualizadas", "balancas", "Balanças desatualizadas"),
+      pending("fila", "balancas", "Fila das balanças"),
       pending("pedidos", "pedidos", "Pedidos do site (7 dias)"),
       pending("omie", "omie", "Envios OMIE com problema"),
-      pending("relatorios", "relatorios", "Relatorios com erro"),
-      pending("senha", "acessos", "Senha de preco errada"),
+      pending("relatorios", "relatorios", "Relatórios com erro"),
+      pending("senha", "acessos", "Senha de preço errada"),
       browserCard
     ];
   }
@@ -944,11 +944,11 @@ export function summarizeSupport(
   const offlineCard: SupportCard = {
     id: "offline",
     tab: "balancas",
-    label: "Balancas offline",
+    label: "Balanças offline",
     value: active.length ? `${offline.length} de ${active.length}` : "0",
     detail:
       active.length === 0
-        ? "nenhuma balanca ativa"
+        ? "nenhuma balança ativa"
         : offline.length === 0
           ? "todas ligadas"
           : offline.length === 1
@@ -961,14 +961,14 @@ export function summarizeSupport(
   const outdatedCard: SupportCard = {
     id: "desatualizadas",
     tab: "balancas",
-    label: "Balancas desatualizadas",
+    label: "Balanças desatualizadas",
     value: String(outdated.length),
     detail:
       outdated.length === 0
         ? latest
           ? `todas na ${latest}`
-          : "versao nao informada"
-        : `versao atual ${latest ?? "—"} · ${names(outdated.map(({ device }) => device.name))}`,
+          : "versão não informada"
+        : `versão atual ${latest ?? "—"} · ${names(outdated.map(({ device }) => device.name))}`,
     severity: outdated.length > 0 ? "warning" : "ok"
   };
 
@@ -986,7 +986,7 @@ export function summarizeSupport(
   const queueCard: SupportCard = {
     id: "fila",
     tab: "balancas",
-    label: "Fila das balancas",
+    label: "Fila das balanças",
     value: String(queueIssues.length),
     detail: queueParts.length ? queueParts.join(" · ") : "fila andando",
     severity: blockedJobs > 0 ? "danger" : queueIssues.length > 0 ? "warning" : "ok"
@@ -1030,10 +1030,10 @@ export function summarizeSupport(
   const reportCard: SupportCard = {
     id: "relatorios",
     tab: "relatorios",
-    label: "Relatorios com erro",
+    label: "Relatórios com erro",
     value: String(badDispatches.length),
     detail: badDispatches.length
-      ? `ultimo em ${formatDay(badDispatches[0].reportDate)}`
+      ? `último em ${formatDay(badDispatches[0].reportDate)}`
       : `${plural(overview.reportDispatches.length, "envio", "envios")} em 30 dias`,
     severity: badDispatches.some((dispatch) => dispatch.status === "failed")
       ? "danger"
@@ -1047,7 +1047,7 @@ export function summarizeSupport(
   const passwordCard: SupportCard = {
     id: "senha",
     tab: "acessos",
-    label: "Senha de preco errada",
+    label: "Senha de preço errada",
     value: String(overview.pricePasswordFailures.length),
     detail: top
       ? `${top.userName ?? "Sem nome"}: ${plural(top.count, "tentativa", "tentativas")}`
@@ -1206,30 +1206,30 @@ export function buildSupportReport(input: {
   const { overview, diagnostics, browserErrors, connection, loadError, now } = input;
   const nowIso = new Date(now).toISOString();
   const out: string[] = [
-    "KyberRock Web — relatorio para o suporte",
-    `Gerado em ${formatStamp(nowIso, true)} (horario de ${SUPPORT_TIMEZONE})`
+    "KyberRock Web — relatório para o suporte",
+    `Gerado em ${formatStamp(nowIso, true)} (horário de ${SUPPORT_TIMEZONE})`
   ];
   if (overview) out.push(`Dados da nuvem de ${formatStamp(overview.generatedAt, true)}`);
-  if (loadError) out.push(`Nuvem: nao respondeu (${reportText(loadError)})`);
+  if (loadError) out.push(`Nuvem: não respondeu (${reportText(loadError)})`);
 
   out.push(
     "",
-    "== Diagnostico ==",
+    "== Diagnóstico ==",
     `Site: ${diagnostics.build}`,
-    `Usuario: ${diagnostics.userName} (${roleLabel(diagnostics.role)})`,
+    `Usuário: ${diagnostics.userName} (${roleLabel(diagnostics.role)})`,
     `Empresa: ${diagnostics.companyId} · Unidade: ${diagnostics.unitId}`,
     `Navegador: ${diagnostics.userAgent}`,
     line([
-      `Online: ${diagnostics.online ? "sim" : "NAO"}`,
+      `Online: ${diagnostics.online ? "sim" : "NÃO"}`,
       `Fuso: ${diagnostics.timeZone}`,
       `Tela: ${diagnostics.screen}`,
       diagnostics.language ? `Idioma: ${diagnostics.language}` : null
     ])
   );
-  if (diagnostics.page) out.push(`Pagina: ${diagnostics.page}`);
+  if (diagnostics.page) out.push(`Página: ${diagnostics.page}`);
   if (connection) {
     out.push(
-      `Teste de conexao (${formatStamp(connection.at)}): web-api ${formatProbe(connection.api)} · banco ${formatProbe(connection.db)}`
+      `Teste de conexão (${formatStamp(connection.at)}): web-api ${formatProbe(connection.api)} · banco ${formatProbe(connection.db)}`
     );
   }
 
@@ -1246,13 +1246,13 @@ export function buildSupportReport(input: {
 
     out.push(
       ...section(
-        `Balancas (versao mais nova: ${latest ?? "—"})`,
+        `Balanças (versão mais nova: ${latest ?? "—"})`,
         sortDevices(overview.devices, latest, now),
         (device) => {
           const check = checkDevice(device, latest, now);
           const health = device.health;
           return line([
-            `${device.name}${device.deviceNumber ? ` (No ${device.deviceNumber})` : ""}`,
+            `${device.name}${device.deviceNumber ? ` (Nº ${device.deviceNumber})` : ""}`,
             device.unitId ? (units.get(device.unitId) ?? shortId(device.unitId)) : null,
             !device.isActive ? "INATIVA" : null,
             `v${device.appVersion ?? "?"}${check.outdated ? " DESATUALIZADA" : ""}`,
@@ -1261,13 +1261,13 @@ export function buildSupportReport(input: {
               ? `${device.online ? "online" : "OFFLINE"} (visto ${formatAgo(device.lastSeenAt, now)})`
               : null,
             device.executesWebOperations ? "executa o site" : null,
-            device.isPriceMaster ? "principal de precos" : null,
+            device.isPriceMaster ? "principal de preços" : null,
             `fila ${health.queuePending ?? "?"} pendentes / ${health.queueBlocked ?? "?"} parados`,
             health.oldestPendingAt ? `mais antiga ${formatAgo(health.oldestPendingAt, now)}` : null,
-            health.lastError ? `ultimo erro: ${reportText(health.lastError, 140)}` : null
+            health.lastError ? `último erro: ${reportText(health.lastError, 140)}` : null
           ]);
         },
-        "Nenhuma balanca cadastrada."
+        "Nenhuma balança cadastrada."
       )
     );
 
@@ -1281,7 +1281,7 @@ export function buildSupportReport(input: {
             REQUEST_KIND_LABELS[request.kind] ?? request.kind,
             requestStatusView(request, now).label,
             request.requestedByName ? `por ${request.requestedByName}` : null,
-            `balanca ${deviceLabel(devices, request.claimedByDeviceId)}`,
+            `balança ${deviceLabel(devices, request.claimedByDeviceId)}`,
             `pesagem ${shortId(request.operationId)}`,
             reportText(request.resultMessage)
           ]),
@@ -1293,13 +1293,13 @@ export function buildSupportReport(input: {
     if (printFailures.length > 0) {
       out.push(
         ...section(
-          "Cupons que nao imprimiram (7 dias)",
+          "Cupons que não imprimiram (7 dias)",
           printFailures,
           (request) =>
             line([
               formatStamp(request.requestedAt),
               REQUEST_KIND_LABELS[request.kind] ?? request.kind,
-              `balanca ${deviceLabel(devices, request.claimedByDeviceId)}`,
+              `balança ${deviceLabel(devices, request.claimedByDeviceId)}`,
               reportText(request.printMessage)
             ]),
           "Nenhum."
@@ -1346,14 +1346,14 @@ export function buildSupportReport(input: {
 
     out.push(
       ...section(
-        "Relatorios automaticos com erro (30 dias)",
+        "Relatórios automáticos com erro (30 dias)",
         overview.reportDispatches.filter(dispatchIsProblem),
         (dispatch) =>
           line([
             formatDay(dispatch.reportDate),
             DISPATCH_KIND_LABELS[dispatch.kind] ?? dispatch.kind,
             dispatchStatusView(dispatch).label,
-            plural(dispatch.recipientsCount, "destinatario", "destinatarios"),
+            plural(dispatch.recipientsCount, "destinatário", "destinatários"),
             reportText(dispatch.lastError)
           ]),
         "Nenhum."
@@ -1362,13 +1362,13 @@ export function buildSupportReport(input: {
 
     out.push(
       ...section(
-        "Senha de preco errada (7 dias)",
+        "Senha de preço errada (7 dias)",
         groupPasswordFailures(overview.pricePasswordFailures),
         (group) =>
           line([
-            group.userName ?? `usuario ${shortId(group.userId)}`,
+            group.userName ?? `usuário ${shortId(group.userId)}`,
             plural(group.count, "tentativa", "tentativas"),
-            `ultima ${formatStamp(group.lastAt)}`
+            `última ${formatStamp(group.lastAt)}`
           ]),
         "Nenhuma."
       )

@@ -156,7 +156,7 @@ describe("primitivos do console", () => {
       />
     );
     expect(confirm).toContain("A fatura some do historico.");
-    expect(confirm).toContain("nao pode ser desfeita");
+    expect(confirm).toContain("não pode ser desfeita");
   });
 });
 

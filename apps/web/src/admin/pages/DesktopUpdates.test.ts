@@ -121,7 +121,7 @@ describe("PROMOTION_ACTIONS", () => {
     const text = PROMOTION_ACTIONS["cancel-test"].confirm?.("0.8.201", "0.8.200") ?? "";
 
     expect(text).toContain("0.8.201");
-    expect(text.toLowerCase()).toContain("nao e reprovar");
+    expect(text.toLowerCase()).toContain("não é reprovar");
   });
 
   it("os gestos do caminho normal nunca forcam", () => {
@@ -150,6 +150,6 @@ describe("PROMOTION_ACTIONS", () => {
 
     expect(text).toContain("0.8.193");
     expect(text).toContain("0.8.200");
-    expect(text.toLowerCase()).toContain("nao volta sozinha");
+    expect(text.toLowerCase()).toContain("não volta sozinha");
   });
 });

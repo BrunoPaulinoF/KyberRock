@@ -99,7 +99,7 @@
   color: var(--kr-danger);
 }
 .dash-health-label {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -134,7 +134,7 @@
   background: var(--kr-surface-soft);
   border: 1px solid var(--kr-border);
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 .dash-kpis {
@@ -179,7 +179,7 @@
   color: var(--dash-chart-6);
 }
 .dash-kpi-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -192,7 +192,7 @@
   white-space: nowrap;
 }
 .dash-kpi-hint {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
 }
 
@@ -248,7 +248,7 @@
   color: var(--kr-text-strong);
 }
 .dash-pending-detail {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
 }
 .dash-pending-action {
@@ -258,7 +258,7 @@
   padding: 4px 8px;
   cursor: pointer;
   font-weight: 700;
-  font-size: 11px;
+  font-size: 12px;
   background: var(--kr-surface);
   color: var(--kr-muted);
   white-space: nowrap;
@@ -295,7 +295,7 @@
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  font-size: 10px;
+  font-size: 12px;
 }
 .dash-recent-item {
   width: 100%;
@@ -326,7 +326,7 @@
   display: inline-block;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;

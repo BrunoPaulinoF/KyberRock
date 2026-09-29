@@ -1,10 +1,11 @@
-import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from "react";
-import { BrowserRouter, HashRouter, Navigate, Route, Routes } from "react-router-dom";
+import { lazy, Suspense, useEffect, type ComponentType, type LazyExoticComponent } from "react";
+import { BrowserRouter, HashRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { Layout } from "./components/Layout";
 import { ToastProvider } from "./components/ui";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { canSee, homeFor, usesSidebar, type Screen } from "./lib/permissions";
+import { documentTitle, standaloneTitle } from "./lib/page-title";
 import { isStandaloneDisplay } from "./lib/pwa-install";
 import { ThemeProvider } from "./lib/theme";
 import { Login } from "./pages/Login";
@@ -91,6 +92,20 @@ function Entry() {
   return <Landing />;
 }
 
+/**
+ * Nome da aba do navegador nas telas fora da casca. Fica antes das rotas de proposito: o efeito
+ * dele roda antes do da tela, e a casca (`Layout`) e a pagina de apresentacao, que escolhem o
+ * proprio titulo, falam por ultimo.
+ */
+function RouteTitle() {
+  const { pathname } = useLocation();
+  const title = standaloneTitle(pathname);
+  useEffect(() => {
+    if (title) document.title = documentTitle(title);
+  }, [title]);
+  return null;
+}
+
 /** Atalho: a tela so monta para quem a ve. */
 function only(screen: Screen, element: React.ReactElement) {
   return <Private screen={screen}>{element}</Private>;
@@ -109,6 +124,7 @@ export function App() {
       <AuthProvider>
         <ToastProvider>
           <Router>
+            <RouteTitle />
             <Suspense fallback={<div className="empty">Carregando...</div>}>
               <Routes>
                 <Route path="/" element={<Entry />} />

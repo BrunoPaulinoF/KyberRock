@@ -131,7 +131,7 @@
 }
 .krdoc-ghost-btn.krdoc-btn-glossary {
   padding: 5px 9px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .krdoc-check {
   width: 16px;
@@ -210,7 +210,7 @@
 }
 .krdoc-result-kind {
   color: var(--kr-muted);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -289,7 +289,7 @@
 .krdoc-card-eyebrow {
   margin: 0;
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -569,7 +569,7 @@
   border-radius: 999px;
   background: var(--kr-primary-strong);
   color: var(--kr-primary-text);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
   flex-shrink: 0;
   margin-top: 1px;

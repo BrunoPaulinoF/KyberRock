@@ -154,7 +154,7 @@
   text-align: left;
   color: var(--kr-muted);
   border-bottom: 1px solid var(--kr-border);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -235,7 +235,7 @@
 }
 .tc-stats dt {
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -250,7 +250,7 @@
 }
 .tc-stats dd small {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 .tc-stat-alert dd {
@@ -273,7 +273,7 @@
   gap: 6px;
   margin: 0 0 8px;
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -284,7 +284,7 @@
   background: var(--kr-surface-soft);
   border: 1px solid var(--kr-border);
   color: var(--kr-text);
-  font-size: 10px;
+  font-size: 12px;
 }
 .tc-share-list {
   display: flex;
@@ -320,7 +320,7 @@
 .tc-share-value small {
   margin-left: 6px;
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 .tc-share-bar {
@@ -341,7 +341,7 @@
   padding: 0;
   border: 0;
   background: none;
-  color: var(--kr-accent);
+  color: var(--kr-link);
   font: inherit;
   font-size: 12px;
   font-weight: 800;

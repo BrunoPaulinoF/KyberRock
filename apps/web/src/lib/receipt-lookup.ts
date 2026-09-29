@@ -35,36 +35,36 @@ function toNumber(digits: string): number | null {
  */
 export function parseReceiptQuery(input: string): ReceiptQuery {
   const text = input.trim().toUpperCase();
-  if (!text) return { kind: "invalid", message: "Digite o codigo do cupom." };
+  if (!text) return { kind: "invalid", message: "Digite o código do cupom." };
 
   const receipt = /^(?:COPIA\s*)?(?:NRO\.?\s*)?(\d+)\s*-\s*(\d+)$/.exec(text);
   if (receipt) {
     const receiptNumber = toNumber(receipt[1]);
     const deviceNumber = toNumber(receipt[2]);
     if (receiptNumber && deviceNumber) return { kind: "receipt", receiptNumber, deviceNumber };
-    return { kind: "invalid", message: "Numero da via invalido." };
+    return { kind: "invalid", message: "Número da via inválido." };
   }
 
   const code = /^COD\.?\s*(\d+)$/.exec(text);
   if (code) {
     const value = toNumber(code[1]);
-    return value ? { kind: "code", code: value } : { kind: "invalid", message: "Codigo invalido." };
+    return value ? { kind: "code", code: value } : { kind: "invalid", message: "Código inválido." };
   }
 
   if (/^\d+$/.test(text)) {
     const value = toNumber(text);
-    return value ? { kind: "number", value } : { kind: "invalid", message: "Codigo invalido." };
+    return value ? { kind: "number", value } : { kind: "invalid", message: "Código inválido." };
   }
 
   return {
     kind: "invalid",
-    message: "Use o COD do cupom (ex.: 3249) ou o numero da via (ex.: 4038-4)."
+    message: "Use o COD do cupom (ex.: 3249) ou o número da via (ex.: 4038-4)."
   };
 }
 
 /** "COD 003249" — como o topo do cupom mostra. */
 export function operationCodeLabel(code: number | null | undefined): string {
-  return code ? `COD ${String(code).padStart(6, "0")}` : "Sem codigo";
+  return code ? `COD ${String(code).padStart(6, "0")}` : "Sem código";
 }
 
 /** "000004038-4" — como a linha "COPIA NRO" do cupom mostra. */
@@ -78,7 +78,7 @@ export function receiptNumberLabel(
 
 /** "1a via", "2a via". */
 export function copyLabel(copyNumber: number): string {
-  return `${copyNumber}a via`;
+  return `${copyNumber}ª via`;
 }
 
 function asRecord(value: Json | undefined): Record<string, Json | undefined> | null {
@@ -280,7 +280,7 @@ export async function loadReceiptDetail(
     .eq("id", operationId)
     .single();
   fail(error);
-  if (!operation) throw new Error("Pesagem nao encontrada.");
+  if (!operation) throw new Error("Pesagem não encontrada.");
 
   const [copies, unit, customer, product, method, term] = await Promise.all([
     supabase

@@ -236,12 +236,12 @@ export function futureInvoiceFill(item: FutureInvoiceItem): FutureInvoiceFill {
   const notes: string[] = [];
   if (!item.productId) {
     notes.push(
-      `O produto da nota (${item.invoiceDescription}) nao casou com nenhum do cadastro: escolha o produto.`
+      `O produto da nota (${item.invoiceDescription}) não casou com nenhum do cadastro: escolha o produto.`
     );
   }
   if (item.totalWeightKg === null) {
     notes.push(
-      `A nota esta em ${item.unit ?? "outra unidade"} (${quantityLabel(item)}): informe o total em quilos.`
+      `A nota está em ${item.unit ?? "outra unidade"} (${quantityLabel(item)}): informe o total em quilos.`
     );
   }
   return {

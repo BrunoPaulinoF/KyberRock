@@ -255,7 +255,7 @@ describe("describeNextClosing", () => {
 
   it("says when automatic billing is off", () => {
     expect(describeNextClosing(company({ billing_enabled: false }))).toBe(
-      "Cobranca automatica desligada"
+      "Cobrança automática desligada"
     );
   });
 
@@ -467,7 +467,7 @@ describe("buildActivationChecklist", () => {
     const step = stepById(steps, "companies");
     expect(step.status).toBe("pending");
     expect(step.items).toEqual([
-      "Pedreira Serra Azul: Cobranca automatica desligada, Valor acertado nao informado, CEP em falta"
+      "Pedreira Serra Azul: Cobrança automática desligada, Valor acertado nao informado, CEP em falta"
     ]);
   });
 

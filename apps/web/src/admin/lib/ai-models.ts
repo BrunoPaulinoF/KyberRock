@@ -28,7 +28,7 @@ export const AI_MODEL_OPTIONS: AiModelOption[] = [
   {
     id: "gpt-4.1-mini",
     label: "GPT-4.1 mini (recomendado)",
-    hint: "Melhor equilibrio para o assistente: segue bem as instrucoes, responde rapido e custa pouco."
+    hint: "Melhor equilíbrio para o assistente: segue bem as instruções, responde rápido e custa pouco."
   },
   {
     id: "gpt-4.1",
@@ -38,17 +38,17 @@ export const AI_MODEL_OPTIONS: AiModelOption[] = [
   {
     id: "gpt-4.1-nano",
     label: "GPT-4.1 nano",
-    hint: "O mais barato e rapido. Bom para duvidas simples; erra mais nas que exigem raciocinio."
+    hint: "O mais barato e rápido. Bom para dúvidas simples; erra mais nas que exigem raciocínio."
   },
   {
     id: "gpt-4o-mini",
     label: "GPT-4o mini",
-    hint: "Geracao anterior do modelo pequeno. Use se a conta ainda nao tiver acesso aos GPT-4.1."
+    hint: "Geração anterior do modelo pequeno. Use se a conta ainda não tiver acesso aos GPT-4.1."
   },
   {
     id: "gpt-4o",
     label: "GPT-4o",
-    hint: "Geracao anterior do modelo grande."
+    hint: "Geração anterior do modelo grande."
   }
 ];
 

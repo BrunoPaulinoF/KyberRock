@@ -156,14 +156,14 @@ export function Overview({
     },
     {
       key: "online",
-      header: "Balancas online",
+      header: "Balanças online",
       render: (row) =>
         row.devices === 0 ? (
           <span className="adm-cell-sub">Nenhuma ativada</span>
         ) : (
           <span
             className="adm-meter"
-            title={`${row.online} de ${row.devices} com contato nos ultimos 15 min`}
+            title={`${row.online} de ${row.devices} com contato nos últimos 15 min`}
           >
             <span className="adm-meter-bar">
               <span style={{ width: `${Math.round((row.online / row.devices) * 100)}%` }} />
@@ -176,11 +176,11 @@ export function Overview({
     },
     {
       key: "attention",
-      header: "Atencao",
+      header: "Atenção",
       render: (row) =>
         row.attention > 0 ? (
           <Badge tone="danger" dot>
-            {row.attention} balanca{row.attention > 1 ? "s" : ""}
+            {row.attention} balança{row.attention > 1 ? "s" : ""}
           </Badge>
         ) : row.devices > 0 ? (
           <Badge tone="ok" dot>
@@ -202,7 +202,7 @@ export function Overview({
     },
     {
       key: "status",
-      header: "Situacao",
+      header: "Situação",
       render: (row) =>
         row.company.isActive ? (
           <Badge tone="ok" dot>
@@ -220,7 +220,7 @@ export function Overview({
       actions: true,
       render: (row) => (
         <Button size="sm" onClick={() => onNavigate("devices", row.company.id)}>
-          Ver balancas
+          Ver balanças
         </Button>
       )
     }
@@ -229,8 +229,8 @@ export function Overview({
   return (
     <>
       <PageHead
-        title="Visao geral"
-        description="Como esta a plataforma agora e o que precisa de voce."
+        title="Visão geral"
+        description="Como está a plataforma agora e o que precisa de você."
         actions={
           <>
             <Button
@@ -265,7 +265,7 @@ export function Overview({
         />
         <KpiCard
           icon={<MonitorSmartphone size={18} />}
-          label="Balancas online"
+          label="Balanças online"
           value={
             <>
               {fleet.online}
@@ -274,7 +274,7 @@ export function Overview({
           }
           hint={
             fleet.active - fleet.online > 0
-              ? `${fleet.active - fleet.online} sem contato ha mais de 15 min`
+              ? `${fleet.active - fleet.online} sem contato há mais de 15 min`
               : "Todas com contato agora"
           }
           tone={fleet.active > 0 && fleet.online === fleet.active ? "ok" : "neutral"}
@@ -282,11 +282,11 @@ export function Overview({
         />
         <KpiCard
           icon={<AlertTriangle size={18} />}
-          label="Precisam de atencao"
+          label="Precisam de atenção"
           value={attentionTotal}
           hint={
             attentionTotal === 0
-              ? "Nenhuma balanca com problema"
+              ? "Nenhuma balança com problema"
               : [
                   fleet.down > 0 ? `${fleet.down} com envio parado` : "",
                   fleet.warn > 0 ? `${fleet.warn} sem contato ou atrasada` : ""
@@ -320,7 +320,7 @@ export function Overview({
                 ? `${billing.value.overdueCount} fatura${billing.value.overdueCount > 1 ? "s" : ""} vencida${billing.value.overdueCount > 1 ? "s" : ""} · ${formatCents(billing.value.overdueAmountCents)}`
                 : `${billing.value.openCount} em aberto, nenhuma vencida`
               : billing.status === "failed"
-                ? "Nao foi possivel ler o financeiro"
+                ? "Não foi possível ler o financeiro"
                 : undefined
           }
           tone={billing.status === "ready" && billing.value.overdueCount > 0 ? "danger" : "neutral"}
@@ -328,7 +328,7 @@ export function Overview({
         />
         <KpiCard
           icon={<Download size={18} />}
-          label="Desktop em producao"
+          label="Desktop em produção"
           value={
             release.status === "ready"
               ? (release.value.version ?? "—")
@@ -338,9 +338,9 @@ export function Overview({
           }
           hint={
             release.status === "ready" && release.value.version
-              ? `${release.value.onVersion} de ${release.value.reporting} balanca${release.value.reporting === 1 ? "" : "s"} nesta versao`
+              ? `${release.value.onVersion} de ${release.value.reporting} balança${release.value.reporting === 1 ? "" : "s"} nesta versão`
               : release.status === "failed"
-                ? "Nao foi possivel ler as versoes"
+                ? "Não foi possível ler as versões"
                 : undefined
           }
           tone="accent"
@@ -350,8 +350,8 @@ export function Overview({
 
       <div className="adm-dash-grid">
         <Panel
-          title="Balancas que precisam de atencao"
-          description="Envio parado primeiro: ele nao volta sem alguem."
+          title="Balanças que precisam de atenção"
+          description="Envio parado primeiro: ele não volta sem alguém."
           actions={
             <Button size="sm" onClick={() => onNavigate("devices", undefined, "attention")}>
               Ver todas
@@ -362,7 +362,7 @@ export function Overview({
           {overview.attention.length === 0 ? (
             <div className="adm-all-good">
               <CircleCheck size={28} aria-hidden="true" />
-              <p>Todas as balancas ativas estao em dia.</p>
+              <p>Todas as balanças ativas estão em dia.</p>
             </div>
           ) : (
             <ul className="adm-list">
@@ -398,14 +398,14 @@ export function Overview({
         </Panel>
 
         <Panel
-          title="Pendencias de configuracao"
+          title="Pendências de configuração"
           description="O que ficou por fazer em cada pedreira ativa."
           flush
         >
           {overview.pending.length === 0 ? (
             <div className="adm-all-good">
               <CircleCheck size={28} aria-hidden="true" />
-              <p>Nenhuma pendencia. Todas as pedreiras estao configuradas.</p>
+              <p>Nenhuma pendência. Todas as pedreiras estão configuradas.</p>
             </div>
           ) : (
             <ul className="adm-list">
@@ -439,7 +439,7 @@ export function Overview({
                 </li>
               ))}
               {overview.pending.length > 10 && (
-                <li className="adm-list-more">e mais {overview.pending.length - 10} pendencias</li>
+                <li className="adm-list-more">e mais {overview.pending.length - 10} pendências</li>
               )}
             </ul>
           )}
@@ -448,7 +448,7 @@ export function Overview({
 
       <Panel
         title="Pedreiras"
-        description="Cada pedreira em uma linha. Clique para ver as balancas dela."
+        description="Cada pedreira em uma linha. Clique para ver as balanças dela."
         flush
       >
         <DataTable

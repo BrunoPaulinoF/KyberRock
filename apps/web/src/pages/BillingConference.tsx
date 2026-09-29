@@ -35,7 +35,7 @@ import { deliverReports, spreadsheetFileName } from "../lib/report-output";
 import { useAsync } from "../lib/use-async";
 
 const HELP =
-  "Lista pesagem a pesagem do periodo: cliente, data, produto, peso, frete e total de cada carregamento fechado na balanca, com a situacao dele no OMIE. Use o filtro de situacao para isolar o que ainda nao foi faturado e conferir contra o relatorio do OMIE. O PDF e a planilha saem com as mesmas linhas que estao na tela.";
+  "Lista pesagem a pesagem do período: cliente, data, produto, peso, frete e total de cada carregamento fechado na balança, com a situação dele no OMIE. Use o filtro de situação para isolar o que ainda não foi faturado e conferir contra o relatório do OMIE. O PDF e a planilha saem com as mesmas linhas que estão na tela.";
 
 /**
  * Conferencia de faturamento — a tela `WeighingBillingReportView` do desktop, lendo a nuvem.
@@ -131,7 +131,7 @@ export function BillingConference() {
           : `${names.length} arquivos gerados:\n${names.join("\n")}`
       );
     } catch (err) {
-      setExportMessage(err instanceof Error ? err.message : "Falha ao gerar o relatorio.");
+      setExportMessage(err instanceof Error ? err.message : "Falha ao gerar o relatório.");
     } finally {
       setExporting(false);
     }
@@ -146,7 +146,7 @@ export function BillingConference() {
     <section className="billing-conference">
       <header className="billing-conference-header">
         <div className="billing-conference-title-row">
-          <h2 className="billing-conference-title">Conferencia de faturamento</h2>
+          <h2 className="billing-conference-title">Conferência de faturamento</h2>
           <span className="billing-conference-help" role="img" aria-label="Dica" title={HELP}>
             <Lightbulb size={14} />
           </span>
@@ -159,9 +159,9 @@ export function BillingConference() {
               ? "Gerando..."
               : selectedFormats.length > 1
                 ? `Gerar ${selectedFormats.length} arquivos`
-                : "Gerar relatorio"
+                : "Gerar relatório"
           }
-          title="Gera os arquivos escolhidos com as pesagens filtradas: a planilha Excel baixa na hora e o PDF abre a impressao do navegador (escolha Salvar como PDF)."
+          title="Gera os arquivos escolhidos com as pesagens filtradas: a planilha Excel baixa na hora e o PDF abre a impressão do navegador (escolha Salvar como PDF)."
           disabled={exporting || loading || !report}
           onClick={() => void handleExport()}
         >
@@ -172,7 +172,7 @@ export function BillingConference() {
       <div className="billing-conference-card billing-conference-filters">
         <div className="billing-conference-filter-grid">
           <div className="billing-conference-filter-block">
-            <span className="billing-conference-filter-label">Periodo</span>
+            <span className="billing-conference-filter-label">Período</span>
             <div className="billing-conference-chips">
               {BILLING_PERIOD_OPTIONS.map((option) => (
                 <button
@@ -197,7 +197,7 @@ export function BillingConference() {
                   />
                 </label>
                 <label className="billing-conference-date">
-                  Ate
+                  Até
                   <input
                     type="date"
                     className="billing-conference-input"
@@ -227,12 +227,12 @@ export function BillingConference() {
               className="billing-conference-input"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Cliente, produto, placa ou numero da operacao"
+              placeholder="Cliente, produto, placa ou número da operação"
             />
           </div>
 
           <div className="billing-conference-filter-block">
-            <span className="billing-conference-filter-label">Situacao no OMIE</span>
+            <span className="billing-conference-filter-label">Situação no OMIE</span>
             <div className="billing-conference-chips">
               <button
                 type="button"
@@ -295,21 +295,21 @@ export function BillingConference() {
             <Kpi
               label="Sem faturar"
               value={formatBRL(unbilled.totalCents)}
-              hint={`${formatCount(unbilled.operations)} pesagem(ns) - ${formatTons(unbilled.netWeightKg)}`}
+              hint={`${formatCount(unbilled.operations)} ${unbilled.operations === 1 ? "pesagem" : "pesagens"} - ${formatTons(unbilled.netWeightKg)}`}
               tone={unbilled.operations > 0 ? "danger" : "success"}
             />
           </div>
 
           <div className="billing-conference-card">
-            <h3 className="billing-conference-card-title">Situacao do faturamento</h3>
+            <h3 className="billing-conference-card-title">Situação do faturamento</h3>
             {report.bySituation.length === 0 ? (
-              <p className="billing-conference-hint">Sem pesagens no periodo.</p>
+              <p className="billing-conference-hint">Sem pesagens no período.</p>
             ) : (
               <div className="billing-conference-scroll">
                 <table className="billing-conference-table">
                   <thead>
                     <tr>
-                      <th className="left">Situacao</th>
+                      <th className="left">Situação</th>
                       <th>Pesagens</th>
                       <th>Peso</th>
                       <th>Total</th>
@@ -331,9 +331,9 @@ export function BillingConference() {
               </div>
             )}
             <p className="billing-conference-foot-note">
-              O KyberRock envia ao OMIE o pedido de venda (ou a ordem de servico, na venda interna);
-              a nota fiscal e emitida no proprio OMIE, na etapa &quot;Faturar&quot;. Uma pesagem em
-              &quot;No OMIE, falta faturar&quot; ja saiu daqui certa — o que falta e a emissao la.
+              O KyberRock envia ao OMIE o pedido de venda (ou a ordem de serviço, na venda interna);
+              a nota fiscal é emitida no próprio OMIE, na etapa &quot;Faturar&quot;. Uma pesagem em
+              &quot;No OMIE, falta faturar&quot; já saiu daqui certa — o que falta é a emissão lá.
             </p>
           </div>
 
@@ -418,12 +418,12 @@ function WeighingLinesTable({
           <th className="left">Produto</th>
           <th className="left">Placa</th>
           <th>Peso</th>
-          <th>Preco unit.</th>
+          <th>Preço unit.</th>
           <th>Produto</th>
           <th>Frete</th>
           <th>Total</th>
           <th className="left">Tipo</th>
-          <th className="left">Situacao</th>
+          <th className="left">Situação</th>
           <th className="left">Nota fiscal</th>
           <th className="left">Pedido/OS OMIE</th>
         </tr>
@@ -434,7 +434,7 @@ function WeighingLinesTable({
             <td className="left">{row.operationCode === null ? "-" : row.operationCode}</td>
             <td
               className="left"
-              title={row.closedAt ? `Saida: ${formatDateTime(row.closedAt)}` : ""}
+              title={row.closedAt ? `Saída: ${formatDateTime(row.closedAt)}` : ""}
             >
               {formatDayLabel(row.date)}
             </td>

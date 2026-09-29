@@ -31,6 +31,7 @@ import {
   formatOldDate,
   isOpenOperation,
   omieBacklog,
+  plural,
   recentOperations,
   requestBacklog,
   summarizeDay,
@@ -47,6 +48,9 @@ import { useExecutorStatus } from "./Operation";
  * e reler na hora, pelo aviso de pesagem da balanca (`useOnCadastroChange`).
  */
 const REFRESH_MS = 30_000;
+
+/** O que o KPI mostra enquanto a primeira leitura do dia nao chegou. */
+const EMPTY_VALUE = "—";
 
 /**
  * "Painel operacional" — a tela inicial do KyberRock Desktop (`DashboardView.tsx`), lendo a
@@ -154,6 +158,13 @@ export function Dashboard() {
 
   const loadError =
     open.error ?? closedToday.error ?? recentClosed.error ?? omieRows.error ?? requests.error;
+  /*
+   * Antes da primeira resposta o painel nao afirma nada: "0 operacoes", "R$ 0,00" e "Operacao
+   * em dia" na tela enquanto a nuvem ainda responde pareciam o dia parado e tudo certo.
+   */
+  const dayLoaded = closedToday.data !== null;
+  const attentionReady =
+    open.data !== null && omieRows.data !== null && requests.data !== null && executor !== null;
 
   return (
     <section className="dash">
@@ -162,7 +173,7 @@ export function Dashboard() {
           <p className="desk-kicker">Tela inicial</p>
           <h1
             className="dash-hero-title"
-            title="Visao rapida do turno: situacao da balanca, movimento do dia e o que precisa de atencao agora."
+            title="Visão rápida do turno: situação da balança, movimento do dia e o que precisa de atenção agora."
           >
             Painel operacional
           </h1>
@@ -170,7 +181,7 @@ export function Dashboard() {
         <div className="dash-hero-actions">
           <button type="button" className="btn" onClick={() => navigate("/operacoes")}>
             <ListChecks size={16} />
-            Operacoes
+            Operações
           </button>
           <button type="button" className="btn" onClick={() => navigate("/cadastros")}>
             <FolderOpen size={16} />
@@ -178,7 +189,7 @@ export function Dashboard() {
           </button>
           <button type="button" className="btn" onClick={() => navigate("/relatorios")}>
             <Table2 size={16} />
-            Relatorios
+            Relatórios
           </button>
           <button type="button" className="btn" onClick={() => navigate("/insights")}>
             <BarChart3 size={16} />
@@ -211,30 +222,30 @@ export function Dashboard() {
             <KpiCell
               icon={ClipboardList}
               accent="1"
-              label="Operacoes"
-              value={kpis.operations.toLocaleString("pt-BR")}
+              label="Operações"
+              value={dayLoaded ? kpis.operations.toLocaleString("pt-BR") : EMPTY_VALUE}
               hint="Fechadas hoje"
             />
             <KpiCell
               icon={Scale}
               accent="5"
-              label="Peso liquido"
-              value={formatDashTons(kpis.weightKg)}
-              hint={`${formatKg(kpis.weightKg)} kg`}
+              label="Peso líquido"
+              value={dayLoaded ? formatDashTons(kpis.weightKg) : EMPTY_VALUE}
+              hint={dayLoaded ? `${formatKg(kpis.weightKg)} kg` : "Carregando"}
             />
             <KpiCell
               icon={BadgeDollarSign}
               accent="3"
               label="Faturamento"
-              value={formatMoney(kpis.totalCents)}
-              hint="Soma das operacoes fechadas"
+              value={dayLoaded ? formatMoney(kpis.totalCents) : EMPTY_VALUE}
+              hint="Soma das operações fechadas"
             />
             <KpiCell
               icon={Receipt}
               accent="6"
-              label="Ticket medio"
-              value={formatMoney(kpis.ticketCents)}
-              hint="Por operacao fechada"
+              label="Ticket médio"
+              value={dayLoaded ? formatMoney(kpis.ticketCents) : EMPTY_VALUE}
+              hint="Por operação fechada"
             />
           </div>
         </article>
@@ -242,21 +253,23 @@ export function Dashboard() {
         <article className="dash-card">
           <header className="dash-card-head">
             <div>
-              <p className="desk-kicker">Atencao</p>
+              <p className="desk-kicker">Atenção</p>
             </div>
-            {!hasPendingAttention && <span className="dash-ok-tag">Operacao em dia</span>}
+            {attentionReady && !hasPendingAttention && (
+              <span className="dash-ok-tag">Operação em dia</span>
+            )}
           </header>
 
           {executorDown && executorInfo && (
-            <PendingSection title="Balanca executora fora do ar" tone="danger">
+            <PendingSection title="Balança executora fora do ar" tone="danger">
               <PendingRow
                 label={`${executorInfo.name} sem sinal`}
                 detail={
                   executorInfo.seenAt
-                    ? `Ultimo sinal em ${formatDateTime(executorInfo.seenAt)} - os pedidos do site esperam ela voltar`
+                    ? `Último sinal em ${formatDateTime(executorInfo.seenAt)} - os pedidos do site esperam ela voltar`
                     : "Os pedidos do site esperam ela voltar"
                 }
-                action={{ label: "Abrir operacoes", onClick: () => navigate("/operacoes") }}
+                action={{ label: "Abrir operações", onClick: () => navigate("/operacoes") }}
                 tone="danger"
               />
             </PendingSection>
@@ -264,7 +277,7 @@ export function Dashboard() {
 
           {staleOpen.length > 0 && (
             <PendingSection
-              title="Pesagens abertas ha muito tempo"
+              title="Pesagens abertas há muito tempo"
               tone={staleOpen.some((item) => item.tone === "danger") ? "danger" : "warning"}
             >
               {alarmed.map(({ operation, tone }) => (
@@ -272,15 +285,15 @@ export function Dashboard() {
                   key={operation.id}
                   label={`${formatPlate(operation.plate) || "--"} - ${operation.customer_name || "cliente"}`}
                   detail={`${operation.product_description || "produto"} - ${formatElapsed(operation.created_at, now)}`}
-                  action={{ label: "Abrir operacoes", onClick: () => navigate("/operacoes") }}
+                  action={{ label: "Abrir operações", onClick: () => navigate("/operacoes") }}
                   tone={tone}
                 />
               ))}
               {calm > 0 && (
                 <PendingRow
-                  label={`${calm} aberta(s) recente(s)`}
+                  label={`${calm} ${plural(calm, "aberta recente", "abertas recentes")}`}
                   detail="Sem alerta, dentro do tempo normal"
-                  action={{ label: "Abrir operacoes", onClick: () => navigate("/operacoes") }}
+                  action={{ label: "Abrir operações", onClick: () => navigate("/operacoes") }}
                   tone="neutral"
                 />
               )}
@@ -290,10 +303,10 @@ export function Dashboard() {
           {omie && omie.failed > 0 && (
             <PendingSection title="Envios ao OMIE com falha" tone="danger">
               <PendingRow
-                label={`${omie.failed} pesagem(ns) nao aceita(s) pelo OMIE`}
+                label={`${omie.failed} ${plural(omie.failed, "pesagem não aceita", "pesagens não aceitas")} pelo OMIE`}
                 detail="Recusa do OMIE ou cadastro incompleto - veja a coluna Fiscal OMIE"
                 action={{
-                  label: "Ver concluidas",
+                  label: "Ver concluídas",
                   onClick: () => navigate("/operacoes?aba=concluidas")
                 }}
                 tone="danger"
@@ -304,10 +317,10 @@ export function Dashboard() {
           {omie && omie.pending > 0 && (
             <PendingSection title="Pedidos OMIE pendentes" tone="warning">
               <PendingRow
-                label={`${omie.pending} pedido(s) aguardando envio`}
-                detail="A balanca envia ao OMIE na proxima sincronizacao"
+                label={`${omie.pending} ${plural(omie.pending, "pedido aguardando", "pedidos aguardando")} envio`}
+                detail="A balança envia ao OMIE na próxima sincronização"
                 action={{
-                  label: "Ver concluidas",
+                  label: "Ver concluídas",
                   onClick: () => navigate("/operacoes?aba=concluidas")
                 }}
                 tone="warning"
@@ -322,32 +335,35 @@ export function Dashboard() {
             >
               {siteRequests.waiting > 0 && (
                 <PendingRow
-                  label={`${siteRequests.waiting} pedido(s) aguardando a balanca`}
+                  label={`${siteRequests.waiting} ${plural(siteRequests.waiting, "pedido aguardando", "pedidos aguardando")} a balança`}
                   detail={
                     executorInfo?.online
-                      ? "Balanca conectada - registrando"
-                      : "Balanca fora do ar - registra quando voltar a conexao"
+                      ? "Balança conectada - registrando"
+                      : "Balança fora do ar - registra quando voltar a conexão"
                   }
-                  action={{ label: "Abrir operacoes", onClick: () => navigate("/operacoes") }}
+                  action={{ label: "Abrir operações", onClick: () => navigate("/operacoes") }}
                   tone="warning"
                 />
               )}
               {siteRequests.failed > 0 && (
                 <PendingRow
-                  label={`${siteRequests.failed} pedido(s) nao registrado(s)`}
-                  detail="A balanca devolveu sem registrar (ultimas 12 h)"
-                  action={{ label: "Abrir operacoes", onClick: () => navigate("/operacoes") }}
+                  label={`${siteRequests.failed} ${plural(siteRequests.failed, "pedido não registrado", "pedidos não registrados")}`}
+                  detail="A balança devolveu sem registrar (últimas 12 h)"
+                  action={{ label: "Abrir operações", onClick: () => navigate("/operacoes") }}
                   tone="danger"
                 />
               )}
             </PendingSection>
           )}
 
-          {!hasPendingAttention && (
+          {attentionReady && !hasPendingAttention && (
             <p className="dash-muted">
-              Nenhuma pendencia no momento. As pesagens abertas estao dentro do tempo normal e nao
-              ha envio ao OMIE nem pedido do site esperando.
+              Nenhuma pendência no momento. As pesagens abertas estão dentro do tempo normal e não
+              há envio ao OMIE nem pedido do site esperando.
             </p>
+          )}
+          {!attentionReady && !hasPendingAttention && !loadError && (
+            <p className="dash-muted">Verificando pendências...</p>
           )}
         </article>
       </div>
@@ -356,7 +372,7 @@ export function Dashboard() {
         <header className="dash-card-head">
           <div>
             <p className="desk-kicker">Recente</p>
-            <h2 className="dash-card-title">Ultimas pesagens</h2>
+            <h2 className="dash-card-title">Últimas pesagens</h2>
           </div>
           <button type="button" className="btn small" onClick={() => navigate("/operacoes")}>
             Ver todas
@@ -374,7 +390,7 @@ export function Dashboard() {
               <span>Hora</span>
               <span>Placa / Cliente</span>
               <span>Produto</span>
-              <span>Peso liquido</span>
+              <span>Peso líquido</span>
               <span>Tipo</span>
               <span>Status</span>
             </div>
@@ -388,7 +404,7 @@ export function Dashboard() {
                   key={op.id}
                   type="button"
                   className="dash-recent-row dash-recent-item"
-                  title={`${plate} - ${op.customer_name || "cliente"} | ${op.product_description || "produto"} | ${isOpen ? "Aberta" : "Fechada"}. Clique para abrir a lista de operacoes.`}
+                  title={`${plate} - ${op.customer_name || "cliente"} | ${op.product_description || "produto"} | ${isOpen ? "Aberta" : "Fechada"}. Clique para abrir a lista de operações.`}
                   onClick={() => navigate(isOpen ? "/operacoes" : "/operacoes?aba=concluidas")}
                 >
                   <span className="dash-recent-time">
@@ -398,7 +414,7 @@ export function Dashboard() {
                   <span className="dash-recent-plate">
                     <strong>{plate}</strong>
                     <small className="dash-muted">
-                      {op.customer_name || "Cliente nao informado"}
+                      {op.customer_name || "Cliente não informado"}
                     </small>
                   </span>
                   <span>{op.product_description || "--"}</span>

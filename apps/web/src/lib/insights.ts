@@ -68,12 +68,12 @@ export const INSIGHTS_PERIOD_OPTIONS: Array<{ id: InsightsPeriod; label: string 
   { id: "today", label: "Hoje" },
   { id: "7d", label: "7 dias" },
   { id: "30d", label: "30 dias" },
-  { id: "month", label: "Mes atual" },
-  { id: "lastMonth", label: "Mes anterior" },
+  { id: "month", label: "Mês atual" },
+  { id: "lastMonth", label: "Mês anterior" },
   { id: "custom", label: "Personalizado" }
 ];
 
-export const CUSTOM_PERIOD_LABEL = "Periodo personalizado";
+export const CUSTOM_PERIOD_LABEL = "Período personalizado";
 
 /** Soma dias a uma data AAAA-MM-DD (conta em UTC, sem horario de verao no caminho). */
 export function addDays(iso: string, days: number): string {
@@ -117,14 +117,14 @@ export function resolveInsightsRange(
       : { start: end, end: start, label: CUSTOM_PERIOD_LABEL };
   }
   if (period === "today") return { start: today, end: today, label: "Hoje" };
-  if (period === "7d") return { start: addDays(today, -6), end: today, label: "Ultimos 7 dias" };
+  if (period === "7d") return { start: addDays(today, -6), end: today, label: "Últimos 7 dias" };
   if (period === "30d") {
-    return { start: addDays(today, -29), end: today, label: "Ultimos 30 dias" };
+    return { start: addDays(today, -29), end: today, label: "Últimos 30 dias" };
   }
   if (period === "month")
-    return { start: `${today.slice(0, 7)}-01`, end: today, label: "Mes atual" };
+    return { start: `${today.slice(0, 7)}-01`, end: today, label: "Mês atual" };
   const lastMonthEnd = addDays(`${today.slice(0, 7)}-01`, -1);
-  return { start: `${lastMonthEnd.slice(0, 7)}-01`, end: lastMonthEnd, label: "Mes anterior" };
+  return { start: `${lastMonthEnd.slice(0, 7)}-01`, end: lastMonthEnd, label: "Mês anterior" };
 }
 
 /** Dia contabil da pesagem: o do FECHAMENTO, no fuso da pedreira (`operationSaleDateSql`). */

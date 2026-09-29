@@ -123,7 +123,7 @@
   padding: 5px 8px;
 }
 .insights-period-hint {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
   margin: 0;
 }
@@ -146,7 +146,7 @@
   margin: 0;
 }
 .insights-kpi-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--kr-muted);
   text-transform: uppercase;
@@ -192,7 +192,7 @@
   margin: 0;
 }
 .insights-card-head span {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
 }
 .insights-chart-body {
@@ -221,7 +221,7 @@
 }
 .insights-axis text {
   fill: var(--kr-chart-axis);
-  font-size: 11px;
+  font-size: 12px;
 }
 .insights-cursor {
   stroke: var(--kr-chart-axis);
@@ -292,7 +292,7 @@
   gap: 10px;
 }
 .insights-sync-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--kr-muted);
   text-transform: uppercase;
@@ -306,7 +306,7 @@
   margin: 4px 0 0;
 }
 .insights-sync-hint {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--kr-muted);
   margin: 6px 0 0;
 }
@@ -347,7 +347,7 @@
   padding: 8px 12px;
   border-bottom: 2px solid var(--kr-card-border);
   color: var(--kr-muted);
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   position: sticky;
