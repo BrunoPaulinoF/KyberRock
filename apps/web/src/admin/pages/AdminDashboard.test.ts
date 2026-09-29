@@ -5,6 +5,7 @@ import {
   buildDeleteRequest,
   isVirtualWebDevice,
   matchesCadastroSearch,
+  matchesDeviceFilter,
   parseUserRole,
   pricePasswordRule,
   SITE_ROLE_OPTIONS,
@@ -200,5 +201,48 @@ describe("perfis de acesso", () => {
   it("o dispositivo virtual do site nao ganha login", () => {
     expect(isVirtualWebDevice("web-9489c3ef-9e10-4eb1-bc50-26137dca5e5e")).toBe(true);
     expect(isVirtualWebDevice("desktop-2427a458-a03e-49f0-b1db-7e901d2607fa")).toBe(false);
+  });
+});
+
+describe("matchesDeviceFilter", () => {
+  const NOW = new Date("2026-09-29T12:00:00.000Z");
+  const recent = new Date(NOW.getTime() - 60_000).toISOString();
+  const base = {
+    id: "d1",
+    companyId: "c1",
+    unitId: "u1",
+    name: "Portaria",
+    isActive: true,
+    isPriceMaster: true,
+    executesWebOperations: true,
+    lastSeenAt: recent,
+    healthQueuePending: 0,
+    healthQueueBlocked: 0,
+    healthOldestPendingAt: null,
+    healthLastError: null,
+    healthCollectedAt: recent
+  };
+
+  it("todas mostra tudo, inclusive o dispositivo virtual do site", () => {
+    expect(matchesDeviceFilter({ ...base, id: "web-c1" }, "all", false, NOW)).toBe(true);
+  });
+
+  it("precisam de atencao pega envio parado e balanca sem contato", () => {
+    expect(matchesDeviceFilter(base, "attention", true, NOW)).toBe(false);
+    expect(matchesDeviceFilter({ ...base, healthQueueBlocked: 1 }, "attention", true, NOW)).toBe(
+      true
+    );
+    expect(matchesDeviceFilter({ ...base, lastSeenAt: null }, "attention", true, NOW)).toBe(true);
+    // Bloqueada nao "precisa de atencao": foi o administrador quem parou.
+    expect(
+      matchesDeviceFilter({ ...base, isActive: false, lastSeenAt: null }, "attention", true, NOW)
+    ).toBe(false);
+  });
+
+  it("sem login e bloqueadas", () => {
+    expect(matchesDeviceFilter(base, "no-login", false, NOW)).toBe(true);
+    expect(matchesDeviceFilter(base, "no-login", true, NOW)).toBe(false);
+    expect(matchesDeviceFilter({ ...base, isActive: false }, "blocked", false, NOW)).toBe(true);
+    expect(matchesDeviceFilter({ ...base, id: "web-c1" }, "no-login", false, NOW)).toBe(false);
   });
 });

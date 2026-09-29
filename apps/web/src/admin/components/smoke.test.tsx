@@ -11,10 +11,12 @@ import {
   EyeButton,
   Field,
   Fieldset,
+  KpiCard,
   Modal,
   Note,
   PageHead,
   Panel,
+  RowMenu,
   Stat,
   StatGrid
 } from "./index";
@@ -167,5 +169,51 @@ describe("botao de olho", () => {
     expect(html).toContain("Ver credenciais de Pedreira Serra Azul");
     expect(html).toContain("<svg");
     expect(html).toContain('aria-hidden="true"');
+  });
+});
+
+describe("visao geral e menu da linha", () => {
+  it("cartao clicavel vira botao, com rotulo, valor e dica", () => {
+    const html = renderToStaticMarkup(
+      <KpiCard
+        label="Balancas online"
+        value="5 / 7"
+        hint="2 sem contato"
+        tone="warn"
+        onClick={() => {}}
+      />
+    );
+    expect(html).toContain("<button");
+    expect(html).toContain("adm-kpi-warn");
+    expect(html).toContain("Balancas online");
+    expect(html).toContain("2 sem contato");
+  });
+
+  it("menu da linha fecha por padrao e se anuncia como menu", () => {
+    const html = renderToStaticMarkup(
+      <RowMenu
+        label="Mais acoes de Portaria"
+        items={[{ label: "Excluir", tone: "danger", onClick: () => {} }]}
+      />
+    );
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("Mais acoes de Portaria");
+    // Fechado: os itens so aparecem no clique.
+    expect(html).not.toContain("Excluir");
+  });
+
+  it("a trilha mostra a bolha de alerta no lugar da contagem", () => {
+    const html = renderToStaticMarkup(
+      <AdminShell
+        sections={[{ id: "devices", label: "Balancas", group: "Acessos", count: 7, alert: 2 }]}
+        activeSection="devices"
+        onSelectSection={() => {}}
+      >
+        <p>corpo</p>
+      </AdminShell>
+    );
+    expect(html).toContain("adm-nav-alert");
+    expect(html).toContain(">2<");
   });
 });
