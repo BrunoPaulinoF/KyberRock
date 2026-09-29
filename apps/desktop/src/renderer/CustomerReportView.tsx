@@ -755,30 +755,10 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
             />
           </DataCard>
 
-          <DataCard title="Placas" empty={report.byPlate.length === 0}>
-            <Table
-              headers={[
-                "Placa",
-                "Motorista",
-                "Transportadora",
-                "Viagens",
-                "Peso",
-                "Tempo medio",
-                "Total"
-              ]}
-              rows={report.byPlate.map((row) => [
-                row.plate,
-                row.driverName ?? "-",
-                row.carrierName ?? "-",
-                formatNumber(row.operations),
-                formatKg(row.netWeightKg),
-                formatMinutes(row.avgMinutes),
-                formatBRL(row.totalCents)
-              ])}
-            />
-          </DataCard>
-
-          {/* O detalhe da tabela acima: as viagens de cada motorista, em sequencia. */}
+          {/*
+            As viagens de cada placa e motorista, em sequencia, com a transportadora de cada uma.
+            O antigo quadro "Placas" (o total por placa) saiu: repetia esta lista em resumo.
+          */}
           <DataCard
             title="Viagens por placa e motorista"
             empty={report.tripsByPlate.length === 0}
@@ -788,6 +768,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
               headers={[
                 "Placa",
                 "Motorista",
+                "Transportadora",
                 "Data",
                 "Cupom",
                 "Produto",
@@ -802,6 +783,7 @@ export function CustomerReportView({ desktopApi }: { desktopApi: KyberRockDeskto
               rows={report.tripsByPlate.map((operation) => [
                 operation.plate,
                 operation.driverName,
+                operation.carrierName ?? "-",
                 formatDayLabel(operation.date),
                 formatCouponNumber(operation.couponNumber),
                 operation.productDescription,

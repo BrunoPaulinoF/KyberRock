@@ -4,6 +4,7 @@ import {
   operationCodeLabel,
   parseReceiptQuery,
   permanenceLabel,
+  invoiceStampLines,
   receiptLines,
   receiptNumberLabel,
   receiptPrintHtml,
@@ -77,5 +78,20 @@ describe("copia congelada", () => {
     const html = receiptPrintHtml(["Cliente: A & <B>"], "cupom");
     expect(html).toContain("Cliente: A &amp; &lt;B&gt;");
     expect(html).toContain("<title>cupom</title>");
+  });
+});
+
+describe("nota fiscal no cupom virtual", () => {
+  it("sem nota nao acrescenta nada", () => {
+    expect(invoiceStampLines(null)).toEqual([]);
+    expect(invoiceStampLines("  ")).toEqual([]);
+  });
+
+  it("carimba o numero centralizado na largura da via", () => {
+    const stamp = invoiceStampLines(" 4521 ", ["x".repeat(48)]);
+    expect(stamp[0]).toBe("-".repeat(48));
+    expect(stamp[1].trim()).toBe("NOTA FISCAL (NF-e): 4521");
+    expect(stamp[1].length).toBeLessThanOrEqual(48);
+    expect(stamp[1].startsWith(" ")).toBe(true);
   });
 });

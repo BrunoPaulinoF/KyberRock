@@ -34,14 +34,14 @@ const { data: profile } = await supabase
   .single();
 ```
 
-| `role`          | Telas no site                                                                                                                     | Grava pela `web-api`                                                                                                                            |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `monitoramento` | Só **Monitoramento** (vendas em tempo real), sem configurações — único perfil que vê essa tela                                    | Nada — só consulta (403 em toda escrita)                                                                                                        |
-| `comercial`     | Insights, Conferência de faturamento, Relatórios, Controle de caminhões, Relatório por cliente e **Cadastros**, sem configurações | Todo o cadastro (cliente, bloco comercial, frota e preço), **sem senha de preço**; não pesa, não mexe em carteira, fechamento nem destinatários |
-| `gestor`        | Todas menos Comercial e Monitoramento, com configurações                                                                          | Tudo                                                                                                                                            |
-| `operacao`      | Todas menos Comercial e Monitoramento, com configurações                                                                          | Tudo; mudar preço **sempre** pede a senha da pedreira                                                                                           |
-| `administrador` | Todas menos Comercial e Monitoramento **+ Logs** (suporte), com configurações                                                     | Tudo, sem senha nenhuma, **+ `support_overview`**                                                                                               |
-| `loader`        | Só a fila da unidade (tela `/carregamento`)                                                                                       | Nada — a `web-api` responde 403                                                                                                                 |
+| `role`          | Telas no site                                                                                                                                        | Grava pela `web-api`                                                                                                                            |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `monitoramento` | Só **Monitoramento** (vendas em tempo real), sem configurações                                                                                       | Nada — só consulta (403 em toda escrita)                                                                                                        |
+| `comercial`     | Insights, Conferência de faturamento, Relatórios, Controle de caminhões, Relatório por cliente, **Cadastros** e **Monitoramento**, sem configurações | Todo o cadastro (cliente, bloco comercial, frota e preço), **sem senha de preço**; não pesa, não mexe em carteira, fechamento nem destinatários |
+| `gestor`        | Todas menos Comercial e Monitoramento, com configurações                                                                                             | Tudo                                                                                                                                            |
+| `operacao`      | Todas menos Comercial e Monitoramento, com configurações                                                                                             | Tudo; mudar preço **sempre** pede a senha da pedreira                                                                                           |
+| `administrador` | Todas menos Comercial e Monitoramento **+ Logs** (suporte), com configurações                                                                        | Tudo, sem senha nenhuma, **+ `support_overview`**                                                                                               |
+| `loader`        | Só a fila da unidade (tela `/carregamento`)                                                                                                          | Nada — a `web-api` responde 403                                                                                                                 |
 
 Para LEITURA (RLS) os cinco perfis do site enxergam o mesmo — a empresa inteira; o que muda é a
 tela e a escrita. As telas de cada perfil estão em `apps/web/src/lib/permissions.ts`
@@ -205,6 +205,28 @@ bloco de crédito que ninguém publicou.
 por (cliente, produto, número) — repetir a mesma nota só corrige o total. `nfeNumber` vira só
 dígitos; `totalWeightKg` vazio, zero ou inválido é `null` (nota sem controle de saldo). O saldo é
 baixado pela balança, pelas pesagens. Remover é lápide.
+
+**Consultas ao OMIE da ficha do cliente** (não gravam nada; mesmos perfis do cadastro de cliente,
+porque gastam chamada da chave OMIE da pedreira):
+
+| Ação                            | Payload                   | Devolve                                                                                                                                                                                         |
+| ------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `customer_balance`              | `customerId`              | `status: "ok"` com `openCents`, `openTitles`, `overdueCents`, `overdueTitles`, `nextDueDate`, `truncated`, `checkedAt`; ou `status: "not_linked"` / `"unavailable"` + `message`                 |
+| `lookup_future_billing_invoice` | `customerId`, `nfeNumber` | `invoices[]`: `invoiceNumber`, `series`, `issueDate`, `customerName`, `otherCustomer`, `items[]` (`productId`, `productDescription`, `invoiceDescription`, `quantity`, `unit`, `totalWeightKg`) |
+
+- `customer_balance` é o **saldo do cliente** no cartão Info e na ficha (aba Comercial e crédito):
+  os títulos a receber **em aberto** no OMIE (`ListarContasReceber` com
+  `filtrar_apenas_titulos_em_aberto` e `filtrar_cliente`, via `customer_open_receivables` da
+  `omie-sync`; a soma é `_shared/omie-open-receivables.ts`). É perguntado na hora e **não é
+  gravado**: `customers.open_receivables_cents` desce para as balanças e entra na conta do limite
+  de crédito, e o site não mexe nisso. OMIE fora do ar volta `unavailable` (200), não erro.
+- `lookup_future_billing_invoice` é o botão **Buscar no OMIE** da aba Entrega futura: lista a nota
+  pelo número (`ListarNF` com `nNFInicial`/`nNFFinal` e `filtrar_por_status: "N"`, via
+  `lookup_invoice` da `omie-sync`; a leitura é `_shared/omie-invoice-items.ts`), confere o número de
+  novo, casa cada item com o produto do cadastro pelo código do OMIE (`omie_product_id`) ou pelo
+  código do produto — nunca pelo nome — e converte o volume para kg só quando a unidade é de peso
+  (t, kg); m³ fica para a pessoa digitar. Nota de outro cliente vem com `otherCustomer` e um aviso.
+  404 quando a nota não existe (ou está cancelada), 502 quando o OMIE não respondeu.
 
 ### 4.4 Transportadora, motorista, veículo (comercial, gestor, operação e administrador)
 

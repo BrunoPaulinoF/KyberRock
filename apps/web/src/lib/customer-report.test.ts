@@ -237,7 +237,7 @@ describe("buildCustomerReport", () => {
   });
 
   it("o modelo completo acrescenta as tabelas de transporte e operacoes", () => {
-    expect(customerReportTables(report, "simplified")).toHaveLength(7);
+    expect(customerReportTables(report, "simplified")).toHaveLength(6);
     const complete = customerReportTables(report, "complete").map((table) => table.title);
     expect(complete).toContain("Operacoes (detalhado)");
     expect(complete).toContain("Operacoes canceladas");
@@ -369,8 +369,8 @@ describe("documentos do desktop", () => {
       "Vencimentos no periodo",
       "Produtos comprados",
       "Materiais por dia",
-      "Placas",
       "Viagens por placa e motorista",
+      "Transportadora",
       "Compras por mes",
       "Preco medio/t",
       "Nota fiscal",
@@ -384,6 +384,8 @@ describe("documentos do desktop", () => {
       expect(html).toContain(text);
     }
     expect(html).not.toContain("Operacoes (detalhado)");
+    // O quadro "Placas" saiu: a lista de viagens ja traz placa, motorista e transportadora.
+    expect(html).not.toContain("<h2>Placas</h2>");
   });
 
   it("o PDF completo acrescenta transporte, pagamentos, operacoes e canceladas", () => {

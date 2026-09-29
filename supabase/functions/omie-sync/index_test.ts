@@ -5962,3 +5962,116 @@ Deno.test("check_order_billing busca as notas antes de conferir os pedidos", asy
   const calls = omieQueue.requests.map((request) => request.call);
   assertEquals(calls.indexOf("ListarNF") < calls.indexOf("ListarPedidos"), true);
 });
+
+function lookupFixtures(suffix: string, tokenHash: string) {
+  return createSupabaseDependencies({
+    devices: {
+      [`device-${suffix}`]: {
+        id: `device-${suffix}`,
+        company_id: `company-${suffix}`,
+        unit_id: `unit-${suffix}`,
+        token_hash: tokenHash,
+        is_active: true
+      }
+    },
+    companies: {
+      [`company-${suffix}`]: {
+        id: `company-${suffix}`,
+        is_active: true,
+        omie_app_key: `key-${suffix}`,
+        omie_app_secret: `secret-${suffix}`
+      }
+    }
+  });
+}
+
+// Entrega futura pelo site: o numero da nota traz produto e volume da propria NF-e.
+Deno.test("lookup_invoice lista a nota pelo numero e devolve os itens", async () => {
+  const deviceToken = "token-lookup-invoice";
+  const fixtures = lookupFixtures("lookup-invoice", await sha256Hex(deviceToken));
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarNF") {
+      return {
+        nfCadastro: [
+          {
+            ide: { nNF: "000029490", serie: "1", dEmi: "01/09/2026" },
+            nfDestInt: { nCodCli: 777 },
+            det: [
+              {
+                prod: { cProd: "BR1", xProd: "BRITA 1", qCom: 30, uCom: "TON" },
+                nfProdInt: { nCodProd: 555 }
+              }
+            ]
+          }
+        ]
+      };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-lookup-invoice",
+      deviceToken,
+      action: "lookup_invoice",
+      payload: { invoiceNumber: "29.490" }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, {
+    ok: true,
+    invoices: [
+      {
+        invoiceNumber: "29490",
+        omieCustomerId: 777,
+        items: [{ omieProductId: 555, description: "BRITA 1", weightKg: 30000 }]
+      }
+    ]
+  });
+  const param = getParam(findRequest(omieQueue, "ListarNF"));
+  assertEquals(param.nNFInicial, 29490);
+  assertEquals(param.nNFFinal, 29490);
+  assertEquals(param.filtrar_por_status, "N");
+});
+
+// Saldo do cliente no cadastro do site: so os titulos em aberto daquele cliente.
+Deno.test("customer_open_receivables soma os titulos em aberto do cliente", async () => {
+  const deviceToken = "token-open-receivables";
+  const fixtures = lookupFixtures("open-receivables", await sha256Hex(deviceToken));
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarContasReceber") {
+      return {
+        total_de_paginas: 1,
+        conta_receber_cadastro: [
+          { codigo_lancamento_omie: 1, valor_documento: 1000, data_vencimento: "10/01/2020" },
+          { codigo_lancamento_omie: 2, valor_documento: 500, data_vencimento: "10/01/2099" }
+        ]
+      };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-open-receivables",
+      deviceToken,
+      action: "customer_open_receivables",
+      payload: { customerOmieCode: 777 }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, {
+    ok: true,
+    openCents: 150000,
+    openTitles: 2,
+    overdueCents: 100000,
+    overdueTitles: 1,
+    nextDueDate: "2099-01-10",
+    truncated: false
+  });
+  const param = getParam(findRequest(omieQueue, "ListarContasReceber"));
+  assertEquals(param.filtrar_cliente, 777);
+  assertEquals(param.filtrar_apenas_titulos_em_aberto, "S");
+});

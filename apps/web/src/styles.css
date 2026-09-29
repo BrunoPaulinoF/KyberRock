@@ -562,6 +562,10 @@ table.data td strong.plate-badge {
 table.data tbody tr:hover td {
   background: var(--kr-card-hover);
 }
+/* Linha que abre com dois cliques (lista de clientes). */
+table.data tr.row-open {
+  cursor: pointer;
+}
 table.data tr.inactive td {
   color: var(--kr-muted);
 }
@@ -1855,8 +1859,9 @@ input[type="radio"] {
 }
 .op-row.closed {
   grid-template-columns:
-    96px minmax(160px, 1.1fr) minmax(110px, 0.7fr) 140px minmax(170px, 0.9fr)
+    96px minmax(160px, 1.1fr) minmax(110px, 0.7fr) 140px 96px minmax(170px, 0.9fr)
     150px;
+  min-width: 820px;
 }
 .op-row.head {
   border-top: none;
@@ -2322,6 +2327,18 @@ input[type="radio"] {
   background: var(--kr-surface-soft);
   padding: 12px;
   margin-bottom: 12px;
+}
+/* Entrega futura: o que o OMIE achou da nota digitada. */
+.future-lookup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+.future-lookup-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--kr-text);
 }
 .file-subtitle {
   font-size: 12px;

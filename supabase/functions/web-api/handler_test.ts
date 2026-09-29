@@ -117,6 +117,9 @@ function harness(
       pushes.push({ action, payload });
       return { omieCustomerId: 777 };
     },
+    query: async () => {
+      throw new Error("consulta ao OMIE nao esperada neste teste");
+    },
     ...input.omie
   };
   const resolveSession = async (): Promise<WebSessionResult> =>
@@ -155,7 +158,7 @@ describe("web-api: sessao e permissoes", () => {
       {
         store: new MemoryStore(),
         resolveSession: async () => ({ ok: false, status: 401, error: "x" }),
-        omie: { push: async () => ({ omieCustomerId: 1 }) }
+        omie: { push: async () => ({ omieCustomerId: 1 }), query: async () => ({}) }
       }
     );
     expect(response.status).toBe(200);
@@ -965,6 +968,187 @@ describe("web-api: frete e entrega futura do cliente", () => {
   });
 });
 
+describe("web-api: consultas ao OMIE da ficha do cliente", () => {
+  it("saldo: soma do OMIE, sem gravar nada; cliente sem codigo nem pergunta", async () => {
+    const queries: Array<{ action: string; payload: Row }> = [];
+    const h = harness({
+      role: "comercial",
+      omie: {
+        query: async (action, payload) => {
+          queries.push({ action, payload });
+          return {
+            ok: true,
+            openCents: 150000,
+            openTitles: 2,
+            overdueCents: 100000,
+            overdueTitles: 1,
+            nextDueDate: "2026-10-15",
+            truncated: false
+          };
+        }
+      }
+    });
+    h.store.seed("customers", [
+      { id: "c-1", company_id: COMPANY, omie_customer_id: 777, open_receivables_cents: 0 },
+      { id: "c-2", company_id: COMPANY, omie_customer_id: null }
+    ]);
+
+    const result = await h.call("customer_balance", { customerId: "c-1" });
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({
+      status: "ok",
+      openCents: 150000,
+      overdueCents: 100000,
+      nextDueDate: "2026-10-15",
+      checkedAt: NOW
+    });
+    expect(queries).toEqual([
+      { action: "customer_open_receivables", payload: { customerOmieCode: 777 } }
+    ]);
+    // O numero e so para a tela: o limite de credito das balancas nao muda.
+    expect(h.store.rows("customers")[0].open_receivables_cents).toBe(0);
+
+    expect((await h.call("customer_balance", { customerId: "c-2" })).body).toMatchObject({
+      status: "not_linked"
+    });
+    expect(queries).toHaveLength(1);
+  });
+
+  it("saldo: OMIE fora do ar vira aviso, nao erro", async () => {
+    const h = harness({
+      role: "gestor",
+      omie: {
+        query: async () => {
+          throw new Error("HTTP 500");
+        }
+      }
+    });
+    h.store.seed("customers", [{ id: "c-1", company_id: COMPANY, omie_customer_id: 777 }]);
+    const result = await h.call("customer_balance", { customerId: "c-1" });
+    expect(result.status).toBe(200);
+    expect(result.body.status).toBe("unavailable");
+    expect(String(result.body.message)).toContain("HTTP 500");
+  });
+
+  it("monitoramento nao consulta o OMIE (o carregador nem tem sessao aqui)", async () => {
+    const h = harness({ role: "monitoramento" });
+    expect((await h.call("customer_balance", { customerId: "c-1" })).status).toBe(403);
+    expect(
+      (await h.call("lookup_future_billing_invoice", { customerId: "c-1", nfeNumber: "1" })).status
+    ).toBe(403);
+  });
+
+  it("entrega futura: a nota traz produto e volume, casados com o cadastro", async () => {
+    const queries: Array<{ action: string; payload: Row }> = [];
+    const h = harness({
+      role: "comercial",
+      omie: {
+        query: async (action, payload) => {
+          queries.push({ action, payload });
+          return {
+            ok: true,
+            invoices: [
+              {
+                invoiceNumber: "29490",
+                series: "1",
+                issueDate: "2026-09-01",
+                omieCustomerId: 999,
+                customerName: "OUTRA EMPRESA",
+                cancelled: false,
+                items: [
+                  {
+                    omieProductId: 555,
+                    code: "BR1",
+                    description: "BRITA 1 (NF)",
+                    quantity: 30,
+                    unit: "TON",
+                    weightKg: 30000
+                  },
+                  {
+                    omieProductId: null,
+                    code: "XYZ",
+                    description: "AREIA",
+                    quantity: 10,
+                    unit: "M3",
+                    weightKg: null
+                  }
+                ]
+              }
+            ]
+          };
+        }
+      }
+    });
+    h.store.seed("customers", [{ id: "c-1", company_id: COMPANY, omie_customer_id: 777 }]);
+    h.store.seed("products", [
+      { id: "p-1", company_id: COMPANY, description: "BRITA 1", code: "B1", omie_product_id: 555 }
+    ]);
+
+    const result = await h.call("lookup_future_billing_invoice", {
+      customerId: "c-1",
+      nfeNumber: "000.029.490"
+    });
+    expect(result.status).toBe(200);
+    expect(queries).toEqual([{ action: "lookup_invoice", payload: { invoiceNumber: "29490" } }]);
+    expect(result.body.invoices).toEqual([
+      {
+        invoiceNumber: "29490",
+        series: "1",
+        issueDate: "2026-09-01",
+        customerName: "OUTRA EMPRESA",
+        otherCustomer: true,
+        items: [
+          {
+            productId: "p-1",
+            productDescription: "BRITA 1",
+            invoiceDescription: "BRITA 1 (NF)",
+            quantity: 30,
+            unit: "TON",
+            totalWeightKg: 30000
+          },
+          {
+            productId: null,
+            productDescription: null,
+            invoiceDescription: "AREIA",
+            quantity: 10,
+            unit: "M3",
+            totalWeightKg: null
+          }
+        ]
+      }
+    ]);
+    expect((result.body.warnings as string[])[0]).toContain("outro cliente");
+    // So consulta: a nota so e gravada quando a pessoa salva.
+    expect(h.store.rows("customer_future_billing_invoices")).toHaveLength(0);
+  });
+
+  it("entrega futura: sem numero, nota inexistente e OMIE fora do ar", async () => {
+    let answer: () => Promise<Row> = async () => ({ ok: true, invoices: [] });
+    const h = harness({ role: "comercial", omie: { query: () => answer() } });
+    h.store.seed("customers", [{ id: "c-1", company_id: COMPANY }]);
+
+    expect(
+      (await h.call("lookup_future_billing_invoice", { customerId: "c-1", nfeNumber: "00" })).status
+    ).toBe(400);
+    const missing = await h.call("lookup_future_billing_invoice", {
+      customerId: "c-1",
+      nfeNumber: "123"
+    });
+    expect(missing.status).toBe(404);
+    expect(missing.body.error).toContain("123");
+
+    answer = async () => {
+      throw new Error("API bloqueada");
+    };
+    const down = await h.call("lookup_future_billing_invoice", {
+      customerId: "c-1",
+      nfeNumber: "123"
+    });
+    expect(down.status).toBe(502);
+    expect(down.body.error).toContain("API bloqueada");
+  });
+});
+
 describe("web-api: senha de preco no cadastro", () => {
   function priced(requiresPricePassword: boolean, password: string | null = "4321") {
     const h = harness({ role: "operacao", requiresPricePassword });
@@ -1267,7 +1451,7 @@ describe("web-api: buscar CNPJ", () => {
       {
         store: new MemoryStore(),
         resolveSession: async () => ({ ok: true, session: session("comercial") }),
-        omie: { push: async () => ({ omieCustomerId: 1 }) },
+        omie: { push: async () => ({ omieCustomerId: 1 }), query: async () => ({}) },
         cnpjLookup: async (cnpj) => ({
           found: true,
           cnpj,

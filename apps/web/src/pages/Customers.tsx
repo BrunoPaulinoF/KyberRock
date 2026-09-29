@@ -2,6 +2,7 @@ import { SearchCheck } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { ConditionLegend } from "../components/ConditionLegend";
+import { CustomerInfoModal } from "../components/CustomerPanels";
 import { IconAction, NewButton, Pill, SearchBar, SectionHead } from "../components/desk";
 import { DeleteDialog } from "../components/PricePassword";
 import {
@@ -67,6 +68,7 @@ export function CustomersSection() {
   useOnCadastroChange(aux.refresh, [...CADASTRO_TABLES.customers, ...CADASTRO_TABLES.payment]);
   const [editing, setEditing] = useState<Customer | "new" | null>(null);
   const [file, setFile] = useState<Customer | null>(null);
+  const [viewing, setViewing] = useState<Customer | null>(null);
   const [removing, setRemoving] = useState<Customer | null>(null);
 
   const [terms, activeCount] = aux.data ?? [[], 0];
@@ -91,7 +93,7 @@ export function CustomersSection() {
       <SectionHead
         title="Clientes"
         count={activeCount}
-        description="Clientes sincronizados do OMIE ou criados aqui. Clientes novos sao enviados ao OMIE na hora."
+        description="Clientes sincronizados do OMIE ou criados aqui. Clientes novos sao enviados ao OMIE na hora. Dois cliques no cliente mostram os dados dele."
         action={
           user.canEditCustomers && (
             <NewButton onClick={() => setEditing("new")}>Novo cliente</NewButton>
@@ -120,6 +122,7 @@ export function CustomersSection() {
         rowClassName={(c) => (c.is_active ? undefined : "inactive")}
         empty={list.loading ? "Carregando..." : "Nenhum cliente encontrado."}
         pageSize={0}
+        onRowDoubleClick={setViewing}
         footer={
           <LoadMore
             shown={list.rows.length}
@@ -171,26 +174,34 @@ export function CustomersSection() {
             key: "actions",
             header: "Acoes",
             numeric: true,
-            render: (c) =>
-              user.canEditCustomers && (
-                <span className="row-actions">
-                  <IconAction icon="edit" label="Editar cliente" onClick={() => setEditing(c)} />
-                  <IconAction
-                    icon="sliders"
-                    label="Comercial, precos, frete, transporte e entrega futura"
-                    onClick={() => setFile(c)}
-                  />
-                  <button className="btn small" onClick={() => void toggleActive(c)}>
-                    {c.is_active ? "Inativar" : "Reativar"}
-                  </button>
-                  <IconAction
-                    icon="trash"
-                    label="Excluir cliente"
-                    tone="danger"
-                    onClick={() => setRemoving(c)}
-                  />
-                </span>
-              )
+            render: (c) => (
+              <span className="row-actions">
+                <IconAction
+                  icon="eye"
+                  label="Ver os dados do cliente (ou dois cliques na linha)"
+                  onClick={() => setViewing(c)}
+                />
+                {user.canEditCustomers && (
+                  <>
+                    <IconAction icon="edit" label="Editar cliente" onClick={() => setEditing(c)} />
+                    <IconAction
+                      icon="sliders"
+                      label="Comercial, precos, frete, transporte e entrega futura"
+                      onClick={() => setFile(c)}
+                    />
+                    <button className="btn small" onClick={() => void toggleActive(c)}>
+                      {c.is_active ? "Inativar" : "Reativar"}
+                    </button>
+                    <IconAction
+                      icon="trash"
+                      label="Excluir cliente"
+                      tone="danger"
+                      onClick={() => setRemoving(c)}
+                    />
+                  </>
+                )}
+              </span>
+            )
           }
         ]}
       />
@@ -204,6 +215,38 @@ export function CustomersSection() {
             setEditing(null);
             await refresh();
           }}
+        />
+      )}
+      {viewing && (
+        <CustomerInfoModal
+          customer={{ id: viewing.id, name: viewing.trade_name || viewing.legal_name }}
+          actions={
+            user.canEditCustomers && (
+              <>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    setEditing(viewing);
+                    setViewing(null);
+                  }}
+                >
+                  Editar cadastro
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    setFile(viewing);
+                    setViewing(null);
+                  }}
+                >
+                  Comercial, precos e mais
+                </button>
+              </>
+            )
+          }
+          onClose={() => setViewing(null)}
         />
       )}
       {file && (
@@ -290,7 +333,9 @@ function CustomerForm({
       setError("CNPJ/CPF invalido. Confira os digitos.");
       return;
     }
-    if (describePaymentCondition(conditionText).status === "invalid") {
+    // Cliente que ja existe nao mexe na condicao aqui (ela fica na ficha): a guardada, mesmo
+    // num formato antigo do OMIE, nao pode travar a edicao do endereco.
+    if (!customer && describePaymentCondition(conditionText).status === "invalid") {
       setError('Condicao de pagamento padrao invalida. Veja os formatos em "Como escrever".');
       return;
     }
@@ -447,18 +492,32 @@ function CustomerForm({
             <input className="input" value={form.contactName} onChange={set("contactName")} />
           </Field>
         </div>
-        <Field
-          label="Condicao de pagamento padrao"
-          hint="Vazio = sem padrao. Se nao existir no OMIE, e criada automaticamente no envio."
-        >
-          <input
-            className="input"
-            value={conditionText}
-            onChange={(e) => setConditionText(e.target.value)}
-            placeholder='Ex.: "30", "7 14 21", "3 parcelas" ou "s+20"'
-          />
-        </Field>
-        <ConditionLegend value={conditionText} />
+        {/*
+          Cliente que ja existe muda a condicao na ficha (aba Comercial e credito), ao lado da
+          forma de pagamento. Aqui ela fica so no cadastro novo, que ainda nao tem ficha.
+        */}
+        {customer ? (
+          <p className="desk-muted">
+            Condicao de pagamento padrao: <strong>{initialCondition || "sem padrao"}</strong>. Para
+            mudar, use o botao de ficha do cliente (aba Comercial e credito), junto da forma de
+            pagamento.
+          </p>
+        ) : (
+          <>
+            <Field
+              label="Condicao de pagamento padrao"
+              hint="Vazio = sem padrao. Se nao existir no OMIE, e criada automaticamente no envio."
+            >
+              <input
+                className="input"
+                value={conditionText}
+                onChange={(e) => setConditionText(e.target.value)}
+                placeholder='Ex.: "30", "7 14 21", "3 parcelas" ou "s+20"'
+              />
+            </Field>
+            <ConditionLegend value={conditionText} />
+          </>
+        )}
         <div className="grid-3">
           <Field label="CEP">
             <input className="input" value={form.zipcode} onChange={set("zipcode")} />

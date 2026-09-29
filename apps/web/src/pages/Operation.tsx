@@ -73,6 +73,7 @@ import { PRICE_CODE_HINT } from "../lib/price-code";
 import { q, type Operation } from "../lib/queries";
 import { supabase } from "../lib/supabase";
 import { closedPeriodBounds } from "../lib/closed-operations";
+import { invoiceNumberLabel } from "../lib/desktop/invoice-number-label";
 import { useAsync } from "../lib/use-async";
 import { usePaged } from "../lib/use-paged";
 import { useDebounced } from "./Customers";
@@ -316,6 +317,16 @@ export async function sendRequest(
     toast.push(errorMessage(caught), "error");
     return false;
   }
+}
+
+/** A coluna "Nota fiscal" das concluidas: o numero, "Sem nota" ou "—" (venda interna). */
+function InvoiceNumberCell({ number, internal }: { number: string | null; internal: boolean }) {
+  const label = invoiceNumberLabel(number, internal ? "internal" : "invoice");
+  return (
+    <span className="op-cell" title={label.title ?? undefined}>
+      {label.state === "number" ? <strong>NF {label.text}</strong> : <small>{label.text}</small>}
+    </span>
+  );
 }
 
 function operationLabel(operation: Pick<Operation, "operation_code" | "plate">): string {
@@ -693,7 +704,7 @@ export function Operations() {
                 className="input"
                 type="search"
                 value={closedSearch}
-                placeholder="Cliente, placa ou produto"
+                placeholder="Cliente, placa, produto ou NF"
                 style={{ minWidth: 240 }}
                 onChange={(event) => setClosedSearch(event.target.value)}
               />
@@ -863,6 +874,7 @@ export function Operations() {
               <span>Cliente / Produto</span>
               <span>Peso liquido / Receita</span>
               <span>Concluida em</span>
+              <span>Nota fiscal</span>
               <span>Fiscal OMIE</span>
               <span>Acoes</span>
             </div>
@@ -884,6 +896,10 @@ export function Operations() {
                     <span>{formatMoney(row.total_cents)}</span>
                   </span>
                   <span>{formatDateTime(row.closed_at ?? row.created_at)}</span>
+                  <InvoiceNumberCell
+                    number={row.omie_invoice_number}
+                    internal={row.operation_type === "internal"}
+                  />
                   <span className="op-cell">
                     <Pill tone={fiscal.tone}>{fiscal.label}</Pill>
                     <small>{fiscal.detail}</small>

@@ -4,6 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { useUser } from "../lib/auth";
+import { loadCreditBalance, loadOmieBalance, type OmieBalance } from "../lib/customer-balance";
 import {
   creditLabel,
   customerAddress,
@@ -13,8 +14,11 @@ import {
   loadCustomerWeighings,
   sumWeighings,
   type CustomerRef,
+  type CustomerRow,
+  type SpecialPriceLine,
   type WeighingTotals
 } from "../lib/customer-weighings";
+import { invoiceNumberLabel } from "../lib/desktop/invoice-number-label";
 import {
   formatDate,
   formatDateTime,
@@ -71,6 +75,18 @@ function TotalsStrip({ totals }: { totals: WeighingTotals }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/** "NF 4521", "Sem nota" (venda com nota ainda sem numero) ou "—" (venda interna). */
+function InvoiceNumber({ number, internal }: { number: string | null; internal: boolean }) {
+  const label = invoiceNumberLabel(number, internal ? "internal" : "invoice");
+  return label.state === "number" ? (
+    <strong>NF {label.text}</strong>
+  ) : (
+    <span className="cp-muted" title={label.title ?? undefined}>
+      {label.text}
+    </span>
   );
 }
 
@@ -202,6 +218,7 @@ export function CustomerWeighingsModal({
                     <tr>
                       <th>Data</th>
                       <th>COD</th>
+                      <th>Nota fiscal</th>
                       <th>Placa</th>
                       <th>Motorista</th>
                       <th className="num">Peso (kg)</th>
@@ -223,6 +240,12 @@ export function CustomerWeighingsModal({
                           ) : (
                             operationCodeLabel(op.operation_code)
                           )}
+                        </td>
+                        <td>
+                          <InvoiceNumber
+                            number={op.omie_invoice_number}
+                            internal={op.operation_type === "internal"}
+                          />
                         </td>
                         <td>{op.plate ? <PlateBadge plate={formatPlate(op.plate)} /> : "—"}</td>
                         <td>{op.driver_name || "—"}</td>
@@ -249,23 +272,29 @@ export function CustomerWeighingsModal({
 }
 
 /**
- * Cartao "Info" (o olho da tabela dinamica): o cadastro do cliente e o resumo do periodo do
- * relatorio — o preco medio que saiu da coluna mora aqui.
+ * Cartao "Info" do cliente: o cadastro, os precos especiais e o saldo (credito no KyberRock e o
+ * que esta em aberto no OMIE). Abre pelo olho da tabela dinamica — ali com o resumo do periodo do
+ * relatorio, onde mora o preco medio que saiu da coluna — e pelos dois cliques na lista de
+ * clientes da tela Cadastros, sem resumo.
  */
 export function CustomerInfoModal({
   customer,
-  periodLabel,
-  totals,
-  lastSale,
+  summary,
   onWeighings,
+  actions,
   onClose
 }: {
   customer: CustomerRef;
-  periodLabel: string;
-  totals: WeighingTotals;
-  /** Instante da ultima pesagem do cliente no periodo. */
-  lastSale: string | null;
-  onWeighings: () => void;
+  /** O resumo do periodo do relatorio. Sem ele (aberto pelo cadastro) o cartao nao mostra. */
+  summary?: {
+    periodLabel: string;
+    totals: WeighingTotals;
+    /** Instante da ultima pesagem do cliente no periodo. */
+    lastSale: string | null;
+  };
+  onWeighings?: () => void;
+  /** Botoes a mais no rodape (a tela Cadastros poe o Editar e a ficha). */
+  actions?: ReactNode;
   onClose: () => void;
 }) {
   const user = useUser();
@@ -274,6 +303,7 @@ export function CustomerInfoModal({
     [user.companyId, customer.id]
   );
   const row = info.data?.customer ?? null;
+  const specialPrices = info.data?.specialPrices ?? [];
 
   return (
     <Modal
@@ -283,9 +313,12 @@ export function CustomerInfoModal({
       onClose={onClose}
       footer={
         <>
-          <button type="button" className="btn" onClick={onWeighings}>
-            Ver pesagens
-          </button>
+          {actions}
+          {onWeighings && (
+            <button type="button" className="btn" onClick={onWeighings}>
+              Ver pesagens
+            </button>
+          )}
           <button type="button" className="btn primary" onClick={onClose}>
             Fechar
           </button>
@@ -317,16 +350,20 @@ export function CustomerInfoModal({
           </Alert>
         )}
 
-        <section className="cp-card">
-          <h3>Resumo · {periodLabel}</h3>
-          <TotalsStrip totals={totals} />
-          <p className="cp-muted">
-            Ultima pesagem no periodo: {lastSale ? formatDateTime(lastSale) : "—"}
-          </p>
-        </section>
+        {summary && (
+          <section className="cp-card">
+            <h3>Resumo · {summary.periodLabel}</h3>
+            <TotalsStrip totals={summary.totals} />
+            <p className="cp-muted">
+              Ultima pesagem no periodo: {summary.lastSale ? formatDateTime(summary.lastSale) : "—"}
+            </p>
+          </section>
+        )}
 
         {row && (
           <>
+            <CustomerBalanceCard customer={row} />
+
             <InfoSection title="Cadastro">
               <InfoItem label="Razao social" value={row.legal_name} wide />
               <InfoItem label="Nome fantasia" value={row.trade_name} wide />
@@ -359,11 +396,48 @@ export function CustomerInfoModal({
                 label="Limite de credito"
                 value={row.credit_limit_cents ? formatMoney(row.credit_limit_cents) : null}
               />
-              <InfoItem
-                label="A receber em aberto"
-                value={formatMoney(row.open_receivables_cents)}
-              />
             </InfoSection>
+
+            <section className="cp-card">
+              <h3>Precos especiais ({specialPrices.length})</h3>
+              {specialPrices.length === 0 ? (
+                <p className="cp-muted">
+                  Sem preco especial: o cliente paga o preco padrao de cada produto.
+                </p>
+              ) : (
+                <div className="table-wrap cp-table">
+                  <table className="data">
+                    <thead>
+                      <tr>
+                        <th>Produto</th>
+                        <th className="num">Especial</th>
+                        <th className="num">Padrao</th>
+                        <th className="num">Diferenca</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {specialPrices.map((price) => (
+                        <tr key={price.productId}>
+                          <td>
+                            <strong>{price.productDescription}</strong>
+                            {price.productCode && (
+                              <span className="cell-sub">Codigo {price.productCode}</span>
+                            )}
+                          </td>
+                          <td className="num">
+                            <strong>{perTon(price.specialCents)}</strong>
+                          </td>
+                          <td className="num">
+                            {price.defaultCents === null ? "—" : perTon(price.defaultCents)}
+                          </td>
+                          <td className="num">{priceDifference(price)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
 
             {row.observations && (
               <InfoSection title="Observacoes">
@@ -374,6 +448,134 @@ export function CustomerInfoModal({
         )}
       </div>
     </Modal>
+  );
+}
+
+/** "-7,00" (mais barato que o padrao) ou "+3,00"; "—" sem padrao para comparar. */
+function priceDifference(price: SpecialPriceLine): string {
+  if (price.defaultCents === null) return "—";
+  const diff = price.specialCents - price.defaultCents;
+  if (diff === 0) return "igual";
+  return `${diff > 0 ? "+" : "-"}${formatMoney(Math.abs(diff))}`;
+}
+
+/**
+ * O saldo do cliente: o credito no KyberRock (extrato fiado / pre-pago, que ja esta na nuvem) e
+ * os titulos em aberto no OMIE, perguntados na hora (`lib/customer-balance.ts`).
+ */
+export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
+  const user = useUser();
+  const credit = useAsync(
+    () => loadCreditBalance(user.companyId, customer.id),
+    [user.companyId, customer.id]
+  );
+  // Sem codigo no OMIE nao ha o que perguntar: nem gasta a chamada. O "Atualizar" pergunta de
+  // novo mesmo com a resposta guardada (`loadOmieBalance`).
+  const [forceOmie, setForceOmie] = useState(0);
+  const omie = useAsync(
+    () =>
+      customer.omie_customer_id
+        ? loadOmieBalance(customer.id, { force: forceOmie > 0 })
+        : Promise.resolve<OmieBalance>({ status: "not_linked" }),
+    [customer.id, customer.omie_customer_id, forceOmie]
+  );
+  const omieData = omie.data;
+  const showCredit = customer.credit_account_enabled || (credit.data?.movements ?? 0) > 0;
+
+  return (
+    <section className="cp-card">
+      <div className="cp-card-head">
+        <h3>Saldo do cliente</h3>
+        <button
+          type="button"
+          className="btn small"
+          onClick={() => {
+            void credit.reload();
+            setForceOmie((count) => count + 1);
+          }}
+          disabled={omie.loading || credit.loading}
+        >
+          {omie.loading ? "Consultando OMIE..." : "Atualizar"}
+        </button>
+      </div>
+      <dl className="cp-items">
+        {omie.loading && !omieData ? (
+          <InfoItem label="Em aberto no OMIE" value="Consultando..." />
+        ) : omieData?.status === "ok" ? (
+          <>
+            <InfoItem
+              label="Em aberto no OMIE"
+              value={
+                <>
+                  {formatMoney(omieData.openCents)}
+                  <span className="cell-sub">
+                    {omieData.openTitles === 1 ? "1 titulo" : `${omieData.openTitles} titulos`}
+                  </span>
+                </>
+              }
+            />
+            <InfoItem
+              label="Vencido"
+              value={
+                omieData.overdueCents > 0 ? (
+                  <span className="cp-danger">
+                    {formatMoney(omieData.overdueCents)}
+                    <span className="cell-sub">
+                      {omieData.overdueTitles === 1
+                        ? "1 titulo"
+                        : `${omieData.overdueTitles} titulos`}
+                    </span>
+                  </span>
+                ) : (
+                  "Nada vencido"
+                )
+              }
+            />
+            <InfoItem
+              label="Proximo vencimento"
+              value={omieData.nextDueDate ? formatDate(omieData.nextDueDate) : null}
+            />
+          </>
+        ) : omieData?.status === "not_linked" ? (
+          <InfoItem
+            label="Em aberto no OMIE"
+            value="Cliente ainda sem codigo no OMIE"
+            wide={!showCredit}
+          />
+        ) : (
+          <InfoItem
+            label="Em aberto no OMIE"
+            value={omieData?.status === "unavailable" ? omieData.message : null}
+            wide
+          />
+        )}
+        {showCredit && (
+          <InfoItem
+            label="Credito no KyberRock"
+            value={
+              credit.error ? (
+                credit.error
+              ) : credit.data ? (
+                <span className={credit.data.balanceCents < 0 ? "cp-danger" : undefined}>
+                  {formatMoney(credit.data.balanceCents)}
+                  <span className="cell-sub">
+                    {credit.data.balanceCents < 0 ? "utilizado do limite" : "disponivel"}
+                  </span>
+                </span>
+              ) : (
+                "Carregando..."
+              )
+            }
+          />
+        )}
+      </dl>
+      {omieData?.status === "ok" && (
+        <p className="cp-muted">
+          Consultado no OMIE em {formatDateTime(omieData.checkedAt)}.
+          {omieData.truncated && " O cliente tem mais de mil titulos em aberto: o total e parcial."}
+        </p>
+      )}
+    </section>
   );
 }
 

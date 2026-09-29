@@ -1250,24 +1250,14 @@ export function customerReportTables(
       ]),
       emptyMessage: "Nenhum carregamento neste periodo."
     },
-    {
-      title: "Placas",
-      headers: ["Placa", "Motorista", "Transportadora", "Viagens", "Peso", "Tempo medio", "Total"],
-      rows: report.byPlate.map((row) => [
-        row.plate,
-        row.driverName ?? "-",
-        row.carrierName ?? "-",
-        formatNumber(row.operations),
-        formatKg(row.netWeightKg),
-        formatMinutes(row.avgMinutes),
-        formatBRL(row.totalCents)
-      ])
-    },
+    // O quadro "Placas" (o total por placa) saiu: a lista abaixo ja traz cada viagem com placa,
+    // motorista e transportadora.
     {
       title: "Viagens por placa e motorista",
       headers: [
         "Placa",
         "Motorista",
+        "Transportadora",
         "Data",
         "Cupom",
         "Produto",
@@ -1282,6 +1272,7 @@ export function customerReportTables(
       rows: report.tripsByPlate.map((operation) => [
         operation.plate,
         operation.driverName,
+        operation.carrierName ?? "-",
         formatDayLabel(operation.date),
         formatCouponNumber(operation.couponNumber),
         operation.productDescription,

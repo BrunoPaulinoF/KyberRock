@@ -312,7 +312,7 @@ export function CustomerReport() {
                   Simplificado
                   <span className="cr-checkbox-hint">
                     Dados principais: cadastro, KPIs, vencimentos, produtos, materiais por dia,
-                    placas com as viagens de cada motorista e compras por mes.
+                    viagens por placa e motorista (com a transportadora) e compras por mes.
                   </span>
                 </span>
               </label>

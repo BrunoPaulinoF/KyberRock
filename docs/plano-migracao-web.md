@@ -122,14 +122,14 @@ link do WhatsApp e o `/download` (ver `AGENTS.md`, "Saida do loader-web").
 `administrador` (migrações `202609220003`, `202609240001` e `202609260001`). Em 26/09 cada perfil
 passou a ter um conjunto **fechado de telas** — o que não é dele nem aparece:
 
-| Perfil          | Vê                                                                                                         | Edita                                             |
-| --------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `carregador`    | Só a fila de carregamento da unidade (`/carregamento` no site)                                             | Marca carga concluída                             |
-| `monitoramento` | Só a tela Monitoramento (vendas em tempo real), sem configurações — único perfil que vê essa tela          | Nada                                              |
-| `comercial`     | Insights, conferência de faturamento, relatórios, controle de caminhões, relatório por cliente e cadastros | Todo o cadastro e preço, sem senha de preço       |
-| `gestor`        | Tudo, menos a Nova entrada, Comercial e Monitoramento, com configurações                                   | Tudo, menos a Nova entrada                        |
-| `operacao`      | Tudo, menos Comercial e Monitoramento, com configurações                                                   | Tudo; mudar preço sempre pede a senha da pedreira |
-| `administrador` | Tudo (menos Comercial e Monitoramento) + Logs de suporte, com configurações                                | Tudo, sem senha                                   |
+| Perfil          | Vê                                                                                                                        | Edita                                             |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `carregador`    | Só a fila de carregamento da unidade (`/carregamento` no site)                                                            | Marca carga concluída                             |
+| `monitoramento` | Só a tela Monitoramento (vendas em tempo real), sem configurações                                                         | Nada                                              |
+| `comercial`     | Insights, conferência de faturamento, relatórios, controle de caminhões, relatório por cliente, cadastros e Monitoramento | Todo o cadastro e preço, sem senha de preço       |
+| `gestor`        | Tudo, menos a Nova entrada, Comercial e Monitoramento, com configurações                                                  | Tudo, menos a Nova entrada                        |
+| `operacao`      | Tudo, menos Comercial e Monitoramento, com configurações                                                                  | Tudo; mudar preço sempre pede a senha da pedreira |
+| `administrador` | Tudo (menos Comercial e Monitoramento) + Logs de suporte, com configurações                                               | Tudo, sem senha                                   |
 
 O painel `/admin` cria os logins em **Acessos do sistema** (antiga aba "Balanças"): cada
 computador cadastrado ganha um login do site com e-mail, senha e perfil

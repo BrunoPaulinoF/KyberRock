@@ -30,6 +30,8 @@ import {
   type OmieCustomerAdvance,
   type OmieReceivableRaw
 } from "../_shared/omie-customer-advances.ts";
+import { invoicesWithNumber, normalizeInvoiceNumber } from "../_shared/omie-invoice-items.ts";
+import { quarryToday, summarizeOpenReceivables } from "../_shared/omie-open-receivables.ts";
 
 const PAGE_SIZE = 100;
 const PUSH_PAGE_SIZE = 25;
@@ -76,7 +78,9 @@ type OmieAction =
   | "check_order_billing"
   | "cancel_order"
   | "push_customer"
-  | "push_carrier";
+  | "push_carrier"
+  | "customer_open_receivables"
+  | "lookup_invoice";
 
 type PullResume = {
   customersPage?: number;
@@ -693,6 +697,27 @@ export async function handleOmieSyncRequest(
       const payload = body.payload as PushCarrierPayload;
       const omieCustomerId = await pushCarrierToOmie(credentials, payload);
       return jsonResponse({ ok: true, omieCustomerId });
+    }
+
+    // Saldo do cliente no cadastro do site (via `web-api`): os titulos a receber em aberto.
+    // Consulta so, nada e gravado — ver `_shared/omie-open-receivables.ts`.
+    if (action === "customer_open_receivables") {
+      const payload = body.payload as { customerOmieCode?: unknown } | undefined;
+      const customerOmieCode = Number(payload?.customerOmieCode);
+      if (!Number.isInteger(customerOmieCode) || customerOmieCode <= 0) {
+        return jsonResponse({ error: "Informe o codigo OMIE do cliente." }, 400);
+      }
+      const result = await listCustomerOpenReceivables(credentials, customerOmieCode);
+      return jsonResponse({ ok: true, ...result });
+    }
+
+    // Nota de entrega futura (via `web-api`): produto e volume pelo numero da NF-e.
+    if (action === "lookup_invoice") {
+      const payload = body.payload as { invoiceNumber?: unknown } | undefined;
+      const invoiceNumber = normalizeInvoiceNumber(payload?.invoiceNumber);
+      if (!invoiceNumber) return jsonResponse({ error: "Informe o numero da NF-e." }, 400);
+      const invoices = await listOmieInvoicesByNumber(credentials, invoiceNumber);
+      return jsonResponse({ ok: true, invoices });
     }
 
     return jsonResponse({ error: "Acao OMIE desconhecida" }, 400);
@@ -5426,6 +5451,83 @@ async function listOmieInvoicesByOrder(
   );
 
   return index;
+}
+
+/**
+ * As notas VALIDAS com aquele numero (uma por serie), com os itens. `nNFInicial`/`nNFFinal`
+ * recortam a listagem no proprio OMIE; `invoicesWithNumber` confere o numero de novo, porque
+ * preencher a entrega futura com o produto de outra nota seria pior que nao preencher.
+ */
+async function listOmieInvoicesByNumber(
+  credentials: OmieCredentials,
+  invoiceNumber: string
+): Promise<ReturnType<typeof invoicesWithNumber>> {
+  const number = Number(invoiceNumber);
+  let response: unknown;
+  try {
+    response = await callOmie<unknown, unknown>(credentials, "/produtos/nfconsultar/", "ListarNF", {
+      pagina: 1,
+      registros_por_pagina: 20,
+      apenas_importado_api: "N",
+      nNFInicial: number,
+      nNFFinal: number,
+      // So nota nao cancelada (ver `listOmieInvoicesPage`).
+      filtrar_por_status: "N"
+    });
+  } catch (error) {
+    // "Nao ha registros" e resposta: a nota nao existe (ou foi cancelada).
+    const message = getErrorMessage(error);
+    if (isOmieNotFoundFault(message) || /nenhum registro/i.test(message)) return [];
+    throw error;
+  }
+  return invoicesWithNumber(response, invoiceNumber);
+}
+
+/** Paginas lidas, no maximo, para somar o que o cliente deve (100 titulos por pagina). */
+const OPEN_RECEIVABLES_MAX_PAGES = 10;
+
+/**
+ * Os titulos a receber EM ABERTO do cliente, somados (`summarizeOpenReceivables`). Cliente com
+ * mais de mil titulos abertos sai com `truncated`, e a tela avisa que o total e parcial.
+ */
+async function listCustomerOpenReceivables(
+  credentials: OmieCredentials,
+  customerOmieCode: number
+): Promise<ReturnType<typeof summarizeOpenReceivables> & { truncated: boolean }> {
+  const rows: OmieReceivableRaw[] = [];
+  let truncated = false;
+  for (let page = 1; page <= OPEN_RECEIVABLES_MAX_PAGES; page++) {
+    let response: {
+      total_de_paginas?: number;
+      conta_receber_cadastro?: OmieReceivableRaw[];
+      contaReceberCadastro?: OmieReceivableRaw[];
+    } | null;
+    try {
+      response = await callOmie<
+        Record<string, unknown>,
+        {
+          total_de_paginas?: number;
+          conta_receber_cadastro?: OmieReceivableRaw[];
+          contaReceberCadastro?: OmieReceivableRaw[];
+        } | null
+      >(credentials, "/financas/contareceber/", "ListarContasReceber", {
+        pagina: page,
+        registros_por_pagina: PAGE_SIZE,
+        apenas_importado_api: "N",
+        filtrar_apenas_titulos_em_aberto: "S",
+        filtrar_cliente: customerOmieCode
+      });
+    } catch (error) {
+      // Cliente sem titulo em aberto: o OMIE responde com faultstring em vez de lista vazia.
+      if (!isEmptyReceivablesError(error)) throw error;
+      response = null;
+    }
+    const items = response?.conta_receber_cadastro ?? response?.contaReceberCadastro ?? [];
+    rows.push(...items);
+    if (computeFinished(page, items.length, toIntOrNull(response?.total_de_paginas))) break;
+    if (page === OPEN_RECEIVABLES_MAX_PAGES) truncated = true;
+  }
+  return { ...summarizeOpenReceivables(rows, quarryToday(new Date())), truncated };
 }
 
 /** O periodo de emissao em que a nota procurada pode estar, em dd/mm/aaaa. */

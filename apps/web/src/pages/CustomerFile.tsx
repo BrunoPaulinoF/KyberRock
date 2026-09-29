@@ -1,10 +1,12 @@
-import { Car, FileText, Tag, Truck, Wallet, type LucideIcon } from "lucide-react";
+import { Car, FileText, SearchCheck, Tag, Truck, Wallet, type LucideIcon } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
 
+import { ConditionLegend } from "../components/ConditionLegend";
+import { CustomerBalanceCard } from "../components/CustomerPanels";
 import { EmptyState, IconAction, Pill, PlateBadge } from "../components/desk";
 import { Picker } from "../components/Picker";
 import { PricePasswordField } from "../components/PricePassword";
-import { Alert, DataTable, Field, Modal, useToast } from "../components/ui";
+import { Alert, DataTable, Field, Modal, Warnings, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
@@ -12,13 +14,19 @@ import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import {
   customerFreightEntries,
   defaultPriceByProduct,
+  futureInvoiceFill,
   normalizeNfeNumber,
+  parseFutureInvoices,
   parseTotalWeightKg,
-  type CustomerFreightEntry
+  quantityLabel,
+  type CustomerFreightEntry,
+  type FutureInvoice,
+  type FutureInvoiceItem
 } from "../lib/customer-cadastro";
 import { dedupePaymentMethods, dedupeVehicles, representativeIds } from "../lib/dedupe";
 import { FREIGHT_MODALITIES } from "../lib/desktop/freight";
-import { formatMoney, formatPlate, parseMoneyToCents } from "../lib/format";
+import { conditionTextOf, describePaymentCondition } from "../lib/entry-freight";
+import { formatDate, formatMoney, formatPlate, parseMoneyToCents } from "../lib/format";
 import { matchesSearch } from "../lib/operation";
 import { q, type Customer, type Product } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
@@ -43,7 +51,7 @@ const TABS: Array<{ id: CustomerFileTab; label: string; icon: LucideIcon }> = [
 
 const TAB_HINTS: Record<CustomerFileTab, string> = {
   comercial:
-    "Forma de pagamento e transportadora padrao, nota fiscal e conta de credito (fiado / pre-pago).",
+    "Saldo do cliente, forma e condicao de pagamento, transportadora padrao, nota fiscal e conta de credito (fiado / pre-pago).",
   precos:
     "Preco especial do cliente em cada produto. Ele vale no lugar do preco padrao na pesagem.",
   frete:
@@ -762,6 +770,46 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
   const [totalKg, setTotalKg] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // O que o OMIE disse da nota digitada: produto e volume vem da propria NF-e.
+  const [lookup, setLookup] = useState<{ invoices: FutureInvoice[]; warnings: string[] } | null>(
+    null
+  );
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [fillNotes, setFillNotes] = useState<string[]>([]);
+
+  function applyItem(item: FutureInvoiceItem) {
+    const fill = futureInvoiceFill(item);
+    if (fill.productId) setProductId(fill.productId);
+    setTotalKg(fill.totalKg);
+    setFillNotes(fill.notes);
+  }
+
+  async function lookupInvoice() {
+    const number = normalizeNfeNumber(nfeNumber);
+    if (!number) {
+      setFormError("Digite o numero da NF-e para buscar no OMIE.");
+      return;
+    }
+    setLookupBusy(true);
+    setFormError(null);
+    setFillNotes([]);
+    setLookup(null);
+    try {
+      const result = await callWebApi("lookup_future_billing_invoice", {
+        customerId: customer.id,
+        nfeNumber: number
+      });
+      const found = parseFutureInvoices(result);
+      setLookup({ invoices: found, warnings: result.warnings });
+      // Nota de um item so (o caso comum): ja preenche. Mais de um, a pessoa escolhe abaixo.
+      const items = found.flatMap((invoice) => invoice.items);
+      if (items.length === 1) applyItem(items[0]);
+    } catch (caught) {
+      setFormError(errorMessage(caught));
+    } finally {
+      setLookupBusy(false);
+    }
+  }
 
   async function save() {
     if (!productId) {
@@ -785,6 +833,8 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
       setProductId("");
       setNfeNumber("");
       setTotalKg("");
+      setLookup(null);
+      setFillNotes([]);
       await invoices.reload();
     } catch (caught) {
       setFormError(errorMessage(caught));
@@ -809,25 +859,60 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
       {canEdit && (
         <div className="file-form">
           {formError && <Alert kind="error">{formError}</Alert>}
-          <Field label="Produto da nota">
-            <Picker
-              value={productId}
-              options={[
-                { value: ANY_PRODUCT, label: "Qualquer produto do cliente" },
-                ...productOptions(products)
-              ]}
-              onChange={setProductId}
-              placeholder="Buscar produto da nota..."
-              loading={loading}
-            />
-          </Field>
-          <div className="grid-2">
-            <Field label="Numero da NF-e" hint="Numero da nota ja emitida (so digitos).">
+          <Field
+            label="Numero da NF-e"
+            hint="Numero da nota ja emitida. Buscar no OMIE traz o produto e o total da propria nota."
+          >
+            <div className="input-with-action">
               <input
                 className="input"
                 value={nfeNumber}
                 onChange={(e) => setNfeNumber(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void lookupInvoice();
+                  }
+                }}
                 inputMode="numeric"
+              />
+              <button
+                type="button"
+                className="btn"
+                onClick={() => void lookupInvoice()}
+                disabled={lookupBusy}
+                title="Buscar a nota no OMIE e preencher produto e total"
+              >
+                <SearchCheck size={15} />
+                {lookupBusy ? "Buscando..." : "Buscar no OMIE"}
+              </button>
+            </div>
+          </Field>
+          {lookup && (
+            <FutureInvoiceLookup
+              invoices={lookup.invoices}
+              warnings={lookup.warnings}
+              onUse={applyItem}
+            />
+          )}
+          {fillNotes.length > 0 && (
+            <Alert kind="info">
+              {fillNotes.map((note) => (
+                <div key={note}>{note}</div>
+              ))}
+            </Alert>
+          )}
+          <div className="grid-2">
+            <Field label="Produto da nota">
+              <Picker
+                value={productId}
+                options={[
+                  { value: ANY_PRODUCT, label: "Qualquer produto do cliente" },
+                  ...productOptions(products)
+                ]}
+                onChange={setProductId}
+                placeholder="Buscar produto da nota..."
+                loading={loading}
               />
             </Field>
             <Field
@@ -903,24 +988,118 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
 
 // ---------------------------------------------------------------------------
 
+/** O que o OMIE achou da nota: cada item com o botao de usar no formulario. */
+function FutureInvoiceLookup({
+  invoices,
+  warnings,
+  onUse
+}: {
+  invoices: FutureInvoice[];
+  warnings: string[];
+  onUse: (item: FutureInvoiceItem) => void;
+}) {
+  const single = invoices.flatMap((invoice) => invoice.items).length === 1;
+  return (
+    <div className="future-lookup">
+      <Warnings items={warnings} />
+      {invoices.map((invoice) => (
+        <div key={`${invoice.invoiceNumber}-${invoice.series ?? ""}`}>
+          <p className="future-lookup-title">
+            <strong>
+              NF-e {invoice.invoiceNumber}
+              {invoice.series ? ` · serie ${invoice.series}` : ""}
+            </strong>
+            {invoice.issueDate && ` · emitida em ${formatDate(invoice.issueDate)}`}
+            {invoice.customerName && ` · ${invoice.customerName}`}
+          </p>
+          {invoice.items.length === 0 ? (
+            <p className="desk-muted">A nota nao tem itens de produto.</p>
+          ) : (
+            <div className="table-wrap">
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>Produto na nota</th>
+                    <th>Produto do cadastro</th>
+                    <th className="num">Quantidade</th>
+                    <th className="num">Total (kg)</th>
+                    <th className="num">{single ? "" : "Usar"}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoice.items.map((item, index) => (
+                    <tr key={`${item.invoiceDescription}-${index}`}>
+                      <td>{item.invoiceDescription}</td>
+                      <td>
+                        {item.productDescription ?? (
+                          <span className="desk-muted">Nao casou — escolha abaixo</span>
+                        )}
+                      </td>
+                      <td className="num">{quantityLabel(item)}</td>
+                      <td className="num">
+                        {item.totalWeightKg === null
+                          ? "—"
+                          : item.totalWeightKg.toLocaleString("pt-BR")}
+                      </td>
+                      <td className="num">
+                        {single ? (
+                          <span className="desk-muted">Preenchido</span>
+                        ) : (
+                          <button type="button" className="btn small" onClick={() => onUse(item)}>
+                            Usar
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const WEEKDAYS = ["Domingo", "Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado"];
 
 /**
  * Bloco comercial e credito do cliente (forma de pagamento e transportadora padrao, exige NF,
- * conta de credito). Tem dono: o que se publica aqui vale em todas as balancas.
+ * conta de credito). Tem dono: o que se publica aqui vale em todas as balancas. A condicao de
+ * pagamento padrao mora ao lado da forma, mas grava pelo cadastro do cliente (sobe ao OMIE). No
+ * topo, o saldo do cliente (`CustomerBalanceCard`).
  */
 function CommercialTab({ customer }: { customer: Customer }) {
   const user = useUser();
   const toast = useToast();
   const canEdit = user.canEditCustomers;
   const lists = useAsync(
-    () => Promise.all([q.paymentMethods(user.companyId), q.carriers(user.companyId)]),
+    () =>
+      Promise.all([
+        q.paymentMethods(user.companyId),
+        q.carriers(user.companyId),
+        q.paymentTerms(user.companyId)
+      ]),
     [user.companyId]
   );
   useOnCadastroChange(lists.refresh, [...CADASTRO_TABLES.payment, ...CADASTRO_TABLES.carriers]);
-  const [methods, carriers] = lists.data ?? [[], []];
+  const [methods, carriers, terms] = lists.data ?? [[], [], []];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  // A condicao padrao fica aqui, ao lado da forma de pagamento (o combinado com o cliente e um
+  // par). Como no cadastro, e TEXTO ("30", "7 14 21"): a web-api reusa a condicao com a mesma
+  // regra ou cria uma. Ela nao e do bloco comercial — sobe ao OMIE com o cliente
+  // (`upsert_customer`), por isso so vai quando mudou.
+  const [savedCondition, setSavedCondition] = useState<string | null>(null);
+  const [conditionText, setConditionText] = useState<string | null>(null);
+  const currentCondition = useMemo(() => {
+    const term = terms.find((t) => t.id === customer.default_payment_term_id);
+    return term ? conditionTextOf(term.rules_json, term.name) : "";
+  }, [terms, customer.default_payment_term_id]);
+  const initialCondition = savedCondition ?? currentCondition;
+  const condition = conditionText ?? initialCondition;
   // Cada balanca tem a sua copia de "Dinheiro", "Pix"...: o seletor mostra uma de cada, e a
   // escolha atual (que pode ser a copia de outra maquina) aparece pela representante.
   const methodGroups = useMemo(
@@ -945,9 +1124,26 @@ function CommercialTab({ customer }: { customer: Customer }) {
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
+    const conditionChanged = condition.trim() !== initialCondition.trim();
+    // So confere o que foi digitado: a condicao guardada pode ter um nome antigo do OMIE que o
+    // leitor nao reconhece, e isso nao pode travar o resto do bloco comercial.
+    if (conditionChanged && describePaymentCondition(condition).status === "invalid") {
+      setError('Condicao de pagamento padrao invalida. Veja os formatos em "Como escrever".');
+      return;
+    }
     setBusy(true);
     setError(null);
+    setWarnings([]);
     try {
+      if (conditionChanged) {
+        const result = await callWebApi("upsert_customer", {
+          id: customer.id,
+          defaultPaymentCondition: condition.trim() || null
+        });
+        setWarnings(result.warnings);
+        setSavedCondition(condition.trim());
+        setConditionText(null);
+      }
       await callWebApi("set_customer_commercial", {
         id: customer.id,
         defaultPaymentMethodId: form.defaultPaymentMethodId || null,
@@ -972,10 +1168,14 @@ function CommercialTab({ customer }: { customer: Customer }) {
 
   return (
     <>
+      <div className="cp" style={{ marginBottom: 14 }}>
+        <CustomerBalanceCard customer={customer} />
+      </div>
       <p className="desk-muted" style={{ marginTop: 0 }}>
         Estas configuracoes tem dono: o que voce publicar aqui vale em todas as balancas.
       </p>
       {error && <Alert kind="error">{error}</Alert>}
+      <Warnings items={warnings} />
       <form onSubmit={(e) => void onSubmit(e)}>
         <div className="grid-2">
           <Field label="Forma de pagamento padrao">
@@ -995,6 +1195,21 @@ function CommercialTab({ customer }: { customer: Customer }) {
               emptyLabel="Sem forma padrao"
             />
           </Field>
+          <Field
+            label="Condicao de pagamento padrao"
+            hint="Vazio = sem padrao. Se nao existir no OMIE, e criada no envio."
+          >
+            <input
+              className="input"
+              value={condition}
+              onChange={(e) => setConditionText(e.target.value)}
+              placeholder='Ex.: "30", "7 14 21", "3 parcelas" ou "s+20"'
+              disabled={!canEdit}
+            />
+          </Field>
+        </div>
+        <ConditionLegend value={condition} />
+        <div className="grid-2">
           <Field label="Transportadora padrao">
             <Picker
               value={form.defaultCarrierId}

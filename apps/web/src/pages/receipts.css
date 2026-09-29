@@ -171,6 +171,11 @@
     rgba(220, 38, 38, 0.06) 22px 44px
   );
 }
+/* O numero da NF-e, acrescentado no fim da via virtual (o papel sai antes da nota). */
+.rc-paper-nf {
+  font-weight: 700;
+  color: #0b4a8b;
+}
 .rc-paper-empty {
   width: 340px;
   max-width: 100%;

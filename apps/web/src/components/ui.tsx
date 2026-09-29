@@ -140,6 +140,14 @@ export function useShowMore(resetKey: string, pageSize = PAGE_SIZE) {
  * linhas de uma vez era o que deixava as telas pesadas. `pageKey` volta para a primeira pagina
  * quando muda (a busca, o filtro); `pageSize={0}` desliga (lista que ja vem paginada do banco).
  */
+/** O alvo do clique e um controle da linha (botao, link, campo)? */
+function isControl(target: EventTarget): boolean {
+  return (
+    target instanceof Element &&
+    target.closest("button, a, input, select, textarea, label") !== null
+  );
+}
+
 export function DataTable<T>({
   columns,
   rows,
@@ -148,7 +156,8 @@ export function DataTable<T>({
   empty = "Nada por aqui.",
   pageSize = PAGE_SIZE,
   pageKey,
-  footer
+  footer,
+  onRowDoubleClick
 }: {
   columns: Column<T>[];
   rows: T[];
@@ -159,6 +168,11 @@ export function DataTable<T>({
   pageKey?: string;
   /** Rodape dentro da moldura da tabela (o "Ver mais" da lista paginada no banco). */
   footer?: ReactNode;
+  /**
+   * Dois cliques na linha (a lista de clientes abre os dados do cliente). Clique duplo num botao
+   * ou link da linha continua sendo daquele botao.
+   */
+  onRowDoubleClick?: (row: T) => void;
 }) {
   const page = useShowMore(pageKey ?? "", pageSize);
   if (rows.length === 0) return <div className="empty">{empty}</div>;
@@ -177,7 +191,22 @@ export function DataTable<T>({
         </thead>
         <tbody>
           {visible.map((row) => (
-            <tr key={rowKey(row)} className={rowClassName?.(row)}>
+            <tr
+              key={rowKey(row)}
+              className={
+                [rowClassName?.(row), onRowDoubleClick ? "row-open" : undefined]
+                  .filter(Boolean)
+                  .join(" ") || undefined
+              }
+              onDoubleClick={
+                onRowDoubleClick
+                  ? (event) => {
+                      if (isControl(event.target)) return;
+                      onRowDoubleClick(row);
+                    }
+                  : undefined
+              }
+            >
               {columns.map((column) => (
                 <td key={column.key} className={column.numeric ? "num" : undefined}>
                   {column.render(row)}

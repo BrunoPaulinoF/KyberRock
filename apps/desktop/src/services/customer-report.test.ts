@@ -703,9 +703,11 @@ describe("customer report rendering", () => {
       expect(html).toContain("Mes atual");
       expect(html).toContain("Produtos comprados");
       expect(html).toContain("Materiais por dia");
-      expect(html).toContain("Placas");
+      // O quadro "Placas" saiu: a transportadora entrou na lista de viagens.
+      expect(html).not.toContain("<h2>Placas</h2>");
       expect(html).toContain("Viagens por placa e motorista");
       expect(html).toContain("Joao Motorista");
+      expect(html).toContain("Transportes Rocha");
       expect(html).toContain("Compras por mes");
       expect(html).toContain("ABC1D23");
       // O dia de cada material sai no simplificado, nao so no completo.
@@ -769,8 +771,9 @@ describe("customer report rendering", () => {
       expect(simplified).toContain("Resumo");
       expect(simplified).toContain("Produtos");
       expect(simplified).toContain("Materiais por dia");
-      expect(simplified).toContain("Placas");
+      expect(simplified).not.toContain("<h2>Placas</h2>");
       expect(simplified).toContain("Viagens por placa");
+      expect(simplified).toContain("Transportes Rocha");
       expect(simplified).not.toContain("Canceladas");
 
       const complete = renderCustomerReportSpreadsheet(report, "complete");

@@ -31,6 +31,8 @@ function op(partial: Partial<ReportOperation> & { id: string }): ReportOperation
     freight_total_cents: 10_000,
     total_cents: 60_000,
     freight_type: "fob",
+    operation_type: "invoice",
+    omie_invoice_number: null,
     closed_at: "2026-09-11T13:00:00Z",
     created_at: "2026-09-11T12:00:00Z",
     ...partial
@@ -70,6 +72,19 @@ describe("fechamento diario e periodo", () => {
     const lines = reportLines(ops);
     expect(lines.map((line) => line.id)).toEqual(["a", "b", "c"]);
     expect(lines[1].customerName).toBe("N/A");
+  });
+
+  it("leva o numero da nota fiscal; venda interna fica marcada", () => {
+    const lines = reportLines([
+      op({ id: "a", omie_invoice_number: " 4521 " }),
+      op({ id: "b", omie_invoice_number: "" }),
+      op({ id: "c", operation_type: "internal" })
+    ]);
+    expect(lines.map((line) => [line.invoiceNumber, line.operationType])).toEqual([
+      ["4521", "invoice"],
+      [null, "invoice"],
+      [null, "internal"]
+    ]);
   });
 
   it("recorta o dia e soma", () => {

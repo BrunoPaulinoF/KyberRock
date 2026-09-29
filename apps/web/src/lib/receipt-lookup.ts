@@ -99,6 +99,27 @@ export function receiptLines(snapshot: Json | undefined): string[] {
   return lines.map((line) => (typeof line === "string" ? line : ""));
 }
 
+/** Largura da via de 80 mm quando ela nao da para medir (as linhas tem 48 colunas). */
+const RECEIPT_COLUMNS = 48;
+
+/**
+ * O carimbo da nota fiscal no cupom virtual. A via sai da impressora no fechamento da pesagem,
+ * ANTES de a NF-e existir — o numero chega depois, pela conferencia de faturamento —, entao o
+ * papel nunca o traz. A tela acrescenta este bloco no fim da via (e na impressao pelo navegador),
+ * separado do que foi impresso: a copia congelada continua intacta. Sem nota, nada.
+ */
+export function invoiceStampLines(
+  invoiceNumber: string | null | undefined,
+  lines: readonly string[] = []
+): string[] {
+  const number = (invoiceNumber ?? "").trim();
+  if (!number) return [];
+  const width = Math.max(RECEIPT_COLUMNS, ...lines.map((line) => line.length));
+  const text = `NOTA FISCAL (NF-e): ${number}`;
+  const left = Math.max(0, Math.floor((width - text.length) / 2));
+  return ["-".repeat(width), `${" ".repeat(left)}${text}`];
+}
+
 /** Um texto da copia congelada (nome da forma de pagamento, telefone...), se houver. */
 export function snapshotText(snapshot: Json | undefined, key: string): string | null {
   const value = asRecord(snapshot)?.[key];

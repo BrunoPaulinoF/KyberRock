@@ -43,7 +43,11 @@ export function closedPeriodFilter(bounds: {
   return [`and(${range("closed_at")})`, `and(closed_at.is.null,${range("created_at")})`].join(",");
 }
 
-/** Busca por cliente, produto ou placa (a placa sem hifen nem espaco, como e gravada). */
+/**
+ * Busca por cliente, produto ou placa (a placa sem hifen nem espaco, como e gravada) e, quando o
+ * texto e um numero ("4521", "NF 4521", "NF-e 004521"), pela nota fiscal — que a conferencia
+ * grava sem os zeros da esquerda.
+ */
 export function closedSearchFilter(search: string): string | null {
   const term = sanitizeSearchTerm(search);
   if (!term.replace(/\*/g, "").trim()) return null;
@@ -51,5 +55,7 @@ export function closedSearchFilter(search: string): string | null {
   const parts = [`customer_name.ilike.${like}`, `product_description.ilike.${like}`];
   const plate = term.replace(/[\s-]/g, "");
   if (plate.replace(/\*/g, "")) parts.push(`plate.ilike.*${plate}*`);
+  const invoice = /^(?:nf-?e?\s*)?0*(\d+)$/i.exec(term.trim());
+  if (invoice) parts.push(`omie_invoice_number.eq.${invoice[1]}`);
   return parts.join(",");
 }

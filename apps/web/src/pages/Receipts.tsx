@@ -14,6 +14,7 @@ import { formatDateTime, formatDocument, formatMoney, formatPlate } from "../lib
 import {
   copyLabel,
   findReceipts,
+  invoiceStampLines,
   loadReceiptDetail,
   operationCodeLabel,
   parseReceiptQuery,
@@ -208,6 +209,9 @@ function ReceiptView({
   const { operation, copies, customer } = detail;
   const copy = copies[copyIndex] ?? copies[0] ?? null;
   const lines = receiptLines(copy?.content_snapshot_json);
+  // A NF-e sai depois da impressao: o numero entra no fim da via virtual, separado do papel.
+  const stamp = invoiceStampLines(operation.omie_invoice_number, lines);
+  const invoiceNumber = (operation.omie_invoice_number ?? "").trim();
   const cancelled = operation.status === "cancelled";
   const freight = getFreightModalityInfo(operation.freight_type);
   const code = operationCodeLabel(operation.operation_code);
@@ -215,7 +219,7 @@ function ReceiptView({
 
   function print() {
     const title = `cupom ${code}${copy ? ` via ${receiptNumberLabel(copy.receipt_number, copy.device_number)}` : ""}`;
-    void printReportHtml(receiptPrintHtml(lines, title), title);
+    void printReportHtml(receiptPrintHtml([...lines, ...stamp], title), title);
   }
 
   return (
@@ -245,6 +249,14 @@ function ReceiptView({
         {lines.length > 0 ? (
           <pre className={`rc-paper${cancelled ? " cancelled" : ""}`} translate="no">
             {lines.join("\n")}
+            {stamp.length > 0 && (
+              <span
+                className="rc-paper-nf"
+                title="A nota fiscal saiu depois da impressao: o numero nao esta no papel."
+              >
+                {`\n${stamp.join("\n")}`}
+              </span>
+            )}
           </pre>
         ) : (
           <div className="rc-paper-empty">
@@ -258,7 +270,10 @@ function ReceiptView({
       <div className="rc-info">
         <div className="rc-summary">
           <div>
-            <span className="rc-summary-code">{code}</span>
+            <span className="rc-summary-code">
+              {code}
+              {invoiceNumber && ` · NF ${invoiceNumber}`}
+            </span>
             <strong className="rc-summary-name">{operation.customer_name ?? "Sem cliente"}</strong>
           </div>
           <div className="rc-summary-side">
