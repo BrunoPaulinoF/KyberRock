@@ -1,5 +1,5 @@
 import { ChevronDown } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 
 import { matchesSearch } from "../lib/operation";
 
@@ -49,30 +49,41 @@ export function Picker({
 }) {
   const listId = useId();
   const selected = options.find((option) => option.value === value) ?? null;
-  const [text, setText] = useState(selected?.label ?? "");
+  // `text` e so a BUSCA. Fechado, o campo mostra quem esta escolhido; aberto, mostra o que esta
+  // sendo digitado, e o escolhido vira a dica em cinza. Antes a caixa abria com o nome escolhido
+  // dentro e o que se digitava grudava nele ("RONALDO ...joao"), sem achar ninguem.
+  const [text, setText] = useState("");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // A escolha veio de fora (padrao do cliente, formulario reaberto): mostra o nome dela.
-  useEffect(() => {
-    if (!open) setText(selected?.label ?? "");
-  }, [selected?.label, open]);
-
   const matches = useMemo(() => {
-    const search = open && text !== (selected?.label ?? "") ? text : "";
+    const search = open ? text : "";
     const found = onSearch
       ? options
       : options.filter((option) => matchesSearch(`${option.label} ${option.hint ?? ""}`, search));
     return found.slice(0, MAX_VISIBLE);
-  }, [options, text, open, selected?.label, onSearch]);
+  }, [options, text, open, onSearch]);
 
   const items: Array<PickerOption | null> = allowEmpty ? [null, ...matches] : matches;
 
+  /** Abre com a busca vazia: a lista inteira aparece e o que se digita comeca do zero. */
+  function openList() {
+    setActive(0);
+    if (open) return;
+    setText("");
+    onSearch?.("");
+    setOpen(true);
+  }
+
+  function close() {
+    setOpen(false);
+    setText("");
+  }
+
   function choose(option: PickerOption | null) {
     onChange(option?.value ?? "");
-    setText(option?.label ?? "");
-    setOpen(false);
+    close();
   }
 
   return (
@@ -84,34 +95,36 @@ export function Picker({
         aria-expanded={open}
         aria-controls={listId}
         aria-autocomplete="list"
-        value={text}
-        placeholder={placeholder}
+        value={open ? text : (selected?.label ?? "")}
+        placeholder={open && selected ? selected.label : placeholder}
         autoFocus={autoFocus}
         disabled={disabled}
         // A lista abre no clique, ao digitar ou na seta para baixo — nao so por ganhar foco:
         // o Cliente ja entra focado na Nova entrada, e a lista aberta sozinha cobria Produto e
         // Forma de pagamento, entao o clique nesses campos escolhia um cliente sem querer.
         onFocus={(event) => event.currentTarget.select()}
-        onMouseDown={() => {
-          setOpen(true);
-          setActive(0);
-        }}
+        onMouseDown={openList}
         onBlur={() => {
           // Da tempo do clique na lista chegar antes de fechar.
-          window.setTimeout(() => setOpen(false), 120);
+          window.setTimeout(close, 120);
         }}
         onChange={(event) => {
-          setText(event.target.value);
+          let typed = event.target.value;
+          // Fechado, a caixa ainda mostrava o nome escolhido: se o cursor estava no fim dele, a
+          // letra nova chega grudada. A busca e so o que foi digitado agora.
+          if (!open && selected && typed.startsWith(selected.label)) {
+            typed = typed.slice(selected.label.length);
+          }
+          setText(typed);
           setOpen(true);
           setActive(0);
-          onSearch?.(event.target.value);
+          onSearch?.(typed);
         }}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown") {
             event.preventDefault();
             if (!open) {
-              setOpen(true);
-              setActive(0);
+              openList();
               return;
             }
             setActive((index) => Math.min(index + 1, items.length - 1));
@@ -123,8 +136,7 @@ export function Picker({
             choose(items[Math.min(active, items.length - 1)] ?? null);
           } else if (event.key === "Escape" && open) {
             event.stopPropagation();
-            setOpen(false);
-            setText(selected?.label ?? "");
+            close();
           }
         }}
       />
@@ -137,11 +149,10 @@ export function Picker({
         onMouseDown={(event) => {
           event.preventDefault();
           if (open) {
-            setOpen(false);
+            close();
           } else {
             inputRef.current?.focus();
-            setOpen(true);
-            setActive(0);
+            openList();
           }
         }}
       >
