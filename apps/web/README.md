@@ -1,10 +1,15 @@
 # KyberRock Web
 
-Site do carregador, do comercial e da gestão da pedreira (workspace `@kyberrock/web`). Carregador
-e comercial também entram pelo KyberRock Portal (`apps/loader-web`) por enquanto — o site tem as
-mesmas telas deles, e o portal sai depois dos testes. Lê o Supabase do
-KyberRock direto (com o login do usuário e RLS) e grava **só** pela Edge Function `web-api`.
-O contrato completo está em `docs/web-api.md`; o plano em `docs/plano-migracao-web.md`.
+Site do carregador, do comercial e da gestão da pedreira (workspace `@kyberrock/web`), em
+`https://kyberrock.kybernan.com.br`. Lê o Supabase do KyberRock direto (com o login do usuário e
+RLS) e grava **só** pela Edge Function `web-api`. O contrato completo está em `docs/web-api.md`;
+o plano em `docs/plano-migracao-web.md`.
+
+Também é o site público que o KyberRock Portal (`apps/loader-web`, EasyPanel) era — e que por isso
+pode sair do ar: a apresentação do produto em `/` (com o login no topo), o painel da plataforma da
+Kybernan em `/admin` (`src/admin/`), a página do link temporário do WhatsApp em
+`/whatsapp/:token`, o instalador do desktop em `/download` e o guia em PDF. O que fazer antes de
+desligar o EasyPanel está no `AGENTS.md` ("Saida do loader-web").
 
 ## Regras desta pasta
 
@@ -31,7 +36,8 @@ npx vitest run apps/web                       # só os testes do site
 
 Acessos de homologação (Pedreira Teste): `gestor.teste@kyberrock.app` e
 `comercial.teste@kyberrock.app` (senhas com a Kybernan). Para ver as telas de outro perfil,
-troque o perfil do login no painel `/admin`.
+troque o perfil do login no painel `/admin` (usuário e senha da plataforma, não um login de
+pedreira).
 
 ## Telas
 
@@ -67,6 +73,9 @@ classe usada em mais de uma tela mora no `styles.css`.
 
 | Rota                       | Quem                                    | O que faz                                                                                            |
 | -------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `/`                        | quem nao esta logado                    | Apresentacao do KyberRock com o login no topo (logado vai para a tela do perfil)                     |
+| `/admin`                   | equipe Kybernan (login da plataforma)   | Painel da plataforma: pedreiras, unidades, logins, balancas, atualizacoes, financeiro, IA            |
+| `/whatsapp/:token`         | qualquer um com o link (15 min)         | Parear o WhatsApp da pedreira pelo QR, sem login                                                     |
 | `/carregamento`            | carregador                              | Fila de carregamento da unidade: concluir e devolver carga                                           |
 | `/monitoramento`           | monitoramento, gestor, operacao, admin. | Vendas em tempo real (tela cheia, estilo KDS): numeros, graficos, ultimas vendas, patio              |
 | `/painel`                  | gestor, operacao, administrador         | Painel: resumo do dia, balanca executora, pendencias do OMIE, ultimas pesagens                       |
@@ -95,7 +104,8 @@ do desktop (Electron `printToPDF`) com a impressao do site do mesmo HTML, as pag
 e a posicao de cada palavra saem iguais.
 
 Os enderecos antigos (`/operacao`, `/clientes`, `/veiculos`, `/transportadoras`, `/precos`,
-`/vendas`) redirecionam para os novos.
+`/vendas` e o `/loader` do loader-web) redirecionam para os novos. `/download` (no `.htaccess`)
+leva ao instalador mais novo do KyberRock Desktop.
 
 ## Deploy na Hostinger
 
@@ -103,18 +113,24 @@ O site é estático (build do Vite em `apps/web/dist/`). Na Hostinger, ao conect
 repositório `BrunoPaulinoF/KyberRock` (branch `main`):
 
 1. **Diretório raiz do projeto**: `apps/web`.
-2. **Variáveis de build**: `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY`.
+2. **Variáveis de build**: `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY`; opcional,
+   `VITE_WHATSAPP_NUMBER` (WhatsApp comercial da página de apresentação, só dígitos com DDI —
+   sem ela os botões usam o número de exemplo).
 3. **Comando de build**: `npm install && npm run build` (dentro de `apps/web`; o
    `package.json` da pasta lista tudo o que o build precisa, então funciona sem a raiz).
    **Pasta publicada**: `dist`.
-4. O `public/.htaccess` vai junto no build e faz toda rota cair no `index.html` (SPA).
+4. O `public/.htaccess` vai junto no build e faz toda rota cair no `index.html` (SPA), além do
+   atalho `/download`. Os arquivos saem da raiz (`base: "/"` no `vite.config.ts`): com caminho
+   relativo, abrir direto um endereço de dois níveis (`/cadastros/clientes` no F5,
+   `/admin/login`, `/whatsapp/<token>`) pedia os scripts dentro da pasta errada e a tela ficava em
+   branco.
 5. Cada merge na `main` publica. O site não depende de nenhum outro workspace, então mudança
    só na balança ou nas Edge Functions gera um build igual ao anterior.
 
 Prévia sem servidor com rewrite (uma pasta dentro de outro site, uma hospedagem estática
 qualquer): compile com `VITE_ROUTER=hash` e as rotas viram `/#/clientes`, que funciona em
-qualquer lugar. Os caminhos dos arquivos já são relativos (`base: "./"`), então o build também
-funciona fora da raiz do domínio.
+qualquer lugar. Nesse modo os caminhos dos arquivos são relativos (`base: "./"`), então o build
+também funciona fora da raiz do domínio.
 
 Se a Hostinger do plano não rodar build (hospedagem compartilhada só com FTP), o caminho é um
 workflow em `.github/workflows/` da raiz que faça `npm ci && npm run build -w @kyberrock/web`
@@ -126,6 +142,7 @@ e envie `apps/web/dist/` por FTP com os secrets do repositório.
 src/
   lib/        supabase (cliente), api (web-api), auth (sessão), queries (leituras), format
   components/ ui (tabela, modal, campos, toast), Layout
-  pages/      Login, Customers, Cadastros (veículos/motoristas/transportadoras), Prices,
+  pages/      Login, Landing (apresentação), WhatsappConnect, Customers, Cadastros, Prices,
               SalesReport, Wallet, InvoiceClosing
+  admin/      painel da plataforma (/admin): login próprio, estilo próprio (admin-ui.css)
 ```

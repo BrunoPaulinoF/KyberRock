@@ -137,6 +137,13 @@ describe("resolveWhatsappLinkSiteUrl", () => {
   it("never points the guest at the Supabase domain", () => {
     expect(DEFAULT_WHATSAPP_LINK_SITE_URL).not.toContain("supabase.co");
   });
+
+  it("points at the KyberRock Web, where the guest page lives now", () => {
+    // O loader-web (EasyPanel) saiu do ar: link apontando para ele morreria no
+    // celular do convidado.
+    expect(DEFAULT_WHATSAPP_LINK_SITE_URL).toBe("https://kyberrock.kybernan.com.br");
+    expect(DEFAULT_WHATSAPP_LINK_SITE_URL).not.toContain("easypanel");
+  });
 });
 
 describe("buildWhatsappLinkStateUrl", () => {

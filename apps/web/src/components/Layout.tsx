@@ -32,6 +32,7 @@ import type { LucideIcon } from "lucide-react";
 import { useAuth, useUser } from "../lib/auth";
 import { CadastroLiveProvider } from "../lib/cadastro-live-provider";
 import { canSee, ROLE_LABELS, type Screen } from "../lib/permissions";
+import { publicAsset } from "../lib/public-asset";
 import { useTheme } from "../lib/theme";
 
 /**
@@ -182,7 +183,7 @@ export function Layout() {
         >
           <Menu size={22} />
         </button>
-        <img src="./logo.png" alt="" className="sidebar-logo" />
+        <img src={publicAsset("logo.png")} alt="" className="sidebar-logo" />
         <span className="mobile-bar-title">{current ?? "KyberRock"}</span>
       </header>
       <button
@@ -194,7 +195,7 @@ export function Layout() {
       />
       <aside className="sidebar" id="kr-sidebar">
         <div className="sidebar-header">
-          <img src="./logo.png" alt="" className="sidebar-logo" />
+          <img src={publicAsset("logo.png")} alt="" className="sidebar-logo" />
           <span className="sidebar-brand">KyberRock</span>
           <span className="sidebar-meta">Web</span>
           <button

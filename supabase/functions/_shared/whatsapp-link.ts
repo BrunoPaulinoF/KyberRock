@@ -7,7 +7,7 @@
 //
 // Tudo o que decide se o link ainda vale mora aqui, puro e testado pelo vitest:
 // prazo, estado, contagem regressiva, formato do token e roteamento do caminho.
-// A Edge Function so faz banco e rede; a pagina do convidado e do loader-web. O
+// A Edge Function so faz banco e rede; a pagina do convidado e do KyberRock Web. O
 // motivo e o de sempre -- prazo calculado em dois lugares vira prazo diferente
 // em dois lugares.
 
@@ -92,16 +92,17 @@ export function isWhatsappLinkToken(value: unknown): value is string {
   return typeof value === "string" && new RegExp(`^[A-Za-z0-9_-]{${TOKEN_LENGTH}}$`).test(value);
 }
 
-/** Caminho da pagina do convidado dentro do site (rota do loader-web). */
+/** Caminho da pagina do convidado dentro do site (rota `/whatsapp/:token` do KyberRock Web). */
 export const WHATSAPP_LINK_PAGE_PATH = "whatsapp";
 
 /**
- * Endereco publico do loader-web hoje. Nao e segredo -- e a barra de enderecos
- * do navegador de quem usa o site --, e por isso vive no codigo, como o
- * `DEFAULT_SUPABASE_URL` do desktop e o destino do `/download` no nginx. Assim o
- * link funciona numa instalacao nova sem nenhum passo manual no dashboard.
+ * Endereco publico do KyberRock Web (Hostinger). A pagina morava no loader-web
+ * (EasyPanel), que saiu do ar; ela veio para o site no mesmo caminho. Nao e
+ * segredo -- e a barra de enderecos do navegador de quem usa o site --, e por
+ * isso vive no codigo, como o `DEFAULT_SUPABASE_URL` do desktop. Assim o link
+ * funciona numa instalacao nova sem nenhum passo manual no dashboard.
  */
-export const DEFAULT_WHATSAPP_LINK_SITE_URL = "https://kybernan-kyber-rock.qdidmr.easypanel.host";
+export const DEFAULT_WHATSAPP_LINK_SITE_URL = "https://kyberrock.kybernan.com.br";
 
 /**
  * Site de onde sai a pagina do convidado: o valor do ambiente manda, o padrao
@@ -114,7 +115,7 @@ export function resolveWhatsappLinkSiteUrl(configured: string | undefined | null
 }
 
 /**
- * Endereco que o operador envia. Ele aponta para o SITE (loader-web), nao para
+ * Endereco que o operador envia. Ele aponta para o SITE (KyberRock Web), nao para
  * o dominio do projeto Supabase: as Edge Functions respondem HTML como
  * `text/plain` com `nosniff` -- protecao anti-phishing do `*.supabase.co` --
  * entao uma pagina servida de la chegaria ao celular do convidado como

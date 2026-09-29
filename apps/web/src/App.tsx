@@ -5,6 +5,7 @@ import { Layout } from "./components/Layout";
 import { ToastProvider } from "./components/ui";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { canSee, homeFor, usesSidebar, type Screen } from "./lib/permissions";
+import { isStandaloneDisplay } from "./lib/pwa-install";
 import { ThemeProvider } from "./lib/theme";
 import { Login } from "./pages/Login";
 
@@ -38,6 +39,16 @@ const Settings = page(() => import("./pages/Settings"), "Settings");
 const SupportLogs = page(() => import("./pages/SupportLogs"), "SupportLogs");
 const TruckControl = page(() => import("./pages/TruckControl"), "TruckControl");
 const Wallet = page(() => import("./pages/Wallet"), "Wallet");
+const Landing = page(() => import("./pages/Landing"), "Landing");
+const WhatsappConnect = page(() => import("./pages/WhatsappConnect"), "WhatsappConnect");
+
+/*
+ * Painel da plataforma (console da Kybernan), que veio do loader-web: login proprio (usuario e
+ * senha da plataforma, nao o do Supabase Auth) e estilo proprio. Pedaco separado como as telas —
+ * nenhum perfil de pedreira baixa o painel.
+ */
+const AdminPanel = page(() => import("./admin/AdminPanel"), "AdminPanel");
+const AdminLogin = page(() => import("./admin/pages/AdminLogin"), "AdminLogin");
 
 /**
  * Guarda de rota. Cada perfil tem um conjunto fechado de telas (`lib/permissions.ts`): o
@@ -64,7 +75,20 @@ function Private({
 function Home() {
   const { user, loading } = useAuth();
   if (loading) return <div className="empty">Carregando...</div>;
-  return <Navigate to={user ? homeFor(user.role) : "/login"} replace />;
+  return <Navigate to={user ? homeFor(user.role) : "/"} replace />;
+}
+
+/**
+ * `/`: quem esta logado vai para a tela inicial do perfil; quem nao esta ve a pagina de
+ * apresentacao, com o login no topo. O app instalado no celular (o do carregador) abre direto
+ * no login — ali a pagina de venda so atrapalha.
+ */
+function Entry() {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="empty">Carregando...</div>;
+  if (user) return <Navigate to={homeFor(user.role)} replace />;
+  if (isStandaloneDisplay()) return <Navigate to="/login" replace />;
+  return <Landing />;
 }
 
 /** Atalho: a tela so monta para quem a ve. */
@@ -87,8 +111,19 @@ export function App() {
           <Router>
             <Suspense fallback={<div className="empty">Carregando...</div>}>
               <Routes>
+                <Route path="/" element={<Entry />} />
                 <Route path="/login" element={<Login />} />
+                {/*
+                  Link temporario de conexao do WhatsApp. Publico de proposito: quem abre e o
+                  dono do celular, sem conta no sistema. O que autoriza e o token de 256 bits do
+                  endereco, conferido pela Edge Function junto com o prazo de 15 minutos.
+                */}
+                <Route path="/whatsapp/:token" element={<WhatsappConnect />} />
+                <Route path="/admin" element={<AdminPanel />} />
+                <Route path="/admin/login" element={<AdminLogin />} />
                 <Route path="/carregamento" element={only("carregamento", <Loading />)} />
+                {/* Endereco da fila do carregador no loader-web, que sai do ar. */}
+                <Route path="/loader" element={<Navigate to="/carregamento" replace />} />
                 <Route path="/monitoramento" element={only("monitoramento", <Monitor />)} />
                 <Route
                   element={
@@ -97,7 +132,6 @@ export function App() {
                     </Private>
                   }
                 >
-                  <Route index element={<Home />} />
                   <Route path="/painel" element={only("painel", <Dashboard />)} />
                   <Route path="/operacoes" element={only("operacoes", <Operations />)} />
                   <Route path="/carteira" element={only("carteira", <Wallet />)} />

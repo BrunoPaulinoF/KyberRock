@@ -29,7 +29,7 @@ import {
 //   POST /whatsapp-link/c/<token>/state -> QR e estado atualizados, de 3 em 3 s,
 //                                          consultados pela pagina do convidado.
 //
-// A PAGINA nao mora aqui: ela e a rota `/whatsapp/<token>` do loader-web. As
+// A PAGINA nao mora aqui: ela e a rota `/whatsapp/<token>` do KyberRock Web. As
 // Edge Functions respondem HTML como `text/plain` com `nosniff` (protecao
 // anti-phishing do dominio `*.supabase.co`), entao uma pagina servida daqui
 // chegaria ao celular do convidado como codigo-fonte. O que atravessa esse
@@ -51,7 +51,7 @@ import {
 
 const LINKS_TABLE = "whatsapp_connection_links";
 const CHANNEL_SETTINGS_TABLE = "report_channel_settings";
-/** Override do endereco publico do loader-web, quando o site trocar de dominio. */
+/** Override do endereco publico do KyberRock Web, quando o site trocar de dominio. */
 const SITE_URL_ENV = "KYBERROCK_SITE_URL";
 const UAZAPI_TIMEOUT_MS = 20_000;
 

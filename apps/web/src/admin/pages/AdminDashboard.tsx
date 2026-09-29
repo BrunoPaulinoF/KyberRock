@@ -1,0 +1,2269 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
+import { SUPABASE_URL } from "../../lib/supabase-env";
+import { useAdminLogout } from "../lib/admin-session";
+import { classifyDeviceHealth, type DeviceHealthLevel } from "../lib/device-health";
+import { DEVICE_NAME_MAX_LENGTH, parseDeviceName } from "../lib/device-name";
+import { matchesSearch, rankBySearch } from "../lib/search-ranking";
+import { AiAssistantSettings } from "./AiAssistantSettings";
+import { DesktopUpdates } from "./DesktopUpdates";
+import { FinancialBackoffice } from "./FinancialBackoffice";
+import {
+  AdminShell,
+  Badge,
+  Button,
+  ButtonGroup,
+  ConfirmDialog,
+  CopyButton,
+  DataTable,
+  EyeButton,
+  Field,
+  Fieldset,
+  Modal,
+  Note,
+  PageHead,
+  Panel
+} from "../components";
+import type { Column, NavSection, Tone } from "../components";
+
+/**
+ * Cor de cada estado de saude da balanca.
+ *
+ * "Sem dados" fica em cinza de proposito: e a balanca que nao reportou, e
+ * pinta-la de verde seria o painel afirmando o que ninguem apurou.
+ */
+const HEALTH_TONES: Record<DeviceHealthLevel, Tone> = {
+  unknown: "neutral",
+  ok: "ok",
+  warn: "warn",
+  down: "danger"
+};
+
+/**
+ * De quanto em quanto tempo a aba Balancas se atualiza sozinha.
+ *
+ * A aba deixou de ser so cadastro: com a coluna de saude ela vira o monitor da
+ * frota, e monitor que so mostra o estado do momento em que a pagina foi aberta
+ * e pior que nenhum — quem esta com a tela aberta pararia de ver justamente a
+ * balanca que travou depois disso. As demais abas continuam carregando uma vez.
+ */
+const DEVICES_REFRESH_INTERVAL_MS = 60_000;
+
+/**
+ * Console administrativo da plataforma.
+ *
+ * Organizado como console tecnico: uma secao por entidade, cada uma com a sua
+ * tabela densa e as acoes na propria linha. O formato anterior — listas em
+ * cartao lado a lado com o formulario de criacao — gastava varias vezes mais
+ * altura por registro, e com dezenas de pedreiras achar uma exigia rolar a
+ * pagina inteira. Criar e editar viraram modal justamente para devolver a
+ * largura toda a listagem.
+ *
+ * Estilo: `admin-ui.css` + primitivos de `components/admin`. Nao acrescente
+ * estilo inline aqui — o motivo de o arquivo ter encolhido pela metade e que
+ * ele parou de carregar a aparencia de cada elemento.
+ */
+
+interface Company {
+  id: string;
+  name: string;
+  legalName: string;
+  document: string;
+  isActive: boolean;
+  createdAt: string;
+  omieAppKeyMasked?: string | null;
+  omieAppSecretConfigured?: boolean;
+  desktopActivationCode?: string;
+  desktopActivationCodeRotatedAt?: string;
+}
+
+interface Unit {
+  id: string;
+  companyId: string;
+  name: string;
+  timezone: string;
+  isActive: boolean;
+}
+
+/**
+ * Perfil de acesso (`user_profiles.role`, migracoes `202609240001` e `202609260001`). O
+ * carregador ve so a fila da unidade; os outros cinco sao perfis do KyberRock Web. As telas de
+ * cada um estao em `apps/web/src/lib/permissions.ts`; o que cada um grava, em
+ * `supabase/functions/_shared/web-session.ts`.
+ */
+export type UserRole =
+  | "loader"
+  | "monitoramento"
+  | "comercial"
+  | "gestor"
+  | "operacao"
+  | "administrador";
+
+/** Perfis do site, na ordem do seletor, com o que cada um pode. */
+export const SITE_ROLE_OPTIONS: ReadonlyArray<{ value: UserRole; label: string; hint: string }> = [
+  {
+    value: "monitoramento",
+    label: "Monitoramento",
+    hint: "So a tela de vendas em tempo real. Sem configuracoes."
+  },
+  {
+    value: "comercial",
+    label: "Comercial",
+    hint: "Insights, conferencia de faturamento, relatorios, controle de caminhoes, relatorio por cliente e cadastros. Cadastra tudo e muda preco sem senha. Sem configuracoes."
+  },
+  {
+    value: "gestor",
+    label: "Gestor",
+    hint: "Tudo. Com configuracoes."
+  },
+  {
+    value: "operacao",
+    label: "Operacao",
+    hint: "Tudo. Mudar preco sempre pede a senha de preco da pedreira. Com configuracoes."
+  },
+  {
+    value: "administrador",
+    label: "Administrador",
+    hint: "Tudo, sem pedir senha, mais os logs de suporte. Com configuracoes."
+  }
+];
+
+export const USER_ROLE_LABELS: Record<UserRole, string> = {
+  loader: "Carregador",
+  monitoramento: "Monitoramento",
+  comercial: "Comercial",
+  gestor: "Gestor",
+  operacao: "Operacao",
+  administrador: "Administrador"
+};
+
+/**
+ * A senha de preco depende do perfil antes da marca do login: a operacao sempre pede, o
+ * administrador e o comercial nunca (`requiresPricePasswordFor` em `_shared/web-session.ts`). So
+ * nos outros perfis a marca do painel decide.
+ */
+export function pricePasswordRule(role: UserRole): "always" | "never" | "flag" {
+  if (role === "operacao") return "always";
+  if (role === "administrador" || role === "comercial") return "never";
+  return "flag";
+}
+
+export function parseUserRole(value: unknown): UserRole {
+  return typeof value === "string" && Object.hasOwn(USER_ROLE_LABELS, value)
+    ? (value as UserRole)
+    : "loader";
+}
+
+/** O dispositivo virtual do site (`web-<company_id>`) nao e um computador: nao tem login. */
+export function isVirtualWebDevice(deviceId: string): boolean {
+  return deviceId.startsWith("web-");
+}
+
+interface LoaderUser {
+  id: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  companyId: string;
+  unitId: string;
+  isActive: boolean;
+  /** Acesso do sistema (computador cadastrado) a que este login pertence, se houver. */
+  deviceId: string | null;
+  /** Pede a senha de alteracao de preco ao mudar preco de pesagem pelo site. */
+  requiresPricePassword: boolean;
+}
+
+/** Anel de atualizacao: `beta` recebe as versoes em avaliacao antes da frota. */
+export type DeviceUpdateChannel = "latest" | "beta";
+
+/**
+ * Le o anel que a nuvem informou.
+ *
+ * So `beta` tira a balanca de producao. Campo ausente (nuvem sem a migracao),
+ * null, ou qualquer texto inesperado aparecem como producao — a tela nunca pode
+ * sugerir que uma balanca de cliente esta recebendo versao em avaliacao quando
+ * nao se sabe se esta.
+ */
+export function toDeviceUpdateChannel(value: unknown): DeviceUpdateChannel {
+  return typeof value === "string" && value.trim().toLowerCase() === "beta" ? "beta" : "latest";
+}
+
+interface Device {
+  id: string;
+  companyId: string;
+  unitId: string;
+  name: string;
+  isActive: boolean;
+  updateChannel: DeviceUpdateChannel;
+  /**
+   * Balanca principal de precos da pedreira: a unica que publica preco padrao, preco
+   * especial por cliente, tabela de preco e valor de frete do cadastro. As demais espelham
+   * o que vem dela. Sem principal, cada balanca publica o proprio cadastro de preco — o
+   * empate que fazia o preco especial existir numa maquina e nao na outra.
+   */
+  isPriceMaster: boolean;
+  /** Executa os pedidos de pesagem do site da unidade (migracao `202609250001`). */
+  executesWebOperations: boolean;
+  lastSeenAt: string | null;
+  /**
+   * Saude da fila de envio, reportada pela propria balanca no `desktop-status`.
+   *
+   * `null` em toda parte e "esta balanca nunca reportou" — instalacao anterior
+   * ao relatorio, ou nuvem sem a migracao aplicada. A tela precisa saber
+   * distinguir isso de "fila limpa": ver `lib/device-health.ts`.
+   */
+  healthQueuePending: number | null;
+  healthQueueBlocked: number | null;
+  healthOldestPendingAt: string | null;
+  healthLastError: string | null;
+  healthCollectedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Alvo da exclusao mostrado no modal de confirmacao. */
+export interface DeleteTarget {
+  type: "company" | "unit" | "user" | "device";
+  id: string;
+  name: string;
+  /** Preenchido quando type === "user": "Carregador" ou "Comercial". */
+  roleLabel?: string;
+}
+
+/**
+ * Texto do modal de confirmacao. A exclusao nao pede mais a senha do administrador (quem esta
+ * no dashboard ja passou pelo login), entao a mensagem precisa deixar explicito o efeito em
+ * cascata antes do clique final.
+ */
+export function buildDeleteConfirmationMessage(target: DeleteTarget): string {
+  if (target.type === "company") {
+    return `Tem certeza que deseja excluir a pedreira "${target.name}"? Todas as unidades, usuarios e dispositivos vinculados serao excluidos tambem.`;
+  }
+  if (target.type === "unit") {
+    return `Tem certeza que deseja excluir a unidade "${target.name}"? Os usuarios e dispositivos vinculados a ela serao excluidos tambem.`;
+  }
+  if (target.type === "device") {
+    return `Tem certeza que deseja excluir o desktop "${target.name}"? A ativacao dele e perdida e a balanca precisara ser ativada de novo com o codigo da pedreira.`;
+  }
+  const role = target.roleLabel ? `${target.roleLabel.toLowerCase()} ` : "";
+  return `Tem certeza que deseja excluir o usuario ${role}"${target.name}"? O acesso dele ao sistema sera removido.`;
+}
+
+/** Acao/payload do admin-api correspondente ao alvo. */
+export function buildDeleteRequest(target: DeleteTarget): {
+  action: string;
+  payload: Record<string, string>;
+} {
+  if (target.type === "company") {
+    return { action: "delete_company", payload: { companyId: target.id } };
+  }
+  if (target.type === "unit") {
+    return { action: "delete_unit", payload: { unitId: target.id } };
+  }
+  if (target.type === "device") {
+    return { action: "delete_device", payload: { deviceId: target.id } };
+  }
+  return { action: "delete_loader", payload: { userId: target.id } };
+}
+
+/**
+ * Busca dos cadastros: casa quando TODOS os termos digitados aparecem em algum
+ * dos campos da linha. Buscar por termo (e nao pela frase inteira) e o que faz
+ * "sul joao" achar o carregador Joao da Pedreira Sul — a ordem em que a pessoa
+ * lembra dos dois nao pode importar.
+ *
+ * Delega ao `search-ranking`, que tambem ignora acento e pontuacao — antes "sao" nao
+ * achava "São" e o CNPJ digitado com pontos nao achava o gravado sem eles.
+ */
+export function matchesCadastroSearch(search: string, fields: Array<string | null | undefined>) {
+  return matchesSearch(search, fields);
+}
+
+/**
+ * Filtra e ORDENA uma lista de cadastro pela proximidade com o que foi digitado.
+ *
+ * A ordem importa em toda tabela do painel: sem ela, procurar "alfa" trazia a Pedreira
+ * Alfa depois de "Transportes Beta Alfa Norte" so porque esta foi cadastrada antes.
+ */
+function rankCadastro<T>(
+  items: readonly T[],
+  fieldsOf: (item: T) => Array<string | null | undefined>,
+  search: string
+): T[] {
+  return rankBySearch(items, fieldsOf, search);
+}
+
+type Section =
+  | "companies"
+  | "units"
+  | "loaders"
+  | "comercial"
+  | "devices"
+  | "updates"
+  | "financeiro"
+  | "ai";
+
+/** Resposta de `reveal_credentials`. Ver `_shared/admin-credentials.ts`. */
+interface RevealedCredential {
+  label: string;
+  kind: "secret" | "code" | "info";
+  value: string | null;
+  hint?: string;
+  unavailable?: string;
+}
+
+interface CredentialBundle {
+  title: string;
+  subtitle: string;
+  credentials: RevealedCredential[];
+}
+
+type CredentialTarget = { type: "company" | "user" | "device"; id: string };
+
+function formatDate(value: string | null | undefined): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "—" : parsed.toLocaleDateString("pt-BR");
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "—" : parsed.toLocaleString("pt-BR");
+}
+
+/** Projeto na barra superior: emitir boleto no projeto errado sai caro. */
+function environmentLabel(): string {
+  try {
+    return new URL(SUPABASE_URL).hostname.split(".")[0];
+  } catch {
+    return "";
+  }
+}
+
+export function AdminDashboard() {
+  const logout = useAdminLogout();
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [users, setUsers] = useState<LoaderUser[]>([]);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [section, setSection] = useState<Section>("companies");
+  const [filterCompanyId, setFilterCompanyId] = useState("");
+  const [search, setSearch] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [feedback, setFeedback] = useState<{ tone: "ok" | "danger"; text: string } | null>(null);
+
+  const [generatedCode, setGeneratedCode] = useState<string | null>(null);
+  const [creating, setCreating] = useState<null | "company" | "unit" | "loader" | "comercial">(
+    null
+  );
+  const [editingCompany, setEditingCompany] = useState<Company | null>(null);
+  const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
+  const [renamingDevice, setRenamingDevice] = useState<Device | null>(null);
+  const [creatingLoginFor, setCreatingLoginFor] = useState<Device | null>(null);
+  const [resettingPasswordUser, setResettingPasswordUser] = useState<LoaderUser | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<DeleteTarget | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [credentials, setCredentials] = useState<CredentialBundle | null>(null);
+  const [credentialsLoading, setCredentialsLoading] = useState(false);
+
+  // Sessao expirou no meio do uso: desloga e volta para /admin/login. Sem isto,
+  // callAdminFunction lancava e o dashboard ficava renderizado com todas as listas vazias, sem
+  // erro nem redirect ("parece que apagou tudo").
+  const handleError = useCallback(
+    (error: unknown, fallback: string) => {
+      if (error instanceof AdminSessionExpiredError) {
+        void logout();
+        return;
+      }
+      setFeedback({ tone: "danger", text: error instanceof Error ? error.message : fallback });
+    },
+    [logout]
+  );
+
+  /**
+   * `silent` e a releitura de fundo da aba Balancas: nao acende "carregando" e
+   * nao acusa erro na tela. Uma oscilacao de rede num ciclo automatico nao pode
+   * piscar a tabela nem plantar um aviso vermelho que ninguem pediu — a proxima
+   * passada resolve, e ate la vale o ultimo estado conhecido.
+   */
+  const loadData = useCallback(
+    async (options: { silent?: boolean } = {}) => {
+      if (!options.silent) setIsLoading(true);
+      try {
+        const data = await callAdminFunction<{
+          companies: Array<{
+            id: string;
+            name: string;
+            legal_name: string;
+            document: string | null;
+            is_active: boolean;
+            created_at: string;
+            omie_app_key?: string | null;
+            omie_app_secret?: string | null;
+            desktop_activation_code?: string;
+            desktop_activation_code_rotated_at?: string;
+          }>;
+          units: Array<{
+            id: string;
+            company_id: string;
+            name: string;
+            timezone: string;
+            is_active: boolean;
+          }>;
+          users: Array<{
+            id: string;
+            email: string;
+            name: string;
+            role?: string;
+            company_id: string;
+            unit_id: string;
+            is_active: boolean;
+            device_id?: string | null;
+            requires_price_password?: boolean | null;
+          }>;
+          devices: Array<{
+            id: string;
+            company_id: string;
+            unit_id: string;
+            name: string;
+            is_active: boolean;
+            update_channel?: string | null;
+            is_price_master?: boolean | null;
+            executes_web_operations?: boolean | null;
+            last_seen_at: string | null;
+            // Ausentes enquanto a migracao da saude nao for aplicada: a funcao cai
+            // no select sem elas para a lista inteira nao deixar de carregar.
+            health_queue_pending?: number | null;
+            health_queue_blocked?: number | null;
+            health_oldest_pending_at?: string | null;
+            health_last_error?: string | null;
+            health_collected_at?: string | null;
+            created_at: string;
+            updated_at: string;
+          }>;
+        }>("admin-api", { action: "list" });
+
+        setCompanies(
+          data.companies.map((company) => ({
+            id: company.id,
+            name: company.name,
+            legalName: company.legal_name,
+            document: company.document ?? "",
+            isActive: company.is_active,
+            createdAt: company.created_at,
+            omieAppKeyMasked: company.omie_app_key ?? null,
+            omieAppSecretConfigured: Boolean(company.omie_app_secret),
+            desktopActivationCode: company.desktop_activation_code,
+            desktopActivationCodeRotatedAt: company.desktop_activation_code_rotated_at
+          }))
+        );
+        setUnits(
+          data.units.map((unit) => ({
+            id: unit.id,
+            companyId: unit.company_id,
+            name: unit.name,
+            timezone: unit.timezone,
+            isActive: unit.is_active
+          }))
+        );
+        setUsers(
+          data.users.map((user) => ({
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: parseUserRole(user.role),
+            companyId: user.company_id,
+            unitId: user.unit_id,
+            isActive: user.is_active,
+            deviceId: user.device_id ?? null,
+            requiresPricePassword: user.requires_price_password === true
+          }))
+        );
+        setDevices(
+          (data.devices ?? []).map((device) => ({
+            id: device.id,
+            companyId: device.company_id,
+            unitId: device.unit_id,
+            name: device.name,
+            isActive: device.is_active,
+            updateChannel: toDeviceUpdateChannel(device.update_channel),
+            isPriceMaster: device.is_price_master === true,
+            executesWebOperations: device.executes_web_operations === true,
+            lastSeenAt: device.last_seen_at,
+            // `?? null` e nao `?? 0`: coluna ausente (migracao pendente) e campo
+            // nulo (balanca que nunca reportou) tem que continuar sendo "nao sei"
+            // ate a tela. Virar zero aqui faria a coluna pintar de verde a frota
+            // inteira no dia do deploy.
+            healthQueuePending: device.health_queue_pending ?? null,
+            healthQueueBlocked: device.health_queue_blocked ?? null,
+            healthOldestPendingAt: device.health_oldest_pending_at ?? null,
+            healthLastError: device.health_last_error ?? null,
+            healthCollectedAt: device.health_collected_at ?? null,
+            createdAt: device.created_at,
+            updatedAt: device.updated_at
+          }))
+        );
+      } catch (error) {
+        if (!options.silent) handleError(error, "Nao foi possivel carregar os cadastros.");
+      } finally {
+        if (!options.silent) setIsLoading(false);
+      }
+    },
+    [handleError]
+  );
+
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
+
+  // Enquanto a aba Balancas estiver aberta ela se atualiza sozinha: a saude da
+  // fila muda sem ninguem clicar, e uma balanca que trava depois de a pagina
+  // abrir precisa aparecer. Sai de cena junto com a aba — as outras nao
+  // ganharam trafego nenhum com isto.
+  useEffect(() => {
+    if (section !== "devices") return;
+    const intervalId = window.setInterval(
+      () => void loadData({ silent: true }),
+      DEVICES_REFRESH_INTERVAL_MS
+    );
+    return () => window.clearInterval(intervalId);
+  }, [section, loadData]);
+
+  /** Executa uma acao do admin-api, mostra o resultado e recarrega a lista. */
+  const run = useCallback(
+    async (
+      action: string,
+      payload: Record<string, unknown>,
+      successMessage: string
+    ): Promise<boolean> => {
+      setFeedback(null);
+      try {
+        await callAdminFunction("admin-api", { action, payload });
+        await loadData();
+        setFeedback({ tone: "ok", text: successMessage });
+        return true;
+      } catch (error) {
+        handleError(error, "A acao falhou.");
+        return false;
+      }
+    },
+    [handleError, loadData]
+  );
+
+  const companyName = useCallback(
+    (companyId: string) => companies.find((company) => company.id === companyId)?.name ?? "—",
+    [companies]
+  );
+  const unitName = useCallback(
+    (unitId: string) => units.find((unit) => unit.id === unitId)?.name ?? "—",
+    [units]
+  );
+  /** Nomes das balancas principais de precos da pedreira, para a linha dizer de quem espelha. */
+  const priceMasterNames = useCallback(
+    (companyId: string) =>
+      devices
+        .filter((device) => device.companyId === companyId && device.isPriceMaster)
+        .map((device) => device.name),
+    [devices]
+  );
+
+  const filteredCompanies = useMemo(
+    () =>
+      rankCadastro(
+        companies.filter((company) => !filterCompanyId || company.id === filterCompanyId),
+        (company) => [company.name, company.legalName, company.document],
+        search
+      ),
+    [companies, filterCompanyId, search]
+  );
+
+  const filteredUnits = useMemo(
+    () =>
+      rankCadastro(
+        units.filter((unit) => !filterCompanyId || unit.companyId === filterCompanyId),
+        (unit) => [unit.name, companyName(unit.companyId)],
+        search
+      ),
+    [units, filterCompanyId, search, companyName]
+  );
+
+  const filteredDevices = useMemo(
+    () =>
+      rankCadastro(
+        devices.filter((device) => !filterCompanyId || device.companyId === filterCompanyId),
+        (device) => [
+          device.name,
+          device.id,
+          companyName(device.companyId),
+          unitName(device.unitId)
+        ],
+        search
+      ),
+    [devices, filterCompanyId, search, companyName, unitName]
+  );
+
+  // A secao "Comercial" lista comercial E gestor: sao os dois perfis do site.
+  const usersByRole = useCallback(
+    (role: "loader" | "comercial") =>
+      rankCadastro(
+        users.filter(
+          (user) =>
+            (role === "comercial" ? user.role !== "loader" : user.role === "loader") &&
+            (!filterCompanyId || user.companyId === filterCompanyId)
+        ),
+        (user) => [user.name, user.email, companyName(user.companyId)],
+        search
+      ),
+    [users, filterCompanyId, search, companyName]
+  );
+
+  const sections: NavSection[] = [
+    { id: "companies", label: "Pedreiras", group: "Cadastros", count: companies.length },
+    { id: "units", label: "Unidades", group: "Cadastros", count: units.length },
+    {
+      id: "loaders",
+      label: "Carregadores",
+      group: "Acessos",
+      count: users.filter((user) => user.role === "loader").length
+    },
+    {
+      id: "comercial",
+      label: "Usuarios do site",
+      group: "Acessos",
+      count: users.filter((user) => user.role !== "loader").length
+    },
+    { id: "devices", label: "Acessos do sistema", group: "Acessos", count: devices.length },
+    { id: "updates", label: "Atualizacoes", group: "Plataforma" },
+    { id: "financeiro", label: "Financeiro", group: "Plataforma" },
+    { id: "ai", label: "Assistente de IA", group: "Plataforma" }
+  ];
+
+  const filterToolbar = (
+    <>
+      <select
+        className="adm-select adm-toolbar-grow"
+        aria-label="Filtrar por pedreira"
+        value={filterCompanyId}
+        onChange={(event) => setFilterCompanyId(event.target.value)}
+      >
+        <option value="">Todas as pedreiras</option>
+        {companies.map((company) => (
+          <option key={company.id} value={company.id}>
+            {company.name}
+          </option>
+        ))}
+      </select>
+      <input
+        className="adm-input adm-toolbar-grow"
+        aria-label="Buscar nos cadastros"
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder="Buscar por nome, e-mail ou documento"
+      />
+      {(filterCompanyId || search) && (
+        <Button
+          size="sm"
+          onClick={() => {
+            setFilterCompanyId("");
+            setSearch("");
+          }}
+        >
+          Limpar
+        </Button>
+      )}
+    </>
+  );
+
+  // -------------------------------------------------------------------------
+  // Colunas
+  // -------------------------------------------------------------------------
+
+  const companyColumns: Array<Column<Company>> = [
+    {
+      key: "name",
+      header: "Pedreira",
+      render: (company) => (
+        <>
+          <span className="adm-cell-primary">{company.name}</span>
+          <p className="adm-cell-sub">{company.legalName}</p>
+        </>
+      )
+    },
+    {
+      key: "document",
+      header: "CNPJ",
+      render: (company) => <span className="adm-mono">{company.document || "—"}</span>
+    },
+    {
+      key: "units",
+      header: "Unidades",
+      numeric: true,
+      render: (company) => units.filter((unit) => unit.companyId === company.id).length
+    },
+    {
+      key: "omie",
+      header: "OMIE",
+      render: (company) =>
+        company.omieAppKeyMasked ? (
+          <Badge tone="ok" dot>
+            Conectado
+          </Badge>
+        ) : (
+          <Badge tone="warn" dot>
+            Sem token
+          </Badge>
+        )
+    },
+    {
+      key: "status",
+      header: "Situacao",
+      render: (company) =>
+        company.isActive ? (
+          <Badge tone="ok" dot>
+            Ativa
+          </Badge>
+        ) : (
+          <Badge tone="danger" dot>
+            Inativa
+          </Badge>
+        )
+    },
+    {
+      key: "created",
+      header: "Criada em",
+      render: (company) => <span className="adm-mono">{formatDate(company.createdAt)}</span>
+    },
+    {
+      key: "actions",
+      header: "",
+      actions: true,
+      render: (company) => (
+        <ButtonGroup>
+          <EyeButton
+            title={`Ver credenciais de ${company.name}`}
+            onClick={() => void handleRevealCredentials({ type: "company", id: company.id })}
+          />
+          <Button size="sm" onClick={() => setEditingCompany(company)}>
+            Editar
+          </Button>
+          <Button
+            size="sm"
+            onClick={() =>
+              void run(
+                "toggle_company",
+                { companyId: company.id, isActive: !company.isActive },
+                company.isActive
+                  ? "Pedreira desativada. Os desktops dela perdem o acesso."
+                  : "Pedreira ativada."
+              )
+            }
+          >
+            {company.isActive ? "Desativar" : "Ativar"}
+          </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() =>
+              setConfirmDelete({ type: "company", id: company.id, name: company.name })
+            }
+          >
+            Excluir
+          </Button>
+        </ButtonGroup>
+      )
+    }
+  ];
+
+  const unitColumns: Array<Column<Unit>> = [
+    {
+      key: "name",
+      header: "Unidade",
+      render: (unit) => <span className="adm-cell-primary">{unit.name}</span>
+    },
+    { key: "company", header: "Pedreira", render: (unit) => companyName(unit.companyId) },
+    {
+      key: "devices",
+      header: "Acessos",
+      numeric: true,
+      render: (unit) => devices.filter((device) => device.unitId === unit.id).length
+    },
+    {
+      key: "users",
+      header: "Usuarios",
+      numeric: true,
+      render: (unit) => users.filter((user) => user.unitId === unit.id).length
+    },
+    {
+      key: "status",
+      header: "Situacao",
+      render: (unit) =>
+        unit.isActive ? (
+          <Badge tone="ok" dot>
+            Ativa
+          </Badge>
+        ) : (
+          <Badge tone="danger" dot>
+            Inativa
+          </Badge>
+        )
+    },
+    {
+      key: "actions",
+      header: "",
+      actions: true,
+      render: (unit) => (
+        <ButtonGroup>
+          <EyeButton
+            title={`Ver credenciais da pedreira de ${unit.name}`}
+            onClick={() => void handleRevealCredentials({ type: "company", id: unit.companyId })}
+          />
+          <Button size="sm" onClick={() => setEditingUnit(unit)}>
+            Editar
+          </Button>
+          <Button
+            size="sm"
+            onClick={() =>
+              void run(
+                "toggle_unit",
+                { unitId: unit.id, isActive: !unit.isActive },
+                unit.isActive ? "Unidade desativada." : "Unidade ativada."
+              )
+            }
+          >
+            {unit.isActive ? "Desativar" : "Ativar"}
+          </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => setConfirmDelete({ type: "unit", id: unit.id, name: unit.name })}
+          >
+            Excluir
+          </Button>
+        </ButtonGroup>
+      )
+    }
+  ];
+
+  function userColumns(role: "loader" | "comercial"): Array<Column<LoaderUser>> {
+    const roleLabel = role === "comercial" ? "Comercial" : "Carregador";
+    return [
+      {
+        key: "name",
+        header: "Usuario",
+        render: (user) => (
+          <>
+            <span className="adm-cell-primary">{user.name}</span>
+            <p className="adm-cell-sub">{user.email}</p>
+          </>
+        )
+      },
+      ...(role === "comercial"
+        ? [
+            {
+              key: "role",
+              header: "Perfil",
+              render: (user: LoaderUser) => (
+                <RoleSelect
+                  user={user}
+                  onChange={(next) =>
+                    void run(
+                      "update_user_role",
+                      { userId: user.id, role: next },
+                      `${user.name} agora e ${USER_ROLE_LABELS[next]}.`
+                    )
+                  }
+                />
+              )
+            },
+            {
+              key: "pricePassword",
+              header: "Senha de preco",
+              render: (user: LoaderUser) => (
+                <PricePasswordToggle
+                  user={user}
+                  onChange={(requires) =>
+                    void run(
+                      "update_user_price_password",
+                      { userId: user.id, requiresPricePassword: requires },
+                      requires
+                        ? `${user.name} passa a precisar da senha para mudar preco.`
+                        : `${user.name} muda preco sem senha.`
+                    )
+                  }
+                />
+              )
+            },
+            {
+              key: "device",
+              header: "Acesso",
+              render: (user: LoaderUser) =>
+                user.deviceId ? (
+                  (devices.find((device) => device.id === user.deviceId)?.name ?? "Removido")
+                ) : (
+                  <span className="adm-cell-sub">—</span>
+                )
+            }
+          ]
+        : []),
+      {
+        key: "unit",
+        header: "Unidade",
+        render: (user) => (
+          <select
+            className="adm-select"
+            aria-label={`Unidade de ${user.name}`}
+            value={user.unitId}
+            onChange={(event) =>
+              void run(
+                "update_loader_unit",
+                { userId: user.id, unitId: event.target.value },
+                "Usuario movido de unidade."
+              )
+            }
+          >
+            {!units.some((unit) => unit.id === user.unitId) && (
+              <option value={user.unitId}>Unidade removida</option>
+            )}
+            {units.map((unit) => (
+              <option key={unit.id} value={unit.id}>
+                {unit.name} — {companyName(unit.companyId)}
+              </option>
+            ))}
+          </select>
+        )
+      },
+      { key: "company", header: "Pedreira", render: (user) => companyName(user.companyId) },
+      {
+        key: "status",
+        header: "Situacao",
+        render: (user) =>
+          user.isActive ? (
+            <Badge tone="ok" dot>
+              Ativo
+            </Badge>
+          ) : (
+            <Badge tone="danger" dot>
+              Bloqueado
+            </Badge>
+          )
+      },
+      {
+        key: "actions",
+        header: "",
+        actions: true,
+        render: (user) => (
+          <ButtonGroup>
+            <EyeButton
+              title={`Ver credenciais de ${user.name}`}
+              onClick={() => void handleRevealCredentials({ type: "user", id: user.id })}
+            />
+            <Button size="sm" onClick={() => setResettingPasswordUser(user)}>
+              Senha
+            </Button>
+            <Button
+              size="sm"
+              onClick={() =>
+                void run(
+                  "toggle_loader",
+                  { userId: user.id, isActive: !user.isActive },
+                  user.isActive ? "Acesso bloqueado." : "Acesso liberado."
+                )
+              }
+            >
+              {user.isActive ? "Bloquear" : "Liberar"}
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() =>
+                setConfirmDelete({ type: "user", id: user.id, name: user.name, roleLabel })
+              }
+            >
+              Excluir
+            </Button>
+          </ButtonGroup>
+        )
+      }
+    ];
+  }
+
+  const deviceColumns: Array<Column<Device>> = [
+    {
+      key: "name",
+      header: "Acesso",
+      render: (device) => (
+        <>
+          <span className="adm-cell-primary">{device.name}</span>
+          <p className="adm-cell-sub adm-mono">{device.id.slice(0, 12)}…</p>
+        </>
+      )
+    },
+    {
+      // A balanca que executa as pesagens pedidas pelo site: uma por unidade. Marcar uma
+      // desmarca a anterior (duas executoras pegariam o mesmo pedido).
+      key: "webExecutor",
+      header: "Pesagem do site",
+      render: (device) =>
+        isVirtualWebDevice(device.id) ? (
+          <span className="adm-cell-sub">—</span>
+        ) : (
+          <select
+            className="adm-select"
+            aria-label={`Pesagem do site na balanca ${device.name}`}
+            title="A balanca executora registra as pesagens pedidas pelo site e imprime o cupom do fechamento na impressora dela."
+            value={device.executesWebOperations ? "yes" : "no"}
+            onChange={(event) =>
+              void run(
+                "update_device_web_executor",
+                { deviceId: device.id, executes: event.target.value === "yes" },
+                event.target.value === "yes"
+                  ? `${device.name} passou a executar as pesagens do site.`
+                  : `${device.name} deixou de executar as pesagens do site.`
+              )
+            }
+          >
+            <option value="no">Nao executa</option>
+            <option value="yes">Executa</option>
+          </select>
+        )
+    },
+    {
+      // Login do KyberRock Web deste acesso: e com ele que a pessoa daquele computador entra
+      // no site — inclusive depois que o desktop dela for desligado na virada.
+      key: "login",
+      header: "Login do site",
+      render: (device) => {
+        if (isVirtualWebDevice(device.id)) return <span className="adm-cell-sub">—</span>;
+        const login = users.find((user) => user.deviceId === device.id);
+        if (!login) {
+          return (
+            <Button size="sm" onClick={() => setCreatingLoginFor(device)}>
+              Criar login
+            </Button>
+          );
+        }
+        return (
+          <div className="adm-login-cell">
+            <span className="adm-cell-primary" title={login.email}>
+              {login.email}
+            </span>
+            <div className="adm-login-actions">
+              <RoleSelect
+                user={login}
+                onChange={(next) =>
+                  void run(
+                    "update_user_role",
+                    { userId: login.id, role: next },
+                    `${device.name} agora entra no site como ${USER_ROLE_LABELS[next]}.`
+                  )
+                }
+              />
+              <Button size="sm" onClick={() => setResettingPasswordUser(login)}>
+                Senha
+              </Button>
+            </div>
+            <PricePasswordToggle
+              user={login}
+              onChange={(requires) =>
+                void run(
+                  "update_user_price_password",
+                  { userId: login.id, requiresPricePassword: requires },
+                  requires
+                    ? `${login.email} passa a precisar da senha para mudar preco.`
+                    : `${login.email} muda preco sem senha.`
+                )
+              }
+            />
+            {!login.isActive && (
+              <Badge tone="danger" dot>
+                Bloqueado
+              </Badge>
+            )}
+          </div>
+        );
+      }
+    },
+    { key: "company", header: "Pedreira", render: (device) => companyName(device.companyId) },
+    {
+      key: "unit",
+      header: "Unidade",
+      render: (device) => (
+        <select
+          className="adm-select"
+          aria-label={`Unidade da balanca ${device.name}`}
+          value={device.unitId}
+          onChange={(event) =>
+            void run(
+              "update_device_unit",
+              { deviceId: device.id, unitId: event.target.value },
+              "Balanca movida de unidade."
+            )
+          }
+        >
+          {units
+            .filter((unit) => unit.companyId === device.companyId)
+            .map((unit) => (
+              <option key={unit.id} value={unit.id}>
+                {unit.name}
+              </option>
+            ))}
+        </select>
+      )
+    },
+    {
+      key: "channel",
+      header: "Atualizacao",
+      render: (device) => (
+        <select
+          className="adm-select"
+          aria-label={`Anel de atualizacao da balanca ${device.name}`}
+          title={
+            device.updateChannel === "beta"
+              ? "Recebe as versoes em avaliacao antes da frota."
+              : "So recebe versao ja liberada para producao."
+          }
+          value={device.updateChannel}
+          onChange={(event) =>
+            void run(
+              "update_device_channel",
+              { deviceId: device.id, updateChannel: event.target.value },
+              event.target.value === "beta"
+                ? "Balanca passou para o anel de teste."
+                : "Balanca voltou para producao."
+            )
+          }
+        >
+          <option value="latest">Producao</option>
+          <option value="beta">Teste</option>
+        </select>
+      )
+    },
+    {
+      // Dono do cadastro de preco da pedreira. Cada balanca e marcada por conta propria:
+      // marcar uma NAO rebaixa as outras, e mais de uma principal e o caso normal (a da
+      // portaria e a do escritorio, por exemplo). Entre principais vence quem editou o
+      // preco por ultimo. Sem nenhuma marcada, cada maquina volta a publicar o proprio
+      // cadastro de preco — o comportamento anterior ao campo.
+      key: "priceMaster",
+      header: "Precos",
+      render: (device) => {
+        const masters = priceMasterNames(device.companyId);
+        const others = masters.filter((name) => name !== device.name);
+        return (
+          <select
+            className="adm-select"
+            aria-label={`Cadastro de precos da balanca ${device.name}`}
+            title={
+              device.isPriceMaster
+                ? others.length > 0
+                  ? `Esta balanca define os precos da pedreira, junto com ${others.join(", ")}.`
+                  : "Esta balanca define os precos da pedreira; as demais espelham o que ela publica."
+                : masters.length > 0
+                  ? `Espelha os precos de ${masters.join(", ")}.`
+                  : "Nenhuma balanca principal definida: cada uma publica o proprio cadastro de preco."
+            }
+            value={device.isPriceMaster ? "master" : "follower"}
+            onChange={(event) =>
+              void run(
+                "update_device_price_master",
+                { deviceId: device.id, isPriceMaster: event.target.value === "master" },
+                event.target.value === "master"
+                  ? `${device.name} passou a definir os precos da pedreira.`
+                  : others.length > 0
+                    ? `${device.name} voltou a espelhar os precos de ${others.join(", ")}.`
+                    : "Pedreira ficou sem balanca principal de precos."
+              )
+            }
+          >
+            <option value="master">Principal</option>
+            <option value="follower">
+              {others.length > 0 && !device.isPriceMaster
+                ? `Espelha ${others.join(", ")}`
+                : "Espelha a principal"}
+            </option>
+          </select>
+        );
+      }
+    },
+    {
+      key: "health",
+      header: "Saude",
+      /**
+       * O que esta balanca esta ENTREGANDO — a pergunta que "ultimo contato" e
+       * "versao" nunca responderam. Fila parada e envio esperando clique do
+       * operador so existiam na tela daquele computador, entao o suporte
+       * descobria por telefone, depois de a pedreira ja ter parado.
+       *
+       * A classificacao inteira vive em `lib/device-health.ts`, pura e testada:
+       * o que conta como parada e quanto silencio ainda e normal sao decisoes de
+       * operacao, e nao da para revisa-las lendo uma tabela de mil e oitocentas
+       * linhas.
+       */
+      render: (device) => {
+        const health = classifyDeviceHealth({
+          isActive: device.isActive,
+          lastSeenAt: device.lastSeenAt,
+          queuePending: device.healthQueuePending,
+          queueBlocked: device.healthQueueBlocked,
+          oldestPendingAt: device.healthOldestPendingAt,
+          lastError: device.healthLastError,
+          collectedAt: device.healthCollectedAt
+        });
+        return (
+          <span title={health.detail}>
+            <Badge tone={HEALTH_TONES[health.level]} dot={health.level !== "unknown"}>
+              {health.label}
+            </Badge>
+          </span>
+        );
+      }
+    },
+    {
+      key: "lastSeen",
+      header: "Ultimo contato",
+      render: (device) => <span className="adm-mono">{formatDateTime(device.lastSeenAt)}</span>
+    },
+    {
+      key: "status",
+      header: "Situacao",
+      render: (device) =>
+        device.isActive ? (
+          <Badge tone="ok" dot>
+            Ativa
+          </Badge>
+        ) : (
+          <Badge tone="danger" dot>
+            Bloqueada
+          </Badge>
+        )
+    },
+    {
+      key: "actions",
+      header: "",
+      actions: true,
+      render: (device) => (
+        <ButtonGroup>
+          <EyeButton
+            title={`Ver credenciais de ${device.name}`}
+            onClick={() => void handleRevealCredentials({ type: "device", id: device.id })}
+          />
+          <Button size="sm" onClick={() => setRenamingDevice(device)}>
+            Renomear
+          </Button>
+          <Button
+            size="sm"
+            onClick={() =>
+              void run(
+                "toggle_device",
+                { deviceId: device.id, isActive: !device.isActive },
+                device.isActive ? "Balanca bloqueada." : "Balanca liberada."
+              )
+            }
+          >
+            {device.isActive ? "Bloquear" : "Liberar"}
+          </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => setConfirmDelete({ type: "device", id: device.id, name: device.name })}
+          >
+            Excluir
+          </Button>
+        </ButtonGroup>
+      )
+    }
+  ];
+
+  const activationColumns: Array<Column<Company>> = [
+    {
+      key: "company",
+      header: "Pedreira",
+      render: (company) => <span className="adm-cell-primary">{company.name}</span>
+    },
+    {
+      key: "code",
+      header: "Codigo ativo",
+      render: (company) =>
+        company.desktopActivationCode ? (
+          <span className="adm-mono adm-activation-code">{company.desktopActivationCode}</span>
+        ) : (
+          <Badge tone="warn">Nenhum gerado</Badge>
+        )
+    },
+    {
+      key: "rotated",
+      header: "Gerado em",
+      render: (company) => (
+        <span className="adm-mono">{formatDate(company.desktopActivationCodeRotatedAt)}</span>
+      )
+    },
+    {
+      key: "actions",
+      header: "",
+      actions: true,
+      render: (company) => {
+        const hasActiveUnit = units.some((unit) => unit.companyId === company.id && unit.isActive);
+        return (
+          <ButtonGroup>
+            {company.desktopActivationCode && (
+              <CopyButton value={company.desktopActivationCode} label="Copiar" />
+            )}
+            <Button
+              size="sm"
+              disabled={!hasActiveUnit}
+              title={hasActiveUnit ? undefined : "Cadastre uma unidade ativa antes de gerar"}
+              onClick={() => void handleGenerateCode(company.id)}
+            >
+              Gerar novo
+            </Button>
+          </ButtonGroup>
+        );
+      }
+    }
+  ];
+
+  async function handleGenerateCode(companyId: string): Promise<void> {
+    try {
+      const result = await callAdminFunction<{ code: string }>("admin-api", {
+        action: "generate_desktop_activation_code",
+        payload: { companyId }
+      });
+      setGeneratedCode(result.code);
+      await loadData();
+    } catch (error) {
+      handleError(error, "Nao foi possivel gerar o codigo de ativacao.");
+    }
+  }
+
+  /**
+   * Abre as credenciais de um cadastro. A consulta e sob demanda de proposito:
+   * segredo que viaja no carregamento da lista fica em cache de navegador e em
+   * log de proxy, mesmo quando ninguem pediu para ver.
+   */
+  async function handleRevealCredentials(target: CredentialTarget): Promise<void> {
+    setCredentialsLoading(true);
+    setFeedback(null);
+    try {
+      const response = await callAdminFunction<{ bundle: CredentialBundle }>("admin-api", {
+        action: "reveal_credentials",
+        payload: target
+      });
+      setCredentials(response.bundle);
+    } catch (error) {
+      handleError(error, "Nao foi possivel carregar as credenciais.");
+    } finally {
+      setCredentialsLoading(false);
+    }
+  }
+
+  async function handleConfirmDelete(): Promise<void> {
+    if (!confirmDelete || isDeleting) return;
+    setIsDeleting(true);
+    const { action, payload } = buildDeleteRequest(confirmDelete);
+    const ok = await run(action, payload, "Registro excluido.");
+    setIsDeleting(false);
+    if (ok) setConfirmDelete(null);
+  }
+
+  const inactiveRow = (item: { isActive: boolean }) =>
+    item.isActive ? undefined : "adm-row-muted";
+
+  // -------------------------------------------------------------------------
+
+  return (
+    <AdminShell
+      sections={sections}
+      activeSection={section}
+      onSelectSection={(id) => setSection(id as Section)}
+      environmentLabel={environmentLabel()}
+      headerActions={
+        <Button size="sm" onClick={() => void logout()}>
+          Sair
+        </Button>
+      }
+    >
+      {feedback && <Note tone={feedback.tone === "ok" ? "ok" : "danger"}>{feedback.text}</Note>}
+
+      {isLoading && companies.length === 0 ? (
+        <Panel>
+          <p className="adm-empty">Carregando cadastros...</p>
+        </Panel>
+      ) : (
+        <>
+          {section === "companies" && (
+            <>
+              <PageHead
+                title="Pedreiras"
+                description="Empresas clientes da plataforma. Desativar uma pedreira bloqueia o acesso de todos os desktops dela."
+                actions={
+                  <Button variant="primary" onClick={() => setCreating("company")}>
+                    Nova pedreira
+                  </Button>
+                }
+              />
+              <Panel flush toolbar={filterToolbar}>
+                <DataTable
+                  columns={companyColumns}
+                  rows={filteredCompanies}
+                  rowKey={(company) => company.id}
+                  rowClassName={inactiveRow}
+                  empty={
+                    companies.length === 0
+                      ? "Nenhuma pedreira cadastrada."
+                      : "Nenhuma pedreira encontrada com os filtros atuais."
+                  }
+                />
+              </Panel>
+            </>
+          )}
+
+          {section === "units" && (
+            <>
+              <PageHead
+                title="Unidades"
+                description="Cada pedreira pode ter mais de uma unidade. A fila do carregador e por unidade."
+                actions={
+                  <Button variant="primary" onClick={() => setCreating("unit")}>
+                    Nova unidade
+                  </Button>
+                }
+              />
+              <Panel flush toolbar={filterToolbar}>
+                <DataTable
+                  columns={unitColumns}
+                  rows={filteredUnits}
+                  rowKey={(unit) => unit.id}
+                  rowClassName={inactiveRow}
+                  empty={
+                    units.length === 0
+                      ? "Nenhuma unidade cadastrada."
+                      : "Nenhuma unidade encontrada com os filtros atuais."
+                  }
+                />
+              </Panel>
+            </>
+          )}
+
+          {(section === "loaders" || section === "comercial") && (
+            <>
+              <PageHead
+                title={section === "comercial" ? "Usuarios do site" : "Carregadores"}
+                description={
+                  section === "comercial"
+                    ? "Todos os logins do KyberRock Web, com o perfil de cada um. O login de um computador cadastrado se cria em Acessos do sistema."
+                    : "Entram no KyberRock Web e veem so a fila de carregamento da unidade a que pertencem."
+                }
+                actions={
+                  <Button
+                    variant="primary"
+                    onClick={() => setCreating(section === "comercial" ? "comercial" : "loader")}
+                  >
+                    {section === "comercial" ? "Novo usuario do site" : "Novo carregador"}
+                  </Button>
+                }
+              />
+              <Panel flush toolbar={filterToolbar}>
+                <DataTable
+                  columns={userColumns(section === "comercial" ? "comercial" : "loader")}
+                  rows={usersByRole(section === "comercial" ? "comercial" : "loader")}
+                  rowKey={(user) => user.id}
+                  rowClassName={inactiveRow}
+                  empty="Nenhum usuario encontrado."
+                />
+              </Panel>
+            </>
+          )}
+
+          {section === "devices" && (
+            <>
+              <PageHead
+                title="Acessos do sistema"
+                description="Cada computador cadastrado da pedreira, com o login do site (e-mail, senha e perfil) de quem usa aquele computador. O perfil decide o que a pessoa ve e edita no KyberRock Web. Em Precos, escolha a balanca que define os precos da pedreira — as demais passam a espelhar o cadastro dela."
+              />
+              {generatedCode && (
+                <Note tone="ok">
+                  Codigo gerado: <strong className="adm-mono">{generatedCode}</strong>. Envie ao
+                  operador do desktop — ele vale apenas para a ativacao inicial.{" "}
+                  <Button size="sm" onClick={() => setGeneratedCode(null)}>
+                    Fechar
+                  </Button>
+                </Note>
+              )}
+              <Panel title="Computadores cadastrados" flush toolbar={filterToolbar}>
+                <DataTable
+                  columns={deviceColumns}
+                  rows={filteredDevices}
+                  rowKey={(device) => device.id}
+                  rowClassName={inactiveRow}
+                  empty={
+                    devices.length === 0
+                      ? "Nenhum desktop ativado ainda."
+                      : "Nenhum desktop encontrado com os filtros atuais."
+                  }
+                />
+              </Panel>
+              <Panel
+                title="Codigos de ativacao"
+                description="Um codigo por pedreira. Gerar um novo invalida o anterior."
+                flush
+              >
+                <DataTable
+                  columns={activationColumns}
+                  rows={filteredCompanies}
+                  rowKey={(company) => company.id}
+                  empty="Nenhuma pedreira cadastrada."
+                />
+              </Panel>
+            </>
+          )}
+
+          {section === "updates" && <DesktopUpdates onSessionExpired={() => void logout()} />}
+
+          {section === "financeiro" && (
+            <FinancialBackoffice onSessionExpired={() => void logout()} />
+          )}
+
+          {section === "ai" && <AiAssistantSettings onSessionExpired={() => void logout()} />}
+        </>
+      )}
+
+      {creating === "company" && (
+        <CompanyFormModal
+          title="Nova pedreira"
+          onClose={() => setCreating(null)}
+          onSubmit={async (payload) => {
+            const ok = await run("create_company", payload, "Pedreira criada.");
+            if (ok) setCreating(null);
+          }}
+        />
+      )}
+
+      {editingCompany && (
+        <CompanyFormModal
+          title={`Editar ${editingCompany.name}`}
+          company={editingCompany}
+          onClose={() => setEditingCompany(null)}
+          onSubmit={async (payload) => {
+            const ok = await run(
+              "update_company",
+              { companyId: editingCompany.id, ...payload },
+              "Pedreira atualizada."
+            );
+            if (!ok) return;
+            setEditingCompany(null);
+          }}
+        />
+      )}
+
+      {creating === "unit" && (
+        <UnitFormModal
+          companies={companies}
+          defaultCompanyId={filterCompanyId}
+          onClose={() => setCreating(null)}
+          onSubmit={async (payload) => {
+            const ok = await run("create_unit", payload, "Unidade criada.");
+            if (ok) setCreating(null);
+          }}
+        />
+      )}
+
+      {editingUnit && (
+        <UnitFormModal
+          unit={editingUnit}
+          companies={companies}
+          onClose={() => setEditingUnit(null)}
+          onSubmit={async (payload) => {
+            const ok = await run(
+              "update_unit",
+              { unitId: editingUnit.id, name: payload.name },
+              "Unidade atualizada."
+            );
+            if (ok) setEditingUnit(null);
+          }}
+        />
+      )}
+
+      {renamingDevice && (
+        <DeviceNameModal
+          device={renamingDevice}
+          unitLabel={unitName(renamingDevice.unitId)}
+          onClose={() => setRenamingDevice(null)}
+          onSubmit={async (name) => {
+            const ok = await run(
+              "update_device_name",
+              { deviceId: renamingDevice.id, name },
+              `Balanca renomeada para "${name}". Os computadores da pedreira ja estao exibindo o novo nome.`
+            );
+            if (ok) setRenamingDevice(null);
+          }}
+        />
+      )}
+
+      {(creating === "loader" || creating === "comercial") && (
+        <UserFormModal
+          role={creating}
+          units={units}
+          companies={companies}
+          onClose={() => setCreating(null)}
+          onSubmit={async (payload) => {
+            const ok = await run("create_loader", payload, "Usuario criado.");
+            if (ok) setCreating(null);
+          }}
+        />
+      )}
+
+      {creatingLoginFor && (
+        <DeviceLoginModal
+          device={creatingLoginFor}
+          onClose={() => setCreatingLoginFor(null)}
+          onSubmit={async (payload) => {
+            const ok = await run(
+              "create_loader",
+              { ...payload, deviceId: creatingLoginFor.id },
+              `Login do site criado para ${creatingLoginFor.name}.`
+            );
+            if (ok) setCreatingLoginFor(null);
+          }}
+        />
+      )}
+
+      {resettingPasswordUser && (
+        <PasswordModal
+          user={resettingPasswordUser}
+          onClose={() => setResettingPasswordUser(null)}
+          onSubmit={async (password) => {
+            const ok = await run(
+              "update_loader_password",
+              { userId: resettingPasswordUser.id, password },
+              "Senha atualizada."
+            );
+            if (ok) setResettingPasswordUser(null);
+          }}
+        />
+      )}
+
+      {credentials && (
+        <CredentialsModal bundle={credentials} onClose={() => setCredentials(null)} />
+      )}
+
+      {credentialsLoading && !credentials && (
+        <Modal title="Credenciais" onClose={() => setCredentialsLoading(false)} size="sm">
+          <p className="adm-empty">Carregando...</p>
+        </Modal>
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Confirmar exclusao"
+          message={buildDeleteConfirmationMessage(confirmDelete)}
+          confirmLabel="Excluir"
+          busy={isDeleting}
+          onConfirm={() => void handleConfirmDelete()}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+    </AdminShell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modais de cadastro
+// ---------------------------------------------------------------------------
+
+/**
+ * Credenciais de um cadastro.
+ *
+ * Mostra o valor de quem guarda em texto e, para quem guarda hash (senha do
+ * usuario, token do desktop), mostra o MOTIVO e o caminho que resolve. Dizer so
+ * "indisponivel" faria o administrador procurar a senha em outro lugar por meia
+ * hora — ela nao existe em lugar nenhum.
+ */
+function CredentialsModal({ bundle, onClose }: { bundle: CredentialBundle; onClose: () => void }) {
+  const hasSecret = bundle.credentials.some(
+    (credential) => credential.kind !== "info" && credential.value !== null
+  );
+
+  return (
+    <Modal
+      title={bundle.title}
+      description={bundle.subtitle}
+      onClose={onClose}
+      footer={<Button onClick={onClose}>Fechar</Button>}
+    >
+      {hasSecret && (
+        <Note tone="warn">
+          Credenciais em texto. Confira quem esta olhando a tela antes de continuar.
+        </Note>
+      )}
+      <div style={{ marginTop: hasSecret ? "16px" : 0 }}>
+        {bundle.credentials.map((credential) => (
+          <div key={credential.label} className="adm-cred">
+            <div className="adm-cred-head">
+              <span className="adm-cred-label">{credential.label}</span>
+              {credential.value && <CopyButton value={credential.value} />}
+            </div>
+            {credential.value ? (
+              <p className="adm-cred-value">{credential.value}</p>
+            ) : (
+              <p className="adm-cred-unavailable">{credential.unavailable}</p>
+            )}
+            {credential.value && credential.hint && (
+              <p className="adm-cred-hint">{credential.hint}</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Campo de senha visivel por padrao. O admin cadastra a senha do carregador e
+ * precisa conferir o que digitou antes de repassar — mascarar so gerava senha
+ * errada e usuario sem acesso. O botao esconde quando ha alguem olhando.
+ *
+ * Vale para senha NOVA: o Auth guarda apenas o hash, entao a senha de um
+ * usuario ja cadastrado nao pode ser exibida em lugar nenhum.
+ */
+function PasswordInput({
+  name,
+  required = false,
+  minLength,
+  maxLength,
+  autoFocus = false
+}: {
+  name: string;
+  required?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  autoFocus?: boolean;
+}) {
+  const [visible, setVisible] = useState(true);
+  return (
+    <div className="adm-input-row">
+      <input
+        className="adm-input adm-input-mono"
+        name={name}
+        type={visible ? "text" : "password"}
+        required={required}
+        minLength={minLength}
+        maxLength={maxLength}
+        autoFocus={autoFocus}
+        autoComplete="off"
+      />
+      <Button size="sm" onClick={() => setVisible((value) => !value)}>
+        {visible ? "Ocultar" : "Mostrar"}
+      </Button>
+    </div>
+  );
+}
+
+function CompanyFormModal({
+  title,
+  company,
+  onClose,
+  onSubmit
+}: {
+  title: string;
+  company?: Company;
+  onClose: () => void;
+  onSubmit: (payload: Record<string, unknown>) => void | Promise<void>;
+}) {
+  const formId = "company-form";
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+
+    const payload: Record<string, unknown> = {
+      name: form.get("name"),
+      legalName: form.get("legalName"),
+      document: form.get("document")
+    };
+    const omieAppKey = String(form.get("omieAppKey") ?? "").trim();
+    const omieAppSecret = String(form.get("omieAppSecret") ?? "").trim();
+    if (company) {
+      // Na edicao, campo vazio significa "mantenha o que esta gravado" — o
+      // segredo nunca volta do servidor, entao um submit sem redigitar nao pode
+      // apagar a integracao.
+      if (omieAppKey) payload.omieAppKey = omieAppKey;
+      if (omieAppSecret) payload.omieAppSecret = omieAppSecret;
+    } else {
+      payload.omieAppKey = omieAppKey || null;
+      payload.omieAppSecret = omieAppSecret || null;
+    }
+
+    void onSubmit(payload);
+  }
+
+  return (
+    <Modal
+      title={title}
+      description="Valor acertado, datas do ciclo e dados do boleto ficam na secao Financeiro."
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button type="submit" variant="primary" form={formId}>
+            Salvar
+          </Button>
+        </>
+      }
+    >
+      <form id={formId} className="adm-form" onSubmit={handleSubmit}>
+        <Fieldset legend="Identificacao">
+          <div className="adm-grid">
+            <Field label="Nome fantasia">
+              <input className="adm-input" name="name" defaultValue={company?.name} required />
+            </Field>
+            <Field label="Razao social">
+              <input
+                className="adm-input"
+                name="legalName"
+                defaultValue={company?.legalName}
+                required
+              />
+            </Field>
+            <Field
+              label="CNPJ"
+              hint="Serve de padrao para o boleto quando o cadastro de cobranca nao tiver documento proprio."
+            >
+              <input
+                className="adm-input adm-input-mono"
+                name="document"
+                defaultValue={company?.document}
+              />
+            </Field>
+          </div>
+        </Fieldset>
+
+        <Fieldset legend="Integracao OMIE">
+          {company && (
+            <p className="adm-field-hint">
+              {company.omieAppKeyMasked
+                ? `Configurado (App Key ${company.omieAppKeyMasked}). Deixe vazio para manter.`
+                : "Nao configurado. Os desktops desta pedreira nao conectam ao OMIE."}
+            </p>
+          )}
+          <div className="adm-grid">
+            <Field label="App Key">
+              <input className="adm-input adm-input-mono" name="omieAppKey" autoComplete="off" />
+            </Field>
+            <Field
+              label="App Secret"
+              hint={company ? "Vazio mantem; salve os dois vazios para limpar." : undefined}
+            >
+              <input
+                className="adm-input"
+                name="omieAppSecret"
+                type="password"
+                autoComplete="off"
+              />
+            </Field>
+          </div>
+        </Fieldset>
+      </form>
+    </Modal>
+  );
+}
+
+/**
+ * Renomeia uma balanca ja ativada.
+ *
+ * O nome nao vale so para esta lista: e o rotulo que TODAS as maquinas da
+ * pedreira exibem para aquele computador — a legenda de cores da tela de
+ * Operacoes e o campo "Computador" do detalhe da operacao saem do espelho local
+ * `devices`, que cada desktop reescreve com o que vem da nuvem. Dai o aviso no
+ * formulario: quem renomeia precisa saber que a troca aparece em todo mundo, e
+ * que nao e preciso reativar nada para isso.
+ *
+ * Validacao controlada (e nao `required` do HTML) porque o botao Salvar fica
+ * desabilitado ate o nome ficar valido: nome em branco na nuvem viraria o
+ * generico "Computador" em todas as maquinas, sem erro nenhum na tela.
+ */
+function DeviceNameModal({
+  device,
+  unitLabel,
+  onClose,
+  onSubmit
+}: {
+  device: Device;
+  unitLabel: string;
+  onClose: () => void;
+  onSubmit: (name: string) => void | Promise<void>;
+}) {
+  const formId = "device-name-form";
+  const [name, setName] = useState(device.name);
+  const parsed = parseDeviceName(name);
+
+  return (
+    <Modal
+      title={`Renomear ${device.name}`}
+      onClose={onClose}
+      size="sm"
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button type="submit" variant="primary" form={formId} disabled={!parsed.ok}>
+            Salvar
+          </Button>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className="adm-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!parsed.ok) return;
+          void onSubmit(parsed.name);
+        }}
+      >
+        <Field
+          label="Nome do computador"
+          hint={`Como esta balanca aparece para todos. Ate ${DEVICE_NAME_MAX_LENGTH} caracteres.`}
+          error={parsed.ok ? null : parsed.error}
+        >
+          <input
+            className="adm-input"
+            value={name}
+            maxLength={DEVICE_NAME_MAX_LENGTH}
+            onChange={(event) => setName(event.target.value)}
+            autoFocus
+          />
+        </Field>
+        <Note tone="info">
+          Ao salvar, os computadores da unidade {unitLabel} passam a exibir o novo nome em segundos
+          — na legenda de cores e no responsavel de cada operacao. Nenhuma balanca precisa ser
+          reativada, e as operacoes ja registradas continuam as mesmas.
+        </Note>
+      </form>
+    </Modal>
+  );
+}
+
+function UnitFormModal({
+  unit,
+  companies,
+  defaultCompanyId,
+  onClose,
+  onSubmit
+}: {
+  unit?: Unit;
+  companies: Company[];
+  defaultCompanyId?: string;
+  onClose: () => void;
+  onSubmit: (payload: { companyId?: string; name: string }) => void | Promise<void>;
+}) {
+  const formId = "unit-form";
+  return (
+    <Modal
+      title={unit ? `Editar ${unit.name}` : "Nova unidade"}
+      onClose={onClose}
+      size="sm"
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button type="submit" variant="primary" form={formId}>
+            Salvar
+          </Button>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className="adm-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          void onSubmit({
+            companyId: unit ? undefined : String(form.get("companyId") ?? ""),
+            name: String(form.get("name") ?? "")
+          });
+        }}
+      >
+        {!unit && (
+          <Field label="Pedreira">
+            <select
+              className="adm-select"
+              name="companyId"
+              defaultValue={defaultCompanyId}
+              required
+            >
+              <option value="">Selecione</option>
+              {companies.map((company) => (
+                <option key={company.id} value={company.id}>
+                  {company.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        <Field label="Nome da unidade">
+          <input className="adm-input" name="name" defaultValue={unit?.name} required autoFocus />
+        </Field>
+      </form>
+    </Modal>
+  );
+}
+
+function UserFormModal({
+  role,
+  units,
+  companies,
+  onClose,
+  onSubmit
+}: {
+  role: "loader" | "comercial";
+  units: Unit[];
+  companies: Company[];
+  onClose: () => void;
+  onSubmit: (payload: Record<string, unknown>) => void | Promise<void>;
+}) {
+  const formId = "user-form";
+  return (
+    <Modal
+      title={role === "comercial" ? "Novo usuario do site" : "Novo carregador"}
+      description={
+        role === "comercial"
+          ? "Acessa os relatorios de venda da pedreira."
+          : "Acessa a fila de carregamento da unidade."
+      }
+      onClose={onClose}
+      size="sm"
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button type="submit" variant="primary" form={formId}>
+            Criar
+          </Button>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className="adm-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          void onSubmit({
+            email: form.get("email"),
+            password: form.get("password"),
+            name: form.get("name"),
+            unitId: form.get("unitId"),
+            role: role === "comercial" ? (form.get("role") ?? "comercial") : role
+          });
+        }}
+      >
+        <Field label="Nome completo">
+          <input className="adm-input" name="name" required autoFocus />
+        </Field>
+        {role === "comercial" && <RoleField defaultValue="comercial" />}
+        <Field label="E-mail">
+          <input className="adm-input" name="email" type="email" required />
+        </Field>
+        <Field label="Senha" hint="Minimo de 6 caracteres. Anote antes de repassar ao usuario.">
+          <PasswordInput name="password" required minLength={6} />
+        </Field>
+        <Field label="Unidade">
+          <select className="adm-select" name="unitId" required>
+            <option value="">Selecione</option>
+            {units
+              .filter((unit) => unit.isActive)
+              .map((unit) => (
+                <option key={unit.id} value={unit.id}>
+                  {unit.name} — {companies.find((c) => c.id === unit.companyId)?.name ?? ""}
+                </option>
+              ))}
+          </select>
+        </Field>
+      </form>
+    </Modal>
+  );
+}
+
+/** Seletor de perfil do site com o que cada um pode, logo abaixo. */
+function RoleField({ defaultValue }: { defaultValue: UserRole }) {
+  const [value, setValue] = useState<UserRole>(defaultValue);
+  const hint = SITE_ROLE_OPTIONS.find((option) => option.value === value)?.hint;
+  return (
+    <Field label="Perfil" hint={hint}>
+      <select
+        className="adm-select"
+        name="role"
+        value={value}
+        onChange={(event) => setValue(parseUserRole(event.target.value))}
+      >
+        {SITE_ROLE_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
+/**
+ * "Pede senha para mudar preco": quem estiver marcado digita a senha de alteracao de preco da
+ * pedreira (a mesma da balanca) para mudar preco pelo site — da pesagem e do cadastro. Na
+ * operacao e no administrador quem decide e o perfil, e a caixa so mostra a regra.
+ */
+function PricePasswordToggle({
+  user,
+  onChange
+}: {
+  user: LoaderUser;
+  onChange: (requires: boolean) => void;
+}) {
+  const rule = pricePasswordRule(user.role);
+  return (
+    <label
+      className="adm-check"
+      title={
+        rule === "always"
+          ? "O perfil Operacao sempre pede a senha de preco."
+          : rule === "never"
+            ? "Os perfis Administrador e Comercial nunca pedem senha."
+            : "A senha e a de alteracao de preco da pedreira."
+      }
+    >
+      <input
+        type="checkbox"
+        checked={rule === "flag" ? user.requiresPricePassword : rule === "always"}
+        disabled={rule !== "flag"}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      {rule === "always"
+        ? "Sempre pede senha"
+        : rule === "never"
+          ? "Sem senha"
+          : "Pede senha de preco"}
+    </label>
+  );
+}
+
+/** Troca o perfil de um login na propria linha da tabela. */
+function RoleSelect({ user, onChange }: { user: LoaderUser; onChange: (role: UserRole) => void }) {
+  return (
+    <select
+      className="adm-select"
+      aria-label={`Perfil de ${user.name}`}
+      title={SITE_ROLE_OPTIONS.find((option) => option.value === user.role)?.hint}
+      value={user.role}
+      onChange={(event) => onChange(parseUserRole(event.target.value))}
+    >
+      {user.role === "loader" && <option value="loader">Carregador</option>}
+      {SITE_ROLE_OPTIONS.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/**
+ * Cria o login do site de um acesso do sistema. A unidade e a pedreira vem do proprio
+ * computador cadastrado; o nome ja vem preenchido com o dele.
+ */
+function DeviceLoginModal({
+  device,
+  onClose,
+  onSubmit
+}: {
+  device: Device;
+  onClose: () => void;
+  onSubmit: (payload: Record<string, unknown>) => void | Promise<void>;
+}) {
+  const formId = "device-login-form";
+  return (
+    <Modal
+      title={`Login do site — ${device.name}`}
+      description="E com este e-mail e senha que a pessoa deste computador entra no KyberRock Web."
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button type="submit" variant="primary" form={formId}>
+            Criar login
+          </Button>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className="adm-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          void onSubmit({
+            name: form.get("name"),
+            email: form.get("email"),
+            password: form.get("password"),
+            role: form.get("role")
+          });
+        }}
+      >
+        <Field label="Nome" hint="Quem usa este computador. Aparece no rodape do site.">
+          <input className="adm-input" name="name" required defaultValue={device.name} />
+        </Field>
+        <RoleField defaultValue="monitoramento" />
+        <Field label="E-mail">
+          <input className="adm-input" name="email" type="email" required autoFocus />
+        </Field>
+        <Field label="Senha" hint="Minimo de 6 caracteres. Anote antes de repassar.">
+          <PasswordInput name="password" required minLength={6} />
+        </Field>
+      </form>
+    </Modal>
+  );
+}
+
+function PasswordModal({
+  user,
+  onClose,
+  onSubmit
+}: {
+  user: LoaderUser;
+  onClose: () => void;
+  onSubmit: (password: string) => void | Promise<void>;
+}) {
+  const formId = "password-form";
+  return (
+    <Modal
+      title={`Senha de ${user.name}`}
+      description={user.email}
+      onClose={onClose}
+      size="sm"
+      footer={
+        <>
+          <Button onClick={onClose}>Cancelar</Button>
+          <Button type="submit" variant="primary" form={formId}>
+            Salvar senha
+          </Button>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className="adm-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          void onSubmit(String(form.get("password") ?? ""));
+        }}
+      >
+        <Note>
+          A senha atual nao pode ser exibida — o Supabase Auth guarda apenas o hash dela. Defina uma
+          nova aqui e repasse ao usuario.
+        </Note>
+        <Field label="Nova senha">
+          <PasswordInput name="password" required minLength={6} autoFocus />
+        </Field>
+      </form>
+    </Modal>
+  );
+}

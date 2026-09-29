@@ -1,9 +1,12 @@
 /*
  * Copia de `apps/loader-web/src/lib/pwa-install.ts` (o site nao importa outro workspace de
  * proposito): o "Instalar app" do carregador veio junto com a tela dele para o KyberRock Web.
- * O caminho do service worker e relativo porque o site e publicado com `base: "./"`.
+ * O service worker sai da raiz do site (`publicAsset`), qualquer que seja a pagina aberta: o
+ * registro relativo a pagina (`./sw.js`) em `/whatsapp/<token>` pediria `/whatsapp/sw.js`.
  */
 import { useEffect, useState } from "react";
+
+import { publicAsset } from "./public-asset";
 
 /**
  * Evento `beforeinstallprompt` do Chrome/Edge/Android. Nao faz parte do lib.dom
@@ -92,7 +95,7 @@ export function registerServiceWorker(): void {
   // Em dev (vite) nao ha /sw.js buildado; o registro falharia com 404 no console.
   if (!import.meta.env.PROD) return;
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch(() => {
+    navigator.serviceWorker.register(publicAsset("sw.js")).catch(() => {
       // Best-effort: sem service worker o site continua funcionando no navegador.
     });
   });

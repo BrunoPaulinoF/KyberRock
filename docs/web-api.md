@@ -71,8 +71,8 @@ errada. Enquanto a pedreira não tem a chave (`company_price_codes`, migração 
 a senha fixa antiga (`companies.price_change_password`); sem nenhuma das duas, 403 pedindo para
 falar com o suporte, sem contar como erro.
 
-O carregador e o comercial ainda entram também pelo KyberRock Portal (`apps/loader-web`); o
-portal deixa de receber os dois depois dos testes.
+O KyberRock Portal (`apps/loader-web`) sai do ar: carregador, comercial e o painel `/admin` já
+estão no site.
 
 Quem cria usuários é o painel `/admin` da Kybernan: aba **Acessos do sistema** (um login por
 computador cadastrado, coluna "Login do site", gravado com `user_profiles.device_id`) ou

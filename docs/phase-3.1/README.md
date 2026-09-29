@@ -61,8 +61,9 @@ Alem do auto-update, existe um link publico fixo que sempre baixa a versao mais 
 
 - Edge Function `supabase/functions/desktop-download` (publica, `verify_jwt = false`): consulta o
   release mais recente no GitHub e redireciona para a URL assinada do `.exe`.
-- Atalho amigavel no nginx do loader-web: `GET /download` -> 302 para a Edge Function. Ex.:
-  `https://kybernan-kyber-rock.qdidmr.easypanel.host/download`.
+- Atalho amigavel no KyberRock Web (`apps/web/public/.htaccess`): `GET /download` -> 302 para a
+  Edge Function. Ex.: `https://kyberrock.kybernan.com.br/download`. (Antes era o nginx do
+  loader-web, no EasyPanel, que sai do ar.)
 
 Passos para ativar:
 
@@ -70,7 +71,7 @@ Passos para ativar:
    PAT do `GH_UPDATER_TOKEN`: fine-grained, `Contents: read` neste repo).
 2. Deploy da funcao como **publica**: `supabase functions deploy desktop-download --no-verify-jwt`
    (ou toggle "Verify JWT" desligado no dashboard).
-3. Redeploy do loader-web (Docker/EasyPanel) para o nginx passar a servir `/download`.
+3. O atalho `/download` vai junto em todo build do site (Hostinger); nao ha passo manual.
 
 Botao no app: o menu **Configuracoes -> Atualizacao** verifica/instala a atualizacao, e um ponto
 verde aparece na engrenagem quando ha versao nova pronta.

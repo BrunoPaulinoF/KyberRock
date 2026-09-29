@@ -117,6 +117,7 @@ import {
   type YardTicket
 } from "../lib/monitor";
 import { OPEN_STATUS } from "../lib/operation";
+import { publicAsset } from "../lib/public-asset";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
 import { useMediaQuery } from "../lib/use-media-query";
@@ -691,7 +692,7 @@ export function MonitorView(props: MonitorViewProps) {
   return (
     <div className={`mon${fit ? " is-fit" : ""}`}>
       <header className="mon-top">
-        <img src="./logo.png" alt="" className="mon-logo" />
+        <img src={publicAsset("logo.png")} alt="" className="mon-logo" />
         <div className="mon-title">
           <h1>Monitoramento</h1>
           <span>{props.unitName || "Unidade"}</span>

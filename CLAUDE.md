@@ -39,8 +39,8 @@ apps/desktop (Electron + SQLite)  --HTTPS when online-->  Supabase (Postgres + E
                                                                |  server-side only
                                                                v
                                                           OMIE ERP API
-apps/loader-web (React)  --read-only-->  Supabase Postgres   (loader sees open loading requests)
-apps/web (React)         --RLS read / writes only via `web-api`-->  Supabase   (comercial/gestor)
+apps/web (React)         --RLS read / writes only via `web-api`-->  Supabase   (every site profile, loader included)
+apps/web `/admin`        --admin session-->  admin-api / admin-billing   (Kybernan platform console)
 ```
 
 - **`apps/desktop`** — the operator app and the only place hardware lives. The Electron main
@@ -49,12 +49,18 @@ apps/web (React)         --RLS read / writes only via `web-api`-->  Supabase   (
   `contextIsolation`/`sandbox` boundary via `src/preload/preload.ts` and
   `ipcMain.handle("desktop:*", …)`. See AGENTS.md "Desktop quirks" for native-rebuild and
   workspace-copy gotchas.
-- **`apps/web`** — the comercial/gestor site (`docs/plano-migracao-web.md`, `docs/web-api.md`):
-  reads Postgres under RLS with the user's login and writes **only** through the `web-api` Edge
-  Function, acting as the virtual device `web-<company_id>`. Deployed by Hostinger from this
-  folder; it imports no other workspace on purpose.
-- **`apps/loader-web`** — read-only React site where the loader (carregador) sees open loading
-  requests projected into Supabase Postgres. Served via nginx in Docker.
+- **`apps/web`** — the KyberRock Web (`docs/plano-migracao-web.md`, `docs/web-api.md`), at
+  `https://kyberrock.kybernan.com.br`: every site profile (carregador, monitoramento, comercial,
+  gestor, operacao, administrador) reads Postgres under RLS with the user's login and writes
+  **only** through the `web-api` Edge Function, acting as the virtual device `web-<company_id>`.
+  It is also the public site: presentation page at `/`, the Kybernan platform console at `/admin`
+  (`src/admin/`, own login via `admin-auth`), the WhatsApp pairing page at `/whatsapp/:token` and
+  the installer link `/download`. Deployed by Hostinger from this folder; it imports no other
+  workspace on purpose.
+- **`apps/loader-web`** — **legacy, being shut down** (Docker/nginx on EasyPanel). Everything it
+  served (loader queue, comercial report, `/admin`, landing page, WhatsApp page, `/download`)
+  now lives in `apps/web`; the code is frozen until the workspace is deleted. See AGENTS.md
+  "Saida do loader-web (EasyPanel)".
 - **`supabase/functions/*`** — Deno Edge Functions, the _only_ place sensitive integrations run:
   admin surface (`admin-api`, `admin-auth`), OMIE bridge (`omie-sync`), desktop sync/lifecycle
   (`desktop-sync`, `desktop-pull`, `desktop-status`, `desktop-activate`, `desktop-download`),
@@ -303,7 +309,8 @@ These recur across the codebase and are easy to violate accidentally:
   (`documentacao` | `conhecimento` | `desconhecido`): só a primeira cita fonte, as outras duas
   oferecem o suporte. Sem nuvem ele cai na documentação local, e o que ela não cobre vira "fale
   com o suporte", nunca um palpite. A chave e o modelo da OpenAI são **globais** e vêm do painel
-  do loader-web (tabela `ai_assistant_settings`), não de secret por instalação.
+  da plataforma (`/admin` do KyberRock Web, tabela `ai_assistant_settings`), não de secret por
+  instalação.
 
 ## Product & design docs
 

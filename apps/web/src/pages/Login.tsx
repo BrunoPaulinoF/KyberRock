@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 
 import { Field } from "../components/ui";
 import { useAuth } from "../lib/auth";
+import { isStandaloneDisplay } from "../lib/pwa-install";
+import { publicAsset } from "../lib/public-asset";
 import { isSupabaseConfigured } from "../lib/supabase";
 
 export function Login() {
@@ -34,7 +36,7 @@ export function Login() {
       <div className="panel">
         <div className="panel-body">
           <div className="login-brand">
-            <img src="./logo.png" alt="" />
+            <img src={publicAsset("logo.png")} alt="" />
             <div>
               <h1>KyberRock</h1>
               <small>Comercial e gestao</small>
@@ -71,6 +73,12 @@ export function Login() {
               {busy ? "Entrando..." : "Entrar"}
             </button>
           </form>
+          {/* No app instalado (carregador) a pagina de apresentacao nao faz sentido. */}
+          {!isStandaloneDisplay() && (
+            <p className="login-foot">
+              <Link to="/">Conheca o KyberRock</Link>
+            </p>
+          )}
         </div>
       </div>
     </div>
