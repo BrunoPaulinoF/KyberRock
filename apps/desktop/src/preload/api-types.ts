@@ -877,6 +877,8 @@ export interface KyberRockDesktopApi {
   probeInternet: () => Promise<boolean>;
   /** Avisa o processo principal da queda/volta da internet (trava de edicao e conferencia). */
   setInternetOnline: (online: boolean) => Promise<void>;
+  /** Diferenca entre o relogio deste computador e o da nuvem; `warn` = avisar na tela. */
+  getClockStatus: () => Promise<{ offsetMs: number; warn: boolean }>;
   /** Cadastros feitos sem internet ainda nao conferidos — esses continuam editaveis. */
   listOfflinePendingCadastro: () => Promise<{
     customers: string[];

@@ -19,6 +19,7 @@
 import { createHmac } from "node:crypto";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
+import { realNowMs } from "./cloud-clock.js";
 import { readLocalSetting, readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
 
 /** Quanto tempo cada codigo vale. */
@@ -91,7 +92,9 @@ export function applyPriceCodeFromCloud(
 export function verifyStoredPriceCode(
   database: DesktopDatabase,
   typed: string,
-  nowMs: number = Date.now()
+  // Relogio REAL: o deslocamento da nuvem e somado aqui embaixo, e o `Date` do processo ja
+  // vem corrigido (`cloud-clock.ts`) — somar sobre ele corrigiria duas vezes.
+  nowMs: number = realNowMs()
 ): boolean | null {
   const secret = readStringLocalSetting(database, SECRET_SETTING);
   if (!isUsablePriceCodeSecret(secret)) return null;

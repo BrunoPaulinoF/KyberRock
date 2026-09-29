@@ -1772,6 +1772,27 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     void desktopApi.setInternetOnline(isOnline).catch(() => undefined);
   }, [desktopApi, isOnline]);
 
+  // Relogio do Windows muito diferente do da nuvem: o programa ja usa a hora certa
+  // (`cloud-clock.ts`), mas o aviso pede para acertar o computador tambem.
+  const [clockOffsetMs, setClockOffsetMs] = useState<number | null>(null);
+  useEffect(() => {
+    if (!desktopApi || typeof desktopApi.getClockStatus !== "function") return;
+    let active = true;
+    const read = () =>
+      void desktopApi
+        .getClockStatus()
+        .then((clock) => {
+          if (active) setClockOffsetMs(clock.warn ? clock.offsetMs : null);
+        })
+        .catch(() => undefined);
+    read();
+    const intervalId = window.setInterval(read, 5 * 60 * 1000);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, [desktopApi]);
+
   // Aviso na troca de estado da internet (o teste real, nao so a placa de rede).
   const previousOnlineRef = useRef(isOnline);
   useEffect(() => {
@@ -3170,6 +3191,13 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   liberadas Nova entrada, Insights e as Configuracoes. As entradas registradas agora
                   ficam guardadas neste computador e sobem sozinhas quando a internet voltar.
                 </div>
+              </div>
+            ) : null}
+            {clockOffsetMs !== null ? (
+              <div role="status" style={styles.clockBanner}>
+                <strong>{describeClockOffset(clockOffsetMs)}</strong> O KyberRock ja usa a hora
+                certa da nuvem, mas acerte o relogio do Windows: Configuracoes &gt; Hora e idioma
+                &gt; Data e hora &gt; Sincronizar agora.
               </div>
             ) : null}
             {showSettings ? (
@@ -5947,6 +5975,16 @@ function SidebarItem({
       ) : null}
     </div>
   );
+}
+
+/** `offsetMs` = nuvem - este computador: positivo e o relogio daqui atrasado. */
+export function describeClockOffset(offsetMs: number): string {
+  const minutes = Math.round(Math.abs(offsetMs) / 60_000);
+  const amount =
+    minutes >= 60
+      ? `${Math.floor(minutes / 60)} h ${minutes % 60} min`
+      : `${minutes} minuto${minutes === 1 ? "" : "s"}`;
+  return `O relogio deste computador esta ${amount} ${offsetMs > 0 ? "atrasado" : "adiantado"}.`;
 }
 
 function SidebarSection({ title, children }: { title: string; children: React.ReactNode }) {
@@ -13425,6 +13463,15 @@ const styles = {
     // de uma vez e a lista inteira se remexe na hora de trocar de tela.
     scrollbarGutter: "stable" as const,
     paddingRight: "4px"
+  },
+  clockBanner: {
+    padding: "10px 14px",
+    borderRadius: "10px",
+    border: "1px solid #fcd34d",
+    background: "#fffbeb",
+    color: "#92400e",
+    fontSize: "13px",
+    lineHeight: 1.4
   },
   offlineBanner: {
     display: "flex",

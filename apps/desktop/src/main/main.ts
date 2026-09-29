@@ -88,6 +88,11 @@ import {
 } from "../services/update-channel.js";
 import type { OperationType } from "../services/weighing-operations.js";
 import { spreadsheetHtmlToXlsx, xlsxFileName } from "../services/html-to-xlsx.js";
+import { installCloudClock } from "../services/cloud-clock.js";
+
+// Antes de tudo: o processo inteiro passa a carimbar a hora da NUVEM, nao a do Windows
+// (`services/cloud-clock.ts`). O deslocamento chega com o runtime e com cada validacao.
+installCloudClock();
 
 const require = createRequire(import.meta.url);
 const { autoUpdater } = require("electron-updater") as typeof ElectronUpdater;
@@ -2143,6 +2148,11 @@ function registerIpcHandlers(): void {
       return runtime.setCloudSyncConfig(config);
     }
   );
+
+  ipcMain.handle("desktop:get-clock-status", () => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getClockStatus();
+  });
 
   ipcMain.handle("desktop:set-internet-online", (_event, online: boolean) => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");

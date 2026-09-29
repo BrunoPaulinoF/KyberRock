@@ -432,6 +432,7 @@ const desktopApi = {
   probeInternet: () => ipcRenderer.invoke("desktop:probe-internet"),
   setInternetOnline: (online: boolean) => ipcRenderer.invoke("desktop:set-internet-online", online),
   listOfflinePendingCadastro: () => ipcRenderer.invoke("desktop:list-offline-pending-cadastro"),
+  getClockStatus: () => ipcRenderer.invoke("desktop:get-clock-status"),
   onUpdateAvailable: (callback: (event: unknown, version: string) => void) =>
     ipcRenderer.on("desktop:update-available", callback),
   offUpdateAvailable: (callback: (event: unknown, version: string) => void) =>

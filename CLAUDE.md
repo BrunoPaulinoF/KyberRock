@@ -210,6 +210,11 @@ These recur across the codebase and are easy to violate accidentally:
   pesagem viva. E **excluir cliente** passou a exigir cadastro sem historico nenhum
   (`historyCount`): quem tem carga ou credito usa Inativar ou Unificar, porque excluir nunca
   apagou pesagem — so escondia o caminho ate ela.
+- **Relogio da nuvem** (AGENTS.md "Relogio da nuvem: todas as balancas na mesma hora"): o
+  processo principal e o `'now'` do SQLite usam a hora do SERVIDOR (`services/cloud-clock.ts`),
+  medida no `desktop-status` contra o relogio real (`realNowMs`, nunca o `Date` ja corrigido).
+  Horario de maquina diferente fazia cadastro chegar ao site horas depois. A nuvem ainda troca
+  `updated_at` no futuro pela hora dela (`_shared/future-timestamp.ts`).
 - **Sem internet** (AGENTS.md "Sem internet: telas travadas e cadastro que espera conferencia"):
   a internet e o teste REAL (`renderer/internet-status.ts`), nao o `navigator.onLine`. Sem ela so
   ficam Nova entrada, Insights e Configuracoes; o runtime recusa editar cadastro que ja existia

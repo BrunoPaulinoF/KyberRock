@@ -18,6 +18,12 @@ import {
 } from "./update-notice.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
 import { applyPriceCodeFromCloud } from "./price-code.js";
+import {
+  CLOUD_CLOCK_OFFSET_SETTING,
+  measureCloudClockOffset,
+  realNowMs,
+  setCloudClockOffsetMs
+} from "./cloud-clock.js";
 import { writeUpdateChannel } from "./update-channel.js";
 import { applyPriceMasterFromCloud } from "./price-authority.js";
 import {
@@ -407,12 +413,23 @@ export async function validateDesktopAccess(
         // Ignora falha ao gravar o aviso.
       }
       applyPriceMasterFromCloud(database, readPriceMasters(data), credentials.deviceId, now);
+      // Relogio da nuvem (`cloud-clock.ts`): a hora do servidor nesta resposta, contra o
+      // relogio REAL deste computador. Best-effort como o resto.
+      const receivedAtRealMs = realNowMs();
+      try {
+        const offset = measureCloudClockOffset(data?.checkedAt, receivedAtRealMs);
+        if (offset !== null && setCloudClockOffsetMs(offset)) {
+          writeLocalSetting(database, CLOUD_CLOCK_OFFSET_SETTING, offset);
+        }
+      } catch {
+        // Ignora: o deslocamento gravado continua valendo.
+      }
       // Best-effort: a senha rotativa nunca pode derrubar a validacao que libera a operacao.
       try {
         applyPriceCodeFromCloud(database, {
           secret: data.priceCodeSecret,
           serverTime: data.checkedAt,
-          receivedAtMs: Date.now()
+          receivedAtMs: receivedAtRealMs
         });
       } catch {
         // Ignora: a chave e o relogio gravados continuam valendo.
