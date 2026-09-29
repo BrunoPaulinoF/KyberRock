@@ -633,6 +633,16 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   pelo `upsert_customer`, porque sobe ao OMIE com o cliente); o formulario de edicao so a pede no
   cliente novo. Na aba Entrega futura, **Buscar no OMIE** (`lookup_future_billing_invoice`) traz
   produto e total da propria NF-e — so preenche, quem grava e o Salvar.
+- **O numero da nota precisa SUBIR da balanca.** Quem acha a nota e a conferencia do desktop
+  (`reconcileOmieBillingFromOmie`), e ela grava so no SQLite — de proposito sem mexer em
+  `updated_at`, que republicaria toda pesagem conferida. Faltava subir o que MUDOU: em 29/09,
+  1.703 cargas com nota apareciam no site como "Sem nota" com o log da `omie-sync` mostrando as
+  notas achadas. Agora a pesagem cujo faturamento mudou (faturada, numero da NF, documento
+  sumido) entra na fila da nuvem (`enqueueBillingChangeCloudPush`, chave com o estado novo, entao
+  a mesma resposta nao reenfileira), e a primeira sincronizacao da versao reenvia uma vez o que
+  ja estava conferido (`enqueueOmieBillingCloudBackfill`, so a unidade da balanca, 120 dias).
+  Em `/cupons`, o `omie_sales_order_id` e o "Codigo interno no OMIE" — com o nome "Pedido OMIE"
+  ele era lido como o pedido do cliente.
 - **Numero da nota fiscal** (`omie_invoice_number`) aparece na tela Operacoes (coluna propria nas
   concluidas; a busca acha pelo numero da NF), no fechamento diario e no periodo dos Relatorios,
   nas pesagens do cliente e no cupom virtual de `/cupons` — carimbado NO FIM da via

@@ -5544,9 +5544,14 @@ interface OmieOrderBillingState {
  * cobrar ninguem porque ninguem sabia o que dele ja tinha sido resolvido.
  *
  * Roda junto da sincronizacao cloud, em lote e por rodizio (`omie_billing_checked_at`), e
- * NAO mexe em `updated_at`: as colunas de faturamento sao locais — cada balanca aprende do
- * proprio OMIE —, e bumpar a versao republicaria a operacao inteira na nuvem a toa (na
- * primeira passada, o acervo inteiro de uma vez).
+ * NAO mexe em `updated_at`: bumpar a versao de toda pesagem conferida a republicaria na
+ * nuvem a cada passada, mudasse ou nao (na primeira passada, o acervo inteiro de uma vez).
+ *
+ * Mas o que MUDOU sobe (`enqueueBillingChangeCloudPush`). As colunas de faturamento eram so
+ * locais ate a migracao `202609220004`; desde entao o site mostra a nota das pesagens
+ * (Operacoes, Relatorios, Cupons) e le essas colunas da nuvem. A conferencia achava a nota e
+ * gravava aqui, mas nada a levava para la: em 29/09, 1.703 cargas com nota apareciam no site
+ * como "Sem nota" enquanto o log da `omie-sync` mostrava as notas sendo encontradas.
  */
 /**
  * Quais pesagens ainda tem o que perguntar ao OMIE.
@@ -5878,6 +5883,13 @@ export async function reconcileOmieBillingFromOmie(
       WHERE id = ?`
   );
 
+  // O que o site mostra de cada pesagem ANTES da passada: so o que mudar sobe para a nuvem.
+  const before = new Map(pending.map((row) => [row.id, row]));
+  /** Pesagem -> o estado novo (entra na chave do envio, que nao se repete). */
+  const changed = new Map<string, string>();
+  const invoiceBefore = (operationId: string) =>
+    (before.get(operationId)?.omie_invoice_number ?? "").trim() || null;
+
   for (const result of results) {
     if (result.error) {
       errors.push(`Faturamento OMIE ${result.omieOrderId}: ${result.error}`);
@@ -5886,6 +5898,9 @@ export async function reconcileOmieBillingFromOmie(
     }
 
     if (!result.found) {
+      if (before.get(result.operationId)?.omie_billing_status !== OMIE_BILLING_STATUS_MISSING) {
+        changed.set(result.operationId, OMIE_BILLING_STATUS_MISSING);
+      }
       // O documento sumiu do OMIE (excluido por alguem la). A situacao continua sendo
       // "falta faturar" de proposito — a pesagem REALMENTE nao foi faturada, e agora nem
       // pedido tem. O texto explica isso na linha da conferencia.
@@ -5896,9 +5911,14 @@ export async function reconcileOmieBillingFromOmie(
       continue;
     }
 
+    const invoiceNumber = (result.invoiceNumber ?? "").trim() || null;
     if (!result.billed) {
       markChecked.run(result.orderNumber, result.invoiceNumber, result.operationId);
       if (withoutNumberBefore.has(result.operationId) && result.invoiceNumber) invoiceNumbers++;
+      if (invoiceNumber && invoiceNumber !== invoiceBefore(result.operationId)) {
+        const status = before.get(result.operationId)?.omie_billing_status ?? "open";
+        changed.set(result.operationId, `${status}:${invoiceNumber}`);
+      }
       continue;
     }
 
@@ -5909,6 +5929,13 @@ export async function reconcileOmieBillingFromOmie(
       result.documentUrl,
       result.operationId
     );
+    const invoiceAfter = invoiceNumber ?? invoiceBefore(result.operationId);
+    if (
+      before.get(result.operationId)?.omie_billing_status !== "billed" ||
+      invoiceAfter !== invoiceBefore(result.operationId)
+    ) {
+      changed.set(result.operationId, `billed:${invoiceAfter ?? ""}`);
+    }
     if (!alreadyBilled.has(result.operationId)) billed++;
     if (withoutNumberBefore.has(result.operationId)) {
       if (result.invoiceNumber) invoiceNumbers++;
@@ -5916,7 +5943,87 @@ export async function reconcileOmieBillingFromOmie(
     }
   }
 
+  for (const [operationId, state] of changed) {
+    enqueueBillingChangeCloudPush(database, operationId, state);
+  }
+
   return { checked: results.length, billed, invoiceNumbers, stillWithoutInvoiceNumber, errors };
+}
+
+/**
+ * Sobe para a nuvem a pesagem cujo faturamento mudou na conferencia (faturada, numero da
+ * nota, documento sumido do OMIE). A chave leva o estado novo: a mesma descoberta repetida
+ * na passada seguinte nao enfileira de novo, e uma mudanca de verdade (a nota que chegou
+ * depois do "faturada") enfileira outra vez.
+ */
+function enqueueBillingChangeCloudPush(
+  database: DesktopDatabase,
+  operationId: string,
+  state: string,
+  now: Date = new Date()
+): void {
+  enqueueSyncJob(
+    database,
+    {
+      target: "cloud",
+      action: "upsert_operation",
+      entityType: "operation",
+      entityId: operationId,
+      idempotencyKey: `cloud:operation:${operationId}:omie-billing:${state}`,
+      payload: { operationId }
+    },
+    now
+  );
+}
+
+/** Marca local: o reenvio unico do faturamento ja conferido (ver abaixo) ja rodou. */
+const OMIE_BILLING_CLOUD_BACKFILL_KEY = "omie_billing_cloud_backfill_v1";
+
+/** Ate quantos dias para tras o reenvio unico alcanca. */
+const OMIE_BILLING_CLOUD_BACKFILL_DAYS = 120;
+
+/**
+ * Reenvio UNICO, na primeira sincronizacao desta versao: as pesagens desta unidade que ja
+ * tem faturamento conferido aqui (situacao ou numero da nota) sobem para a nuvem. Sao as
+ * que a conferencia achou antes de `enqueueBillingChangeCloudPush` existir — o site
+ * mostrava "Sem nota" nelas. So a unidade desta balanca: a projecao carimba `unit_id` com
+ * a unidade dela. Devolve quantas entraram na fila (a fila sobe 100 por ciclo).
+ */
+export function enqueueOmieBillingCloudBackfill(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  now: Date = new Date()
+): number {
+  if (readStringLocalSetting(database, OMIE_BILLING_CLOUD_BACKFILL_KEY)) return 0;
+  // A mesma unidade da conferencia (a da nuvem), que e a que a projecao carimba.
+  const { unitId } = getCloudSettings(database, identity);
+  const rows = database
+    .prepare(
+      `SELECT id, omie_billing_status, omie_invoice_number
+         FROM weighing_operations
+        WHERE unit_id = ?
+          AND deleted_at IS NULL
+          AND status <> 'cancelled'
+          AND (omie_billing_status IS NOT NULL
+               OR trim(COALESCE(omie_invoice_number, '')) <> '')
+          AND date(created_at) >= date(?, ?)`
+    )
+    .all(unitId, now.toISOString(), `-${OMIE_BILLING_CLOUD_BACKFILL_DAYS} days`) as Array<{
+    id: string;
+    omie_billing_status: string | null;
+    omie_invoice_number: string | null;
+  }>;
+  for (const row of rows) {
+    const invoice = (row.omie_invoice_number ?? "").trim();
+    enqueueBillingChangeCloudPush(
+      database,
+      row.id,
+      `${row.omie_billing_status ?? "open"}:${invoice}`,
+      now
+    );
+  }
+  writeLocalSetting(database, OMIE_BILLING_CLOUD_BACKFILL_KEY, now.toISOString());
+  return rows.length;
 }
 
 /**
