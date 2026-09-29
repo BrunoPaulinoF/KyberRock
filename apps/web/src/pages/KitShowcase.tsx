@@ -1,8 +1,20 @@
-import { ClipboardList, Moon, Package, Plus, Sun, Truck, Users } from "lucide-react";
+import {
+  Ban,
+  ClipboardList,
+  Moon,
+  Package,
+  Pencil,
+  Plus,
+  Printer,
+  Sun,
+  Truck,
+  Users
+} from "lucide-react";
 import { useState } from "react";
 
 import { DeskPanel, IconAction, PlateBadge, SearchBar, SectionHead } from "../components/desk";
 import {
+  ActionMenu,
   Alert,
   Badge,
   DataTable,
@@ -18,8 +30,10 @@ import {
   SkeletonRows,
   Tabs,
   useConfirm,
+  useDiscardGuard,
   useToast
 } from "../components/ui";
+import { maskCep, maskDocument, maskPhone, maskPlate } from "../lib/masks";
 import { useTheme } from "../lib/theme";
 
 /**
@@ -45,6 +59,11 @@ export function KitShowcase() {
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState(false);
   const [plate, setPlate] = useState("");
+  const [doc, setDoc] = useState("");
+  const [phone, setPhone] = useState("");
+  const [cep, setCep] = useState("");
+  const [note, setNote] = useState("");
+  const guard = useDiscardGuard(note !== "");
 
   return (
     <main className="kit">
@@ -198,7 +217,34 @@ export function KitShowcase() {
         <SectionHead title="Campos" />
         <div className="grid-2">
           <Field label="Placa" hint="Com ou sem traço.">
-            <input className="input" value={plate} onChange={(e) => setPlate(e.target.value)} />
+            <input
+              className="input"
+              value={plate}
+              onChange={(e) => setPlate(maskPlate(e.target.value))}
+            />
+          </Field>
+          <Field label="CNPJ/CPF" hint="Aceita CNPJ com letras.">
+            <input
+              className="input"
+              value={doc}
+              onChange={(e) => setDoc(maskDocument(e.target.value))}
+            />
+          </Field>
+          <Field label="Telefone">
+            <input
+              className="input"
+              inputMode="tel"
+              value={phone}
+              onChange={(e) => setPhone(maskPhone(e.target.value))}
+            />
+          </Field>
+          <Field label="CEP" hint="Completo, preenche o endereço.">
+            <input
+              className="input"
+              inputMode="numeric"
+              value={cep}
+              onChange={(e) => setCep(maskCep(e.target.value))}
+            />
           </Field>
           <Field label="E-mail do destinatário">
             <input className="input" type="email" required />
@@ -229,14 +275,57 @@ export function KitShowcase() {
           empty="Nenhuma pesagem encontrada."
           emptyHint="Tente outra placa ou limpe a busca."
           columns={[
-            { key: "plate", header: "Placa", render: (row) => <PlateBadge plate={row.plate} /> },
-            { key: "customer", header: "Cliente", render: (row) => row.customer },
-            { key: "product", header: "Produto", render: (row) => row.product },
+            {
+              key: "plate",
+              header: "Placa",
+              sortValue: (row) => row.plate,
+              render: (row) => <PlateBadge plate={row.plate} />
+            },
+            {
+              key: "customer",
+              header: "Cliente",
+              sortValue: (row) => row.customer,
+              render: (row) => row.customer
+            },
+            {
+              key: "product",
+              header: "Produto",
+              sortValue: (row) => row.product,
+              render: (row) => row.product
+            },
             {
               key: "tons",
               header: "Toneladas",
               numeric: true,
+              sortValue: (row) => row.tons,
               render: (row) => row.tons.toLocaleString("pt-BR")
+            },
+            {
+              key: "acoes",
+              header: "",
+              render: (row) => (
+                <div className="row-actions">
+                  <button
+                    type="button"
+                    className="btn small primary"
+                    onClick={() => toast.push(`Fechar ${row.plate}`, "info")}
+                  >
+                    Fechar
+                  </button>
+                  <ActionMenu
+                    actions={[
+                      { label: "Alterar pesagem", icon: Pencil, onClick: () => undefined },
+                      { label: "Reimprimir cupom", icon: Printer, onClick: () => undefined },
+                      {
+                        label: "Cancelar venda",
+                        icon: Ban,
+                        tone: "danger",
+                        onClick: () => undefined
+                      }
+                    ]}
+                  />
+                </div>
+              )
             }
           ]}
         />
@@ -275,10 +364,23 @@ export function KitShowcase() {
         <Modal
           title="Alterar pesagem"
           description="A balança executora registra a alteração."
-          onClose={() => setModal(false)}
+          onClose={() => {
+            setModal(false);
+            setNote("");
+          }}
+          dirty={note !== ""}
           footer={
             <>
-              <button type="button" className="btn" onClick={() => setModal(false)}>
+              <button
+                type="button"
+                className="btn"
+                onClick={() =>
+                  void guard(() => {
+                    setModal(false);
+                    setNote("");
+                  })
+                }
+              >
                 Cancelar
               </button>
               <button type="button" className="btn primary" onClick={() => setModal(false)}>
@@ -290,8 +392,13 @@ export function KitShowcase() {
           <Field label="Produto">
             <input className="input" defaultValue="Brita 1" required />
           </Field>
-          <Field label="Observação" hint="Aparece no cupom.">
-            <textarea className="textarea" rows={3} />
+          <Field label="Observação" hint="Digite algo e tente fechar: o site pergunta antes.">
+            <textarea
+              className="textarea"
+              rows={3}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
           </Field>
         </Modal>
       )}

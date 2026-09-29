@@ -1,41 +1,20 @@
-import {
-  BarChart3,
-  BookOpen,
-  ClipboardCheck,
-  Cloud,
-  Database,
-  FileText,
-  Handshake,
-  KeyRound,
-  LayoutDashboard,
-  ListChecks,
-  LogOut,
-  Menu,
-  MonitorPlay,
-  Moon,
-  Printer,
-  Receipt,
-  ReceiptText,
-  Scale,
-  ScrollText,
-  Settings,
-  Sun,
-  Truck,
-  UserSearch,
-  Wallet,
-  X
-} from "lucide-react";
+import { Cloud, LogOut, Menu, Moon, Printer, Scale, Search, Settings, Sun, X } from "lucide-react";
 import { Fragment, Suspense, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import type { LucideIcon } from "lucide-react";
 
 import { useAuth, useUser } from "../lib/auth";
 import { CadastroLiveProvider } from "../lib/cadastro-live-provider";
+import { CADASTRO_TABLES } from "../lib/cadastro-live";
+import { useOnCadastroChange } from "../lib/cadastro-live-provider";
+import { currentLabel, NAV_SECTIONS } from "../lib/navigation";
 import { canSee, ROLE_LABELS, type Screen } from "../lib/permissions";
 import { usePageTitle } from "../lib/page-title";
 import { publicAsset } from "../lib/public-asset";
+import { q } from "../lib/queries";
 import { preloadScreen } from "../lib/screens";
 import { useTheme } from "../lib/theme";
+import { useAsync } from "../lib/use-async";
+import { CommandPalette, isPaletteShortcut } from "./CommandPalette";
 import { PageSkeleton } from "./ui";
 
 /**
@@ -51,76 +30,32 @@ import { PageSkeleton } from "./ui";
  * tela, ao tocar fora ou no Esc. Um menu so, dois jeitos de mostrar — o CSS decide qual.
  */
 
-interface NavItem {
-  screen: Screen;
-  to: string;
-  label: string;
-  icon: LucideIcon;
-}
-
-const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
-  {
-    title: "Operacional",
-    items: [
-      { screen: "painel", to: "/painel", label: "Painel", icon: LayoutDashboard },
-      { screen: "operacoes", to: "/operacoes", label: "Operações", icon: ListChecks },
-      { screen: "carteira", to: "/carteira", label: "Carteira", icon: Wallet },
-      { screen: "cadastros", to: "/cadastros", label: "Cadastros", icon: Database },
-      { screen: "cupons", to: "/cupons", label: "Cupons", icon: Receipt },
-      { screen: "senha-preco", to: "/senha-preco", label: "Senha de preço", icon: KeyRound }
-    ]
-  },
-  {
-    title: "Análise",
-    items: [
-      { screen: "comercial", to: "/comercial", label: "Comercial", icon: Handshake },
-      { screen: "insights", to: "/insights", label: "Insights", icon: BarChart3 },
-      {
-        screen: "controle-caminhoes",
-        to: "/controle-caminhoes",
-        label: "Controle de caminhões",
-        icon: Truck
-      },
-      {
-        screen: "relatorio-cliente",
-        to: "/relatorio-cliente",
-        label: "Relatório por cliente",
-        icon: UserSearch
-      },
-      {
-        screen: "conferencia-faturamento",
-        to: "/conferencia-faturamento",
-        label: "Conferência de faturamento",
-        icon: ClipboardCheck
-      },
-      {
-        screen: "fechamento",
-        to: "/fechamento",
-        label: "Fechamento de faturas",
-        icon: ReceiptText
-      },
-      { screen: "relatorios", to: "/relatorios", label: "Relatórios", icon: FileText },
-      { screen: "monitoramento", to: "/monitoramento", label: "Monitoramento", icon: MonitorPlay },
-      { screen: "documentacao", to: "/documentacao", label: "Documentação", icon: BookOpen }
-    ]
-  },
-  {
-    title: "Suporte",
-    items: [{ screen: "suporte", to: "/suporte", label: "Logs", icon: ScrollText }]
-  }
-];
-/** Nome da tela aberta, para a barra do celular (a tela das configuracoes nao esta no menu). */
-function currentLabel(pathname: string): string | null {
-  if (pathname.startsWith("/configuracoes")) return "Configurações";
-  for (const section of NAV_SECTIONS) {
-    for (const item of section.items) {
-      if (pathname === item.to || pathname.startsWith(`${item.to}/`)) return item.label;
-    }
-  }
-  return null;
+/**
+ * Numero ao lado de um item do menu (as pesagens abertas em "Operacoes"): o que pede atencao
+ * aparece sem abrir a tela. Atualiza pelo mesmo aviso ao vivo das telas; zero nao aparece.
+ */
+function useNavCounts(companyId: string, unitId: string, seesOperations: boolean) {
+  const open = useAsync(
+    () => (seesOperations ? q.openOperationCount(companyId, unitId) : Promise.resolve(0)),
+    [companyId, unitId, seesOperations],
+    { key: seesOperations ? `menu:abertas:${companyId}:${unitId}` : null }
+  );
+  useOnCadastroChange(open.refresh, CADASTRO_TABLES.operations);
+  return { operacoes: open.data ?? 0 } as Partial<Record<Screen, number>>;
 }
 
 export function Layout() {
+  const user = useUser();
+  return (
+    // Cadastro e pesagem gravados na balanca aparecem nas telas (e no menu) na hora
+    // (`lib/cadastro-live.ts`).
+    <CadastroLiveProvider companyId={user.companyId}>
+      <Shell />
+    </CadastroLiveProvider>
+  );
+}
+
+function Shell() {
   const user = useUser();
   const { logout } = useAuth();
   const { theme, toggle } = useTheme();
@@ -131,7 +66,20 @@ export function Layout() {
   const [navOpen, setNavOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
   const current = currentLabel(location.pathname);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const counts = useNavCounts(user.companyId, user.unitId, canSee(user.role, "operacoes"));
   usePageTitle(current);
+
+  // Ctrl+K (Cmd+K no Mac) abre a busca rapida de qualquer tela.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (!isPaletteShortcut(event)) return;
+      event.preventDefault();
+      setSearchOpen((open) => !open);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // O menu fecha ao trocar de tela, ao clicar fora e no Esc — como o do desktop.
   useEffect(() => {
@@ -189,6 +137,14 @@ export function Layout() {
         </button>
         <img src={publicAsset("logo-128.webp")} alt="" className="sidebar-logo" />
         <span className="mobile-bar-title">{current ?? "KyberRock"}</span>
+        <button
+          type="button"
+          className="mobile-bar-btn mobile-bar-search"
+          onClick={() => setSearchOpen(true)}
+          aria-label="Buscar tela, cliente ou placa"
+        >
+          <Search size={20} />
+        </button>
       </header>
       <button
         type="button"
@@ -211,6 +167,16 @@ export function Layout() {
             <X size={20} />
           </button>
         </div>
+        <button
+          type="button"
+          className="sidebar-search"
+          onClick={() => setSearchOpen(true)}
+          aria-label="Buscar tela, cliente ou placa (Ctrl+K)"
+        >
+          <Search size={15} aria-hidden="true" />
+          <span>Buscar…</span>
+          <kbd>Ctrl K</kbd>
+        </button>
         <nav className="sidebar-nav" aria-label="Navegação principal">
           {NAV_SECTIONS.map((section) => {
             const items = section.items.filter((item) => canSee(user.role, item.screen));
@@ -228,7 +194,12 @@ export function Layout() {
                     onTouchStart={() => preloadScreen(screen)}
                   >
                     <Icon size={16} strokeWidth={2.2} />
-                    {label}
+                    <span className="nav-label">{label}</span>
+                    {(counts[screen] ?? 0) > 0 && (
+                      <span className="nav-count" title={`${counts[screen]} em aberto`}>
+                        {counts[screen]?.toLocaleString("pt-BR")}
+                      </span>
+                    )}
                   </NavLink>
                 ))}
               </Fragment>
@@ -308,14 +279,12 @@ export function Layout() {
         </div>
       </aside>
       <main className="main">
-        {/* Cadastro gravado na balanca aparece nas telas na hora (`lib/cadastro-live.ts`). */}
-        <CadastroLiveProvider companyId={user.companyId}>
-          {/* A tela chega em arquivo proprio (App.tsx): o menu fica na tela enquanto ela baixa. */}
-          <Suspense fallback={<PageSkeleton />}>
-            <Outlet />
-          </Suspense>
-        </CadastroLiveProvider>
+        {/* A tela chega em arquivo proprio (App.tsx): o menu fica na tela enquanto ela baixa. */}
+        <Suspense fallback={<PageSkeleton />}>
+          <Outlet />
+        </Suspense>
       </main>
+      {searchOpen && <CommandPalette onClose={() => setSearchOpen(false)} />}
     </div>
   );
 }
