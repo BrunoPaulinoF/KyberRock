@@ -7,17 +7,19 @@
  * Cada perfil tem um conjunto FECHADO de telas — o que nao e dele nem aparece no menu, e o
  * endereco digitado a mao volta para a tela inicial dele:
  *   - `loader`        carregador: so a fila de carregamento da propria unidade;
- *   - `monitoramento` so o painel de vendas em tempo real, sem configuracoes;
- *   - `comercial`     aba Comercial (a tela do portal), insights, conferencia de faturamento,
+ *   - `monitoramento` so o painel de vendas em tempo real, sem configuracoes — e e o UNICO
+ *                     que ve essa tela;
+ *   - `comercial`     aba Comercial (a tela do portal, e so dele), insights, conferencia de faturamento,
  *                     relatorios, controle de caminhoes, relatorio por cliente, cupons e
  *                     cadastros —
  *                     cadastra tudo e muda preco sem senha; sem configuracoes. E o unico (com o
  *                     administrador) que ve a tela "Senha de preco", o codigo rotativo que ele
  *                     passa para a operacao mudar preco;
- *   - `gestor`        tudo, com configuracoes;
- *   - `operacao`      tudo, com configuracoes; mudar preco sempre pede a senha da pedreira;
- *   - `administrador` tudo, sem senha, mais os logs de suporte e a senha de preco, com
- *                     configuracoes.
+ *   - `gestor`        tudo (menos Comercial e Monitoramento), com configuracoes;
+ *   - `operacao`      tudo (menos Comercial e Monitoramento), com configuracoes; mudar preco sempre pede
+ *                     a senha da pedreira;
+ *   - `administrador` tudo (menos Comercial e Monitoramento), sem senha, mais os logs de suporte e a senha
+ *                     de preco, com configuracoes.
  *
  * Nova entrada nao existe no site para perfil nenhum: a entrada so nasce no KyberRock Desktop,
  * na balanca (a `web-api` recusa o pedido de entrada).
@@ -69,20 +71,21 @@ export const SCREENS = [
 ] as const;
 export type Screen = (typeof SCREENS)[number];
 
-/** As telas do KyberRock Desktop (menu lateral), na ordem dele, menos a Nova entrada. */
+/**
+ * As telas do KyberRock Desktop (menu lateral), na ordem dele, menos a Nova entrada, a aba
+ * Comercial e o Monitoramento — essas duas sao SO do perfil de mesmo nome.
+ */
 const DESK_SCREENS: readonly Screen[] = [
   "painel",
   "operacoes",
   "carteira",
   "cadastros",
-  "comercial",
   "insights",
   "controle-caminhoes",
   "relatorio-cliente",
   "conferencia-faturamento",
   "fechamento",
   "relatorios",
-  "monitoramento",
   "documentacao",
   "configuracoes"
 ];
