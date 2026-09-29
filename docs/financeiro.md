@@ -6,7 +6,7 @@ WhatsApp e bloqueio automático por inadimplência.
 
 > Não confundir com o financeiro **das operações da balança** (venda, pedido,
 > contas a receber do cliente da pedreira). Aquele vive no OMIE e no relatório
-> de vendas do loader-web. Este documento é só a mensalidade do sistema — por
+> de vendas do site (aba Comercial). Este documento é só a mensalidade do sistema — por
 > isso a tela fica em uma aba separada dos cadastros.
 
 ## Onde fica cada coisa
@@ -21,7 +21,7 @@ WhatsApp e bloqueio automático por inadimplência.
 | API do painel                 | `supabase/functions/admin-billing/`                         | Ações do backoffice (mesma sessão do `admin-api`).                                  |
 | Passada automática            | `supabase/functions/billing-run/`                           | Chamada pelo pg_cron 2×/dia.                                                        |
 | Notificação de pagamento      | `supabase/functions/billing-webhook/`                       | IPN/webhook do Mercado Pago.                                                        |
-| Tela                          | `apps/loader-web/src/pages/FinancialBackoffice.tsx`         | Aba **Financeiro** do painel admin.                                                 |
+| Tela                          | `apps/web/src/admin/pages/FinancialBackoffice.tsx`          | Aba **Financeiro** do painel admin (`/admin` do KyberRock Web).                     |
 | Schema                        | `supabase/migrations/202608120001_financial_backoffice.sql` | Colunas de cobrança + `billing_settings` / `billing_invoices` / `billing_events`.   |
 | Agendamento                   | `supabase/migrations/202608120002_billing_run_cron.sql`     | Job `kyberrock_billing_run`.                                                        |
 | Segredos                      | `supabase/functions/_shared/billing-secrets.ts`             | Nome fixo de cada credencial + leitura do secret. **Puro e testado.**               |
@@ -139,7 +139,7 @@ token por engano; e `admin-billing` nem aceita esses campos no payload.
 Trocar uma credencial é trocar o secret no Supabase: sem deploy, sem SQL e sem
 nenhum ponto onde o token possa vazar por descuido. As chaves do próprio
 Supabase seguem a regra de sempre — `SUPABASE_SERVICE_ROLE_KEY` só existe dentro
-da Edge Function, e o loader-web carrega apenas a _publishable key_.
+da Edge Function, e o site carrega apenas a _publishable key_.
 
 ### Webhook no painel do Mercado Pago
 
@@ -171,7 +171,7 @@ Três abas — **Faturas**, **Cobrança por pedreira** e **Configurações** —
 delas, o que precisa existir para a cobrança rodar.
 
 **Para a cobrança funcionar** (`buildActivationChecklist`, em
-`apps/loader-web/src/lib/billing.ts`) lista, com o nome exato do campo, o que
+`apps/web/src/admin/lib/billing.ts`) lista, com o nome exato do campo, o que
 ainda falta: secret do Mercado Pago, secret + URL + nome da instância de
 WhatsApp, emitente, e as pedreiras cujo cadastro não fecha ciclo. `pending`
 impede a cobrança; `warn` é recomendação (assinatura do webhook, sandbox

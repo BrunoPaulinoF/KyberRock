@@ -892,6 +892,19 @@ input[type="radio"] {
 .login .alert {
   margin-bottom: 12px;
 }
+.login-foot {
+  margin: 14px 0 0;
+  text-align: center;
+  font-size: 12px;
+}
+.login-foot a {
+  color: var(--kr-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+.login-foot a:hover {
+  text-decoration: underline;
+}
 
 /* ---------- sub-abas (o subTabs do desktop) ---------- */
 .tabs {

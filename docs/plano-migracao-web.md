@@ -112,8 +112,9 @@ Três regras inegociáveis:
 3. **Regra de negócio nova nasce em `_shared/` do repositório principal**, não no site. O site é
    tela.
 
-O que continua no monorepo: `apps/loader-web` (site do carregador e painel `/admin`), até o
-dia em que o site novo absorver o carregador.
+O que continua no monorepo: `apps/loader-web`, só até o EasyPanel ser desligado — o site novo
+já absorveu o carregador, o comercial, o painel `/admin`, a página de apresentação, a página do
+link do WhatsApp e o `/download` (ver `AGENTS.md`, "Saida do loader-web").
 
 ### D5 — Perfis de acesso no site
 
@@ -141,8 +142,8 @@ conforme a marca do login no painel; nunca para o `administrador` nem para o `co
 ### D6 — Hospedagem — DECIDIDO: Hostinger, com deploy automático do GitHub
 
 O site novo sobe na Hostinger a partir do repositório (merge na branch de produção = deploy).
-A VPS atual (Docker/nginx do `loader-web`) será desligada quando o carregador e o painel
-também estiverem lá. Vercel descartada, como combinado.
+A VPS atual (Docker/nginx do `loader-web`) pode ser desligada: o carregador e o painel já estão
+lá (29/09). Vercel descartada, como combinado.
 
 Ponto de atenção para o Pedro na Hostinger: é um SPA — toda rota precisa cair em `index.html`
 (regra de reescrita no `.htaccess`), e as variáveis `VITE_SUPABASE_URL` /

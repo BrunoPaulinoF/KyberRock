@@ -4,8 +4,8 @@
 
 - **Monorepo**: `npm` workspaces. Root `tsconfig.json` is `references`-only; each workspace has `composite: true` and excludes `**/*.test.ts` from build — use `import type` for test-only symbols.
 - **Desktop** (`apps/desktop`, `@kyberrock/desktop`): Electron 40 + React 19 + Vite 7 + `better-sqlite3`. Hardware integration (scale, printer) lives in `src/services/`; the renderer never imports Node.
-- **Loader web** (`apps/loader-web`, `@kyberrock/loader-web`): React 19 + Vite 7 + Supabase JS, served via nginx (Docker / EasyPanel).
-- **Web (comercial/gestor)** (`apps/web`, `@kyberrock/web`): React 19 + Vite 7 + Supabase JS, static build published by Hostinger from `apps/web` (`npm run dev -w @kyberrock/web` → :5175). Writes only via the `web-api` Edge Function; see `docs/web-api.md`.
+- **Loader web** (`apps/loader-web`, `@kyberrock/loader-web`): **legado, saindo do ar** (EasyPanel). Tudo o que ele servia agora mora no KyberRock Web — ver "Saida do loader-web (EasyPanel)". Nao acrescente nada aqui.
+- **Web** (`apps/web`, `@kyberrock/web`): React 19 + Vite 7 + Supabase JS, static build published by Hostinger from `apps/web` (`npm run dev -w @kyberrock/web` → :5175), em `https://kyberrock.kybernan.com.br`. Telas da pedreira (todos os perfis, carregador incluido) write only via the `web-api` Edge Function (see `docs/web-api.md`); e tambem o site publico: apresentacao em `/`, painel da plataforma em `/admin` (`src/admin/`), link do WhatsApp em `/whatsapp/:token` e instalador em `/download`.
 - **Functions lib** (`functions`, `@kyberrock/functions`): TypeScript utils workspace (not to be confused with Deno Edge Functions in `supabase/functions/`).
 - **Shared packages** (`packages/`): `shared` (types), `scale-adapters` (balance), `omie-client` (OMIE), `print-templates` (80 mm / A4).
 - **Cloud**: Supabase Postgres + Deno Edge Functions in `supabase/functions/` (with `_shared/`); SQL migrations in `supabase/migrations/`. Use the `supabase_kyberrock_*` MCP tools for DB / function work.
@@ -136,7 +136,7 @@ mora num lugar só — `operationSaleDateSql(alias)`, em
 `weighing-operations.ts`) — e vale para `reports.ts` (diário, mensal, produto, cliente,
 tabela dinâmica, série diária, mix, exportações), `weighing-billing-report.ts`,
 `customer-report.ts`, `invoice-closing.ts` e `wallet.ts`. Na nuvem a mesma regra é o
-`closed_at` do `daily-report-email` e do relatório de vendas do loader-web.
+`closed_at` do `daily-report-email` e do relatório de vendas (aba Comercial do site).
 
 O motivo é que essa é a data que o KyberRock manda ao OMIE como **emissão do pedido/OS**
 (`issueDate` em `buildOmieBillingJob`, alimentado por `exit_weight_captured_at`) — dela
@@ -220,10 +220,42 @@ npm run clientes -w @kyberrock/desktop -- importar --arquivo clientes-conciliado
 
 ## Loader-web quirks
 
+- **Legado, saindo do ar** — ver "Saida do loader-web (EasyPanel)". O codigo fica congelado ate o
+  workspace ser apagado; corrigir alguma coisa aqui e corrigir no lugar errado.
 - `npm run dev -w @kyberrock/loader-web` → port 5173.
 - Docker: `docker build -f apps/loader-web/Dockerfile .`. The build context is the repo root; the stage installs root deps and then runs `npm run build -w @kyberrock/loader-web`.
 - `.dockerignore` excludes `apps/desktop`, `functions`, `supabase` and several root files (e.g. `PRD.md`, `PLAN.md`, `eslint.config.js`). Do not loosen it without revalidating image size and build time.
 - `nginx.conf` already does SPA fallback (`try_files $uri $uri/ /index.html`) and ships security + cache headers.
+
+## Saida do loader-web (EasyPanel)
+
+O KyberRock Web (`apps/web`, Hostinger, `https://kyberrock.kybernan.com.br`) absorveu tudo o que o
+loader-web servia, para o container do EasyPanel poder ser desligado:
+
+| No loader-web                         | No KyberRock Web                                                       |
+| ------------------------------------- | ---------------------------------------------------------------------- |
+| `/` e `/login` (apresentacao + login) | `/` (apresentacao, login no topo) e `/login` (o do app instalado)      |
+| `/loader` (fila do carregador)        | `/carregamento` (`/loader` redireciona)                                |
+| `/relatorios` (vendas do comercial)   | `/comercial`                                                           |
+| `/admin` e `/admin/login`             | `/admin` e `/admin/login` (`src/admin/`, mesmo usuario e senha)        |
+| `/whatsapp/:token`                    | `/whatsapp/:token` (o padrao do `whatsapp-link` ja aponta para o site) |
+| `/download` (nginx)                   | `/download` (`public/.htaccess`)                                       |
+| guia de instalacao em PDF             | `public/guia-kyberrock-instalacao-e-uso.pdf`                           |
+
+Antes de desligar o EasyPanel:
+
+1. Conferir o site publicado depois do merge: `/`, `/admin/login`, `/download`.
+2. Se o projeto Supabase tiver o secret `KYBERROCK_SITE_URL` apontando para o EasyPanel, trocar
+   pelo dominio do site (ou apagar: o padrao do codigo ja e ele). Senao o link do WhatsApp
+   continua mandando o convidado para o site desligado.
+3. Numero do WhatsApp comercial da pagina de apresentacao: variavel de build
+   `VITE_WHATSAPP_NUMBER` na Hostinger (so digitos, com DDI). Sem ela a pagina usa o numero de
+   exemplo, como o loader-web usava.
+4. Carregador que instalou o app do loader-web no celular abre o site novo e instala de novo
+   ("Instalar app" na tela da fila): o app instalado e do dominio, e o dominio antigo sai do ar.
+
+Desligado o EasyPanel, o workspace `apps/loader-web` (e o `.dockerignore` da raiz, que so existe
+para o Docker dele) sai do repositorio num PR proprio.
 
 ## Tests
 
@@ -270,19 +302,31 @@ offending link of the chain, not above the `return`.
 - `KYBERROCK_ADMIN_PASSWORD_HASH = sha256(SALT + plain_password)`. Configure `SALT` and `HASH` in Edge Function secrets only.
 - `SUPABASE_SERVICE_ROLE_KEY` is Edge-Function-only. Desktop and web use `VITE_SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_PUBLISHABLE_KEY`.
 - OMIE creds (`OMIE_APP_KEY` / `OMIE_APP_SECRET`) live in Edge Function env. **Always** call OMIE from an Edge Function — never from frontend or desktop.
-- A credencial da IA do assistente da documentação **não é secret de deploy**: ela é cadastrada no painel administrativo do loader-web (aba **Assistente de IA**) e gravada na tabela singleton `public.ai_assistant_settings` — uma chave e um modelo **globais**, usados por todas as pedreiras. O `admin-api` (`get_ai_settings` / `update_ai_settings`) é o único caminho de escrita; a RLS nega acesso direto de `anon`/`authenticated`, e o `get` devolve só os quatro últimos caracteres da chave — ela nunca volta para a tela nem chega ao desktop. `OPENAI_API_KEY` / `OPENAI_MODEL` continuam existindo como **fallback** de Edge Function para instalações antigas, mas a tabela tem precedência. Sem chave (ou com o assistente desmarcado) a função responde **503** e o desktop cai silenciosamente na resposta local — a ausência da chave desliga a IA, não quebra a tela. A função omite `temperature` e usa `max_completion_tokens` justamente para aceitar qualquer modelo configurado ali; a lista do seletor é só de interface (o backend aceita qualquer texto), então modelo novo da OpenAI não exige deploy.
+- A credencial da IA do assistente da documentação **não é secret de deploy**: ela é cadastrada no painel da plataforma (`/admin` do KyberRock Web, aba **Assistente de IA**) e gravada na tabela singleton `public.ai_assistant_settings` — uma chave e um modelo **globais**, usados por todas as pedreiras. O `admin-api` (`get_ai_settings` / `update_ai_settings`) é o único caminho de escrita; a RLS nega acesso direto de `anon`/`authenticated`, e o `get` devolve só os quatro últimos caracteres da chave — ela nunca volta para a tela nem chega ao desktop. `OPENAI_API_KEY` / `OPENAI_MODEL` continuam existindo como **fallback** de Edge Function para instalações antigas, mas a tabela tem precedência. Sem chave (ou com o assistente desmarcado) a função responde **503** e o desktop cai silenciosamente na resposta local — a ausência da chave desliga a IA, não quebra a tela. A função omite `temperature` e usa `max_completion_tokens` justamente para aceitar qualquer modelo configurado ali; a lista do seletor é só de interface (o backend aceita qualquer texto), então modelo novo da OpenAI não exige deploy.
 - For local dev, copy `.env.example` to `.env` and fill placeholder values; real secrets stay out of Git.
 
-## Painel administrativo (loader-web)
+## Painel administrativo (`/admin` do KyberRock Web)
 
-- **Design system em `apps/loader-web/src/admin-ui.css` + `src/components/admin/`.** Tudo abaixo
-  de `.adm`; o `loader-ui.css` continua mandando nas telas do carregador e do comercial. Não
-  acrescente estilo inline nas telas do admin — foi justamente o estilo inline espalhado que
-  fazia uma mudança de espaçamento exigir varrer milhares de linhas de TSX.
+- **Mora em `apps/web/src/admin/`** (veio inteiro do loader-web, mesmas telas e mesmas chamadas):
+  `AdminPanel.tsx` (guarda + painel), `pages/` (Dashboard, Financeiro, Atualizacoes, IA, login),
+  `components/` (primitivos) e `lib/`. E um pedaco separado do site (`lazy` no `App.tsx`): nenhum
+  perfil de pedreira baixa uma linha dele.
+- **Login proprio, nao o do Supabase Auth**: usuario e senha da plataforma
+  (`KYBERROCK_ADMIN_USERNAME` / `_PASSWORD_HASH` / `_SALT` nos secrets), conferidos pelo
+  `admin-auth`, que devolve uma sessao HMAC de 8 h guardada em `localStorage`
+  (`kyberrock_admin_session`) e enviada no header `x-admin-session` ao `admin-api` e ao
+  `admin-billing`. As duas sessoes (painel e site) convivem sem se misturar: o admin da plataforma
+  nao abre tela de pedreira, e sair de uma nao derruba a outra (`lib/admin-session.ts`).
+- **Design system em `apps/web/src/admin/admin-ui.css` + `src/admin/components/`.** Tudo abaixo
+  de `.adm`; o `styles.css` do site continua mandando nas telas da pedreira. O console e claro
+  sempre (`color-scheme: light` no `.adm`, senao o tema escuro do site escureceria os campos) e
+  os titulos herdam a tinta dele (`.adm :where(h1, h2, h3, h4)`, porque o `styles.css` pinta todo
+  h1-h3). Não acrescente estilo inline nas telas do admin — foi justamente o estilo inline
+  espalhado que fazia uma mudança de espaçamento exigir varrer milhares de linhas de TSX.
 - Formato de **console técnico**: tabela densa (`DataTable`) no lugar de lista em cartão,
   monoespaçada para id/código/valor, cor reservada para estado. Criar e editar são modal, para a
   listagem ficar com a largura toda.
-- `components/admin/smoke.test.tsx` renderiza os primitivos com `react-dom/server` — é o que
+- `src/admin/components/smoke.test.tsx` renderiza os primitivos com `react-dom/server` — é o que
   pega erro de runtime nos componentes sem precisar de jsdom no repositório.
 - **Botão de olho (`reveal_credentials`)**: mostra as credenciais de UM cadastro, sob demanda —
   fora do `list`, porque segredo que viaja em todo carregamento de tela fica em cache de
@@ -314,7 +358,7 @@ offending link of the chain, not above the `return`.
   ou seja, ele é tão parado quanto um `dead_letter` — contá-lo entre os pendentes esconderia o
   caso mais comum de balança travada (cadastro incompleto para NF-e) dentro do número que quer
   dizer "está andando". A classificação em cores é pura e testada em
-  `apps/loader-web/src/lib/device-health.ts` (o que conta como parada, quanto silêncio ainda é
+  `apps/web/src/admin/lib/device-health.ts` (o que conta como parada, quanto silêncio ainda é
   normal), e **nulo não pode virar zero** em nenhum degrau do caminho: balança que nunca reportou
   aparece em cinza como "Sem dados", porque pintá-la de verde seria o painel afirmando o que
   ninguém apurou. Enquanto a aba está aberta ela se relê sozinha a cada 60 s (`silent`: sem
@@ -335,8 +379,8 @@ offending link of the chain, not above the `return`.
   heartbeat roda a cada 5 s: salvar no painel troca o nome nas outras máquinas em segundos, sem
   reativar nada e sem mexer em token, unidade ou número de cupom. A regra do nome (obrigatório,
   espaços colapsados, limite de 60 caracteres para a legenda caber em uma linha) é pura e testada
-  em `_shared/device-name.ts`; `apps/loader-web/src/lib/device-name.ts` repete a mesma regra de
-  propósito — o loader-web não importa módulo Deno —, então mudar uma exige mudar a outra.
+  em `_shared/device-name.ts`; `apps/web/src/admin/lib/device-name.ts` repete a mesma regra de
+  propósito — o site não importa módulo Deno —, então mudar uma exige mudar a outra.
 - **Apagar balança (`delete_device`) chega às outras máquinas**: o espelho local `devices` só
   sabia somar. Balança de teste, máquina trocada e ativação duplicada — tudo o que o painel apaga
   — continuava na legenda de cores de **cada** desktop para sempre (várias delas com o nome
@@ -392,16 +436,22 @@ nunca está ali.
   `202608190001_whatsapp_connection_links.sql`) responde **só JSON**: `POST /whatsapp-link`
   cria/cancela o link autenticando por `deviceId` + `deviceToken`, e
   `POST .../c/<token>/state` devolve o QR atualizado.
-- **A página do convidado é a rota `/whatsapp/:token` do loader-web, não da Edge Function.** As
+- **A página do convidado é a rota `/whatsapp/:token` do KyberRock Web, não da Edge Function**
+  (`apps/web/src/pages/WhatsappConnect.tsx`; morava no loader-web, no mesmo caminho). As
   Edge Functions respondem HTML como `content-type: text/plain` + `nosniff` (proteção
   anti-phishing do domínio `*.supabase.co`), então a mesma página servida de lá chega ao celular
   do convidado como **código-fonte**. Só JSON atravessa esse filtro — por isso o QR vem por JSON e
   quem desenha é o site. Não mova a página de volta para a função.
-- O endereço do site tem um padrão no código (`DEFAULT_WHATSAPP_LINK_SITE_URL`, o loader-web em
-  produção) e um override por ambiente, **`KYBERROCK_SITE_URL`**. Não é segredo — é a barra de
-  endereços de quem usa o site —, então segue a mesma convenção do `DEFAULT_SUPABASE_URL` do
-  desktop e do destino do `/download` no nginx: instalação nova funciona sem passo manual, e
-  trocar de domínio é definir a variável no projeto Supabase, sem deploy.
+- O endereço do site tem um padrão no código (`DEFAULT_WHATSAPP_LINK_SITE_URL`, o KyberRock Web em
+  produção, `https://kyberrock.kybernan.com.br`) e um override por ambiente, **`KYBERROCK_SITE_URL`**
+  — que, se existir no projeto, **manda** sobre o padrão: apontando para o loader-web, o link
+  morre junto com ele. Não é segredo — é a barra de endereços de quem usa o site —, então segue a
+  mesma convenção do `DEFAULT_SUPABASE_URL` do desktop e do destino do `/download`: instalação nova
+  funciona sem passo manual, e trocar de domínio é definir a variável no projeto Supabase, sem
+  deploy.
+- A página abre direto por link, num endereço de dois níveis: é por isso que o site sai com
+  `base: "/"` (`apps/web/vite.config.ts`). Com caminho relativo, `/whatsapp/<token>` pedia
+  `/whatsapp/assets/...` e recebia o `index.html` no lugar do script — tela em branco.
 - **A credencial da UAZAPI nunca chega ao navegador**: quem fala com a UAZAPI é a função, com o
   token que a pedreira já empurrou para `report_channel_settings`. O visitante recebe só a imagem
   do QR. O banco guarda apenas o **hash** do token do link — o valor em claro existe só na URL.
@@ -455,6 +505,10 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   `apps/web/src/lib/permissions.ts`. Tela que nao e do perfil nao aparece no menu, e o endereco
   digitado a mao volta para a tela inicial dele (`homeFor`). Tela nova entra nessa lista e no
   `NAV_SECTIONS` do `Layout.tsx`; rota nova usa o `only("<tela>", ...)` do `App.tsx`.
+- **Fora dos perfis**: `/` e a pagina de apresentacao para quem nao esta logado (logado vai para o
+  `homeFor`; o app instalado abre no `/login`), `/whatsapp/:token` e publica, e `/admin` e o
+  painel da plataforma, com login proprio (ver "Painel administrativo"). Nenhuma das tres passa
+  pelo `only`/`Private`.
 - `monitoramento` so ve `/monitoramento`; `comercial` a aba `/comercial`, as cinco telas de
   analise, Cadastros, `/cupons` e `/senha-preco`. `/monitoramento` e `/comercial` sao **so** do
   perfil de mesmo nome. `gestor` e `operacao` veem todo o resto (com `/cupons`, que nao existe no
@@ -683,7 +737,7 @@ manifesto da raiz; tambem por **workflow_dispatch**):
 > — que devolveria 404 justamente para o caso mais comum, um build parado.
 
 **Passo 2 — pela aba Atualizacoes do painel (ou pelo `desktop-promote.yml` direto).** A tela
-(`apps/loader-web/src/pages/DesktopUpdates.tsx`) lista as versoes com a situacao de cada uma —
+(`apps/web/src/admin/pages/DesktopUpdates.tsx`) lista as versoes com a situacao de cada uma —
 **Parado**, **Em teste**, **Producao**, **Incompleto** — e oferece os gestos que movem alguma
 coisa: _Enviar para teste_, _Liberar para producao_, _Cancelar teste_, _Reprovar_ e a volta atras.
 Ela tambem mostra, em cartao no topo, a versao que esta em producao e a que esta em teste, e quantas
@@ -692,7 +746,7 @@ balancas estao em cada anel — uma versao em teste com zero balancas marcadas n
 Sete coisas na tela merecem atencao de quem for mexer nela:
 
 - **Ela se recarrega sozinha** e nao espera clique: promover so dispara um run, e o estado da
-  versao muda no GitHub segundos depois. O ritmo esta em `apps/loader-web/src/lib/desktop-updates.ts`
+  versao muda no GitHub segundos depois. O ritmo esta em `apps/web/src/admin/lib/desktop-updates.ts`
   (3s com promocao a caminho, 8s com build compilando, 30s parada, nada com a aba escondida). Um
   gesto so e dado por concluido quando a versao aparece no estado pedido — producao se confere por
   `isCurrentProduction`, nunca pelo estado `producao`, que uma estavel antiga ja tem.
@@ -750,7 +804,7 @@ Sete coisas na tela merecem atencao de quem for mexer nela:
   as pedreiras. O link de cada linha chama `admin-api` → `get_desktop_release_notes`, que cruza a
   versao com os PRs mesclados **entre ela e a versao anterior** e devolve titulo, autor, data e o
   corpo de cada um; o modal renderiza o markdown com um parser proprio
-  (`apps/loader-web/src/lib/release-notes.ts` — nada vira HTML, porque o texto vem de fora). A
+  (`apps/web/src/admin/lib/release-notes.ts` — nada vira HTML, porque o texto vem de fora). A
   leitura e **sob demanda** e fica em cache por versao enquanto a aba esta aberta: a aba se
   recarrega sozinha a cada poucos segundos e a API do GitHub tem limite por hora, entao cruzar
   release com PR em toda verificacao de fundo secaria o limite de que as promocoes precisam.
@@ -849,8 +903,9 @@ promocao so fica no GitHub ate ele existir.
 - To cut a new **minor/major** line, bump `apps/desktop/package.json` (`MAJOR.MINOR`) in a PR;
   the patch keeps coming from `run_number`.
 - **Fixed public download link**: `supabase/functions/desktop-download` (public, `verify_jwt=false`,
-  needs `GH_RELEASES_TOKEN`) redirects to the latest release's `.exe`; loader-web nginx exposes it as
-  `GET /download`. Ele **descarta pre-release**, entao serve sempre a ultima versao liberada para
+  needs `GH_RELEASES_TOKEN`) redirects to the latest release's `.exe`; o site expoe como
+  `GET /download` (`apps/web/public/.htaccess`, antes era o nginx do loader-web), e a pagina de
+  apresentacao liga direto na funcao. Ele **descarta pre-release**, entao serve sempre a ultima versao liberada para
   producao e instalacao nova nunca cai num build parado nem numa versao em avaliacao — que e o
   desejado, porque numa maquina recem-instalada nao ha versao anterior para voltar. O filtro de
   `prerelease` so passou a existir junto com o fluxo de dois passos: antes ele pulava so `draft`, e

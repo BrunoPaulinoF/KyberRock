@@ -27,16 +27,16 @@ dado, como a operação nasce e fecha, e como ela chega à nuvem e ao OMIE. Deta
 
 ## Superfícies
 
-| Superfície              | Responsabilidade                                                            | Estado         |
-| ----------------------- | --------------------------------------------------------------------------- | -------------- |
-| Desktop Windows         | Operação principal, leitura de balança, SQLite, impressão, sync, relatórios | Offline-first  |
-| Loader web — `/`        | Carregador vê as solicitações de carregamento em aberto                     | Online         |
-| Loader web — `/admin`   | Painel administrativo: pedreiras, unidades, balanças, versões, financeiro   | Online         |
-| Supabase Edge Functions | Integrações sensíveis, sync, tarefas agendadas, e-mail, WhatsApp, IA        | Online         |
-| Supabase Postgres       | Projeção cloud multiunidade e dados do site/painel                          | Online         |
-| OMIE                    | ERP para cadastros, financeiro, pedidos e OS                                | Online externo |
-| GitHub Releases         | Distribuição do instalador e do auto-update do desktop                      | Online externo |
-| Mercado Pago / UAZAPI   | Boleto e WhatsApp da cobrança da plataforma                                 | Online externo |
+| Superfície               | Responsabilidade                                                            | Estado         |
+| ------------------------ | --------------------------------------------------------------------------- | -------------- |
+| Desktop Windows          | Operação principal, leitura de balança, SQLite, impressão, sync, relatórios | Offline-first  |
+| KyberRock Web            | Telas da pedreira por perfil (carregador, comercial, gestão) e site público | Online         |
+| KyberRock Web — `/admin` | Painel administrativo: pedreiras, unidades, balanças, versões, financeiro   | Online         |
+| Supabase Edge Functions  | Integrações sensíveis, sync, tarefas agendadas, e-mail, WhatsApp, IA        | Online         |
+| Supabase Postgres        | Projeção cloud multiunidade e dados do site/painel                          | Online         |
+| OMIE                     | ERP para cadastros, financeiro, pedidos e OS                                | Online externo |
+| GitHub Releases          | Distribuição do instalador e do auto-update do desktop                      | Online externo |
+| Mercado Pago / UAZAPI    | Boleto e WhatsApp da cobrança da plataforma                                 | Online externo |
 
 ## Topologia
 
@@ -61,9 +61,11 @@ Supabase
      v
 OMIE API
 
-Loader web (React + nginx/Docker)
-  /       carregador, leitura das solicitações em aberto
-  /admin  painel administrativo (Edge Functions admin-*)
+KyberRock Web (React, Hostinger — kyberrock.kybernan.com.br)
+  /                 apresentação (quem não está logado) ou tela do perfil
+  /carregamento...  telas da pedreira: leitura por RLS, escrita só pela web-api
+  /admin            painel administrativo (Edge Functions admin-*)
+  /whatsapp/:token  pareamento do WhatsApp por link temporário
 ```
 
 O desktop **nunca** fala com o OMIE, o Mercado Pago ou a OpenAI direto: essas chamadas só
@@ -72,16 +74,17 @@ acontecem em Edge Function. O renderer **nunca** toca Node: tudo cruza a frontei
 
 ## Módulos
 
-| Módulo             | Caminho                    | Responsabilidade                                               |
-| ------------------ | -------------------------- | -------------------------------------------------------------- |
-| Shared             | `packages/shared`          | Tipos, enums de operação, ids, formatação, ranking de busca    |
-| Scale adapters     | `packages/scale-adapters`  | Contrato de adapter, Toledo (serial e TCP) e balança virtual   |
-| Print templates    | `packages/print-templates` | Cupom 80 mm e relatório A4                                     |
-| OMIE client        | `packages/omie-client`     | Cliente tipado por serviço, datas, limites de campo, retry     |
-| Desktop            | `apps/desktop`             | Operação local, hardware, SQLite, filas, relatórios            |
-| Loader web + admin | `apps/loader-web`          | Site do carregador e painel administrativo                     |
-| Edge Functions     | `supabase/functions`       | Integrações sensíveis, sync, jobs agendados                    |
-| Utils TS           | `functions`                | Biblioteca `@kyberrock/functions` — **não** são Edge Functions |
+| Módulo              | Caminho                    | Responsabilidade                                               |
+| ------------------- | -------------------------- | -------------------------------------------------------------- |
+| Shared              | `packages/shared`          | Tipos, enums de operação, ids, formatação, ranking de busca    |
+| Scale adapters      | `packages/scale-adapters`  | Contrato de adapter, Toledo (serial e TCP) e balança virtual   |
+| Print templates     | `packages/print-templates` | Cupom 80 mm e relatório A4                                     |
+| OMIE client         | `packages/omie-client`     | Cliente tipado por serviço, datas, limites de campo, retry     |
+| Desktop             | `apps/desktop`             | Operação local, hardware, SQLite, filas, relatórios            |
+| Web + admin         | `apps/web`                 | Site de todos os perfis, apresentação e painel administrativo  |
+| Loader web (legado) | `apps/loader-web`          | Saindo do ar (EasyPanel); tudo o que servia está em `apps/web` |
+| Edge Functions      | `supabase/functions`       | Integrações sensíveis, sync, jobs agendados                    |
+| Utils TS            | `functions`                | Biblioteca `@kyberrock/functions` — **não** são Edge Functions |
 
 ## Edge Functions
 
@@ -238,7 +241,7 @@ Impressão:
 
 ## OMIE
 
-Toda chamada ao OMIE sai da Edge Function `omie-sync` — nunca do desktop nem do loader-web. As
+Toda chamada ao OMIE sai da Edge Function `omie-sync` — nunca do desktop nem do site. As
 credenciais (app key/secret por empresa) ficam do lado servidor.
 
 Ações do `omie-sync`:
@@ -401,7 +404,8 @@ Três formas de a venda ser paga, todas decididas no fechamento local:
 
 ## Painel Administrativo
 
-Em `/admin` do loader-web, com API nas funções `admin-auth`, `admin-api` e `admin-billing`:
+Em `/admin` do KyberRock Web (`apps/web/src/admin/`, veio do loader-web), com login próprio e API
+nas funções `admin-auth`, `admin-api` e `admin-billing`:
 
 - CRUD de empresas (pedreiras), unidades e usuários carregadores;
 - gestão da frota de balanças: número, cor, nome, unidade, canal de atualização, marca de balança
@@ -427,7 +431,7 @@ O anel de cada balança está em `device_registrations.update_channel`; a versã
 pelo heartbeat (`app_version`) e o painel consegue pedir a atualização para uma máquina
 (`update_notice_*`). O passo a passo dos workflows, as armadilhas do `latest.yml` e as regras da
 tela estão em `AGENTS.md` ("Desktop versioning"). Instalação nova usa o link público servido por
-`desktop-download` (atalho `/download` no nginx do loader-web).
+`desktop-download` (atalho `/download` do KyberRock Web, no `.htaccess`).
 
 ## Backoffice Financeiro Da Plataforma
 

@@ -35,7 +35,7 @@ primeiro. A outra máquina recebia essa linha e a jogava fora.
 
 ## A solução: dono do cadastro de preço
 
-O administrador marca, no painel do loader-web, **quais balanças são principais**. Pode ser uma, e
+O administrador marca, no painel da plataforma (`/admin` do KyberRock Web), **quais balanças são principais**. Pode ser uma, e
 pode ser mais de uma — na pedreira quem cadastra preço costuma ser mais de um posto (a balança da
 portaria e a do escritório). A partir daí:
 
