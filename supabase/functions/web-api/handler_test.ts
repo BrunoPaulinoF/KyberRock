@@ -637,21 +637,67 @@ describe("web-api: preco (gestor)", () => {
     const result = await h.call("set_customer_special_price", {
       customerId: "c-1",
       productId: "p-1",
-      unitPriceCents: 7000,
-      validFrom: "2026-10-01"
+      unitPriceCents: 7000
     });
 
     expect(result.status).toBe(200);
     expect(result.body.id).toBe("id-1");
-    expect(h.store.rows("customer_special_prices")[1]).toMatchObject({
+    const saved = h.store.rows("customer_special_prices")[1];
+    expect(saved).toMatchObject({
       company_id: COMPANY,
       customer_id: "c-1",
       product_id: "p-1",
       unit_price_cents: 7000,
-      valid_from: "2026-10-01",
-      valid_to: null,
       is_active: true
     });
+    // A tabela na nuvem nao tem essas colunas: manda-las derrubava o salvamento (PGRST204).
+    expect(saved).not.toHaveProperty("valid_from");
+    expect(saved).not.toHaveProperty("valid_to");
+  });
+
+  it("atualizar preco especial tambem nao manda colunas de validade", async () => {
+    const h = harness({ role: "gestor" });
+    h.store.seed("customers", [{ id: "c-1", company_id: COMPANY }]);
+    h.store.seed("products", [{ id: "p-1", company_id: COMPANY }]);
+    h.store.seed("customer_special_prices", [
+      {
+        id: "sp-1",
+        company_id: COMPANY,
+        customer_id: "c-1",
+        product_id: "p-1",
+        unit_price_cents: 6000,
+        is_active: true
+      }
+    ]);
+
+    const result = await h.call("set_customer_special_price", {
+      customerId: "c-1",
+      productId: "p-1",
+      unitPriceCents: 7700
+    });
+
+    expect(result.status).toBe(200);
+    expect(result.body.id).toBe("sp-1");
+    const saved = h.store.rows("customer_special_prices")[0];
+    expect(saved.unit_price_cents).toBe(7700);
+    expect(saved).not.toHaveProperty("valid_from");
+    expect(saved).not.toHaveProperty("valid_to");
+  });
+
+  it("preco especial com data de validade e recusado em vez de ignorar a data", async () => {
+    const h = harness({ role: "gestor" });
+    h.store.seed("customers", [{ id: "c-1", company_id: COMPANY }]);
+    h.store.seed("products", [{ id: "p-1", company_id: COMPANY }]);
+
+    const result = await h.call("set_customer_special_price", {
+      customerId: "c-1",
+      productId: "p-1",
+      unitPriceCents: 7000,
+      validFrom: "2026-10-01"
+    });
+
+    expect(result.status).toBe(400);
+    expect(h.store.rows("customer_special_prices")).toHaveLength(0);
   });
 
   it("remover preco especial e exclusao logica (tombstone para as balancas)", async () => {
