@@ -1042,6 +1042,33 @@ falta: com o banco fora do ar, retentar qualquer erro multiplicava a carga sobre
 Recuperacao: assim que a nuvem volta, o ping de acesso (a cada 30 s) responde `approved` e as
 balancas se liberam sozinhas — nao ha nada a fazer maquina a maquina.
 
+## Relogio da nuvem: todas as balancas na mesma hora
+
+Cada balanca carimbava `created_at`/`updated_at` com o relogio do Windows dela, e eles nao
+batem: em 28/09/2026 a nuvem tinha cadastro 5 a 17 min "no futuro", e o cadastro feito numa
+balanca chegava ao site ate 14 h depois (ver "Cadastro de uma maquina chega nas outras", 2b).
+Acertar o Windows pede administrador, que o instalador (`perMachine: false`) nao tem, entao o
+PROGRAMA usa a hora da nuvem (`services/cloud-clock.ts`):
+
+- O `desktop-status` devolve a hora do servidor (`checkedAt`); a diferenca para o relogio REAL
+  daqui vira `cloud_clock_offset_ms` (gravado: vale sem internet e desde a abertura). Variacao
+  abaixo de 2 s e ruido de rede e nao mexe no relogio.
+- `installCloudClock()` (primeira linha de `main.ts`) troca o `Date` do processo principal por um
+  Proxy: `new Date()` e `Date.now()` saem corrigidos, `new Date(x)` e `instanceof Date` seguem
+  iguais. O renderer nao e corrigido — o que ele grava passa pelo runtime.
+- O SQLite tem relogio proprio: `datetime('now')`, `strftime(..., 'now')` etc. leem o do sistema
+  (o pull do OMIE carimba cadastro assim). `installSqliteCloudClock` (em `openDesktopDatabase`)
+  sobrepoe essas funcoes: `'now'` vira a hora corrigida e o resto e calculado pela funcao ORIGINAL
+  numa conexao em memoria separada. So age com o relogio instalado — testes ficam como sao — e
+  so e LIGADA quando a diferenca passa de 2 s: a funcao sobreposta custa ~18x a nativa (20 mil
+  `date()` em 68 ms contra 4 ms), preco que so vale na balanca de relogio errado.
+- O deslocamento e medido contra `realNowMs()`, nunca contra o `Date` ja corrigido (a segunda
+  medicao daria ~0 e desfaria a correcao). Pelo mesmo motivo a senha de preco confere com
+  `realNowMs()` + o deslocamento dela.
+- Diferenca acima de 2 min aparece na tela (faixa amarela) pedindo para acertar o Windows.
+- Na nuvem, `desktop-sync` troca pela hora do servidor o `updated_at` de cadastro que chega mais
+  de 1 min no futuro (`_shared/future-timestamp.ts`): protege enquanto houver balanca antiga.
+
 ## Sem internet: telas travadas e cadastro que espera conferencia
 
 **Deteccao.** `navigator.onLine` so fica falso quando TODAS as placas de rede caem — com VPN,

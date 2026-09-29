@@ -3,6 +3,7 @@ import path from "node:path";
 
 import Database from "better-sqlite3";
 
+import { installSqliteCloudClock } from "../services/cloud-clock.js";
 import { ensureDesktopDataDirectories, getDesktopDataPaths } from "./paths.js";
 
 export type DesktopDatabase = Database.Database;
@@ -29,6 +30,8 @@ export function openDesktopDatabase(options: OpenDesktopDatabaseOptions = {}): D
     readonly: options.readonly ?? false
   });
 
+  // `'now'` do SQLite na hora da nuvem, como o `Date` do processo (`cloud-clock.ts`).
+  installSqliteCloudClock(database);
   database.pragma("foreign_keys = ON");
   database.pragma("busy_timeout = 5000");
 

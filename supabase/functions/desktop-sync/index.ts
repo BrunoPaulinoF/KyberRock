@@ -20,6 +20,7 @@ import {
   resolvePriceConflicts,
   PRICE_MASTER_TABLES
 } from "../_shared/price-master-conflicts.ts";
+import { clampFutureTimestamps } from "../_shared/future-timestamp.ts";
 
 type CloudPayload = {
   deviceId?: string;
@@ -254,6 +255,23 @@ Deno.serve(async (req) => {
     const tokenHash = await sha256Hex(deviceToken);
     if (!safeEqual(tokenHash, device.token_hash)) {
       return jsonResponse({ error: "Token de dispositivo invalido" }, 401);
+    }
+
+    // Cadastro "do futuro" (relogio adiantado numa balanca que ainda nao atualizou) entra
+    // com a hora do servidor, antes de qualquer decisao que compare horario.
+    const serverNowMs = Date.now();
+    let futureClamped = 0;
+    const clampKeys = ["customers", "products", ...CADASTRO_TABLES.map((entry) => entry.key)];
+    for (const key of clampKeys) {
+      const payload = body as unknown as Record<string, Record<string, unknown>[] | undefined>;
+      const result = clampFutureTimestamps(payload[key], serverNowMs);
+      payload[key] = result.rows;
+      futureClamped += result.clamped;
+    }
+    if (futureClamped > 0) {
+      console.warn(
+        `desktop-sync: ${futureClamped} linha(s) de cadastro com updated_at no futuro (device ${deviceId})`
+      );
     }
 
     const counts = {

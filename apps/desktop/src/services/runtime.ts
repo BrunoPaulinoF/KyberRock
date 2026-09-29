@@ -66,6 +66,13 @@ import {
   mergeDuplicateCustomersByDocument,
   type CustomerMergeResult
 } from "./customer-merge.js";
+import { readLocalSetting } from "./local-settings.js";
+import {
+  CLOUD_CLOCK_OFFSET_SETTING,
+  CLOUD_CLOCK_WARNING_MS,
+  cloudClockOffsetMs,
+  setCloudClockOffsetMs
+} from "./cloud-clock.js";
 import {
   hasOfflinePendingCadastro,
   isOfflinePending,
@@ -773,6 +780,8 @@ export class DesktopRuntime {
 
   private constructor(initialized: InitializedDesktopDatabase) {
     this.database = initialized.database;
+    // A ultima diferenca medida contra a nuvem vale desde a abertura, mesmo sem internet.
+    setCloudClockOffsetMs(readLocalSetting<unknown>(this.database, CLOUD_CLOCK_OFFSET_SETTING));
     this.paths = initialized.paths;
     this.cacheStore = new CacheStore(this.database);
     this.reportService = new ReportService(this.database);
@@ -5601,6 +5610,12 @@ export class DesktopRuntime {
           );
         });
     }
+  }
+
+  /** Quanto o relogio deste computador difere da nuvem (a tela avisa quando e muito). */
+  getClockStatus(): { offsetMs: number; warn: boolean } {
+    const offsetMs = cloudClockOffsetMs();
+    return { offsetMs, warn: Math.abs(offsetMs) >= CLOUD_CLOCK_WARNING_MS };
   }
 
   /** Cadastros feitos sem internet que ainda esperam a conferencia (a tela libera editar). */
