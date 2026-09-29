@@ -101,6 +101,10 @@ export function formatTons(kg: number | null | undefined): string {
 
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
+  // Data sem hora ("2026-09-29", um vencimento) e o proprio dia: lida como instante, ela vira a
+  // meia-noite UTC — 21h do dia ANTERIOR em Sao Paulo — e a tela mostrava 28/09 no lugar de 29/09.
+  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (day) return `${day[3]}/${day[2]}/${day[1]}`;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   return date.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });

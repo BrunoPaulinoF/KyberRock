@@ -30,6 +30,7 @@ import {
   readOmiePullState,
   readStoredSupabaseConfig,
   rearmOmieBillingForCustomer,
+  enqueueOmieBillingCloudBackfill,
   reconcileOmieBillingFromOmie,
   syncCustomerAdvancesFromCloud,
   syncOmieReferenceDataFromCloud,
@@ -3148,9 +3149,118 @@ describe("supabase sync", () => {
       expect(row.omie_document_url).toBe("https://omie.example/danfe.pdf");
       expect(row.omie_billed_at).not.toBeNull();
       expect(row.omie_billing_checked_at).not.toBeNull();
-      // As colunas de faturamento sao locais: bumpar updated_at republicaria a operacao
-      // inteira na nuvem a toa — na primeira passada, o acervo inteiro de uma vez.
+      // Nao bumpa updated_at (republicaria toda pesagem conferida a cada passada)...
       expect(row.updated_at).toBe(RECENT_ISO);
+      // ...mas a que MUDOU sobe para a nuvem: e de la que o site le o numero da nota.
+      expect(cloudBillingPushes(database)).toEqual([
+        {
+          entity_id: "op-faturada",
+          idempotency_key: "cloud:operation:op-faturada:omie-billing:billed:987"
+        }
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  // 29/09: a conferencia achava a nota e gravava so aqui; o site mostrava "Sem nota" em 1.703
+  // cargas. So o que muda sobe — a mesma resposta na passada seguinte nao reenvia.
+  it("sobe para a nuvem so a pesagem cujo faturamento mudou", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-com-nota", salesOrderId: 101 });
+      insertSentOperation(database, { id: "op-sem-nota", salesOrderId: 102 });
+      insertSentOperation(database, { id: "op-erro", salesOrderId: 103 });
+      const answer = (invoiceNumber: string | null, billed: boolean) => ({
+        error: null,
+        data: {
+          ok: true,
+          results: [
+            {
+              operationId: "op-com-nota",
+              orderType: "sales",
+              omieOrderId: 101,
+              found: true,
+              billed,
+              orderNumber: "55",
+              invoiceNumber,
+              documentUrl: null,
+              error: null
+            },
+            {
+              operationId: "op-sem-nota",
+              orderType: "sales",
+              omieOrderId: 102,
+              found: true,
+              billed: false,
+              orderNumber: "56",
+              invoiceNumber: null,
+              documentUrl: null,
+              error: null
+            },
+            {
+              operationId: "op-erro",
+              orderType: "sales",
+              omieOrderId: 103,
+              found: false,
+              billed: false,
+              orderNumber: null,
+              invoiceNumber: null,
+              documentUrl: null,
+              error: "OMIE fora do ar"
+            }
+          ]
+        }
+      });
+
+      // Nota emitida, mas o pedido ainda nao consta faturado: o numero ja sobe.
+      invokeMock.mockResolvedValueOnce(answer("4101", false));
+      await reconcileOmieBillingFromOmie(database, identity, { force: true });
+      expect(cloudBillingPushes(database).map((job) => job.idempotency_key)).toEqual([
+        "cloud:operation:op-com-nota:omie-billing:open:4101"
+      ]);
+
+      // Depois consta faturado com a mesma nota: mudou a situacao, sobe de novo.
+      invokeMock.mockResolvedValueOnce(answer("4101", true));
+      await reconcileOmieBillingFromOmie(database, identity, { force: true });
+      expect(cloudBillingPushes(database).map((job) => job.idempotency_key)).toEqual([
+        "cloud:operation:op-com-nota:omie-billing:billed:4101",
+        "cloud:operation:op-com-nota:omie-billing:open:4101"
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("reenvia uma vez so o faturamento ja conferido desta unidade", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      createCloudSettings(database);
+      insertSentOperation(database, { id: "op-faturada", salesOrderId: 201 });
+      insertSentOperation(database, { id: "op-numero", salesOrderId: 202 });
+      insertSentOperation(database, { id: "op-sem-nada", salesOrderId: 203 });
+      insertSentOperation(database, { id: "op-cancelada", salesOrderId: 204 });
+      database.exec(`
+        UPDATE weighing_operations SET omie_billing_status = 'billed', omie_invoice_number = '4101'
+         WHERE id = 'op-faturada';
+        UPDATE weighing_operations SET omie_invoice_number = ' 4102 ' WHERE id = 'op-numero';
+        UPDATE weighing_operations SET omie_billing_status = 'billed', status = 'cancelled'
+         WHERE id = 'op-cancelada';
+      `);
+
+      expect(enqueueOmieBillingCloudBackfill(database, identity)).toBe(2);
+      expect(cloudBillingPushes(database).map((job) => job.idempotency_key)).toEqual([
+        "cloud:operation:op-faturada:omie-billing:billed:4101",
+        "cloud:operation:op-numero:omie-billing:open:4102"
+      ]);
+      // Segunda vez: ja rodou, nao enfileira nada.
+      expect(enqueueOmieBillingCloudBackfill(database, identity)).toBe(0);
+      expect(cloudBillingPushes(database)).toHaveLength(2);
     } finally {
       database.close();
     }
@@ -3947,6 +4057,20 @@ function daysAgoIso(days: number): string {
 }
 
 /** Pesagem fechada que ja tem pedido (ou OS) no OMIE e ainda nao consta faturada. */
+/** Os envios de pesagem para a nuvem que a conferencia do OMIE enfileirou. */
+function cloudBillingPushes(
+  database: DesktopDatabase
+): Array<{ entity_id: string; idempotency_key: string }> {
+  return database
+    .prepare(
+      `SELECT entity_id, idempotency_key FROM sync_queue
+        WHERE target = 'cloud' AND action = 'upsert_operation'
+          AND idempotency_key LIKE '%:omie-billing:%'
+        ORDER BY idempotency_key`
+    )
+    .all() as Array<{ entity_id: string; idempotency_key: string }>;
+}
+
 function insertSentOperation(
   database: DesktopDatabase,
   options: {

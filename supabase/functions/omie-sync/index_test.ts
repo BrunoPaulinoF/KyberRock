@@ -6074,4 +6074,61 @@ Deno.test("customer_open_receivables soma os titulos em aberto do cliente", asyn
   const param = getParam(findRequest(omieQueue, "ListarContasReceber"));
   assertEquals(param.filtrar_cliente, 777);
   assertEquals(param.filtrar_apenas_titulos_em_aberto, "S");
+  assertEquals(param.registros_por_pagina, 500);
+});
+
+// O comercial precisa do saldo SEPARADO POR NOTA (29/09): "emitimos uma nota de um milhao,
+// outra de quinhentos e outra de quinhentos, e esta juntando tudo".
+Deno.test("customer_open_receivables separa por nota e cai para 100 por pagina", async () => {
+  const deviceToken = "token-open-by-invoice";
+  const fixtures = lookupFixtures("open-by-invoice", await sha256Hex(deviceToken));
+  const omieQueue = createOmieQueueStub((input) => {
+    if (input.call === "ListarContasReceber") {
+      const param = getParam(input);
+      if (param.registros_por_pagina === 500) {
+        throw new Error("ERROR: O numero maximo de registros por pagina e 100");
+      }
+      return {
+        total_de_paginas: 1,
+        conta_receber_cadastro: [
+          {
+            codigo_lancamento_omie: 1,
+            numero_documento_fiscal: "4101",
+            valor_documento: 1000,
+            data_vencimento: "10/01/2099"
+          },
+          {
+            codigo_lancamento_omie: 2,
+            numero_documento_fiscal: "4102",
+            valor_documento: 500,
+            data_vencimento: "10/01/2099"
+          }
+        ]
+      };
+    }
+    return defaultOmieListResponse(input);
+  });
+
+  const response = await postOmieSync(
+    {
+      deviceId: "device-open-by-invoice",
+      deviceToken,
+      action: "customer_open_receivables",
+      payload: { customerOmieCode: 777 }
+    },
+    { createClient: fixtures.createClient, omieQueue }
+  );
+
+  assertObjectMatch(response, {
+    ok: true,
+    openCents: 150000,
+    byInvoice: [
+      { invoiceNumber: "4101", openCents: 100000 },
+      { invoiceNumber: "4102", openCents: 50000 }
+    ]
+  });
+  const sizes = omieQueue.requests
+    .filter((request) => request.call === "ListarContasReceber")
+    .map((request) => getParam(request).registros_por_pagina);
+  assertEquals(sizes, [500, 100]);
 });

@@ -1294,6 +1294,26 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function textOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/** O saldo por nota fiscal que a `omie-sync` devolveu, conferido campo a campo. */
+function openInvoiceGroups(value: unknown): Row[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((group): group is Row => Boolean(group) && typeof group === "object")
+    .map((group) => ({
+      invoiceNumber: textOrNull(group.invoiceNumber),
+      issueDate: textOrNull(group.issueDate),
+      openCents: wholeNumber(group.openCents),
+      openTitles: wholeNumber(group.openTitles),
+      overdueCents: wholeNumber(group.overdueCents),
+      overdueTitles: wholeNumber(group.overdueTitles),
+      nextDueDate: textOrNull(group.nextDueDate)
+    }));
+}
+
 /**
  * Saldo do cliente no cadastro do site: os titulos a receber em aberto no OMIE, perguntados na
  * hora (`customer_open_receivables` da `omie-sync`). Nada e gravado — `open_receivables_cents`
@@ -1318,6 +1338,7 @@ async function customerBalance(ctx: ActionContext): Promise<Row> {
       overdueCents: wholeNumber(result.overdueCents),
       overdueTitles: wholeNumber(result.overdueTitles),
       nextDueDate: typeof result.nextDueDate === "string" ? result.nextDueDate : null,
+      byInvoice: openInvoiceGroups(result.byInvoice),
       truncated: result.truncated === true,
       checkedAt: ctx.nowIso
     };
