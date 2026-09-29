@@ -119,6 +119,7 @@ import {
 import { OPEN_STATUS } from "../lib/operation";
 import { supabase } from "../lib/supabase";
 import { useTheme } from "../lib/theme";
+import { useMediaQuery } from "../lib/use-media-query";
 
 /*
  * Tela `/monitoramento`: o que a pedreira esta vendendo, em tempo real, estilo KDS. Fica FORA do
@@ -944,21 +945,6 @@ export function MonitorView(props: MonitorViewProps) {
 // ---------------------------------------------------------------------------
 // Medidas (painel que nao cresce)
 // ---------------------------------------------------------------------------
-
-function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(
-    () => typeof window !== "undefined" && window.matchMedia?.(query).matches === true
-  );
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const list = window.matchMedia(query);
-    const onChange = () => setMatches(list.matches);
-    onChange();
-    list.addEventListener("change", onChange);
-    return () => list.removeEventListener("change", onChange);
-  }, [query]);
-  return matches;
-}
 
 /**
  * Largura e altura do elemento, acompanhando o redimensionamento. Ref de callback: o grafico sai
