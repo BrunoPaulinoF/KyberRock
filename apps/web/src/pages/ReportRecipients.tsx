@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 
 import { IconAction, NewButton, SectionHead } from "../components/desk";
 import {
@@ -9,6 +9,7 @@ import {
   Modal,
   Pill,
   useConfirm,
+  useDiscardGuard,
   useToast
 } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
@@ -16,6 +17,7 @@ import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { useAsync } from "../lib/use-async";
+import { fieldOfError, maskPhoneInput, whatsappForInput } from "./cadastro-form";
 
 /**
  * Quem recebe o fechamento diario (a tela Relatorios do desktop). A lista mora na nuvem
@@ -102,53 +104,9 @@ export function ReportRecipients() {
     { key: `relatorios:destinatarios:${user.companyId}` }
   );
   useOnCadastroChange(refresh, CADASTRO_TABLES.reportRecipients);
-  const [form, setForm] = useState<FormState | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<Recipient | "new" | null>(null);
   const recipients = data?.recipients ?? [];
   const channels = data?.channels;
-
-  function edit(recipient: Recipient) {
-    setFormError(null);
-    setForm({
-      id: recipient.id,
-      displayName: recipient.display_name ?? "",
-      isActive: recipient.is_active,
-      channel: channelOf(recipient),
-      email: recipient.email ?? "",
-      whatsappPhone: recipient.whatsapp_phone ?? "",
-      reportTypes: recipient.report_types,
-      sendFinancial: recipient.send_financial,
-      financialScheduleTime: recipient.financial_schedule_time ?? ""
-    });
-  }
-
-  async function save() {
-    if (!form) return;
-    setBusy(true);
-    setFormError(null);
-    try {
-      await callWebApi("save_report_recipient", {
-        id: form.id ?? undefined,
-        displayName: form.displayName,
-        isActive: form.isActive,
-        sendEmail: form.channel !== "whatsapp",
-        sendWhatsapp: form.channel !== "email",
-        email: form.email,
-        whatsappPhone: form.whatsappPhone,
-        reportTypes: form.reportTypes,
-        sendFinancial: form.sendFinancial,
-        financialScheduleTime: form.sendFinancial ? form.financialScheduleTime : null
-      });
-      toast.push(form.id ? "Destinatário atualizado." : "Destinatário adicionado.");
-      setForm(null);
-      await reload();
-    } catch (caught) {
-      setFormError(errorMessage(caught));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function remove(recipient: Recipient) {
     const name = recipient.display_name || recipient.email || recipient.whatsapp_phone || "";
@@ -182,16 +140,7 @@ export function ReportRecipients() {
         title="Destinatários cadastrados"
         count={recipients.length}
         description="Quem recebe o fechamento diário por e-mail ou WhatsApp. Vale para todas as balanças da pedreira."
-        action={
-          <NewButton
-            onClick={() => {
-              setFormError(null);
-              setForm(EMPTY_FORM);
-            }}
-          >
-            Novo destinatário
-          </NewButton>
-        }
+        action={<NewButton onClick={() => setEditing("new")}>Novo destinatário</NewButton>}
       />
       {error && <ErrorState message={error} onRetry={() => void reload()} />}
       {channels && (
@@ -227,10 +176,25 @@ export function ReportRecipients() {
           loading={loading}
           empty="Nenhum destinatário cadastrado."
           columns={[
-            { key: "name", header: "Nome", render: (row) => row.display_name ?? "-" },
+            {
+              key: "name",
+              header: "Nome",
+              sortValue: (row) => row.display_name,
+              render: (row) => row.display_name ?? "-"
+            },
             { key: "channel", header: "Canal", render: (row) => CHANNEL_LABEL[channelOf(row)] },
-            { key: "email", header: "E-mail", render: (row) => row.email ?? "-" },
-            { key: "whatsapp", header: "WhatsApp", render: (row) => row.whatsapp_phone ?? "-" },
+            {
+              key: "email",
+              header: "E-mail",
+              sortValue: (row) => row.email,
+              render: (row) => row.email ?? "-"
+            },
+            {
+              key: "whatsapp",
+              header: "WhatsApp",
+              sortValue: (row) => row.whatsapp_phone,
+              render: (row) => row.whatsapp_phone ?? "-"
+            },
             {
               key: "types",
               header: "Relatórios",
@@ -258,7 +222,11 @@ export function ReportRecipients() {
               numeric: true,
               render: (row) => (
                 <span className="row-actions">
-                  <IconAction icon="edit" label="Editar destinatário" onClick={() => edit(row)} />
+                  <IconAction
+                    icon="edit"
+                    label="Editar destinatário"
+                    onClick={() => setEditing(row)}
+                  />
                   <IconAction
                     icon="trash"
                     label="Remover destinatário"
@@ -272,123 +240,235 @@ export function ReportRecipients() {
         />
       )}
 
-      {form && (
-        <Modal
-          title={form.id ? "Editar destinatário" : "Adicionar destinatário"}
-          wide
-          onClose={() => setForm(null)}
-          footer={
-            <>
-              <button className="btn" onClick={() => setForm(null)}>
-                Cancelar
-              </button>
-              <button className="btn primary" disabled={busy} onClick={() => void save()}>
-                {busy ? "Salvando..." : form.id ? "Salvar" : "Adicionar"}
-              </button>
-            </>
-          }
-        >
-          {formError && <Alert kind="error">{formError}</Alert>}
-          <div className="grid-3">
-            <div>
-              <h4 className="recipients-form-title">Identificação</h4>
-              <Field label="Nome (opcional)">
-                <input
-                  className="input"
-                  value={form.displayName}
-                  placeholder="Dono ou responsável"
-                  onChange={(event) => setForm({ ...form, displayName: event.target.value })}
-                />
-              </Field>
-              <Field label="Ativo">
-                <select
-                  className="select"
-                  value={form.isActive ? "yes" : "no"}
-                  onChange={(event) => setForm({ ...form, isActive: event.target.value === "yes" })}
-                >
-                  <option value="yes">Sim</option>
-                  <option value="no">Não</option>
-                </select>
-              </Field>
-            </div>
-            <div>
-              <h4 className="recipients-form-title">Canais</h4>
-              <Field label="Enviar por">
-                <select
-                  className="select"
-                  value={form.channel}
-                  onChange={(event) => setForm({ ...form, channel: event.target.value as Channel })}
-                >
-                  <option value="email">E-mail</option>
-                  <option value="whatsapp">WhatsApp</option>
-                  <option value="both">Ambos</option>
-                </select>
-              </Field>
-              <Field label="E-mail">
-                <input
-                  className="input"
-                  type="email"
-                  value={form.email}
-                  placeholder="dono@pedreira.com"
-                  onChange={(event) => setForm({ ...form, email: event.target.value })}
-                />
-              </Field>
-              <Field label="WhatsApp">
-                <input
-                  className="input"
-                  type="tel"
-                  value={form.whatsappPhone}
-                  placeholder="(11) 99999-9999"
-                  onChange={(event) => setForm({ ...form, whatsappPhone: event.target.value })}
-                />
-              </Field>
-            </div>
-            <div>
-              <h4 className="recipients-form-title">Relatórios</h4>
-              <Field label="Relatórios enviados">
-                <select
-                  className="select"
-                  value={form.reportTypes}
-                  onChange={(event) => setForm({ ...form, reportTypes: event.target.value })}
-                >
-                  <option value="sales">Vendas</option>
-                  <option value="trucks">Caminhões</option>
-                  <option value="both">Vendas + Caminhões</option>
-                </select>
-              </Field>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={form.sendFinancial}
-                  onChange={(event) => setForm({ ...form, sendFinancial: event.target.checked })}
-                />
-                Recebe o relatório financeiro (OMIE)
-              </label>
-              {form.sendFinancial && (
-                <Field label="Horário do financeiro" hint="Vazio = o horário geral dos envios.">
-                  <select
-                    className="select"
-                    value={form.financialScheduleTime}
-                    onChange={(event) =>
-                      setForm({ ...form, financialScheduleTime: event.target.value })
-                    }
-                  >
-                    <option value="">Horário geral</option>
-                    {Array.from({ length: 24 }, (_, hour) => {
-                      const value = `${String(hour).padStart(2, "0")}:00`;
-                      return (
-                        <option key={value} value={value}>
-                          {value}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </Field>
-              )}
-            </div>
-          </div>
-        </Modal>
+      {editing && (
+        <RecipientForm
+          recipient={editing === "new" ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={async () => {
+            setEditing(null);
+            await reload();
+          }}
+        />
       )}
     </>
+  );
+}
+
+/** O formulario como abre. O WhatsApp gravado (55 + DDD + numero) aparece como se digita. */
+function recipientFormOf(recipient: Recipient | null): FormState {
+  if (!recipient) return EMPTY_FORM;
+  return {
+    id: recipient.id,
+    displayName: recipient.display_name ?? "",
+    isActive: recipient.is_active,
+    channel: channelOf(recipient),
+    email: recipient.email ?? "",
+    whatsappPhone: whatsappForInput(recipient.whatsapp_phone),
+    reportTypes: recipient.report_types,
+    sendFinancial: recipient.send_financial,
+    financialScheduleTime: recipient.financial_schedule_time ?? ""
+  };
+}
+
+type RecipientField = "channel" | "email" | "whatsappPhone";
+
+/** A recusa da `web-api` que tem campo aparece embaixo dele; o resto, no alto da janela. */
+const RECIPIENT_ERROR_FIELDS: ReadonlyArray<readonly [RecipientField, RegExp]> = [
+  ["email", /e-mail/i],
+  ["whatsappPhone", /whatsapp/i],
+  ["channel", /canal/i]
+];
+
+function RecipientForm({
+  recipient,
+  onClose,
+  onSaved
+}: {
+  recipient: Recipient | null;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [initial] = useState(() => recipientFormOf(recipient));
+  const [form, setForm] = useState(initial);
+  const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<RecipientField, string>>>({});
+  const [busy, setBusy] = useState(false);
+  const dirty = (Object.keys(form) as Array<keyof FormState>).some(
+    (key) => form[key] !== initial[key]
+  );
+  const guard = useDiscardGuard(dirty);
+
+  function update(patch: Partial<FormState>) {
+    setForm((current) => ({ ...current, ...patch }));
+    setFieldErrors((current) => {
+      // Trocar o canal muda quais campos valem: os erros antigos saem.
+      if ("channel" in patch) return {};
+      const next = { ...current };
+      for (const key of Object.keys(patch)) delete next[key as RecipientField];
+      return next;
+    });
+  }
+
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    setFieldErrors({});
+    try {
+      await callWebApi("save_report_recipient", {
+        id: form.id ?? undefined,
+        displayName: form.displayName,
+        isActive: form.isActive,
+        sendEmail: form.channel !== "whatsapp",
+        sendWhatsapp: form.channel !== "email",
+        email: form.email,
+        // Sem mexer, sobe o numero gravado; o digitado a web-api deixa so com os digitos (e
+        // poe o 55), entao a mascara nao muda o que e gravado.
+        whatsappPhone:
+          form.whatsappPhone === initial.whatsappPhone
+            ? (recipient?.whatsapp_phone ?? "")
+            : form.whatsappPhone,
+        reportTypes: form.reportTypes,
+        sendFinancial: form.sendFinancial,
+        financialScheduleTime: form.sendFinancial ? form.financialScheduleTime : null
+      });
+      toast.push(form.id ? "Destinatário atualizado." : "Destinatário adicionado.");
+      await onSaved();
+    } catch (caught) {
+      const message = errorMessage(caught);
+      const field = fieldOfError(message, RECIPIENT_ERROR_FIELDS);
+      if (field) setFieldErrors({ [field]: message });
+      else setError(message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const formId = "recipient-form";
+  return (
+    <Modal
+      title={form.id ? "Editar destinatário" : "Adicionar destinatário"}
+      wide
+      dirty={dirty}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={() => void guard(onClose)}>
+            Cancelar
+          </button>
+          <button className="btn primary" type="submit" form={formId} disabled={busy}>
+            {busy ? "Salvando..." : form.id ? "Salvar" : "Adicionar"}
+          </button>
+        </>
+      }
+    >
+      {error && <Alert kind="error">{error}</Alert>}
+      <form id={formId} onSubmit={(e) => void onSubmit(e)}>
+        <div className="grid-3">
+          <div>
+            <h4 className="recipients-form-title">Identificação</h4>
+            <Field label="Nome (opcional)">
+              <input
+                className="input"
+                value={form.displayName}
+                placeholder="Dono ou responsável"
+                onChange={(event) => update({ displayName: event.target.value })}
+              />
+            </Field>
+            <Field label="Ativo">
+              <select
+                className="select"
+                value={form.isActive ? "yes" : "no"}
+                onChange={(event) => update({ isActive: event.target.value === "yes" })}
+              >
+                <option value="yes">Sim</option>
+                <option value="no">Não</option>
+              </select>
+            </Field>
+          </div>
+          <div>
+            <h4 className="recipients-form-title">Canais</h4>
+            <Field label="Enviar por" error={fieldErrors.channel}>
+              <select
+                className="select"
+                value={form.channel}
+                onChange={(event) => update({ channel: event.target.value as Channel })}
+              >
+                <option value="email">E-mail</option>
+                <option value="whatsapp">WhatsApp</option>
+                <option value="both">Ambos</option>
+              </select>
+            </Field>
+            <Field label="E-mail" error={fieldErrors.email}>
+              <input
+                className="input"
+                type="email"
+                value={form.email}
+                placeholder="dono@pedreira.com"
+                required={form.channel !== "whatsapp"}
+                onChange={(event) => update({ email: event.target.value })}
+              />
+            </Field>
+            <Field
+              label="WhatsApp"
+              hint="Com DDD. Número de outro país: comece com +."
+              error={fieldErrors.whatsappPhone}
+            >
+              <input
+                className="input"
+                type="tel"
+                inputMode="tel"
+                value={form.whatsappPhone}
+                placeholder="(11) 99999-9999"
+                required={form.channel !== "email"}
+                onChange={(event) => update({ whatsappPhone: maskPhoneInput(event.target.value) })}
+              />
+            </Field>
+          </div>
+          <div>
+            <h4 className="recipients-form-title">Relatórios</h4>
+            <Field label="Relatórios enviados">
+              <select
+                className="select"
+                value={form.reportTypes}
+                onChange={(event) => update({ reportTypes: event.target.value })}
+              >
+                <option value="sales">Vendas</option>
+                <option value="trucks">Caminhões</option>
+                <option value="both">Vendas + Caminhões</option>
+              </select>
+            </Field>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={form.sendFinancial}
+                onChange={(event) => update({ sendFinancial: event.target.checked })}
+              />
+              Recebe o relatório financeiro (OMIE)
+            </label>
+            {form.sendFinancial && (
+              <Field label="Horário do financeiro" hint="Vazio = o horário geral dos envios.">
+                <select
+                  className="select"
+                  value={form.financialScheduleTime}
+                  onChange={(event) => update({ financialScheduleTime: event.target.value })}
+                >
+                  <option value="">Horário geral</option>
+                  {Array.from({ length: 24 }, (_, hour) => {
+                    const value = `${String(hour).padStart(2, "0")}:00`;
+                    return (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    );
+                  })}
+                </select>
+              </Field>
+            )}
+          </div>
+        </div>
+      </form>
+    </Modal>
   );
 }
