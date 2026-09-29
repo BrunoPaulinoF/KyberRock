@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 
 import { IconAction, NewButton, Pill, SearchBar, SectionHead } from "../components/desk";
+import { Picker } from "../components/Picker";
 import { DeleteDialog } from "../components/PricePassword";
 import { Alert, DataTable, Field, Modal, Warnings, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
@@ -421,20 +422,16 @@ function VehicleForm({
           />
         </Field>
         <Field label="Transportadora">
-          <select
-            className="select"
+          <Picker
             value={carrierId}
-            onChange={(e) => setCarrierId(e.target.value)}
-          >
-            <option value="">—</option>
-            {carriers
+            options={carriers
               .filter((c) => c.is_active)
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-          </select>
+              .map((c) => ({ value: c.id, label: c.name }))}
+            onChange={setCarrierId}
+            placeholder="Buscar transportadora..."
+            allowEmpty
+            emptyLabel="Sem transportadora"
+          />
         </Field>
       </form>
     </Modal>

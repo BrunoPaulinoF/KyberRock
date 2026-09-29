@@ -814,12 +814,15 @@ input[type="radio"] {
   width: 100%;
   max-width: 640px;
   box-shadow: var(--kr-shadow);
-  overflow: hidden;
+  /* Sem "hidden": a lista de busca (Picker) de uma janela curta passaria da borda e sumiria
+     cortada. Os cantos arredondados ficam no cabecalho e no rodape. */
+  overflow: visible;
 }
 .modal.wide {
   max-width: 860px;
 }
 .modal-head {
+  border-radius: 16px 16px 0 0;
   padding: 14px 18px;
   border-bottom: 1px solid var(--kr-border);
   background: var(--kr-surface-soft);
@@ -838,6 +841,7 @@ input[type="radio"] {
   padding: 18px;
 }
 .modal-foot {
+  border-radius: 0 0 16px 16px;
   padding: 14px 18px;
   border-top: 1px solid var(--kr-border);
   background: var(--kr-surface-soft);
@@ -2186,6 +2190,7 @@ input[type="radio"] {
   .modal-foot {
     position: sticky;
     bottom: 0;
+    border-radius: 0;
     padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
   }
   .modal-foot .btn {

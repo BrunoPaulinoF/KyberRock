@@ -630,22 +630,17 @@ export function Operations() {
                 onChange={(event) => setClosedDay(event.target.value || todayIso())}
               />
             </label>
-            <label className="op-filter">
+            <div className="op-filter" style={{ minWidth: 220 }}>
               Produto
-              <select
-                className="select"
-                value={closedProduct}
-                style={{ minWidth: 180 }}
-                onChange={(event) => setClosedProduct(event.target.value)}
-              >
-                <option value="all">Todos</option>
-                {closedProducts.map((product) => (
-                  <option key={product} value={product}>
-                    {product}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <Picker
+                value={closedProduct === "all" ? "" : closedProduct}
+                options={closedProducts.map((product) => ({ value: product, label: product }))}
+                onChange={(product) => setClosedProduct(product || "all")}
+                placeholder="Buscar produto..."
+                allowEmpty
+                emptyLabel="Todos"
+              />
+            </div>
             <label className="op-filter">
               Buscar
               <input
