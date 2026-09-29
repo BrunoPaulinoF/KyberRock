@@ -1,5 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 
+import { useAutoLoadMore } from "../lib/auto-load-more";
+import { PHONE_QUERY, useMediaQuery } from "../lib/use-media-query";
+
 // ---------------------------------------------------------------------------
 // Toast
 // ---------------------------------------------------------------------------
@@ -79,7 +82,9 @@ export const PAGE_SIZE = 50;
 
 /**
  * "Mostrando 50 de 2.301" + "Ver mais". Serve a lista paginada na tela (`DataTable`) e a
- * paginada no banco (clientes), que traz a proxima pagina so no clique.
+ * paginada no banco (clientes). No computador a proxima pagina vem no clique; no celular ela
+ * vem sozinha quando o rodape chega perto da tela (`useAutoLoadMore`) — o botao fica como
+ * reserva, para quando a pagina falhou.
  */
 export function LoadMore({
   shown,
@@ -94,11 +99,19 @@ export function LoadMore({
   onMore: () => void;
   step?: number;
 }) {
+  const phone = useMediaQuery(PHONE_QUERY);
+  const footerRef = useAutoLoadMore({
+    enabled: phone,
+    shown,
+    total,
+    loading: loading === true,
+    onMore
+  });
   // Lista que cabe numa pagina so nao precisa de rodape.
   if (total <= 0 || (shown >= total && total <= step)) return null;
   const left = Math.max(0, total - shown);
   return (
-    <div className="load-more">
+    <div className="load-more" ref={footerRef}>
       <span>
         Mostrando {Math.min(shown, total).toLocaleString("pt-BR")} de{" "}
         {total.toLocaleString("pt-BR")}
