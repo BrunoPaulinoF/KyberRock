@@ -18,6 +18,14 @@ describe("telas de cada perfil", () => {
     expect(usesSidebar("monitoramento")).toBe(false);
   });
 
+  it("so o perfil monitoramento ve a tela Monitoramento", () => {
+    expect(ROLES.filter((role) => canSee(role, "monitoramento"))).toEqual(["monitoramento"]);
+  });
+
+  it("so o perfil comercial ve a aba Comercial", () => {
+    expect(ROLES.filter((role) => canSee(role, "comercial"))).toEqual(["comercial"]);
+  });
+
   it("comercial ve a aba Comercial, as cinco telas de analise, os cadastros e a senha de preco", () => {
     expect([...SCREENS_BY_ROLE.comercial].sort()).toEqual(
       [
@@ -39,18 +47,30 @@ describe("telas de cada perfil", () => {
     expect((SCREENS as readonly string[]).includes("nova-entrada")).toBe(false);
   });
 
-  it("gestor ve tudo menos os logs", () => {
+  it("gestor ve tudo menos os logs, a aba Comercial e o monitoramento", () => {
     const hidden = SCREENS.filter((screen) => !canSee("gestor", screen));
-    expect(hidden.sort()).toEqual(["carregamento", "senha-preco", "suporte"]);
+    expect(hidden.sort()).toEqual([
+      "carregamento",
+      "comercial",
+      "monitoramento",
+      "senha-preco",
+      "suporte"
+    ]);
   });
 
   it("operacao ve tudo menos os logs; administrador ve tambem os logs", () => {
     expect(SCREENS.filter((screen) => !canSee("operacao", screen)).sort()).toEqual([
       "carregamento",
+      "comercial",
+      "monitoramento",
       "senha-preco",
       "suporte"
     ]);
-    expect(SCREENS.filter((screen) => !canSee("administrador", screen))).toEqual(["carregamento"]);
+    expect(SCREENS.filter((screen) => !canSee("administrador", screen)).sort()).toEqual([
+      "carregamento",
+      "comercial",
+      "monitoramento"
+    ]);
   });
 
   it("configuracoes: gestor, operacao e administrador", () => {

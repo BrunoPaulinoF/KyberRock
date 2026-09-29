@@ -455,9 +455,10 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   `apps/web/src/lib/permissions.ts`. Tela que nao e do perfil nao aparece no menu, e o endereco
   digitado a mao volta para a tela inicial dele (`homeFor`). Tela nova entra nessa lista e no
   `NAV_SECTIONS` do `Layout.tsx`; rota nova usa o `only("<tela>", ...)` do `App.tsx`.
-- `monitoramento` so ve `/monitoramento`; `comercial` as cinco telas de analise mais Cadastros,
-  `/cupons` e `/senha-preco`; `gestor` e `operacao` tudo (com `/cupons`, que nao existe no
-  desktop); `administrador` tudo mais `/suporte` (Logs) e `/senha-preco`.
+- `monitoramento` so ve `/monitoramento`; `comercial` a aba `/comercial`, as cinco telas de
+  analise, Cadastros, `/cupons` e `/senha-preco`. `/monitoramento` e `/comercial` sao **so** do
+  perfil de mesmo nome. `gestor` e `operacao` veem todo o resto (com `/cupons`, que nao existe no
+  desktop); `administrador` o mesmo mais `/suporte` (Logs) e `/senha-preco`.
   So gestor, operacao e administrador tem a engrenagem de configuracoes; os outros tem so o botao
   Sair.
 - O que cada perfil **grava** mora na `web-api` (`_shared/web-session.ts`, `actionDenial` no
