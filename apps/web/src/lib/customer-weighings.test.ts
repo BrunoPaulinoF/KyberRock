@@ -5,6 +5,7 @@ import {
   customerAddress,
   customerCityLine,
   groupWeighingsByProduct,
+  specialPriceLines,
   sumWeighings,
   type CustomerWeighingOperation
 } from "./customer-weighings";
@@ -25,6 +26,8 @@ function op(overrides: Partial<CustomerWeighingOperation>): CustomerWeighingOper
     product_total_cents: 50_000,
     freight_total_cents: 0,
     total_cents: 50_000,
+    operation_type: "invoice",
+    omie_invoice_number: null,
     closed_at: "2026-09-10T12:00:00Z",
     created_at: "2026-09-10T11:00:00Z",
     ...overrides
@@ -97,5 +100,47 @@ describe("cartao Info", () => {
     expect(creditLabel({ credit_account_enabled: true, credit_mode: "prepaid" })).toBe("Pre-pago");
     expect(creditLabel({ credit_account_enabled: true, credit_mode: "normal" })).toBe("Fiado");
     expect(creditLabel({ credit_account_enabled: false, credit_mode: "normal" })).toBe("Nao usa");
+  });
+});
+
+describe("specialPriceLines", () => {
+  it("um preco por produto, com o padrao ao lado, em ordem de nome", () => {
+    const lines = specialPriceLines(
+      [
+        { product_id: "p2", unit_price_cents: 6_000, updated_at: "2026-09-01T00:00:00Z" },
+        // Copia de outra balanca: vale a atualizada por ultimo.
+        { product_id: "p2", unit_price_cents: 6_500, updated_at: "2026-09-10T00:00:00Z" },
+        { product_id: "p1", unit_price_cents: 4_000, updated_at: "2026-09-05T00:00:00Z" },
+        { product_id: "p9", unit_price_cents: 1_000, updated_at: "2026-09-05T00:00:00Z" }
+      ],
+      [
+        { id: "p1", description: "Areia", code: "AR", unit_price_cents: 4_500 },
+        { id: "p2", description: "Brita 1", code: null, unit_price_cents: 9_999 }
+      ],
+      [{ product_id: "p2", unit_price_cents: 7_000 }]
+    );
+    expect(lines).toEqual([
+      {
+        productId: "p1",
+        productDescription: "Areia",
+        productCode: "AR",
+        specialCents: 4_000,
+        defaultCents: 4_500
+      },
+      {
+        productId: "p2",
+        productDescription: "Brita 1",
+        productCode: null,
+        specialCents: 6_500,
+        defaultCents: 7_000
+      },
+      {
+        productId: "p9",
+        productDescription: "Produto fora do cadastro",
+        productCode: null,
+        specialCents: 1_000,
+        defaultCents: null
+      }
+    ]);
   });
 });

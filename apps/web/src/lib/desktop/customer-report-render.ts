@@ -26,7 +26,6 @@ import type {
   CustomerReportOperation,
   CustomerReportPaymentRow,
   CustomerReportPeriodRow,
-  CustomerReportPlateRow,
   CustomerReportProductDayRow,
   CustomerReportProductRow,
   CustomerReportVariant,
@@ -235,18 +234,8 @@ export function renderCustomerReportHtml(
     )
   );
 
-  sections.push(
-    section(
-      "Placas",
-      table(
-        ["Placa", "Motorista", "Transportadora", "Viagens", "Peso", "Tempo medio", "Total"],
-        report.byPlate.map((row) => plateCells(row)),
-        null,
-        "Sem placas no periodo."
-      )
-    )
-  );
-
+  // O quadro "Placas" (um total por placa) saiu: a lista abaixo ja traz cada viagem com placa,
+  // motorista e transportadora, e o quadro so repetia o mesmo em resumo.
   sections.push(
     section(
       "Viagens por placa e motorista",
@@ -545,14 +534,6 @@ export function renderCustomerReportSpreadsheet(
 
   blocks.push(
     sheetTable(
-      "Placas",
-      ["Placa", "Motorista", "Transportadora", "Viagens", "Peso (kg)", "Tempo medio", "Total"],
-      report.byPlate.map((row) => plateCells(row))
-    )
-  );
-
-  blocks.push(
-    sheetTable(
       "Viagens por placa",
       TRIP_HEADERS,
       report.tripsByPlate.map((operation) => tripCells(operation))
@@ -725,6 +706,8 @@ function productDayCells(row: CustomerReportProductDayRow): string[] {
 const TRIP_HEADERS = [
   "Placa",
   "Motorista",
+  // Quem levou a carga: o caminhao de terceiro so se identifica pela transportadora.
+  "Transportadora",
   "Data",
   // O CUPOM vem junto da data porque e o numero que o cliente tem na mao: a conferencia
   // dele e "este papel esta nesta lista?", e sem a coluna sobrava casar por peso e placa.
@@ -746,6 +729,7 @@ function tripCells(operation: CustomerReportOperation): string[] {
   return [
     operation.plate,
     operation.driverName,
+    operation.carrierName ?? "-",
     formatDayLabel(operation.date),
     formatCouponNumber(operation.couponNumber),
     operation.productDescription,
@@ -756,18 +740,6 @@ function tripCells(operation: CustomerReportOperation): string[] {
     formatBRL(operation.totalCents),
     invoiceNumberText(operation.omieInvoiceNumber, operation.operationType),
     operation.minutesInside === null ? "-" : formatMinutes(operation.minutesInside)
-  ];
-}
-
-function plateCells(row: CustomerReportPlateRow): string[] {
-  return [
-    row.plate,
-    row.driverName ?? "-",
-    row.carrierName ?? "-",
-    num(row.operations),
-    num(row.netWeightKg),
-    formatMinutes(row.avgMinutes),
-    formatBRL(row.totalCents)
   ];
 }
 

@@ -22,6 +22,7 @@ import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { sumWeighings, type CustomerRef } from "../lib/customer-weighings";
+import { invoiceNumberLabel } from "../lib/desktop/invoice-number-label";
 import { firstDayOfMonth, formatMoney, formatTons, periodToIso, todayIso } from "../lib/format";
 import { q } from "../lib/queries";
 import {
@@ -458,12 +459,14 @@ export function SalesReport() {
         {panel?.kind === "info" && (
           <CustomerInfoModal
             customer={panel.customer}
-            periodLabel={periodLabel}
-            totals={sumWeighings(panelOps)}
-            lastSale={panelOps.reduce<string | null>((last, op) => {
-              const instant = saleInstant(op);
-              return !last || instant > last ? instant : last;
-            }, null)}
+            summary={{
+              periodLabel,
+              totals: sumWeighings(panelOps),
+              lastSale: panelOps.reduce<string | null>((last, op) => {
+                const instant = saleInstant(op);
+                return !last || instant > last ? instant : last;
+              }, null)
+            }}
             onWeighings={() => openWeighings(panel.customer)}
             onClose={() => setPanel(null)}
           />
@@ -536,6 +539,7 @@ function DailyReport({
             <tr>
               <th>Cliente</th>
               <th>Produto</th>
+              <th>Nota fiscal</th>
               <th className="num">Peso liquido (kg)</th>
               <th className="num">Valor produto</th>
               <th className="num">Frete</th>
@@ -544,7 +548,7 @@ function DailyReport({
           }
           foot={
             <tr>
-              <td colSpan={2}>TOTAL</td>
+              <td colSpan={3}>TOTAL</td>
               <td className="num">{kg(totals.netWeightKg)}</td>
               <td className="num">{formatMoney(totals.productTotalCents)}</td>
               <td className="num">{formatMoney(totals.freightTotalCents)}</td>
@@ -558,6 +562,9 @@ function DailyReport({
                 <CustomerName id={line.customerId} name={line.customerName} onOpen={onCustomer} />
               </td>
               <td>{line.productDescription}</td>
+              <td>
+                <InvoiceCell line={line} />
+              </td>
               <td className="num">{kg(line.netWeightKg)}</td>
               <td className="num">{formatMoney(line.productTotalCents)}</td>
               <td className="num">{formatMoney(line.freightTotalCents)}</td>
@@ -569,6 +576,19 @@ function DailyReport({
         </ReportTable>
       )}
     </>
+  );
+}
+
+/** A nota da pesagem: o numero, "Sem nota" (venda com nota ainda sem numero) ou "—" (interna). */
+function InvoiceCell({ line }: { line: Pick<ReportLine, "invoiceNumber" | "operationType"> }) {
+  const label = invoiceNumberLabel(line.invoiceNumber, line.operationType);
+  return (
+    <span
+      className={label.state === "number" ? "report-nf" : "report-nf muted"}
+      title={label.title ?? undefined}
+    >
+      {label.state === "number" ? `NF ${label.text}` : label.text}
+    </span>
   );
 }
 
@@ -593,6 +613,7 @@ function PeriodReport({
               <th>Data</th>
               <th>Cliente</th>
               <th>Produto</th>
+              <th>Nota fiscal</th>
               <th className="num">Peso kg</th>
               <th className="num">Produto R$/t</th>
               <th className="num">Produto</th>
@@ -603,7 +624,7 @@ function PeriodReport({
           }
           foot={
             <tr>
-              <td colSpan={3}>TOTAL</td>
+              <td colSpan={4}>TOTAL</td>
               <td className="num">{kg(totals.netWeightKg)}</td>
               <td className="num">{perTon(totals.productTotalCents, totals.netWeightKg)}</td>
               <td className="num">{formatMoney(totals.productTotalCents)}</td>
@@ -620,6 +641,9 @@ function PeriodReport({
                 <CustomerName id={line.customerId} name={line.customerName} onOpen={onCustomer} />
               </td>
               <td>{line.productDescription}</td>
+              <td>
+                <InvoiceCell line={line} />
+              </td>
               <td className="num">{kg(line.netWeightKg)}</td>
               <td className="num">{perTon(line.productTotalCents, line.netWeightKg)}</td>
               <td className="num">{formatMoney(line.productTotalCents)}</td>

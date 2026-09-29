@@ -24,6 +24,8 @@ export type ReportOperation = Pick<
   | "freight_total_cents"
   | "total_cents"
   | "freight_type"
+  | "operation_type"
+  | "omie_invoice_number"
   | "closed_at"
   | "created_at"
 >;
@@ -74,6 +76,10 @@ export interface ReportLine {
   productTotalCents: number;
   freightTotalCents: number;
   totalCents: number;
+  /** Numero da NF-e emitida no OMIE; null enquanto a nota nao saiu (ou venda interna). */
+  invoiceNumber: string | null;
+  /** Venda interna nao emite NF-e: a coluna mostra "—" em vez de "Sem nota". */
+  operationType: "invoice" | "internal";
 }
 
 export interface ReportTotals {
@@ -97,7 +103,9 @@ export function reportLines(ops: ReportOperation[]): ReportLine[] {
       netWeightKg: op.net_weight_kg ?? 0,
       productTotalCents: op.product_total_cents ?? 0,
       freightTotalCents: op.freight_total_cents ?? 0,
-      totalCents: op.total_cents ?? 0
+      totalCents: op.total_cents ?? 0,
+      invoiceNumber: (op.omie_invoice_number ?? "").trim() || null,
+      operationType: op.operation_type === "internal" ? "internal" : "invoice"
     }));
 }
 

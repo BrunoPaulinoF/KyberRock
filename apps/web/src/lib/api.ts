@@ -51,6 +51,8 @@ export type WebApiAction =
   | "unit_devices"
   | "support_overview"
   | "lookup_cnpj"
+  | "customer_balance"
+  | "lookup_future_billing_invoice"
   | "price_code";
 
 export class WebApiError extends Error {

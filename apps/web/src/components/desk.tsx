@@ -2,6 +2,7 @@ import {
   Ban,
   Check,
   Clock,
+  Eye,
   FileText,
   Pencil,
   Plus,
@@ -182,7 +183,8 @@ const ACTION_ICONS = {
   close: X,
   clock: Clock,
   wallet: Wallet,
-  sliders: SlidersHorizontal
+  sliders: SlidersHorizontal,
+  eye: Eye
 } satisfies Record<string, LucideIcon>;
 
 export type ActionIcon = keyof typeof ACTION_ICONS;

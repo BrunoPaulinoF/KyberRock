@@ -60,6 +60,11 @@ import {
   verifyPriceCode
 } from "../_shared/price-code.ts";
 import { CnpjLookupError, lookupCnpj, type CnpjLookupResult } from "../_shared/cnpj-lookup.ts";
+import {
+  matchInvoiceProduct,
+  normalizeInvoiceNumber,
+  type OmieInvoice
+} from "../_shared/omie-invoice-items.ts";
 import { conditionTermMatches } from "../_shared/payment-condition-match.ts";
 import { tryParsePaymentCondition } from "../_shared/payment-condition-parser.ts";
 import {
@@ -120,6 +125,9 @@ export interface WebApiStore {
 
 export type OmiePushAction = "push_customer" | "push_carrier";
 
+/** Consultas ao OMIE que nao gravam nada: o saldo do cliente e a nota de entrega futura. */
+export type OmieQueryAction = "customer_open_receivables" | "lookup_invoice";
+
 /** A ponte com a `omie-sync`, pelo dispositivo virtual da empresa (`_shared/web-device.ts`). */
 export interface OmieBridge {
   push(
@@ -127,6 +135,12 @@ export interface OmieBridge {
     payload: Row,
     scope: { companyId: string; unitId: string }
   ): Promise<{ omieCustomerId: number }>;
+  /** Pergunta ao OMIE e devolve o corpo da resposta da `omie-sync` (erro vira excecao). */
+  query(
+    action: OmieQueryAction,
+    payload: Row,
+    scope: { companyId: string; unitId: string }
+  ): Promise<Row>;
 }
 
 export interface WebApiHandlerDependencies {
@@ -181,6 +195,8 @@ export const WEB_API_ACTIONS = [
   "unit_devices",
   "support_overview",
   "lookup_cnpj",
+  "customer_balance",
+  "lookup_future_billing_invoice",
   "price_code"
 ] as const;
 
@@ -246,11 +262,15 @@ export const OPERATION_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction
 
 /**
  * Cadastro de cliente, o bloco comercial/credito dele e os vinculos que partem dele. A busca de
- * CNPJ na Receita mora aqui porque so serve para preencher esse cadastro.
+ * CNPJ na Receita mora aqui porque so serve para preencher esse cadastro — e, pelo mesmo motivo,
+ * as duas consultas ao OMIE da ficha do cliente (o saldo e a nota de entrega futura): gastam
+ * chamada da chave OMIE da pedreira, entao ficam com quem cuida do cadastro.
  */
 export const CUSTOMER_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
   "upsert_customer",
   "lookup_cnpj",
+  "customer_balance",
+  "lookup_future_billing_invoice",
   "set_customer_active",
   "set_customer_commercial",
   "delete_customer",
@@ -1265,6 +1285,126 @@ async function removeCustomerFreightValue(ctx: ActionContext): Promise<Row> {
  * (`setCustomerFutureBillingInvoice`): uma linha viva por (cliente, produto, numero da nota) —
  * repetir a mesma nota so corrige o total. O saldo e calculado na balanca, pelas pesagens.
  */
+function wholeNumber(value: unknown): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number) : 0;
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Saldo do cliente no cadastro do site: os titulos a receber em aberto no OMIE, perguntados na
+ * hora (`customer_open_receivables` da `omie-sync`). Nada e gravado — `open_receivables_cents`
+ * desce para as balancas e entra na conta do limite de credito, e o site nao mexe nisso. O OMIE
+ * fora do ar nao e erro da tela: volta `unavailable` com o motivo, e o resto do cartao aparece.
+ */
+async function customerBalance(ctx: ActionContext): Promise<Row> {
+  const customerId = requiredId(ctx.payload, "customerId", "o cliente");
+  const customer = await requireRow(ctx, "customers", customerId, "Cliente");
+  const omieCustomerId = Number(customer.omie_customer_id);
+  if (!Number.isInteger(omieCustomerId) || omieCustomerId <= 0) return { status: "not_linked" };
+  try {
+    const result = await ctx.omie.query(
+      "customer_open_receivables",
+      { customerOmieCode: omieCustomerId },
+      { companyId: ctx.session.companyId, unitId: ctx.session.unitId }
+    );
+    return {
+      status: "ok",
+      openCents: wholeNumber(result.openCents),
+      openTitles: wholeNumber(result.openTitles),
+      overdueCents: wholeNumber(result.overdueCents),
+      overdueTitles: wholeNumber(result.overdueTitles),
+      nextDueDate: typeof result.nextDueDate === "string" ? result.nextDueDate : null,
+      truncated: result.truncated === true,
+      checkedAt: ctx.nowIso
+    };
+  } catch (error) {
+    return { status: "unavailable", message: `O OMIE nao respondeu agora: ${errorText(error)}` };
+  }
+}
+
+/**
+ * Entrega futura: o numero da NF-e traz o resto da nota — produto e volume — do OMIE
+ * (`lookup_invoice` da `omie-sync`). Nao grava: a tela preenche o formulario e a pessoa confere
+ * e salva (`set_customer_future_billing_invoice`). Cada item volta com o produto do cadastro que
+ * casou (codigo do OMIE ou codigo do produto) e o volume em quilos quando a unidade e de peso.
+ */
+async function lookupFutureBillingInvoice(ctx: ActionContext): Promise<Row> {
+  const customerId = requiredId(ctx.payload, "customerId", "o cliente");
+  const customer = await requireRow(ctx, "customers", customerId, "Cliente");
+  const invoiceNumber = normalizeInvoiceNumber(ctx.payload.nfeNumber);
+  if (!invoiceNumber) throw new WebApiError(400, "Informe o numero da NF-e.");
+
+  let result: Row;
+  try {
+    result = await ctx.omie.query(
+      "lookup_invoice",
+      { invoiceNumber },
+      { companyId: ctx.session.companyId, unitId: ctx.session.unitId }
+    );
+  } catch (error) {
+    throw new WebApiError(502, `Nao deu para consultar a nota no OMIE agora: ${errorText(error)}`);
+  }
+  const invoices = (Array.isArray(result.invoices) ? result.invoices : []) as OmieInvoice[];
+  if (invoices.length === 0) {
+    throw new WebApiError(
+      404,
+      `A NF-e ${invoiceNumber} nao foi encontrada no OMIE (ou esta cancelada). Confira o numero.`
+    );
+  }
+
+  const products = (
+    await ctx.store.listRows(
+      "products",
+      ctx.session.companyId,
+      "id, description, code, omie_product_id",
+      [],
+      { live: true }
+    )
+  ).map((row) => ({
+    id: String(row.id),
+    description: String(row.description ?? ""),
+    code: typeof row.code === "string" ? row.code : null,
+    omieProductId: typeof row.omie_product_id === "number" ? row.omie_product_id : null
+  }));
+  const customerOmieId = Number(customer.omie_customer_id);
+
+  const found = invoices.map((invoice) => {
+    const otherCustomer =
+      invoice.omieCustomerId !== null &&
+      Number.isInteger(customerOmieId) &&
+      customerOmieId > 0 &&
+      invoice.omieCustomerId !== customerOmieId;
+    if (otherCustomer) {
+      ctx.warnings.push(
+        `A NF-e ${invoice.invoiceNumber}${invoice.series ? ` (serie ${invoice.series})` : ""} foi emitida para outro cliente no OMIE${invoice.customerName ? `: ${invoice.customerName}` : ""}. Confira antes de salvar.`
+      );
+    }
+    return {
+      invoiceNumber: invoice.invoiceNumber,
+      series: invoice.series,
+      issueDate: invoice.issueDate,
+      customerName: invoice.customerName,
+      otherCustomer,
+      items: (invoice.items ?? []).map((item) => {
+        const product = matchInvoiceProduct(item, products);
+        return {
+          productId: product?.id ?? null,
+          productDescription: product?.description ?? null,
+          invoiceDescription: item.description,
+          quantity: item.quantity,
+          unit: item.unit,
+          totalWeightKg: item.weightKg
+        };
+      })
+    };
+  });
+  return { invoices: found };
+}
+
 async function setCustomerFutureBillingInvoice(ctx: ActionContext): Promise<Row> {
   const customerId = requiredId(ctx.payload, "customerId", "o cliente");
   await requireRow(ctx, "customers", customerId, "Cliente");
@@ -2319,6 +2459,10 @@ async function runAction(action: WebApiAction, ctx: ActionContext): Promise<Row>
       return supportOverview(ctx);
     case "lookup_cnpj":
       return lookupCustomerCnpj(ctx);
+    case "customer_balance":
+      return customerBalance(ctx);
+    case "lookup_future_billing_invoice":
+      return lookupFutureBillingInvoice(ctx);
     case "price_code":
       return priceCode(ctx);
   }

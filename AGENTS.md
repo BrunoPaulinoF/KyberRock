@@ -525,8 +525,9 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   painel da plataforma, com login proprio (ver "Painel administrativo"). Nenhuma das tres passa
   pelo `only`/`Private`.
 - `monitoramento` so ve `/monitoramento`; `comercial` a aba `/comercial`, as cinco telas de
-  analise, Cadastros, `/cupons` e `/senha-preco`. `/monitoramento` e `/comercial` sao **so** do
-  perfil de mesmo nome. `gestor` e `operacao` veem todo o resto (com `/cupons`, que nao existe no
+  analise, Cadastros, `/cupons`, `/senha-preco` e tambem `/monitoramento` (abre em tela cheia, com
+  "Voltar ao sistema" no lugar do "Sair"). `/comercial` e **so** do comercial; `/monitoramento` e
+  do perfil de mesmo nome e do comercial. `gestor` e `operacao` veem todo o resto (com `/cupons`, que nao existe no
   desktop); `administrador` o mesmo mais `/suporte` (Logs) e `/senha-preco`.
   So gestor, operacao e administrador tem a engrenagem de configuracoes; os outros tem so o botao
   Sair.
@@ -620,6 +621,25 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   `web users read print receipts of own company` (migracao `202609280003`) chega na empresa pela
   UNIDADE, porque `print_receipts` nao tem `company_id` — e por isso o nome dela NAO comeca com
   "web users can read ", prefixo que o laco das migracoes recria comparando `company_id`.
+- **Ficha do cliente no site** (pedidos da reuniao com o comercial, 29/09): dois cliques na linha
+  da lista de clientes (ou o olho) abrem o mesmo cartao **Info** dos relatorios, sem o resumo do
+  periodo (`CustomerInfoModal` com `summary` opcional). O cartao mostra os **precos especiais** do
+  cliente (com o padrao ao lado, `specialPriceLines`) e o **saldo** (`CustomerBalanceCard`): o
+  credito do extrato (`customer_credit_movements`, a mesma soma da balanca) e o que esta **em
+  aberto no OMIE**, perguntado na hora pela acao `customer_balance` da `web-api` — nunca gravado
+  em `open_receivables_cents`, que entra no limite de credito das balancas. A **condicao de
+  pagamento padrao** mudou para a aba Comercial e credito, ao lado da forma de pagamento (grava
+  pelo `upsert_customer`, porque sobe ao OMIE com o cliente); o formulario de edicao so a pede no
+  cliente novo. Na aba Entrega futura, **Buscar no OMIE** (`lookup_future_billing_invoice`) traz
+  produto e total da propria NF-e — so preenche, quem grava e o Salvar.
+- **Numero da nota fiscal** (`omie_invoice_number`) aparece na tela Operacoes (coluna propria nas
+  concluidas; a busca acha pelo numero da NF), no fechamento diario e no periodo dos Relatorios,
+  nas pesagens do cliente e no cupom virtual de `/cupons` — carimbado NO FIM da via
+  (`invoiceStampLines`), porque o papel sai antes de a nota existir e a copia congelada nao muda.
+- **Relatorio por cliente**: o quadro "Placas" saiu e a lista "Viagens por placa e motorista"
+  ganhou a coluna Transportadora — na tela do site, na do desktop e no PDF/planilha
+  (`customer-report-render.ts`, copia do site guardada por `desktop-copies.test.ts`). O dado
+  `byPlate` continua sendo calculado; so nao e mais desenhado.
 - **Relatorios: clicar no cliente** (`components/CustomerPanels.tsx`, regra em
   `lib/customer-weighings.ts`): o nome do cliente (fechamento diario, periodo e tabela dinamica)
   abre todas as pesagens dele separadas por produto, com filtro De/Ate proprio (comeca no periodo

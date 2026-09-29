@@ -9,6 +9,8 @@
  * e pela data em que a pesagem FECHOU, com a criacao de reserva na operacao antiga.
  */
 
+import { defaultPriceByProduct } from "./customer-cadastro";
+import type { CustomerSpecialPrice, Product, ProductDefaultPrice } from "./queries";
 import { saleInstant } from "./reports";
 import { supabase, type Tables } from "./supabase";
 
@@ -34,6 +36,8 @@ export type CustomerWeighingOperation = Pick<
   | "product_total_cents"
   | "freight_total_cents"
   | "total_cents"
+  | "operation_type"
+  | "omie_invoice_number"
   | "closed_at"
   | "created_at"
 >;
@@ -41,7 +45,7 @@ export type CustomerWeighingOperation = Pick<
 const WEIGHING_COLUMNS =
   "id, operation_code, unit_id, customer_id, customer_name, product_id, product_description, " +
   "plate, driver_name, net_weight_kg, unit_price_cents, product_total_cents, " +
-  "freight_total_cents, total_cents, closed_at, created_at";
+  "freight_total_cents, total_cents, operation_type, omie_invoice_number, closed_at, created_at";
 
 const CLOSED_STATUSES = ["closed_local", "pending_cloud", "pending_omie", "synced", "sync_error"];
 
@@ -187,16 +191,102 @@ export interface CustomerInfo {
   paymentMethodName: string | null;
   paymentTermName: string | null;
   carrierName: string | null;
+  /** Os precos especiais do cliente, um por produto (ver `specialPriceLines`). */
+  specialPrices: SpecialPriceLine[];
 }
 
-/** O cadastro do cliente e os nomes do que ele so guarda como id. */
+const NO_CUSTOMER: CustomerInfo = {
+  customer: null,
+  paymentMethodName: null,
+  paymentTermName: null,
+  carrierName: null,
+  specialPrices: []
+};
+
+/** Um preco especial do cliente, como o cartao Info mostra. */
+export interface SpecialPriceLine {
+  productId: string;
+  productDescription: string;
+  productCode: string | null;
+  specialCents: number;
+  /** O preco padrao do produto hoje (tabela padrao ou OMIE); null quando ele nao tem. */
+  defaultCents: number | null;
+}
+
+/**
+ * Os precos especiais do cliente, um por produto, em ordem de nome. O preco padrao vai junto
+ * para a comparacao ("65,00 contra 72,00 do padrao"), pela mesma regra da ficha do cliente
+ * (`defaultPriceByProduct`). Duas linhas do mesmo produto (copia de outra balanca) viram uma: a
+ * atualizada por ultimo, que e a que a balanca principal manteria.
+ */
+export function specialPriceLines(
+  specials: readonly Pick<CustomerSpecialPrice, "product_id" | "unit_price_cents" | "updated_at">[],
+  products: readonly Pick<Product, "id" | "description" | "code" | "unit_price_cents">[],
+  defaults: readonly Pick<ProductDefaultPrice, "product_id" | "unit_price_cents">[]
+): SpecialPriceLine[] {
+  const latest = new Map<string, (typeof specials)[number]>();
+  for (const special of specials) {
+    const current = latest.get(special.product_id);
+    if (!current || special.updated_at > current.updated_at) {
+      latest.set(special.product_id, special);
+    }
+  }
+  const productById = new Map(products.map((product) => [product.id, product]));
+  const defaultByProduct = defaultPriceByProduct(products, defaults);
+  return [...latest.values()]
+    .map((special) => {
+      const product = productById.get(special.product_id);
+      return {
+        productId: special.product_id,
+        productDescription: product?.description || "Produto fora do cadastro",
+        productCode: product?.code || null,
+        specialCents: special.unit_price_cents,
+        defaultCents: defaultByProduct.get(special.product_id) ?? null
+      };
+    })
+    .sort((a, b) => a.productDescription.localeCompare(b.productDescription, "pt-BR"));
+}
+
+/** Os precos especiais vivos do cliente, com o nome e o preco padrao de cada produto. */
+async function loadSpecialPrices(
+  companyId: string,
+  customerId: string
+): Promise<SpecialPriceLine[]> {
+  const { data: specials, error } = await supabase
+    .from("customer_special_prices")
+    .select("product_id, unit_price_cents, updated_at")
+    .eq("company_id", companyId)
+    .eq("customer_id", customerId)
+    .is("deleted_at", null)
+    .eq("is_active", true);
+  if (error) throw new Error(error.message);
+  const productIds = [...new Set((specials ?? []).map((special) => special.product_id))];
+  if (productIds.length === 0) return [];
+  const [products, defaults] = await Promise.all([
+    supabase
+      .from("products")
+      .select("id, description, code, unit_price_cents")
+      .eq("company_id", companyId)
+      .in("id", productIds),
+    supabase
+      .from("product_default_prices")
+      .select("product_id, unit_price_cents")
+      .eq("company_id", companyId)
+      .in("product_id", productIds)
+      .is("deleted_at", null)
+      .eq("is_active", true)
+  ]);
+  if (products.error) throw new Error(products.error.message);
+  if (defaults.error) throw new Error(defaults.error.message);
+  return specialPriceLines(specials ?? [], products.data ?? [], defaults.data ?? []);
+}
+
+/** O cadastro do cliente, os nomes do que ele so guarda como id e os precos especiais. */
 export async function loadCustomerInfo(
   companyId: string,
   customerId: string | null
 ): Promise<CustomerInfo> {
-  if (!customerId) {
-    return { customer: null, paymentMethodName: null, paymentTermName: null, carrierName: null };
-  }
+  if (!customerId) return NO_CUSTOMER;
   const { data: customer, error } = await supabase
     .from("customers")
     .select("*")
@@ -204,11 +294,9 @@ export async function loadCustomerInfo(
     .eq("id", customerId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  if (!customer) {
-    return { customer: null, paymentMethodName: null, paymentTermName: null, carrierName: null };
-  }
+  if (!customer) return NO_CUSTOMER;
   const empty = Promise.resolve({ data: null });
-  const [method, term, carrier] = await Promise.all([
+  const [method, term, carrier, specialPrices] = await Promise.all([
     customer.default_payment_method_id
       ? supabase
           .from("payment_methods")
@@ -225,13 +313,15 @@ export async function loadCustomerInfo(
       : empty,
     customer.default_carrier_id
       ? supabase.from("carriers").select("name").eq("id", customer.default_carrier_id).maybeSingle()
-      : empty
+      : empty,
+    loadSpecialPrices(companyId, customerId)
   ]);
   return {
     customer,
     paymentMethodName: method.data?.name ?? null,
     paymentTermName: term.data?.name ?? null,
-    carrierName: carrier.data?.name ?? null
+    carrierName: carrier.data?.name ?? null,
+    specialPrices
   };
 }
 

@@ -43,4 +43,11 @@ describe("operacoes concluidas: busca", () => {
     );
     expect(closedSearchFilter("Silva, Jose")).toContain("customer_name.ilike.*Silva* Jose*");
   });
+
+  it("numero tambem procura a nota fiscal, sem os zeros da esquerda", () => {
+    expect(closedSearchFilter("4521")).toContain("omie_invoice_number.eq.4521");
+    expect(closedSearchFilter("NF 004521")).toContain("omie_invoice_number.eq.4521");
+    expect(closedSearchFilter("nf-e 4521")).toContain("omie_invoice_number.eq.4521");
+    expect(closedSearchFilter("Brita")).not.toContain("omie_invoice_number");
+  });
 });

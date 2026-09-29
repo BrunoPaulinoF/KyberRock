@@ -92,38 +92,50 @@ const LINK_TABLES: ReadonlySet<string> = new Set([
  * cadastro que existe por CNPJ, codigo de integracao, tags.
  */
 function omieBridge(client: Client, supabaseUrl: string, serviceRoleKey: string): OmieBridge {
+  /** Uma chamada a `omie-sync`; resposta sem `ok` vira excecao com a mensagem dela. */
+  async function callOmieSync(
+    action: string,
+    payload: Record<string, unknown>,
+    scope: { companyId: string; unitId: string }
+  ): Promise<Record<string, unknown>> {
+    const device = await ensureWebDevice(client as unknown as WebDeviceClient, {
+      companyId: scope.companyId,
+      unitId: scope.unitId,
+      serviceRoleKey
+    });
+    const response = await fetch(`${supabaseUrl}/functions/v1/omie-sync`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${serviceRoleKey}`,
+        apikey: serviceRoleKey
+      },
+      body: JSON.stringify({
+        deviceId: device.deviceId,
+        deviceToken: device.deviceToken,
+        action,
+        payload
+      })
+    });
+    const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!response.ok || body.ok !== true) {
+      throw new Error(
+        typeof body.error === "string" ? body.error : `OMIE respondeu ${response.status}`
+      );
+    }
+    return body;
+  }
+
   return {
     async push(action, payload, scope) {
-      const device = await ensureWebDevice(client as unknown as WebDeviceClient, {
-        companyId: scope.companyId,
-        unitId: scope.unitId,
-        serviceRoleKey
-      });
-      const response = await fetch(`${supabaseUrl}/functions/v1/omie-sync`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${serviceRoleKey}`,
-          apikey: serviceRoleKey
-        },
-        body: JSON.stringify({
-          deviceId: device.deviceId,
-          deviceToken: device.deviceToken,
-          action,
-          payload
-        })
-      });
-      const body = (await response.json().catch(() => ({}))) as {
-        ok?: boolean;
-        error?: string;
-        omieCustomerId?: unknown;
-      };
+      const body = await callOmieSync(action, payload, scope);
       const omieCustomerId = Number(body.omieCustomerId);
-      if (!response.ok || !body.ok || !Number.isFinite(omieCustomerId) || omieCustomerId <= 0) {
-        throw new Error(body.error ?? `OMIE respondeu ${response.status}`);
+      if (!Number.isFinite(omieCustomerId) || omieCustomerId <= 0) {
+        throw new Error("O OMIE nao devolveu o codigo do cadastro.");
       }
       return { omieCustomerId };
-    }
+    },
+    query: callOmieSync
   };
 }
 

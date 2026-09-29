@@ -18,15 +18,18 @@ describe("telas de cada perfil", () => {
     expect(usesSidebar("monitoramento")).toBe(false);
   });
 
-  it("so o perfil monitoramento ve a tela Monitoramento", () => {
-    expect(ROLES.filter((role) => canSee(role, "monitoramento"))).toEqual(["monitoramento"]);
+  it("so o monitoramento e o comercial veem a tela Monitoramento", () => {
+    expect(ROLES.filter((role) => canSee(role, "monitoramento"))).toEqual([
+      "monitoramento",
+      "comercial"
+    ]);
   });
 
   it("so o perfil comercial ve a aba Comercial", () => {
     expect(ROLES.filter((role) => canSee(role, "comercial"))).toEqual(["comercial"]);
   });
 
-  it("comercial ve a aba Comercial, as cinco telas de analise, os cadastros e a senha de preco", () => {
+  it("comercial ve a aba Comercial, as telas de analise, o monitoramento, os cadastros e a senha de preco", () => {
     expect([...SCREENS_BY_ROLE.comercial].sort()).toEqual(
       [
         "cadastros",
@@ -36,10 +39,13 @@ describe("telas de cada perfil", () => {
         "conferencia-faturamento",
         "controle-caminhoes",
         "insights",
+        "monitoramento",
         "relatorio-cliente",
         "relatorios"
       ].sort()
     );
+    // Ele tem o menu lateral: o Monitoramento abre em tela cheia, com "Voltar ao sistema".
+    expect(usesSidebar("comercial")).toBe(true);
     expect(canSee("comercial", "configuracoes")).toBe(false);
   });
 

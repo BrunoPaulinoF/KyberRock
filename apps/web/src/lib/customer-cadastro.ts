@@ -140,3 +140,114 @@ export function parseTotalWeightKg(value: string): number | null {
   const parsed = Number(normalized);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
+
+/** Um item da NF-e de entrega futura, como a `web-api` devolve (`lookup_future_billing_invoice`). */
+export interface FutureInvoiceItem {
+  /** O produto do cadastro que casou com o item (codigo do OMIE ou do produto); null = nenhum. */
+  productId: string | null;
+  productDescription: string | null;
+  /** O nome do produto como esta na nota. */
+  invoiceDescription: string;
+  quantity: number;
+  unit: string | null;
+  /** O volume em kg; null quando a unidade nao e de peso (m3, unidade...). */
+  totalWeightKg: number | null;
+}
+
+export interface FutureInvoice {
+  invoiceNumber: string;
+  series: string | null;
+  issueDate: string | null;
+  customerName: string | null;
+  /** A nota foi emitida para outro cliente no OMIE. */
+  otherCustomer: boolean;
+  items: FutureInvoiceItem[];
+}
+
+function textOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** A resposta da `web-api`, conferida campo a campo (a tela nao confia no formato). */
+export function parseFutureInvoices(result: Record<string, unknown>): FutureInvoice[] {
+  const invoices = Array.isArray(result.invoices) ? result.invoices : [];
+  return invoices.flatMap((raw): FutureInvoice[] => {
+    if (!raw || typeof raw !== "object") return [];
+    const invoice = raw as Record<string, unknown>;
+    const invoiceNumber = textOrNull(invoice.invoiceNumber);
+    if (!invoiceNumber) return [];
+    const items = (Array.isArray(invoice.items) ? invoice.items : []).flatMap(
+      (rawItem): FutureInvoiceItem[] => {
+        if (!rawItem || typeof rawItem !== "object") return [];
+        const item = rawItem as Record<string, unknown>;
+        const quantity = numberOrNull(item.quantity);
+        if (quantity === null) return [];
+        return [
+          {
+            productId: textOrNull(item.productId),
+            productDescription: textOrNull(item.productDescription),
+            invoiceDescription: textOrNull(item.invoiceDescription) ?? "Produto da nota",
+            quantity,
+            unit: textOrNull(item.unit),
+            totalWeightKg: numberOrNull(item.totalWeightKg)
+          }
+        ];
+      }
+    );
+    return [
+      {
+        invoiceNumber,
+        series: textOrNull(invoice.series),
+        issueDate: textOrNull(invoice.issueDate),
+        customerName: textOrNull(invoice.customerName),
+        otherCustomer: invoice.otherCustomer === true,
+        items
+      }
+    ];
+  });
+}
+
+/** O que o formulario recebe ao usar um item da nota. */
+export interface FutureInvoiceFill {
+  /** `null` = o produto da nota nao casou com nenhum do cadastro: a pessoa escolhe. */
+  productId: string | null;
+  /** O total em kg ja no formato do campo ("30000"); "" quando nao da para converter. */
+  totalKg: string;
+  /** O que avisar na tela (produto sem cadastro, unidade sem conversao). */
+  notes: string[];
+}
+
+/** "30 TON", "12,5 M3". */
+export function quantityLabel(item: Pick<FutureInvoiceItem, "quantity" | "unit">): string {
+  const quantity = item.quantity.toLocaleString("pt-BR", { maximumFractionDigits: 3 });
+  return item.unit ? `${quantity} ${item.unit}` : quantity;
+}
+
+/**
+ * Preenche produto e total do formulario com um item da nota. O total so vem quando a unidade
+ * da nota e de peso: m3 sem a densidade viraria um saldo inventado, e a balanca baixaria a nota
+ * errado a cada pesagem — ai o campo fica para a pessoa, com o aviso.
+ */
+export function futureInvoiceFill(item: FutureInvoiceItem): FutureInvoiceFill {
+  const notes: string[] = [];
+  if (!item.productId) {
+    notes.push(
+      `O produto da nota (${item.invoiceDescription}) nao casou com nenhum do cadastro: escolha o produto.`
+    );
+  }
+  if (item.totalWeightKg === null) {
+    notes.push(
+      `A nota esta em ${item.unit ?? "outra unidade"} (${quantityLabel(item)}): informe o total em quilos.`
+    );
+  }
+  return {
+    productId: item.productId,
+    totalKg:
+      item.totalWeightKg === null ? "" : String(Math.round(item.totalWeightKg * 1000) / 1000),
+    notes
+  };
+}

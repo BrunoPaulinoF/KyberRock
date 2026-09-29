@@ -114,7 +114,7 @@ function harness(
         {
           store,
           resolveSession: async (): Promise<WebSessionResult> => ({ ok: true, session }),
-          omie: { push: async () => ({ omieCustomerId: 1 }) },
+          omie: { push: async () => ({ omieCustomerId: 1 }), query: async () => ({}) },
           now: () => new Date(NOW),
           newId: () => `id-${++ids}`
         }

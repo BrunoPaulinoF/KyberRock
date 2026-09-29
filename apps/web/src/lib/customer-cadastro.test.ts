@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   customerFreightEntries,
   defaultPriceByProduct,
+  futureInvoiceFill,
   normalizeNfeNumber,
+  parseFutureInvoices,
   parseTotalWeightKg
 } from "./customer-cadastro";
 
@@ -105,5 +107,61 @@ describe("nota de entrega futura", () => {
     expect(parseTotalWeightKg("")).toBeNull();
     expect(parseTotalWeightKg("0")).toBeNull();
     expect(parseTotalWeightKg("abc")).toBeNull();
+  });
+});
+
+describe("nota de entrega futura pelo OMIE", () => {
+  const item = {
+    productId: "p-1",
+    productDescription: "BRITA 1",
+    invoiceDescription: "BRITA 1 (NF)",
+    quantity: 30,
+    unit: "TON",
+    totalWeightKg: 30000
+  };
+
+  it("le a resposta da web-api e descarta o que nao tem numero ou quantidade", () => {
+    expect(
+      parseFutureInvoices({
+        invoices: [
+          {
+            invoiceNumber: "29490",
+            series: "1",
+            otherCustomer: true,
+            items: [item, { invoiceDescription: "SEM QUANTIDADE" }]
+          },
+          { invoiceNumber: "" },
+          null
+        ]
+      })
+    ).toEqual([
+      {
+        invoiceNumber: "29490",
+        series: "1",
+        issueDate: null,
+        customerName: null,
+        otherCustomer: true,
+        items: [item]
+      }
+    ]);
+    expect(parseFutureInvoices({})).toEqual([]);
+  });
+
+  it("item com produto e peso preenche tudo", () => {
+    expect(futureInvoiceFill(item)).toEqual({ productId: "p-1", totalKg: "30000", notes: [] });
+  });
+
+  it("sem produto no cadastro ou em m3, avisa em vez de inventar", () => {
+    const fill = futureInvoiceFill({
+      ...item,
+      productId: null,
+      unit: "M3",
+      quantity: 12.5,
+      totalWeightKg: null
+    });
+    expect(fill.productId).toBeNull();
+    expect(fill.totalKg).toBe("");
+    expect(fill.notes).toHaveLength(2);
+    expect(fill.notes[1]).toContain("12,5 M3");
   });
 });

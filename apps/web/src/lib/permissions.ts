@@ -7,11 +7,11 @@
  * Cada perfil tem um conjunto FECHADO de telas — o que nao e dele nem aparece no menu, e o
  * endereco digitado a mao volta para a tela inicial dele:
  *   - `loader`        carregador: so a fila de carregamento da propria unidade;
- *   - `monitoramento` so o painel de vendas em tempo real, sem configuracoes — e e o UNICO
- *                     que ve essa tela;
+ *   - `monitoramento` so o painel de vendas em tempo real, sem configuracoes;
  *   - `comercial`     aba Comercial (a tela do portal, e so dele), insights, conferencia de faturamento,
- *                     relatorios, controle de caminhoes, relatorio por cliente, cupons e
- *                     cadastros —
+ *                     relatorios, controle de caminhoes, relatorio por cliente, cupons,
+ *                     cadastros e o Monitoramento (o painel de vendas em tempo real, que abre em
+ *                     tela cheia com o botao "Voltar ao sistema") —
  *                     cadastra tudo e muda preco sem senha; sem configuracoes. E o unico (com o
  *                     administrador) que ve a tela "Senha de preco", o codigo rotativo que ele
  *                     passa para a operacao mudar preco;
@@ -73,7 +73,8 @@ export type Screen = (typeof SCREENS)[number];
 
 /**
  * As telas do KyberRock Desktop (menu lateral), na ordem dele, menos a Nova entrada, a aba
- * Comercial e o Monitoramento — essas duas sao SO do perfil de mesmo nome.
+ * Comercial e o Monitoramento — a aba Comercial e so do perfil comercial, e o Monitoramento e do
+ * perfil de mesmo nome e do comercial.
  */
 const DESK_SCREENS: readonly Screen[] = [
   "painel",
@@ -102,7 +103,8 @@ export const SCREENS_BY_ROLE: Record<Role, readonly Screen[]> = {
     "controle-caminhoes",
     "relatorio-cliente",
     "conferencia-faturamento",
-    "relatorios"
+    "relatorios",
+    "monitoramento"
   ],
   // A consulta de cupom e so do site: na balanca o cupom se reimprime pela propria operacao.
   gestor: [...DESK_SCREENS, "cupons"],

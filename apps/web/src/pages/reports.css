@@ -152,3 +152,13 @@
 .reports-muted {
   color: var(--kr-muted);
 }
+
+/* Coluna Nota fiscal do fechamento diario e do periodo. */
+.report-nf {
+  white-space: nowrap;
+  font-weight: 700;
+}
+.report-nf.muted {
+  color: var(--kr-muted);
+  font-weight: 400;
+}
