@@ -15,8 +15,8 @@ import {
 } from "../lib/price-history";
 import { usePaged } from "../lib/use-paged";
 import { useDebounced } from "../pages/Customers";
-import { Pill, SearchBar, SectionHead } from "./desk";
-import { Alert, DataTable, LoadMore } from "./ui";
+import { SearchBar, SectionHead } from "./desk";
+import { DataTable, ErrorState, LoadMore, PAGE_SIZE, Pill } from "./ui";
 
 const SOURCE_OPTIONS: Array<{ value: PriceHistorySource; label: string }> = [
   { value: "todas", label: "Balança e site" },
@@ -42,7 +42,10 @@ export function PriceHistory() {
 
   const list = usePaged(
     (from, to) => priceHistoryPage(user.companyId, { search: debouncedSearch, source }, from, to),
-    [user.companyId, debouncedSearch, source]
+    [user.companyId, debouncedSearch, source],
+    PAGE_SIZE,
+    // Memoria so da lista sem busca: cada palavra digitada viraria uma entrada nova.
+    { key: debouncedSearch.trim() ? null : `precos:historico:${user.companyId}:${source}` }
   );
   useOnCadastroChange(list.refresh, PRICE_HISTORY_TABLES);
 
@@ -53,7 +56,7 @@ export function PriceHistory() {
         count={list.total}
         description="Tudo o que foi adicionado, trocado ou excluído — na balança (com a senha de preço) e no site. Atualiza sozinho."
       />
-      {list.error && <Alert kind="error">{list.error}</Alert>}
+      {list.error && <ErrorState message={list.error} onRetry={() => void list.reload()} />}
       <SearchBar
         value={search}
         onChange={setSearch}
@@ -75,7 +78,8 @@ export function PriceHistory() {
       <DataTable<PriceChange>
         rows={list.rows}
         rowKey={(row) => row.id}
-        empty={list.loading ? "Carregando..." : "Nenhuma alteração de preço especial registrada."}
+        loading={list.loading}
+        empty="Nenhuma alteração de preço especial registrada."
         pageSize={0}
         footer={
           <LoadMore

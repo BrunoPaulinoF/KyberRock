@@ -2,6 +2,7 @@ import { ChevronDown } from "lucide-react";
 import { useId, useMemo, useRef, useState } from "react";
 
 import { matchesSearch } from "../lib/operation";
+import { Skeleton } from "./ui";
 
 export interface PickerOption {
   value: string;
@@ -160,7 +161,13 @@ export function Picker({
       </button>
       {open && !disabled && (
         <ul className="picker-list" id={listId} role="listbox">
-          {loading && options.length === 0 && <li className="picker-empty">Carregando...</li>}
+          {loading && options.length === 0 && (
+            <li className="picker-empty" role="status" aria-label="Carregando" style={{ gap: 10 }}>
+              <Skeleton width="70%" />
+              <Skeleton width="50%" />
+              <Skeleton width="60%" />
+            </li>
+          )}
           {items.length === 0 && !(loading && options.length === 0) && (
             <li className="picker-empty">Nada encontrado.</li>
           )}

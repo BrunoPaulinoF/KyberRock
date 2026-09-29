@@ -3,16 +3,17 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { ConditionLegend } from "../components/ConditionLegend";
 import { CustomerInfoModal } from "../components/CustomerPanels";
-import { IconAction, NewButton, Pill, SearchBar, SectionHead } from "../components/desk";
+import { IconAction, NewButton, SearchBar, SectionHead } from "../components/desk";
 import { DeleteDialog } from "../components/PricePassword";
 import {
   Alert,
-  Badge,
   DataTable,
+  ErrorState,
   Field,
   LoadMore,
   Modal,
   PAGE_SIZE,
+  Pill,
   Warnings,
   useToast
 } from "../components/ui";
@@ -57,11 +58,18 @@ export function CustomersSection() {
         to
       ),
     [user.companyId, debouncedSearch, showInactive],
-    PAGE_SIZE
+    PAGE_SIZE,
+    // Memoria so da lista sem busca: cada palavra digitada viraria uma entrada nova.
+    {
+      key: debouncedSearch.trim()
+        ? null
+        : `clientes:${user.companyId}:${showInactive ? "com-inativos" : "ativos"}`
+    }
   );
   const aux = useAsync(
     () => Promise.all([q.paymentTerms(user.companyId), q.activeCustomerCount(user.companyId)]),
-    [user.companyId]
+    [user.companyId],
+    { key: `clientes:condicoes-e-total:${user.companyId}` }
   );
   // Cliente salvo, inativado ou excluido na balanca aparece aqui sem clicar em atualizar.
   useOnCadastroChange(list.refresh, CADASTRO_TABLES.customers);
@@ -100,7 +108,7 @@ export function CustomersSection() {
           )
         }
       />
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <ErrorState message={error} onRetry={() => void refresh()} />}
       <SearchBar
         value={search}
         onChange={setSearch}
@@ -120,7 +128,8 @@ export function CustomersSection() {
         rows={list.rows}
         rowKey={(c) => c.id}
         rowClassName={(c) => (c.is_active ? undefined : "inactive")}
-        empty={list.loading ? "Carregando..." : "Nenhum cliente encontrado."}
+        loading={list.loading}
+        empty="Nenhum cliente encontrado."
         pageSize={0}
         onRowDoubleClick={setViewing}
         footer={
@@ -164,7 +173,7 @@ export function CustomersSection() {
                   <Pill tone="success">LOCAL</Pill>
                 )}
                 {c.credit_account_enabled && (
-                  <Badge kind="accent">{c.credit_mode === "prepaid" ? "pré-pago" : "fiado"}</Badge>
+                  <Pill tone="info">{c.credit_mode === "prepaid" ? "pré-pago" : "fiado"}</Pill>
                 )}
                 {!c.is_active && <Pill>INATIVO</Pill>}
               </span>

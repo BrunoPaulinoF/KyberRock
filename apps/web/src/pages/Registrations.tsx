@@ -12,7 +12,7 @@ import { useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { DeskPanel, IconTabs, SectionHead } from "../components/desk";
-import { Alert, DataTable } from "../components/ui";
+import { DataTable, ErrorState, PageHeader } from "../components/ui";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
@@ -61,7 +61,11 @@ export function Registrations() {
 
   return (
     <DeskPanel>
-      <h1 className="desk-title">Cadastros</h1>
+      <PageHeader
+        kicker="Operacional"
+        title="Cadastros"
+        description="Clientes, produtos, pagamento e transporte da pedreira. O que é gravado aqui chega às balanças."
+      />
       <IconTabs
         label="Cadastros"
         tabs={TABS}
@@ -95,14 +99,15 @@ export function Registrations() {
  */
 function PaymentSection() {
   const user = useUser();
-  const { data, loading, error, refresh } = useAsync(
+  const { data, loading, error, reload, refresh } = useAsync(
     () =>
       Promise.all([
         q.paymentMethods(user.companyId),
         q.accounts(user.companyId),
         q.paymentTerms(user.companyId)
       ]),
-    [user.companyId]
+    [user.companyId],
+    { key: `cadastros:pagamento:${user.companyId}` }
   );
   useOnCadastroChange(refresh, CADASTRO_TABLES.payment);
   const methods = useMemo(
@@ -121,7 +126,7 @@ function PaymentSection() {
 
   return (
     <>
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <ErrorState message={error} onRetry={() => void reload()} />}
       <SectionHead
         title="Formas de pagamento"
         count={methods.length}
@@ -131,7 +136,8 @@ function PaymentSection() {
         rows={methods}
         rowKey={(row) => row.id}
         rowClassName={(row) => (row.is_active ? undefined : "inactive")}
-        empty={loading ? "Carregando..." : "Nenhuma forma de pagamento."}
+        loading={loading}
+        empty="Nenhuma forma de pagamento."
         columns={[
           {
             key: "name",
@@ -164,7 +170,8 @@ function PaymentSection() {
         rows={accounts}
         rowKey={(row) => row.id}
         rowClassName={(row) => (row.is_active ? undefined : "inactive")}
-        empty={loading ? "Carregando..." : "Nenhuma conta."}
+        loading={loading}
+        empty="Nenhuma conta."
         columns={[
           { key: "name", header: "Conta", render: (row) => <strong>{row.name}</strong> },
           { key: "omie", header: "Cód. OMIE", render: (row) => row.omie_code || "-" },
@@ -179,7 +186,8 @@ function PaymentSection() {
       <DataTable
         rows={terms}
         rowKey={(row) => row.id}
-        empty={loading ? "Carregando..." : "Nenhuma condição."}
+        loading={loading}
+        empty="Nenhuma condição."
         columns={[
           { key: "name", header: "Condição", render: (row) => <strong>{row.name}</strong> },
           { key: "omie", header: "Cód. OMIE", render: (row) => row.omie_code || "-" },

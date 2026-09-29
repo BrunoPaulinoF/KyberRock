@@ -3,10 +3,21 @@ import { useMemo, useState, type FormEvent } from "react";
 
 import { ConditionLegend } from "../components/ConditionLegend";
 import { CustomerBalanceCard } from "../components/CustomerPanels";
-import { EmptyState, IconAction, Pill, PlateBadge } from "../components/desk";
+import { IconAction, PlateBadge, SearchBar } from "../components/desk";
 import { Picker } from "../components/Picker";
 import { PricePasswordField } from "../components/PricePassword";
-import { Alert, DataTable, Field, Modal, Warnings, useToast } from "../components/ui";
+import {
+  Alert,
+  DataTable,
+  EmptyState,
+  ErrorState,
+  Field,
+  Modal,
+  Pill,
+  Tabs,
+  Warnings,
+  useToast
+} from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
@@ -85,20 +96,9 @@ export function CustomerFileModal({
         </button>
       }
     >
-      <nav className="file-tabs" aria-label="Ficha do cliente">
-        {TABS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`file-tab${item.id === tab ? " active" : ""}`}
-            aria-pressed={item.id === tab}
-            onClick={() => setTab(item.id)}
-          >
-            <item.icon size={15} />
-            {item.label}
-          </button>
-        ))}
-      </nav>
+      <div style={{ marginBottom: 14 }}>
+        <Tabs label="Ficha do cliente" tabs={TABS} active={tab} onChange={setTab} />
+      </div>
       {tab === "comercial" && <CommercialTab customer={customer} />}
       {tab === "precos" && <SpecialPricesTab customer={customer} />}
       {tab === "frete" && <FreightTab customer={customer} />}
@@ -108,12 +108,16 @@ export function CustomerFileModal({
   );
 }
 
-/** Produtos e preco padrao de cada um — a base das abas Precos e Frete. */
+/**
+ * Produtos e preco padrao de cada um — a base das abas Precos e Frete. A mesma leitura (e a
+ * mesma chave de memoria) da aba Produtos dos Cadastros (`Products.tsx`).
+ */
 function useProducts() {
   const user = useUser();
   const base = useAsync(
     () => Promise.all([q.products(user.companyId), q.productDefaultPrices(user.companyId)]),
-    [user.companyId]
+    [user.companyId],
+    { key: `produtos:${user.companyId}` }
   );
   useOnCadastroChange(base.refresh, CADASTRO_TABLES.products);
   const [products, defaults] = base.data ?? [[], []];
@@ -121,7 +125,13 @@ function useProducts() {
     () => defaultPriceByProduct(products, defaults),
     [products, defaults]
   );
-  return { products, defaultByProduct, loading: base.loading, error: base.error };
+  return {
+    products,
+    defaultByProduct,
+    loading: base.loading,
+    error: base.error,
+    reload: base.reload
+  };
 }
 
 function productOptions(products: Product[]) {
@@ -145,10 +155,11 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
   const toast = useToast();
   const canEdit = user.canEditPrices;
   const askPassword = user.requiresPricePassword;
-  const { products, defaultByProduct, loading, error } = useProducts();
+  const { products, defaultByProduct, loading, error, reload } = useProducts();
   const special = useAsync(
     () => q.customerSpecialPrices(user.companyId, customer.id),
-    [user.companyId, customer.id]
+    [user.companyId, customer.id],
+    { key: `produtos:especial:${user.companyId}:${customer.id}` }
   );
   useOnCadastroChange(special.refresh, CADASTRO_TABLES.specialPrices);
   const specialByProduct = useMemo(
@@ -238,7 +249,15 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
 
   return (
     <>
-      {(error ?? special.error) && <Alert kind="error">{error ?? special.error}</Alert>}
+      {(error ?? special.error) && (
+        <ErrorState
+          message={error ?? special.error ?? ""}
+          onRetry={() => {
+            void reload();
+            void special.reload();
+          }}
+        />
+      )}
       {canEdit && (
         <div className="file-form">
           {formError && <Alert kind="error">{formError}</Alert>}
@@ -280,14 +299,7 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
         </div>
       )}
 
-      <div className="toolbar" style={{ marginTop: 14 }}>
-        <input
-          className="input"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Buscar produto..."
-          style={{ flex: 1, minWidth: 180 }}
-        />
+      <SearchBar value={search} onChange={setSearch} placeholder="Buscar produto...">
         <label className="check" style={{ margin: 0, whiteSpace: "nowrap" }}>
           <input
             type="checkbox"
@@ -296,18 +308,13 @@ function SpecialPricesTab({ customer }: { customer: Customer }) {
           />
           Só com preço especial ({specialByProduct.size})
         </label>
-      </div>
+      </SearchBar>
       <DataTable
         rows={rows}
         rowKey={(p) => p.id}
         pageSize={0}
-        empty={
-          loading || special.loading
-            ? "Carregando..."
-            : onlySpecial
-              ? "Este cliente não tem preço especial."
-              : "Nenhum produto encontrado."
-        }
+        loading={loading || special.loading}
+        empty={onlySpecial ? "Este cliente não tem preço especial." : "Nenhum produto encontrado."}
         columns={[
           {
             key: "desc",
@@ -382,7 +389,8 @@ function FreightTab({ customer }: { customer: Customer }) {
   const { products, loading } = useProducts();
   const rules = useAsync(
     () => q.customerFreightRules(user.companyId, customer.id),
-    [user.companyId, customer.id]
+    [user.companyId, customer.id],
+    { key: `ficha:frete:${user.companyId}:${customer.id}` }
   );
   useOnCadastroChange(rules.refresh, CADASTRO_TABLES.customerFreight);
   const productNames = useMemo(
@@ -458,7 +466,7 @@ function FreightTab({ customer }: { customer: Customer }) {
 
   return (
     <>
-      {rules.error && <Alert kind="error">{rules.error}</Alert>}
+      {rules.error && <ErrorState message={rules.error} onRetry={() => void rules.reload()} />}
       {canEdit && (
         <div className="file-form">
           {formError && <Alert kind="error">{formError}</Alert>}
@@ -498,7 +506,8 @@ function FreightTab({ customer }: { customer: Customer }) {
         rows={entries}
         rowKey={(entry) => entry.key}
         pageSize={0}
-        empty={rules.loading ? "Carregando..." : "Nenhum frete cadastrado para este cliente."}
+        loading={rules.loading}
+        empty="Nenhum frete cadastrado para este cliente."
         columns={[
           {
             key: "scope",
@@ -561,7 +570,8 @@ function TransportTab({ customer }: { customer: Customer }) {
         q.customerCarrierLinks(customer.id),
         q.customerVehicleLinks(user.companyId, customer.id)
       ]),
-    [user.companyId, customer.id]
+    [user.companyId, customer.id],
+    { key: `ficha:transporte:${user.companyId}:${customer.id}` }
   );
   useOnCadastroChange(data.refresh, [
     ...CADASTRO_TABLES.customerTransport,
@@ -622,7 +632,8 @@ function TransportTab({ customer }: { customer: Customer }) {
 
   return (
     <>
-      {(error ?? data.error) && <Alert kind="error">{error ?? data.error}</Alert>}
+      {data.error && <ErrorState message={data.error} onRetry={() => void data.reload()} />}
+      {error && <Alert kind="error">{error}</Alert>}
       <Field
         label="Tipo de frete padrão"
         hint="Preenche a nova entrada quando este cliente é escolhido. O operador ainda pode trocar."
@@ -755,7 +766,8 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
   const { products, loading } = useProducts();
   const invoices = useAsync(
     () => q.customerFutureBillingInvoices(user.companyId, customer.id),
-    [user.companyId, customer.id]
+    [user.companyId, customer.id],
+    { key: `ficha:entrega:${user.companyId}:${customer.id}` }
   );
   useOnCadastroChange(invoices.refresh, CADASTRO_TABLES.futureBilling);
   const productNames = useMemo(
@@ -855,7 +867,9 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
 
   return (
     <>
-      {invoices.error && <Alert kind="error">{invoices.error}</Alert>}
+      {invoices.error && (
+        <ErrorState message={invoices.error} onRetry={() => void invoices.reload()} />
+      )}
       {canEdit && (
         <div className="file-form">
           {formError && <Alert kind="error">{formError}</Alert>}
@@ -940,7 +954,8 @@ function FutureBillingTab({ customer }: { customer: Customer }) {
         rows={invoices.data ?? []}
         rowKey={(invoice) => invoice.id}
         pageSize={0}
-        empty={invoices.loading ? "Carregando..." : "Nenhuma nota de entrega futura."}
+        loading={invoices.loading}
+        empty="Nenhuma nota de entrega futura."
         columns={[
           {
             key: "nfe",
@@ -1081,7 +1096,8 @@ function CommercialTab({ customer }: { customer: Customer }) {
         q.carriers(user.companyId),
         q.paymentTerms(user.companyId)
       ]),
-    [user.companyId]
+    [user.companyId],
+    { key: `ficha:listas:${user.companyId}` }
   );
   useOnCadastroChange(lists.refresh, [...CADASTRO_TABLES.payment, ...CADASTRO_TABLES.carriers]);
   const [methods, carriers, terms] = lists.data ?? [[], [], []];
@@ -1174,6 +1190,7 @@ function CommercialTab({ customer }: { customer: Customer }) {
       <p className="desk-muted" style={{ marginTop: 0 }}>
         Estas configurações têm dono: o que você publicar aqui vale em todas as balanças.
       </p>
+      {lists.error && <ErrorState message={lists.error} onRetry={() => void lists.reload()} />}
       {error && <Alert kind="error">{error}</Alert>}
       <Warnings items={warnings} />
       <form onSubmit={(e) => void onSubmit(e)}>

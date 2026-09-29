@@ -1,9 +1,18 @@
 import { useMemo, useState } from "react";
 
 import { CustomerPicker } from "../components/CustomerPicker";
-import { EmptyState, IconAction, SearchBar, SectionHead } from "../components/desk";
+import { IconAction, SearchBar, SectionHead } from "../components/desk";
 import { PricePasswordField } from "../components/PricePassword";
-import { Alert, DataTable, Field, Modal, useToast } from "../components/ui";
+import {
+  Alert,
+  DataTable,
+  EmptyState,
+  ErrorState,
+  Field,
+  Modal,
+  Pill,
+  useToast
+} from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
@@ -27,9 +36,11 @@ export function ProductsSection() {
   const toast = useToast();
   const canEdit = user.canEditPrices;
   const askPassword = user.requiresPricePassword;
+  // A mesma leitura (e a mesma chave de memoria) da ficha do cliente (`CustomerFile.tsx`).
   const { data, loading, error, reload, refresh } = useAsync(
     () => Promise.all([q.products(user.companyId), q.productDefaultPrices(user.companyId)]),
-    [user.companyId]
+    [user.companyId],
+    { key: `produtos:${user.companyId}` }
   );
   useOnCadastroChange(refresh, CADASTRO_TABLES.products);
   const [products, defaults] = data ?? [[], []];
@@ -59,7 +70,8 @@ export function ProductsSection() {
 
   const special = useAsync(
     () => (customerId ? q.customerSpecialPrices(user.companyId, customerId) : Promise.resolve([])),
-    [user.companyId, customerId]
+    [user.companyId, customerId],
+    { key: customerId ? `produtos:especial:${user.companyId}:${customerId}` : null }
   );
   useOnCadastroChange(special.refresh, CADASTRO_TABLES.specialPrices);
   const specialByProduct = useMemo(
@@ -117,7 +129,7 @@ export function ProductsSection() {
         count={products.length}
         description="Produtos sincronizados do OMIE com o preço padrão usado na pesagem. Preço especial do cliente tem prioridade sobre o preço padrão."
       />
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <ErrorState message={error} onRetry={() => void reload()} />}
       <SearchBar
         value={search}
         onChange={setSearch}
@@ -133,7 +145,8 @@ export function ProductsSection() {
         <DataTable
           rows={visibleProducts}
           rowKey={(p) => p.id}
-          empty={loading ? "Carregando..." : "Nenhum produto encontrado."}
+          loading={loading}
+          empty="Nenhum produto encontrado."
           columns={[
             { key: "desc", header: "Produto", render: (p) => <strong>{p.description}</strong> },
             { key: "code", header: "Código", render: (p) => p.code || "-" },
@@ -148,7 +161,7 @@ export function ProductsSection() {
                     {fromOmie(p) && <span className="cell-sub">Valor do OMIE</span>}
                   </>
                 ) : (
-                  <span style={{ color: "var(--kr-warning)", fontWeight: 700 }}>Sem preço</span>
+                  <Pill tone="warning">Sem preço</Pill>
                 )
             },
             {
@@ -179,13 +192,17 @@ export function ProductsSection() {
       <div style={{ maxWidth: 420, marginBottom: 10 }}>
         <CustomerPicker companyId={user.companyId} value={customerId} onChange={setCustomerId} />
       </div>
+      {customerId && special.error && (
+        <ErrorState message={special.error} onRetry={() => void special.reload()} />
+      )}
       {!customerId ? (
         <EmptyState title="Nenhum cliente escolhido." hint="Busque o cliente no campo acima." />
       ) : (
         <DataTable
           rows={products}
           rowKey={(p) => p.id}
-          empty={special.loading ? "Carregando..." : "Nenhum produto."}
+          loading={loading || special.loading}
+          empty="Nenhum produto."
           columns={[
             { key: "desc", header: "Produto", render: (p) => <strong>{p.description}</strong> },
             {

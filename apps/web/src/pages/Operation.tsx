@@ -14,21 +14,23 @@ import { useSearchParams } from "react-router-dom";
 import {
   CountBadge,
   DeskPanel,
-  EmptyState,
   IconAction,
   LoaderLight,
-  Pill,
   PillTabs,
   PlateBadge
 } from "../components/desk";
 import { Picker, type PickerOption } from "../components/Picker";
 import {
   Alert,
-  Badge,
+  EmptyState,
+  ErrorState,
   Field,
   LoadMore,
   Modal,
   PAGE_SIZE,
+  PageHeader,
+  Pill,
+  SkeletonRows,
   useShowMore,
   useToast
 } from "../components/ui";
@@ -125,71 +127,75 @@ export function representativeOf(map: Map<string, string>, id: string | null): s
  * aqui na hora, sem recarregar a pagina (`useOnCadastroChange`).
  */
 export function useCatalog(companyId: string) {
-  const catalog = useAsync(async (): Promise<Catalog> => {
-    const [customers, vehicles, drivers, products, carriers, methods, terms] = await Promise.all([
-      q.customers(companyId),
-      q.vehicles(companyId),
-      q.drivers(companyId),
-      q.products(companyId),
-      q.carriers(companyId),
-      q.paymentMethods(companyId),
-      q.paymentTerms(companyId)
-    ]);
-    const liveCustomers = customers.filter((row) => row.is_active);
-    // Cada balanca subiu a sua copia de placa, motorista, forma e condicao: o seletor mostra
-    // uma de cada, e o padrao do cliente (que pode ser a copia de outra maquina) aponta para a
-    // representante (`lib/dedupe.ts`).
-    const vehicleGroups = dedupeVehicles(vehicles.filter((row) => row.is_active));
-    const driverGroups = dedupeDrivers(drivers.filter((row) => row.is_active));
-    const methodGroups = dedupePaymentMethods(methods.filter((row) => row.is_active));
-    const termGroups = dedupeByNameAndCode(terms);
-    const methodIds = representativeIds(methodGroups);
-    const termIds = representativeIds(termGroups);
-    return {
-      customers: liveCustomers.map((row) => ({
-        value: row.id,
-        label: row.trade_name || row.legal_name,
-        hint: formatDocument(row.document) || undefined
-      })),
-      vehicles: vehicleGroups.map(({ row }) => ({
-        value: row.id,
-        label: formatPlate(row.plate),
-        hint: row.description ?? undefined
-      })),
-      drivers: driverGroups.map(({ row }) => ({
-        value: row.id,
-        label: row.name,
-        hint: row.document ?? undefined
-      })),
-      products: products.map((row) => ({
-        value: row.id,
-        label: row.description,
-        hint: row.code ?? undefined
-      })),
-      carriers: carriers
-        .filter((row) => row.is_active)
-        .map((row) => ({
+  const catalog = useAsync(
+    async (): Promise<Catalog> => {
+      const [customers, vehicles, drivers, products, carriers, methods, terms] = await Promise.all([
+        q.customers(companyId),
+        q.vehicles(companyId),
+        q.drivers(companyId),
+        q.products(companyId),
+        q.carriers(companyId),
+        q.paymentMethods(companyId),
+        q.paymentTerms(companyId)
+      ]);
+      const liveCustomers = customers.filter((row) => row.is_active);
+      // Cada balanca subiu a sua copia de placa, motorista, forma e condicao: o seletor mostra
+      // uma de cada, e o padrao do cliente (que pode ser a copia de outra maquina) aponta para a
+      // representante (`lib/dedupe.ts`).
+      const vehicleGroups = dedupeVehicles(vehicles.filter((row) => row.is_active));
+      const driverGroups = dedupeDrivers(drivers.filter((row) => row.is_active));
+      const methodGroups = dedupePaymentMethods(methods.filter((row) => row.is_active));
+      const termGroups = dedupeByNameAndCode(terms);
+      const methodIds = representativeIds(methodGroups);
+      const termIds = representativeIds(termGroups);
+      return {
+        customers: liveCustomers.map((row) => ({
           value: row.id,
-          label: row.name,
+          label: row.trade_name || row.legal_name,
           hint: formatDocument(row.document) || undefined
         })),
-      paymentMethods: methodGroups.map(({ row }) => ({ value: row.id, label: row.name })),
-      paymentTerms: termGroups.map(({ row }) => ({ value: row.id, label: row.name })),
-      representatives: { paymentMethods: methodIds, paymentTerms: termIds },
-      customerDefaults: new Map(
-        liveCustomers.map((row) => [
-          row.id,
-          {
-            paymentMethodId: representativeOf(methodIds, row.default_payment_method_id),
-            paymentTermId: representativeOf(termIds, row.default_payment_term_id),
-            carrierId: row.default_carrier_id ?? "",
-            nfRequired: row.nf_required,
-            freightModality: row.default_freight_modality
-          }
-        ])
-      )
-    };
-  }, [companyId]);
+        vehicles: vehicleGroups.map(({ row }) => ({
+          value: row.id,
+          label: formatPlate(row.plate),
+          hint: row.description ?? undefined
+        })),
+        drivers: driverGroups.map(({ row }) => ({
+          value: row.id,
+          label: row.name,
+          hint: row.document ?? undefined
+        })),
+        products: products.map((row) => ({
+          value: row.id,
+          label: row.description,
+          hint: row.code ?? undefined
+        })),
+        carriers: carriers
+          .filter((row) => row.is_active)
+          .map((row) => ({
+            value: row.id,
+            label: row.name,
+            hint: formatDocument(row.document) || undefined
+          })),
+        paymentMethods: methodGroups.map(({ row }) => ({ value: row.id, label: row.name })),
+        paymentTerms: termGroups.map(({ row }) => ({ value: row.id, label: row.name })),
+        representatives: { paymentMethods: methodIds, paymentTerms: termIds },
+        customerDefaults: new Map(
+          liveCustomers.map((row) => [
+            row.id,
+            {
+              paymentMethodId: representativeOf(methodIds, row.default_payment_method_id),
+              paymentTermId: representativeOf(termIds, row.default_payment_term_id),
+              carrierId: row.default_carrier_id ?? "",
+              nfRequired: row.nf_required,
+              freightModality: row.default_freight_modality
+            }
+          ])
+        )
+      };
+    },
+    [companyId],
+    { key: `operacoes:catalogo:${companyId}` }
+  );
   useOnCadastroChange(catalog.refresh, [
     ...CADASTRO_TABLES.customers,
     ...CADASTRO_TABLES.vehicles,
@@ -302,7 +308,10 @@ function useRequestFeed(companyId: string, onFinished: () => void) {
   return { requests, reload: load };
 }
 
-/** Manda o pedido para a web-api; avisos (balanca fora do ar) viram toast. */
+/**
+ * Manda o pedido para a web-api. Aviso (balanca fora do ar) e "gravou, mas...": o pedido foi
+ * aceito, entao vai como aviso, nao como erro.
+ */
 export async function sendRequest(
   toast: ReturnType<typeof useToast>,
   kind: RequestKind,
@@ -310,7 +319,7 @@ export async function sendRequest(
 ): Promise<boolean> {
   try {
     const result = await callWebApi("request_operation", { kind, ...body });
-    for (const warning of result.warnings) toast.push(warning, "error");
+    for (const warning of result.warnings) toast.push(warning, "warn");
     toast.push(`Pedido de ${REQUEST_KIND_LABELS[kind].toLowerCase()} enviado para a balança.`);
     return true;
   } catch (caught) {
@@ -351,14 +360,14 @@ export function submitOnCtrlEnter(event: ReactKeyboardEvent<HTMLFormElement>) {
 // ---------------------------------------------------------------------------
 
 export function ExecutorBadge({ status }: { status: ExecutorStatus | null }) {
-  if (!status) return <Badge>Balança: verificando...</Badge>;
+  if (!status) return <Pill>Balança: verificando...</Pill>;
   if (!status.executor) {
-    return <Badge kind="warn">Nenhuma balança executa os pedidos do site</Badge>;
+    return <Pill tone="warning">Nenhuma balança executa os pedidos do site</Pill>;
   }
   return status.executor.online ? (
-    <Badge kind="ok">Balança: {status.executor.name} conectada</Badge>
+    <Pill tone="success">Balança: {status.executor.name} conectada</Pill>
   ) : (
-    <Badge kind="err">Balança: {status.executor.name} fora do ar</Badge>
+    <Pill tone="danger">Balança: {status.executor.name} fora do ar</Pill>
   );
 }
 
@@ -431,6 +440,15 @@ function canceledSince(period: CanceledPeriod, now: Date = new Date()): string {
   return start.toISOString();
 }
 
+/** A fila enquanto a primeira leitura chega: a moldura da tabela com as linhas em cinza. */
+function QueueSkeleton({ columns }: { columns: number }) {
+  return (
+    <div className="op-table">
+      <SkeletonRows rows={5} columns={columns} />
+    </div>
+  );
+}
+
 /** Qual janela esta aberta, e para qual pesagem. */
 type Dialog =
   | { kind: "close"; operation: Operation }
@@ -457,7 +475,8 @@ export function Operations() {
 
   const open = useAsync(
     () => q.openOperations(user.companyId, user.unitId),
-    [user.companyId, user.unitId]
+    [user.companyId, user.unitId],
+    { key: `operacoes:abertas:${user.companyId}:${user.unitId}` }
   );
   const openIds = useMemo(() => (open.data ?? []).map((row) => row.id), [open.data]);
   const loading = useAsync(
@@ -580,6 +599,15 @@ export function Operations() {
       : tab === "canceladas"
         ? `${canceledRows.length} canceladas`
         : `${closed.total.toLocaleString("pt-BR")} concluídas`;
+  // Contador em cada aba quando ele e conhecido: as abertas vem sempre; canceladas e concluidas
+  // so sao lidas com a aba aberta, e um "0" nas outras seria mentira.
+  const tabCounts: Record<OperationsTab, number | null> = {
+    abertas: open.data ? open.data.length : null,
+    canceladas: tab === "canceladas" && !canceled.loading ? canceledRows.length : null,
+    concluidas:
+      tab === "concluidas" && !(closed.loading && closed.rows.length === 0) ? closed.total : null
+  };
+  const tabs = OPERATIONS_TABS.map((item) => ({ ...item, count: tabCounts[item.id] }));
 
   async function reprint(operation: Operation) {
     await sendRequest(toast, "reprint", { operationId: operation.id });
@@ -599,28 +627,29 @@ export function Operations() {
   }
 
   const error = open.error ?? closed.error ?? canceled.error ?? catalog.error;
+  const catalogReload = catalog.reload;
+  function retry() {
+    void reloadOpen();
+    void reloadClosed();
+    void reloadCanceled();
+    void catalogReload();
+  }
 
   return (
     <DeskPanel fill>
-      <div className="desk-title-row">
-        <div>
-          <p className="desk-kicker">Fila operacional</p>
-          <h1 className="desk-title">Operações</h1>
-        </div>
-        <span className="executor-line">
-          <ExecutorBadge status={executor} />
-          <CountBadge>{countLabel}</CountBadge>
-        </span>
-      </div>
-
-      <div className="op-toolbar">
-        <PillTabs
-          tabs={OPERATIONS_TABS}
-          active={tab}
-          onChange={(next) => setParams(next === "abertas" ? {} : { aba: next }, { replace: true })}
-        />
-        {tab === "abertas" && (
-          <div className="op-filters">
+      <PageHeader
+        kicker="Fila operacional"
+        title="Operações"
+        help="Cada botão desta tela vira um pedido para a balança executora da unidade, que o registra pelas mesmas funções do KyberRock Desktop; o cupom do fechamento sai na impressora dela. Nova entrada só no KyberRock Desktop."
+        meta={
+          <>
+            <ExecutorBadge status={executor} />
+            {/* Enquanto a lista chega, "0 abertas" seria mentira: o contador espera. */}
+            {tabCounts[tab] !== null && <CountBadge>{countLabel}</CountBadge>}
+          </>
+        }
+        actions={
+          tab === "abertas" && (
             <label className="op-filter">
               Buscar placa
               <input
@@ -633,8 +662,17 @@ export function Operations() {
                 onChange={(event) => setPlateSearch(event.target.value)}
               />
             </label>
-          </div>
-        )}
+          )
+        }
+      />
+
+      <div className="op-toolbar">
+        <PillTabs
+          label="Situação das operações"
+          tabs={tabs}
+          active={tab}
+          onChange={(next) => setParams(next === "abertas" ? {} : { aba: next }, { replace: true })}
+        />
         {tab === "canceladas" && (
           <div className="op-filters">
             <label className="op-filter">
@@ -713,15 +751,19 @@ export function Operations() {
         )}
       </div>
 
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <ErrorState message={error} onRetry={retry} />}
       <RequestFeed requests={feed.requests} />
 
       {tab === "abertas" &&
         (openRows.length === 0 ? (
-          <EmptyState
-            title={open.loading ? "Carregando..." : "Nenhuma operação aberta"}
-            hint="As entradas registradas pela balança aparecem aqui para fechamento."
-          />
+          open.loading ? (
+            <QueueSkeleton columns={4} />
+          ) : (
+            <EmptyState
+              title="Nenhuma operação aberta"
+              hint="As entradas registradas pela balança aparecem aqui para fechamento."
+            />
+          )
         ) : (
           <>
             <div
@@ -826,10 +868,14 @@ export function Operations() {
 
       {tab === "canceladas" &&
         (canceledRows.length === 0 ? (
-          <EmptyState
-            title={canceled.loading ? "Carregando..." : "Nenhuma operação cancelada"}
-            hint="Altere o período no filtro para consultar outros cancelamentos."
-          />
+          canceled.loading ? (
+            <QueueSkeleton columns={4} />
+          ) : (
+            <EmptyState
+              title="Nenhuma operação cancelada"
+              hint="Altere o período no filtro para consultar outros cancelamentos."
+            />
+          )
         ) : (
           <div className="op-table">
             <div className="op-row canceled head">
@@ -859,14 +905,18 @@ export function Operations() {
 
       {tab === "concluidas" &&
         (visibleClosed.length === 0 ? (
-          <EmptyState
-            title={closed.loading ? "Carregando..." : "Nenhuma operação concluída"}
-            hint={
-              closedStart || closedEnd
-                ? "Nenhuma operação fechada no período escolhido."
-                : "As operações fechadas aparecem aqui, da mais nova para a mais antiga."
-            }
-          />
+          closed.loading ? (
+            <QueueSkeleton columns={6} />
+          ) : (
+            <EmptyState
+              title="Nenhuma operação concluída"
+              hint={
+                closedStart || closedEnd
+                  ? "Nenhuma operação fechada no período escolhido."
+                  : "As operações fechadas aparecem aqui, da mais nova para a mais antiga."
+              }
+            />
+          )
         ) : (
           <div className="op-table">
             <div className="op-row closed head">
