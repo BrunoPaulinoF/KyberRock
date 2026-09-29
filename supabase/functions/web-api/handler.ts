@@ -879,11 +879,15 @@ async function setPriceRow(
   ctx: ActionContext,
   table: string,
   naturalKey: RowFilter[],
-  extraColumns: Row
+  extraColumns: Row,
+  options: { hasValidity: boolean } = { hasValidity: true }
 ): Promise<Row> {
   const parsed = parsePriceInput(ctx.payload);
   if (!parsed.ok) throw new WebApiError(400, parsed.error);
   const price = parsed.value;
+  if (!options.hasValidity && (price.validFrom !== null || price.validTo !== null)) {
+    throw new WebApiError(400, "Este preco nao tem data de validade: vale a partir de agora.");
+  }
 
   const live = await ctx.store.listRows(
     table,
@@ -893,11 +897,12 @@ async function setPriceRow(
     { live: true }
   );
   const current = live.find((row) => row.is_active !== false) ?? null;
-  const values = {
+  // `customer_special_prices` nao tem `valid_from`/`valid_to` na nuvem (nem a balanca os
+  // sincroniza): mandar a coluna derrubava o salvamento com PGRST204.
+  const values: Row = {
     unit_price_cents: price.unitPriceCents,
     unit: price.unit,
-    valid_from: price.validFrom,
-    valid_to: price.validTo,
+    ...(options.hasValidity ? { valid_from: price.validFrom, valid_to: price.validTo } : {}),
     updated_at: ctx.nowIso
   };
 
@@ -1020,7 +1025,8 @@ async function setCustomerSpecialPrice(ctx: ActionContext): Promise<Row> {
       { column: "customer_id", value: customerId },
       { column: "product_id", value: productId }
     ],
-    { customer_id: customerId, product_id: productId }
+    { customer_id: customerId, product_id: productId },
+    { hasValidity: false }
   );
   await logSpecialPriceChange(ctx, {
     customer,
