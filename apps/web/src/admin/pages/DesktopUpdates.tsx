@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 
+import { useConfirm } from "../../components/ui";
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
 import {
   arrangeReleases,
@@ -88,7 +90,7 @@ import {
 // Voltar uma versao nunca mexe na frota de primeira: a versao antiga vai para o
 // anel de TESTE (onde a balanca de teste roda com `allowDowngrade` e realmente
 // desce para ela), e so depois a tela oferece regredir a producao. O botao e
-// laranja porque e o unico gesto da tela que anda para tras.
+// ambar de alerta porque e o unico gesto da tela que anda para tras.
 //
 // E producao NAO desce sozinha: `allowDowngrade` fica desligado ali de
 // proposito (`apps/desktop/src/services/update-channel.ts`) — balanca de
@@ -316,6 +318,24 @@ const HIGHLIGHT_LABEL: Record<ReleaseHighlight, { text: string; tone: Tone }> = 
  * derruba a aba inteira com TypeError. Uma situacao desconhecida tem que virar
  * um rotulo feio, nunca uma tela em branco.
  */
+/**
+ * Pergunta de confirmacao escrita como um texto so ("Pergunta?\n\nexplicacao"), o formato que
+ * os textos de `PROMOTION_ACTIONS` ja tinham para o `window.confirm`: a primeira frase vira o
+ * titulo da confirmacao do kit (`useConfirm`) e cada bloco seguinte, um paragrafo da mensagem.
+ */
+export function confirmCopy(text: string): { title: string; message?: ReactNode } {
+  const [title = "", ...paragraphs] = text.split("\n\n");
+  if (paragraphs.length === 0) return { title };
+  return {
+    title,
+    message: paragraphs.map((paragraph, index) => (
+      <p key={index} className="adm-confirm-paragraph">
+        {paragraph}
+      </p>
+    ))
+  };
+}
+
 function stateLabel(state: string): { text: string; tone: Tone } {
   return STATE_LABEL[state] ?? { text: state, tone: "neutral" };
 }
@@ -722,6 +742,7 @@ interface PendingAction extends PendingPromotion {
 }
 
 export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => void }) {
+  const confirm = useConfirm();
   const [data, setData] = useState<ReleasesResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   /** Verificacao de fundo em curso: informa, mas nunca esvazia a tela. */
@@ -924,10 +945,13 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
   async function notifyDevices(): Promise<void> {
     if (!currentVersion || updateTargets.length === 0) return;
     if (
-      !window.confirm(
-        `Avisar ${updateTargets.length} ${updateTargets.length === 1 ? "balança" : "balanças"} para atualizar para a versão ${currentVersion}?\n\n` +
-          "Cada uma recebe o aviso na próxima verificação (até 30 s) e mostra ao operador o botão de atualizar agora. O painel não reinicia balança nenhuma: quem escolhe a hora é quem está na pedreira."
-      )
+      !(await confirm({
+        ...confirmCopy(
+          `Avisar ${updateTargets.length} ${updateTargets.length === 1 ? "balança" : "balanças"} para atualizar para a versão ${currentVersion}?\n\n` +
+            "Cada uma recebe o aviso na próxima verificação (até 30 s) e mostra ao operador o botão de atualizar agora. O painel não reinicia balança nenhuma: quem escolhe a hora é quem está na pedreira."
+        ),
+        confirmLabel: "Avisar"
+      }))
     ) {
       return;
     }
@@ -972,7 +996,19 @@ export function DesktopUpdates({ onSessionExpired }: { onSessionExpired: () => v
 
   async function promote(release: ReleaseRow, intent: PromotionIntent) {
     const action = PROMOTION_ACTIONS[intent];
-    if (action.confirm && !window.confirm(action.confirm(release.version, currentVersion))) return;
+    if (
+      action.confirm &&
+      !(await confirm({
+        ...confirmCopy(action.confirm(release.version, currentVersion)),
+        confirmLabel: action.label,
+        // "Cancelar" ao lado de "Cancelar teste" deixaria a pessoa sem saber qual desiste.
+        cancelLabel: intent === "cancel-test" ? "Manter o teste" : undefined,
+        // Reprovar e a unica sem volta: nem com `force` a versao sobe de novo.
+        tone: action.variant === "danger" ? "danger" : "default"
+      }))
+    ) {
+      return;
+    }
 
     setDispatching(release.version);
     setFeedback({ tone: "info", text: action.dispatched(release.version) });

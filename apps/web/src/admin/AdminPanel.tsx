@@ -10,8 +10,11 @@ import { AdminDashboard } from "./pages/AdminDashboard";
  *
  * Veio inteiro do loader-web (as mesmas telas, as mesmas chamadas ao `admin-api` e ao
  * `admin-billing`) para o loader-web poder sair do ar. Mora em `src/admin/` e e um pedaco
- * separado do site: nem o carregador nem a pedreira baixam uma linha dele. O estilo e o do
- * console (`admin-ui.css`, tudo abaixo de `.adm`), que nao conversa com o `styles.css` do site.
+ * separado do site: nem o carregador nem a pedreira baixam uma linha dele. O desenho e o do
+ * console (`admin-ui.css`, tudo abaixo de `.adm`: denso, tabela no lugar de cartao), mas as
+ * cores sao as do site — os tokens `--adm-*` apontam para os `--kr-*` do `styles.css` e seguem
+ * o tema claro/escuro. Confirmacao e aviso de "copiado" usam o kit (`useConfirm`/`useToast`),
+ * cujos provedores ficam no `App`, por fora do painel.
  */
 export function AdminPanel() {
   if (!hasAdminSession()) return <Navigate to={ADMIN_LOGIN_PATH} replace />;

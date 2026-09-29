@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { intentsFor, PROMOTION_ACTIONS } from "./DesktopUpdates";
+import { confirmCopy, intentsFor, PROMOTION_ACTIONS } from "./DesktopUpdates";
 import type { ReleaseRow } from "./DesktopUpdates";
 import type { ReleaseState } from "../lib/desktop-updates";
 
@@ -130,7 +130,7 @@ describe("PROMOTION_ACTIONS", () => {
     expect(PROMOTION_ACTIONS.reprovar.force).toBe(false);
   });
 
-  it("os gestos que andam para tras sao laranja, e so eles", () => {
+  it("os gestos que andam para tras sao o botao de alerta (ambar), e so eles", () => {
     expect(PROMOTION_ACTIONS["rollback-test"].variant).toBe("warn");
     expect(PROMOTION_ACTIONS["rollback-production"].variant).toBe("warn");
     expect(PROMOTION_ACTIONS.beta.variant).not.toBe("warn");
@@ -151,5 +151,24 @@ describe("PROMOTION_ACTIONS", () => {
     expect(text).toContain("0.8.193");
     expect(text).toContain("0.8.200");
     expect(text.toLowerCase()).toContain("não volta sozinha");
+  });
+});
+
+describe("confirmCopy", () => {
+  it("toda confirmacao de promocao abre com a pergunta no titulo", () => {
+    for (const action of Object.values(PROMOTION_ACTIONS)) {
+      if (!action.confirm) continue;
+      const { title, message } = confirmCopy(action.confirm("0.8.201", "0.8.200"));
+
+      expect(title.endsWith("?")).toBe(true);
+      expect(title).not.toContain("\n");
+      // O resto do texto vira a mensagem, um paragrafo por bloco: nada se perde na troca.
+      expect(Array.isArray(message)).toBe(true);
+      expect((message as unknown[]).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("texto sem explicacao vira so o titulo", () => {
+    expect(confirmCopy("Remover a chave?")).toEqual({ title: "Remover a chave?" });
   });
 });

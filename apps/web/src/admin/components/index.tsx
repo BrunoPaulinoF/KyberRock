@@ -12,6 +12,7 @@ import { MoreHorizontal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
+import { useToast } from "../../components/ui";
 import { publicAsset } from "../../lib/public-asset";
 
 export type Tone = "neutral" | "ok" | "warn" | "danger" | "info";
@@ -58,9 +59,9 @@ export function Button({
   const classes = [
     "adm-btn",
     variant === "primary" ? "adm-btn-primary" : "",
-    // Laranja: gesto que anda para tras (voltar a frota para uma versao
-    // anterior). Nao e destrutivo como o vermelho, mas tambem nao pode sair
-    // por engano no meio dos botoes de sempre.
+    // Ambar de alerta: gesto que anda para tras (voltar a frota para uma
+    // versao anterior). Nao e destrutivo como o vermelho, mas tambem nao pode
+    // sair por engano no meio dos botoes de sempre.
     variant === "warn" ? "adm-btn-warn" : "",
     variant === "danger" ? "adm-btn-danger" : "",
     size === "sm" ? "adm-btn-sm" : ""
@@ -429,10 +430,8 @@ export function ConfirmDialog({
         </>
       }
     >
-      <p style={{ margin: 0, fontSize: "13px", color: "#334155" }}>{message}</p>
-      <p style={{ margin: "10px 0 0", fontSize: "12px", color: "#b91c1c" }}>
-        Esta ação não pode ser desfeita.
-      </p>
+      <p className="adm-confirm-message">{message}</p>
+      <p className="adm-confirm-irreversible">Esta ação não pode ser desfeita.</p>
     </Modal>
   );
 }
@@ -552,18 +551,24 @@ export function PageHead({
  * Copia com feedback fiel. `navigator.clipboard` e undefined em contexto nao
  * seguro (HTTP puro atras de proxy interno) e a escrita e assincrona, entao o
  * "copiado!" otimista mentia justamente quando a copia falhava.
+ *
+ * E um hook porque o aviso de sucesso e a mensagem do site (`useToast` do kit),
+ * e nao a janelinha do navegador, que travava a tela ate alguem clicar em OK.
  */
-export async function copyText(value: string, label = "Copiado!"): Promise<void> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(value);
-      alert(label);
-      return;
+export function useCopyText(): (value: string, label?: string) => Promise<void> {
+  const toast = useToast();
+  return async (value, label = "Copiado.") => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        toast.push(label);
+        return;
+      }
+    } catch {
+      // cai para a copia manual abaixo
     }
-  } catch {
-    // cai para a copia manual abaixo
-  }
-  window.prompt("Copie o valor:", value);
+    window.prompt("Copie o valor:", value);
+  };
 }
 
 /** Botao de copiar com estado momentaneo, para acoes repetidas em tabela. */

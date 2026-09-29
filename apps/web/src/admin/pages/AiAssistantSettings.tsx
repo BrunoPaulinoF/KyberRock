@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { useConfirm } from "../../components/ui";
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
 import {
   AI_MODEL_CUSTOM,
@@ -33,6 +34,7 @@ interface AiSettingsView {
 }
 
 export function AiAssistantSettings({ onSessionExpired }: { onSessionExpired: () => void }) {
+  const confirm = useConfirm();
   const [settings, setSettings] = useState<AiSettingsView | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -114,7 +116,14 @@ export function AiAssistantSettings({ onSessionExpired }: { onSessionExpired: ()
   }
 
   async function removeKey() {
-    if (!window.confirm("Remover a chave? O assistente volta a responder só com a documentação.")) {
+    if (
+      !(await confirm({
+        title: "Remover a chave?",
+        message: "O assistente volta a responder só com a documentação.",
+        confirmLabel: "Remover chave",
+        tone: "danger"
+      }))
+    ) {
       return;
     }
     setIsSaving(true);
