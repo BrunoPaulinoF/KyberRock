@@ -558,7 +558,11 @@ describe("toledo-tcp-adapter conversor que segura a sessao antiga", () => {
     const liberadoEm = Date.now();
     bloqueado = false;
 
-    expect(await waitFor(() => adapter.getStatus().state === "connected", 4000)).toBe(true);
+    // Espera a sessao NOVA: uma tentativa que o conversor recusou logo antes da liberacao
+    // chega a abrir o TCP e deixa o adaptador "conectado" por um instante antes do fechamento.
+    expect(
+      await waitFor(() => sessoes === 2 && adapter.getStatus().state === "connected", 4000)
+    ).toBe(true);
     expect(Date.now() - liberadoEm).toBeLessThan(400);
     expect(sessoes).toBe(2);
     expect(await waitFor(() => adapter.getStatus().lastReading !== null, 2000)).toBe(true);
