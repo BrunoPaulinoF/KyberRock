@@ -626,7 +626,8 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   periodo (`CustomerInfoModal` com `summary` opcional). O cartao mostra os **precos especiais** do
   cliente (com o padrao ao lado, `specialPriceLines`) e o **saldo** (`CustomerBalanceCard`): o
   credito do extrato (`customer_credit_movements`, a mesma soma da balanca) e o que esta **em
-  aberto no OMIE**, perguntado na hora pela acao `customer_balance` da `web-api` — nunca gravado
+  aberto no OMIE** — no total e **separado por nota fiscal** (o comercial precisa saber qual nota
+  o cliente deve, nao so a soma) —, perguntado na hora pela acao `customer_balance` da `web-api` — nunca gravado
   em `open_receivables_cents`, que entra no limite de credito das balancas. A **condicao de
   pagamento padrao** mudou para a aba Comercial e credito, ao lado da forma de pagamento (grava
   pelo `upsert_customer`, porque sobe ao OMIE com o cliente); o formulario de edicao so a pede no
