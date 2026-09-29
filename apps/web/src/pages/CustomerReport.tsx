@@ -1,9 +1,10 @@
 import "./customer-report.css";
 
-import { CircleHelp, Download } from "lucide-react";
+import { Download } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { Picker, type PickerOption } from "../components/Picker";
+import { Alert, EmptyState, ErrorState, PageHeader, SkeletonRows } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
@@ -83,7 +84,11 @@ export function CustomerReport() {
   const [customStart, setCustomStart] = useState(() => todayIso());
   const [customEnd, setCustomEnd] = useState(() => todayIso());
   const [exporting, setExporting] = useState(false);
-  const [exportMessage, setExportMessage] = useState<string | null>(null);
+  // O que a geracao do arquivo respondeu: os nomes gerados (info) ou o que faltou/falhou (erro).
+  const [exportMessage, setExportMessage] = useState<{
+    kind: "info" | "error";
+    text: string;
+  } | null>(null);
   const [variants, setVariants] = useState<Record<CustomerReportVariant, boolean>>({
     simplified: true,
     complete: false
@@ -104,7 +109,9 @@ export function CustomerReport() {
   );
   const selectedFormats = (["pdf", "excel"] as const).filter((format) => formats[format]);
 
-  const lookups = useAsync(() => loadReportLookups(user.companyId), [user.companyId]);
+  const lookups = useAsync(() => loadReportLookups(user.companyId), [user.companyId], {
+    key: `relatorio-cliente:cadastros:${user.companyId}`
+  });
   const customers = useMemo(
     () => buildCustomerOptions(lookups.data?.customers ?? []),
     [lookups.data]
@@ -121,36 +128,46 @@ export function CustomerReport() {
     [customers]
   );
 
-  const result = useAsync(async (): Promise<
-    | { kind: "report"; report: CustomerReportData }
-    | { kind: "overview"; overview: CustomersOverview }
-    | null
-  > => {
-    const data = lookups.data;
-    if (!data || !customerId) return null;
-    const referenceDate = todayIso();
-    const rows = await loadReportOperations({
-      companyId: user.companyId,
-      unitId: user.unitId,
-      // O cliente escolhido pode ter mais de um cadastro (o do OMIE e o da balanca, mesmo
-      // CNPJ): o relatorio e do cliente REAL, e le as cargas de todos eles.
-      customerIds: allCustomers ? null : resolveCustomerIdGroup(data.customers, customerId),
-      startDay: range.start,
-      endDay: range.end,
-      lookbackDays: maxDueDays(data)
-    });
-    const input = {
-      rows,
-      lookups: data,
-      startDate: range.start,
-      endDate: range.end,
-      periodLabel: range.label,
-      referenceDate
-    };
-    return allCustomers
-      ? { kind: "overview", overview: buildCustomersOverview(input) }
-      : { kind: "report", report: buildCustomerReport({ ...input, customerId }) };
-  }, [lookups.data, customerId, range.start, range.end, range.label, user.companyId, user.unitId]);
+  const result = useAsync(
+    async (): Promise<
+      | { kind: "report"; report: CustomerReportData }
+      | { kind: "overview"; overview: CustomersOverview }
+      | null
+    > => {
+      const data = lookups.data;
+      if (!data || !customerId) return null;
+      const referenceDate = todayIso();
+      const rows = await loadReportOperations({
+        companyId: user.companyId,
+        unitId: user.unitId,
+        // O cliente escolhido pode ter mais de um cadastro (o do OMIE e o da balanca, mesmo
+        // CNPJ): o relatorio e do cliente REAL, e le as cargas de todos eles.
+        customerIds: allCustomers ? null : resolveCustomerIdGroup(data.customers, customerId),
+        startDay: range.start,
+        endDay: range.end,
+        lookbackDays: maxDueDays(data)
+      });
+      const input = {
+        rows,
+        lookups: data,
+        startDate: range.start,
+        endDate: range.end,
+        periodLabel: range.label,
+        referenceDate
+      };
+      return allCustomers
+        ? { kind: "overview", overview: buildCustomersOverview(input) }
+        : { kind: "report", report: buildCustomerReport({ ...input, customerId }) };
+    },
+    [lookups.data, customerId, range.start, range.end, range.label, user.companyId, user.unitId],
+    {
+      // Sem cadastro carregado ou sem cliente a leitura e `null`: nao vai para a memoria.
+      key:
+        lookups.data && customerId
+          ? `relatorio-cliente:${user.companyId}:${user.unitId}:${customerId}:${range.start}:${range.end}:${range.label}`
+          : null
+    }
+  );
   // Pesagem fechada, editada ou cancelada na balanca entra no relatorio na hora.
   useOnCadastroChange(result.refresh, CADASTRO_TABLES.operations);
 
@@ -168,11 +185,14 @@ export function CustomerReport() {
     // O resumo de todos os clientes e uma lista unica: nao ha modelo simplificado/completo
     // a escolher, so o formato do arquivo.
     if (!allCustomers && selectedVariants.length === 0) {
-      setExportMessage("Selecione ao menos um modelo: simplificado ou completo.");
+      setExportMessage({
+        kind: "error",
+        text: "Selecione ao menos um modelo: simplificado ou completo."
+      });
       return;
     }
     if (selectedFormats.length === 0) {
-      setExportMessage("Selecione ao menos um formato: PDF ou Excel.");
+      setExportMessage({ kind: "error", text: "Selecione ao menos um formato: PDF ou Excel." });
       return;
     }
     setExporting(true);
@@ -191,8 +211,9 @@ export function CustomerReport() {
         ...files.pdf.map((file) => file.filename),
         ...files.xls.map((file) => spreadsheetFileName(file.filename))
       ];
-      setExportMessage(
-        [
+      setExportMessage({
+        kind: "info",
+        text: [
           names.length === 1
             ? `Arquivo gerado: ${names[0]}`
             : `${names.length} arquivos gerados:\n${names.join("\n")}`,
@@ -200,10 +221,13 @@ export function CustomerReport() {
         ]
           .filter(Boolean)
           .join("\n")
-      );
+      });
       await deliverReports(files);
     } catch (caught) {
-      setExportMessage(errorMessage(caught, "Falha ao gerar o relatório."));
+      setExportMessage({
+        kind: "error",
+        text: errorMessage(caught, "Falha ao gerar o relatório.")
+      });
     } finally {
       setExporting(false);
     }
@@ -216,32 +240,27 @@ export function CustomerReport() {
 
   return (
     <section className="cr-page">
-      <header className="cr-header">
-        <div className="cr-title-row">
-          <h2 className="cr-title">Relatório por cliente</h2>
-          <span className="cr-help" title={HELP} aria-label={HELP} role="img">
-            <CircleHelp size={14} />
-          </span>
-        </div>
-        <div className="cr-header-actions">
+      <PageHeader
+        kicker="Análise"
+        title="Relatório por cliente"
+        help={HELP}
+        actions={
           <button
             type="button"
-            className="icon-action primary"
-            aria-label={
-              exporting
-                ? "Gerando..."
-                : fileCount > 1
-                  ? `Gerar ${fileCount} arquivos`
-                  : "Gerar relatório"
-            }
+            className="btn primary"
             title="Gera os arquivos escolhidos: o Excel é baixado como planilha (.xlsx) e cada PDF abre a janela de impressão, um depois do outro."
             disabled={exporting || !customerId || loading || !result.data}
             onClick={() => void handleExport()}
           >
-            <Download size={16} strokeWidth={2} />
+            <Download size={16} strokeWidth={2} aria-hidden="true" />
+            {exporting
+              ? "Gerando..."
+              : fileCount > 1
+                ? `Gerar ${fileCount} arquivos`
+                : "Gerar relatório"}
           </button>
-        </div>
-      </header>
+        }
+      />
 
       <div className="cr-card">
         <div className="cr-filter-grid">
@@ -386,19 +405,25 @@ export function CustomerReport() {
         </div>
       </div>
 
-      {error ? <p className="cr-error">{error}</p> : null}
-      {exportMessage ? <p className="cr-info">{exportMessage}</p> : null}
+      {error ? (
+        <ErrorState
+          message={error}
+          onRetry={() => void (lookups.error ? lookups.reload() : result.reload())}
+        />
+      ) : null}
+      {exportMessage ? (
+        <Alert kind={exportMessage.kind}>
+          <span className="cr-pre-line">{exportMessage.text}</span>
+        </Alert>
+      ) : null}
 
       {!customerId ? (
-        <div className="cr-card">
-          <p className="cr-hint">
-            Selecione um cliente — ou &quot;Todos os clientes&quot; — para ver a prévia do
-            relatório.
-          </p>
-        </div>
+        <EmptyState
+          title={'Selecione um cliente — ou "Todos os clientes" — para ver a prévia do relatório.'}
+        />
       ) : loading ? (
         <div className="cr-card">
-          <p className="cr-hint">Carregando relatório...</p>
+          <SkeletonRows rows={6} columns={4} />
         </div>
       ) : overview ? (
         <CustomersOverviewPreview overview={overview} />
@@ -544,7 +569,7 @@ function DataCard({ table }: { table: ReportTable }): ReactNode {
     <div className="cr-card cr-data-card">
       <h3 className="cr-card-title">{table.title}</h3>
       {table.rows.length === 0 ? (
-        <p className="cr-hint">{table.emptyMessage ?? "Sem dados no período."}</p>
+        <EmptyState title={table.emptyMessage ?? "Sem dados no período."} />
       ) : (
         <div className="cr-table-scroll">
           <table className="cr-table">

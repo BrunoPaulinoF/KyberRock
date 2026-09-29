@@ -96,9 +96,7 @@ export function CustomerFileModal({
         </button>
       }
     >
-      <div style={{ marginBottom: 14 }}>
-        <Tabs label="Ficha do cliente" tabs={TABS} active={tab} onChange={setTab} />
-      </div>
+      <Tabs label="Ficha do cliente" tabs={TABS} active={tab} onChange={setTab} />
       {tab === "comercial" && <CommercialTab customer={customer} />}
       {tab === "precos" && <SpecialPricesTab customer={customer} />}
       {tab === "frete" && <FreightTab customer={customer} />}

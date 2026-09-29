@@ -1,9 +1,19 @@
 import "./wallet.css";
 
-import { Lightbulb, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { PlateBadge } from "../components/desk";
 import { Picker } from "../components/Picker";
+import {
+  Alert,
+  EmptyState,
+  ErrorState,
+  PageHeader,
+  Pill,
+  SkeletonRows,
+  useToast
+} from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
@@ -69,6 +79,7 @@ function useDebounced<T>(value: T, delay = 300): T {
  */
 export function Wallet() {
   const user = useUser();
+  const toast = useToast();
   const [status, setStatus] = useState<WalletStatusFilter>("open");
   const [search, setSearch] = useState("");
   // O recorte por periodo comeca DESLIGADO: venda em aberto de tres meses atras continua
@@ -83,13 +94,16 @@ export function Wallet() {
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   const range = useMemo(() => resolveInvoiceClosingPeriod(period, new Date()), [period]);
   const debouncedSearch = useDebounced(search);
 
-  const methods = useAsync(() => q.paymentMethods(user.companyId), [user.companyId]);
-  const customers = useAsync(() => q.customers(user.companyId), [user.companyId]);
+  const methods = useAsync(() => q.paymentMethods(user.companyId), [user.companyId], {
+    key: `carteira:formas:${user.companyId}`
+  });
+  const customers = useAsync(() => q.customers(user.companyId), [user.companyId], {
+    key: `carteira:clientes:${user.companyId}`
+  });
   useOnCadastroChange(methods.refresh, CADASTRO_TABLES.payment);
   useOnCadastroChange(customers.refresh, CADASTRO_TABLES.customers);
   const walletIds = useMemo(
@@ -102,9 +116,14 @@ export function Wallet() {
     [methods.data]
   );
   const iso = periodEnabled ? periodToIso(range.start, range.end) : null;
+  const walletIdsKey = walletIds.join(",");
+  // A busca filtra na tela: a leitura e so empresa + formas em carteira + situacao + periodo.
   const ops = useAsync(
     () => loadWalletOperations(user.companyId, walletIds, status, iso),
-    [user.companyId, walletIds.join(","), status, iso?.startIso ?? "", iso?.endIso ?? ""]
+    [user.companyId, walletIdsKey, status, iso?.startIso ?? "", iso?.endIso ?? ""],
+    {
+      key: `carteira:vendas:${user.companyId}:${walletIdsKey}:${status}:${iso ? `${iso.startIso}:${iso.endIso}` : "tudo"}`
+    }
   );
   // Pesagem fechada, editada ou cancelada na balanca entra na tela na hora.
   useOnCadastroChange(ops.refresh, CADASTRO_TABLES.operations);
@@ -145,7 +164,14 @@ export function Wallet() {
   const { openIds, reopenIds, totalCents: selectedTotalCents } = splitSelection(selectedOperations);
 
   const loading = ops.loading || methods.loading;
-  const error = actionError ?? methods.error ?? customers.error ?? ops.error;
+  const loadError = methods.error ?? customers.error ?? ops.error;
+
+  /** "Tentar de novo" do erro de leitura: rele so o que falhou. */
+  function retryFailedReads(): void {
+    for (const read of [methods, customers, ops]) {
+      if (read.error) void read.reload();
+    }
+  }
 
   function toggle(operationId: string): void {
     setSelected((prev) => {
@@ -178,7 +204,6 @@ export function Wallet() {
     }
     setSaving(true);
     setActionError(null);
-    setNotice(null);
     try {
       const result = await callWebApi("settle_wallet", {
         operationIds: openIds,
@@ -187,7 +212,7 @@ export function Wallet() {
         note: note.trim() || null
       });
       const method = settlementMethods.find((m) => m.id === settlementMethodId);
-      setNotice(
+      toast.push(
         `${String(result.settled)} ${result.settled === 1 ? "venda fechada" : "vendas fechadas"} em ${
           method ? paymentMethodDisplayName(method) : "forma escolhida"
         }.`
@@ -209,10 +234,9 @@ export function Wallet() {
     }
     setSaving(true);
     setActionError(null);
-    setNotice(null);
     try {
       const result = await callWebApi("reopen_wallet", { operationIds: reopenIds });
-      setNotice(
+      toast.push(
         `${String(result.reopened)} ${result.reopened === 1 ? "venda" : "vendas"} de volta para a carteira.`
       );
       setSelected(new Set());
@@ -226,27 +250,26 @@ export function Wallet() {
 
   return (
     <section className="wallet">
-      <header className="wallet-header">
-        <div className="wallet-title-row">
-          <h2 className="wallet-title">Carteira</h2>
-          <span className="wallet-help" role="img" aria-label="Dica" title={HELP}>
-            <Lightbulb size={14} />
-          </span>
-        </div>
-        <button
-          type="button"
-          className="icon-action"
-          aria-label="Atualizar"
-          title="Atualizar"
-          disabled={loading}
-          onClick={() => {
-            void methods.reload();
-            void ops.reload();
-          }}
-        >
-          <RefreshCw size={16} />
-        </button>
-      </header>
+      <PageHeader
+        kicker="Operacional"
+        title="Carteira"
+        help={HELP}
+        actions={
+          <button
+            type="button"
+            className="icon-action"
+            aria-label="Atualizar"
+            title="Atualizar"
+            disabled={loading}
+            onClick={() => {
+              void methods.reload();
+              void ops.reload();
+            }}
+          >
+            <RefreshCw size={16} />
+          </button>
+        }
+      />
 
       <div className="wallet-filters">
         <label className="wallet-field">
@@ -374,12 +397,12 @@ export function Wallet() {
         </div>
       </div>
 
-      {error ? <p className="wallet-error">{error}</p> : null}
-      {notice ? <p className="wallet-muted">{notice}</p> : null}
+      {loadError ? <ErrorState message={loadError} onRetry={retryFailedReads} /> : null}
+      {actionError ? <Alert kind="error">{actionError}</Alert> : null}
       {methods.data && walletIds.length === 0 ? (
-        <p className="wallet-muted">
+        <Alert kind="info">
           Esta pedreira não tem forma de pagamento &quot;em carteira&quot; cadastrada.
-        </p>
+        </Alert>
       ) : null}
 
       <div className="wallet-summary">
@@ -467,13 +490,17 @@ export function Wallet() {
 
       <div className="wallet-scroll">
         {loading && !ops.data ? (
-          <p className="wallet-muted">Carregando...</p>
+          <div className="wallet-group">
+            <SkeletonRows rows={5} columns={6} />
+          </div>
         ) : report.groups.length === 0 ? (
-          <p className="wallet-muted">
-            {status === "open"
-              ? "Nenhuma venda em carteira aguardando fechamento."
-              : "Nenhuma venda em carteira no recorte."}
-          </p>
+          <EmptyState
+            title={
+              status === "open"
+                ? "Nenhuma venda em carteira aguardando fechamento."
+                : "Nenhuma venda em carteira no recorte."
+            }
+          />
         ) : (
           report.groups.map((group) => {
             const ids = group.operations.map((operation) => operation.operationId);
@@ -528,7 +555,7 @@ export function Wallet() {
                           <td>{formatDate(operation.operationDate)}</td>
                           <td>{formatDate(operation.soldAt)}</td>
                           <td>
-                            <span className="wallet-plate">{operation.plate}</span>
+                            <PlateBadge plate={operation.plate} />
                           </td>
                           <td>{operation.productDescription}</td>
                           <td className="num">{formatKg(operation.netWeightKg)}</td>
@@ -544,11 +571,11 @@ export function Wallet() {
                           <td>
                             {operation.settledAt ? (
                               <>
-                                <span className="wallet-settled-tag">
+                                <Pill tone="success">
                                   {operation.settledByAdvance
                                     ? "Adiantamento do cliente"
                                     : (operation.settlementMethodName ?? "Fechada")}
-                                </span>
+                                </Pill>
                                 <div className="wallet-muted">
                                   {operation.settlementDueDate
                                     ? `Vence em ${formatDate(operation.settlementDueDate)}`

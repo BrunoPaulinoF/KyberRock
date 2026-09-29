@@ -4,7 +4,6 @@ import {
   Ban,
   CheckCircle2,
   Copy,
-  KeyRound,
   ListChecks,
   ShieldCheck,
   Tag,
@@ -15,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DeskPanel } from "../components/desk";
 import { PriceHistory } from "../components/PriceHistory";
-import { Alert, useToast } from "../components/ui";
+import { ErrorState, PageHeader, Pill, Skeleton, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import {
   formatPriceCode,
@@ -30,6 +29,8 @@ const RETRY_MS = 5_000;
 /** Raio do anel de contagem (SVG de 132 px). */
 const RING_RADIUS = 58;
 const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
+/** Os seis quadrados cinzas no lugar dos numeros enquanto a senha chega (3 + espaco + 3). */
+const DIGIT_SKELETON = ["d0", "d1", "d2", "gap", "d3", "d4", "d5"];
 
 /**
  * Tela "Senha de preco" (comercial e administrador): o codigo de 6 digitos que libera mudar
@@ -93,21 +94,13 @@ export function PriceCodePage() {
 
   return (
     <DeskPanel>
+      <PageHeader
+        kicker="Operacional"
+        title="Senha de preço"
+        description={`O código que libera mudar preço e excluir cadastro para quem não é do comercial. Ele troca sozinho a cada ${period} segundos.`}
+      />
       <div className="pc">
-        <header className="pc-head">
-          <span className="pc-head-icon" aria-hidden="true">
-            <KeyRound size={20} />
-          </span>
-          <div>
-            <h1 className="desk-title">Senha de preço</h1>
-            <p className="pc-head-text">
-              O código que libera mudar preço e excluir cadastro para quem não é do comercial. Ele
-              troca sozinho a cada {period} segundos.
-            </p>
-          </div>
-        </header>
-
-        {error && <Alert kind="error">{error}</Alert>}
+        {error && <ErrorState message={error} onRetry={() => void load()} />}
 
         <div className="pc-grid">
           <section className={`pc-code-card${ending ? " ending" : ""}`} aria-live="polite">
@@ -128,9 +121,22 @@ export function PriceCodePage() {
                   )
                 )}
               </span>
+            ) : error ? (
+              <span className="pc-loading">Sem senha no momento</span>
             ) : (
-              <span className="pc-loading">
-                {error ? "Sem senha no momento" : "Buscando a senha..."}
+              <span className="pc-code" role="status" aria-label="Buscando a senha">
+                {DIGIT_SKELETON.map((key) =>
+                  key === "gap" ? (
+                    <span key={key} className="pc-code-gap" aria-hidden="true" />
+                  ) : (
+                    <Skeleton
+                      key={key}
+                      width="clamp(40px, 9vw, 64px)"
+                      height="clamp(54px, 12vw, 80px)"
+                      radius={12}
+                    />
+                  )
+                )}
               </span>
             )}
 
@@ -221,15 +227,15 @@ export function PriceCodePage() {
               <ul className="pc-roles">
                 <li>
                   <span>Operação</span>
-                  <strong className="pc-tag ask">Sempre pede</strong>
+                  <Pill tone="warning">Sempre pede</Pill>
                 </li>
                 <li>
                   <span>Gestor</span>
-                  <strong className="pc-tag maybe">Se marcado no painel</strong>
+                  <Pill>Se marcado no painel</Pill>
                 </li>
                 <li>
                   <span>Comercial e Administrador</span>
-                  <strong className="pc-tag free">Não precisam</strong>
+                  <Pill tone="success">Não precisam</Pill>
                 </li>
               </ul>
             </section>

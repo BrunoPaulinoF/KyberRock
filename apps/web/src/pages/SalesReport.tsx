@@ -7,6 +7,7 @@ import {
   Download,
   Eye,
   Info,
+  Printer,
   Table2,
   Users
 } from "lucide-react";
@@ -15,9 +16,17 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { CustomerInfoModal, CustomerWeighingsModal } from "../components/CustomerPanels";
-import { DeskPanel, EmptyState, IconAction, PillTabs, SectionHead } from "../components/desk";
+import { DeskPanel, SectionHead } from "../components/desk";
 import { Picker } from "../components/Picker";
-import { Alert } from "../components/ui";
+import {
+  Alert,
+  EmptyState,
+  ErrorState,
+  PageHeader,
+  SkeletonRows,
+  Tabs,
+  type TabItem
+} from "../components/ui";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
@@ -56,7 +65,7 @@ import { ReportRecipients } from "./ReportRecipients";
 
 type ReportTab = "daily" | "period" | "pivot" | "monthly" | "recipients";
 
-const TABS: Array<{ id: ReportTab; label: string; icon: typeof CalendarDays }> = [
+const TABS: Array<TabItem<ReportTab>> = [
   { id: "daily", label: "Fechamento diário", icon: CalendarDays },
   { id: "period", label: "Carregamentos do período", icon: CalendarRange },
   { id: "pivot", label: "Tabela dinâmica de vendas", icon: Table2 },
@@ -64,7 +73,11 @@ const TABS: Array<{ id: ReportTab; label: string; icon: typeof CalendarDays }> =
 ];
 
 /** Quem recebe o fechamento diario: so quem grava (gestor, operacao, administrador) ve e edita. */
-const RECIPIENTS_TAB = { id: "recipients" as const, label: "Destinatários", icon: Users };
+const RECIPIENTS_TAB: TabItem<ReportTab> = {
+  id: "recipients",
+  label: "Destinatários",
+  icon: Users
+};
 
 const TAB_DESCRIPTION: Record<ReportTab, string> = {
   daily: "As vendas do dia, pesagem a pesagem — o mesmo fechamento que a balança envia.",
@@ -174,13 +187,21 @@ export function SalesReport() {
   const period = useMemo(() => periodToIso(range.start, range.end), [range.start, range.end]);
   const validRange = Boolean(range.start && range.end && range.start <= range.end);
 
-  const units = useAsync(() => reportUnits(user.companyId), [user.companyId]);
+  const units = useAsync(() => reportUnits(user.companyId), [user.companyId], {
+    key: `relatorios:unidades:${user.companyId}`
+  });
   const ops = useAsync(
     () =>
       validRange
         ? q.closedOperations(user.companyId, period.startIso, period.endIso)
         : Promise.resolve([]),
-    [user.companyId, period.startIso, period.endIso, validRange]
+    [user.companyId, period.startIso, period.endIso, validRange],
+    // Unidade, cliente, produto e frete filtram na tela: a leitura e so empresa + periodo.
+    {
+      key: validRange
+        ? `relatorios:pesagens:${user.companyId}:${period.startIso}:${period.endIso}`
+        : null
+    }
   );
   // Pesagem fechada, editada ou cancelada na balanca entra na tela na hora.
   useOnCadastroChange(ops.refresh, CADASTRO_TABLES.operations);
@@ -238,27 +259,33 @@ export function SalesReport() {
   return (
     <DeskPanel>
       <div className="reports-page">
-        <div className="desk-title-row">
-          <div>
-            <p className="desk-kicker">Análise</p>
-            <h1 className="desk-title">Relatórios e fechamento diário</h1>
-          </div>
-          <div className="reports-actions reports-no-print" hidden={tab === "recipients"}>
-            <IconAction icon="printer" label="Imprimir" onClick={() => window.print()} />
-            <button
-              type="button"
-              className="btn"
-              onClick={exportCsv}
-              disabled={ops.loading || !hasData}
-            >
-              <Download size={15} />
-              Baixar CSV
-            </button>
-          </div>
-        </div>
+        <PageHeader
+          kicker="Análise"
+          title="Relatórios e fechamento diário"
+          actions={
+            tab === "recipients" ? undefined : (
+              <>
+                <button type="button" className="btn" onClick={() => window.print()}>
+                  <Printer size={16} aria-hidden="true" />
+                  Imprimir
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={exportCsv}
+                  disabled={ops.loading || !hasData}
+                >
+                  <Download size={15} />
+                  Baixar CSV
+                </button>
+              </>
+            )
+          }
+        />
 
         <div className="reports-no-print">
-          <PillTabs
+          <Tabs
+            label="Relatórios"
             tabs={user.canManagePrices ? [...TABS, RECIPIENTS_TAB] : TABS}
             active={tab}
             onChange={setTab}
@@ -413,29 +440,35 @@ export function SalesReport() {
                   </label>
                 </>
               )}
-              {ops.loading && <span className="reports-loading">Carregando...</span>}
             </div>
 
             {!validRange && (
               <Alert kind="error">A data inicial precisa ser anterior à final.</Alert>
             )}
-            {ops.error && <Alert kind="error">{ops.error}</Alert>}
 
-            {tab === "daily" && (
-              <DailyReport lines={lines} totals={totals} onCustomer={openWeighings} />
+            {ops.error ? (
+              <ErrorState message={ops.error} onRetry={() => void ops.reload()} />
+            ) : ops.loading ? (
+              <SkeletonRows rows={6} columns={6} />
+            ) : (
+              <>
+                {tab === "daily" && (
+                  <DailyReport lines={lines} totals={totals} onCustomer={openWeighings} />
+                )}
+                {tab === "period" && (
+                  <PeriodReport lines={lines} totals={totals} onCustomer={openWeighings} />
+                )}
+                {tab === "pivot" && (
+                  <PivotReport
+                    pivot={pivot}
+                    groupBy={groupBy}
+                    onCustomer={openWeighings}
+                    onInfo={openInfo}
+                  />
+                )}
+                {tab === "monthly" && <MonthlyReport series={series} totals={monthTotals} />}
+              </>
             )}
-            {tab === "period" && (
-              <PeriodReport lines={lines} totals={totals} onCustomer={openWeighings} />
-            )}
-            {tab === "pivot" && (
-              <PivotReport
-                pivot={pivot}
-                groupBy={groupBy}
-                onCustomer={openWeighings}
-                onInfo={openInfo}
-              />
-            )}
-            {tab === "monthly" && <MonthlyReport series={series} totals={monthTotals} />}
 
             <p className="reports-note reports-no-print">
               <Info size={14} />

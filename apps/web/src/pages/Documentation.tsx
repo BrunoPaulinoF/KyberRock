@@ -24,6 +24,8 @@ import {
   X
 } from "lucide-react";
 
+import { DeskPanel } from "../components/desk";
+import { EmptyState, PageHeader, Pill, Tabs, type TabItem } from "../components/ui";
 import {
   buildSupportClipboardText,
   documentationFaqCategories,
@@ -105,7 +107,10 @@ function storeJson(key: string, value: unknown): void {
 // Componente principal
 // ---------------------------------------------------------------------------
 
-const documentationTabs: Array<{ id: DocumentationTabId; label: string; icon: LucideIcon }> = [
+/** Com a busca aberta nenhuma area fica marcada: os resultados tomam o lugar delas. */
+type DocumentationTabValue = DocumentationTabId | "busca";
+
+const documentationTabs: Array<TabItem<DocumentationTabId>> = [
   { id: "start", label: "Começar", icon: Rocket },
   { id: "guides", label: "Guias", icon: BookOpen },
   { id: "faq", label: "Dúvidas", icon: HelpCircle },
@@ -215,69 +220,64 @@ export function Documentation() {
 
   return (
     <section className="krdoc-page" aria-labelledby="documentation-title">
-      <div className="krdoc-search-bar">
-        <label className="krdoc-search-label" htmlFor="documentation-search">
-          <Search size={15} />
-          <span id="documentation-title">Buscar na documentação</span>
-        </label>
-        <input
-          id="documentation-search"
-          ref={searchInputRef}
-          className="krdoc-input"
-          type="search"
-          value={searchQuery}
-          placeholder='Digite sua dúvida: "como emitir nota fiscal", "a balança não conecta"...'
-          autoComplete="off"
-          onChange={(event) => setSearchQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape" && searchQuery) {
-              event.stopPropagation();
-              setSearchQuery("");
-            }
+      <DeskPanel>
+        <PageHeader
+          kicker="Análise"
+          title="Documentação"
+          description="A central de ajuda do KyberRock: primeiros passos, guias, dúvidas comuns, diagnóstico guiado e glossário. Busque pela dúvida ou escolha uma área."
+        />
+        <div className="krdoc-search-bar">
+          <label className="krdoc-search-label" htmlFor="documentation-search">
+            <Search size={15} />
+            <span id="documentation-title">Buscar na documentação</span>
+          </label>
+          <input
+            id="documentation-search"
+            ref={searchInputRef}
+            className="krdoc-input"
+            type="search"
+            value={searchQuery}
+            placeholder='Digite sua dúvida: "como emitir nota fiscal", "a balança não conecta"...'
+            autoComplete="off"
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && searchQuery) {
+                event.stopPropagation();
+                setSearchQuery("");
+              }
+            }}
+          />
+          {searching ? (
+            <>
+              <span className="krdoc-search-count">
+                {searchResults.length} {searchResults.length === 1 ? "resultado" : "resultados"}
+              </span>
+              <button
+                type="button"
+                className="krdoc-ghost-btn"
+                onClick={() => {
+                  setSearchQuery("");
+                  searchInputRef.current?.focus();
+                }}
+              >
+                <X size={13} />
+                Limpar
+              </button>
+            </>
+          ) : null}
+        </div>
+
+        <Tabs<DocumentationTabValue>
+          label="Áreas da documentação"
+          tabs={documentationTabs}
+          active={searching ? "busca" : activeTab}
+          onChange={(tab) => {
+            if (tab === "busca") return;
+            setSearchQuery("");
+            setActiveTab(tab);
           }}
         />
-        {searching ? (
-          <>
-            <span className="krdoc-search-count">
-              {searchResults.length} {searchResults.length === 1 ? "resultado" : "resultados"}
-            </span>
-            <button
-              type="button"
-              className="krdoc-ghost-btn"
-              onClick={() => {
-                setSearchQuery("");
-                searchInputRef.current?.focus();
-              }}
-            >
-              <X size={13} />
-              Limpar
-            </button>
-          </>
-        ) : null}
-      </div>
-
-      <nav aria-label="Áreas da documentação" className="krdoc-tab-bar" role="tablist">
-        {documentationTabs.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = !searching && activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={isActive}
-              className={isActive ? "krdoc-tab krdoc-tab-active" : "krdoc-tab"}
-              onClick={() => {
-                setSearchQuery("");
-                setActiveTab(tab.id);
-              }}
-            >
-              <Icon size={15} />
-              {tab.label}
-            </button>
-          );
-        })}
-      </nav>
+      </DeskPanel>
 
       {searching ? (
         <SearchResultsPanel
@@ -353,20 +353,24 @@ function SearchResultsPanel({
 }) {
   if (results.length === 0) {
     return (
-      <section className="krdoc-empty-state" aria-live="polite">
-        <Search size={22} />
-        <strong className="krdoc-empty-title">
-          Nada encontrado para &ldquo;{query.trim()}&rdquo;
-        </strong>
-        {/* O desktop ainda sugere o assistente do canto da tela, que o site nao tem. */}
-        <span>
-          Tente outras palavras (por exemplo &ldquo;nota&rdquo; em vez de &ldquo;NF&rdquo;), ou abra
-          a aba Suporte para saber o que enviar ao suporte.
-        </span>
-        <button type="button" className="krdoc-ghost-btn" onClick={onClear}>
-          <X size={13} />
-          Limpar busca
-        </button>
+      <section className="krdoc-panel" aria-live="polite">
+        <EmptyState
+          icon={Search}
+          title={`Nada encontrado para “${query.trim()}”`}
+          hint={
+            /* O desktop ainda sugere o assistente do canto da tela, que o site nao tem. */
+            <>
+              Tente outras palavras (por exemplo &ldquo;nota&rdquo; em vez de &ldquo;NF&rdquo;), ou
+              abra a aba Suporte para saber o que enviar ao suporte.
+            </>
+          }
+          action={
+            <button type="button" className="krdoc-ghost-btn" onClick={onClear}>
+              <X size={13} />
+              Limpar busca
+            </button>
+          }
+        />
       </section>
     );
   }
@@ -465,9 +469,9 @@ function StartTab({
           title="Preparação da unidade"
           description="Marque cada etapa concluída. O progresso fica salvo neste computador."
         >
-          <span className="krdoc-progress-badge">
+          <Pill tone="info">
             {doneCount}/{quickStartTasks.length}
-          </span>
+          </Pill>
         </PanelHeader>
         <div
           className="krdoc-progress-track"
@@ -729,19 +733,13 @@ function FaqTab({
         description="Clique em uma pergunta para ver a resposta. Filtre por assunto, ou use a busca lá em cima para procurar pela frase inteira."
       />
 
-      <div className="krdoc-category-row" role="group" aria-label="Filtrar dúvidas por assunto">
-        {documentationFaqCategories.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            className={option.id === category ? "krdoc-chip krdoc-chip-active" : "krdoc-chip"}
-            aria-pressed={option.id === category}
-            onClick={() => onSelectCategory(option.id)}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        label="Filtrar dúvidas por assunto"
+        variant="pill"
+        tabs={documentationFaqCategories}
+        active={category}
+        onChange={onSelectCategory}
+      />
 
       <div className="krdoc-faq-list">
         {faqs.map((faq) => {

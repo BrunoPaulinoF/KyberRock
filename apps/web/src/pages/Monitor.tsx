@@ -9,7 +9,6 @@ import {
   ChartColumn,
   Clock,
   Hourglass,
-  Inbox,
   LogOut,
   Minus,
   Moon,
@@ -41,6 +40,7 @@ import {
 } from "react";
 import { Link } from "react-router-dom";
 
+import { EmptyState, HelpTip } from "../components/ui";
 import { useAuth, useUser } from "../lib/auth";
 import { CLOSED_STATUSES } from "../lib/dashboard";
 import { formatMoney, formatPlate } from "../lib/format";
@@ -910,13 +910,16 @@ export function MonitorView(props: MonitorViewProps) {
               </div>
             )}
             {!widgets.kpis && !widgets.feed && !showCharts && !widgets.yard && (
-              <div className="mon-card mon-empty">
-                <Inbox size={28} aria-hidden="true" />
-                <strong>Nenhum painel ligado</strong>
-                <span>Abra os filtros e escolha o que aparece nesta tela.</span>
-                <button type="button" className="mon-btn" onClick={() => setDrawerOpen(true)}>
-                  Escolher painéis
-                </button>
+              <div className="mon-card">
+                <EmptyState
+                  title="Nenhum painel ligado"
+                  hint="Abra os filtros e escolha o que aparece nesta tela."
+                  action={
+                    <button type="button" className="mon-btn" onClick={() => setDrawerOpen(true)}>
+                      Escolher painéis
+                    </button>
+                  }
+                />
               </div>
             )}
           </div>
@@ -1292,17 +1295,6 @@ function PanelHead({
   );
 }
 
-function EmptyState({ title, text, action }: { title: string; text: string; action?: ReactNode }) {
-  return (
-    <div className="mon-empty">
-      <Inbox size={26} aria-hidden="true" />
-      <strong>{title}</strong>
-      <span>{text}</span>
-      {action}
-    </div>
-  );
-}
-
 /** Rodape "+N" de uma lista que mostra so o que cabe (texto, nao botao: nada a rolar). */
 function MoreFooter({ hidden, text }: { hidden: number; text: string }) {
   if (hidden <= 0) return null;
@@ -1347,7 +1339,7 @@ function FeedPanel({
       {sales.length === 0 ? (
         <EmptyState
           title={hasFilters ? "Nenhuma venda com estes filtros" : "Nenhuma venda no período"}
-          text={
+          hint={
             hasFilters
               ? "Tire um filtro para ver mais vendas."
               : "Cada pesagem fechada na balança aparece aqui na hora."
@@ -1443,7 +1435,6 @@ function YardPanel({
           <ul
             className="mon-legend mon-levels"
             aria-label={`Limites do pátio (${BASIS_TEXT[thresholds.basis]})`}
-            title={`Limites pela ${BASIS_TEXT[thresholds.basis]}`}
           >
             <li className="is-normal">
               <Clock size={13} aria-hidden="true" />
@@ -1459,9 +1450,15 @@ function YardPanel({
             </li>
           </ul>
         }
-      />
+      >
+        {/* O `title` da legenda nao aparece no toque do celular: a base dos limites vai no "?". */}
+        <HelpTip
+          label="Sobre os limites do pátio"
+          text={`Limites pela ${BASIS_TEXT[thresholds.basis]}.`}
+        />
+      </PanelHead>
       {tickets.length === 0 ? (
-        <EmptyState title="Pátio vazio" text="Nenhum caminhão aguardando carga agora." />
+        <EmptyState title="Pátio vazio" hint="Nenhum caminhão aguardando carga agora." />
       ) : (
         <div ref={ref} className="mon-fit">
           <ol className="mon-list">
@@ -1907,7 +1904,7 @@ function RankPanel({
     <section className={`mon-card ${className}`} aria-labelledby={headingId}>
       <PanelHead id={headingId} title={title} sub={`por ${METRIC_TEXT[metric].toLowerCase()}`} />
       {rows.length === 0 ? (
-        <EmptyState title="Sem vendas" text={emptyText} />
+        <EmptyState title="Sem vendas" hint={emptyText} />
       ) : (
         <div ref={ref} className="mon-fit">
           <ol className="mon-bars">
@@ -2250,7 +2247,7 @@ function FiltersDrawer({
 
 function MonitorSkeleton() {
   return (
-    <div className="mon-content" aria-busy="true" aria-label="Carregando vendas">
+    <div className="mon-content" role="status" aria-busy="true" aria-label="Carregando vendas">
       <div className="mon-kpi-grid">
         {Array.from({ length: 6 }, (_, index) => (
           <div key={index} className={`mon-kpi mon-skeleton${index < 2 ? " is-hero" : ""}`}>

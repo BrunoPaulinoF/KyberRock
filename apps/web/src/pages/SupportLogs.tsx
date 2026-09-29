@@ -21,8 +21,19 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 
-import { EmptyState, Pill, PlateBadge, SearchBar, SectionHead } from "../components/desk";
-import { Alert, DataTable, Modal, useToast } from "../components/ui";
+import { PlateBadge, SearchBar, SectionHead } from "../components/desk";
+import {
+  DataTable,
+  EmptyState,
+  ErrorState,
+  Modal,
+  PageHeader,
+  Pill,
+  Skeleton,
+  SkeletonRows,
+  Tabs,
+  useToast
+} from "../components/ui";
 import { WebApiError, callWebApi, errorMessage } from "../lib/api";
 import { useUser, type SessionUser } from "../lib/auth";
 import {
@@ -33,6 +44,7 @@ import {
   type ErrorLogSource
 } from "../lib/error-log";
 import { formatMoney, formatPlate } from "../lib/format";
+import { readCache, writeCache } from "../lib/query-cache";
 import { supabase } from "../lib/supabase";
 import {
   BILLING_STUCK_MS,
@@ -146,22 +158,27 @@ export function SupportLogs() {
   const tab = parseSupportTab(params.get("aba"));
   const now = useClock();
   const browserErrors = useBrowserErrors();
+  // Memoria entre telas (`lib/query-cache.ts`): voltar aos logs mostra na hora o ultimo retrato
+  // da nuvem enquanto o novo chega — com o botao de atualizar girando, porque aqui quem pede e
+  // o suporte e ele precisa ver que a leitura esta a caminho.
+  const cacheKey = `suporte:${user.companyId}`;
   const [state, setState] = useState<{
     data: SupportOverview | null;
     loading: boolean;
     error: string | null;
-  }>({ data: null, loading: true, error: null });
+  }>(() => ({ data: readCache<SupportOverview>(cacheKey) ?? null, loading: true, error: null }));
   const [connection, setConnection] = useState<ConnectionState>({ running: false, result: null });
 
   const load = useCallback(async () => {
     setState((current) => ({ ...current, loading: true, error: null }));
     try {
-      const result = await callWebApi("support_overview");
-      setState({ data: normalizeSupportOverview(result), loading: false, error: null });
+      const data = normalizeSupportOverview(await callWebApi("support_overview"));
+      writeCache(cacheKey, data);
+      setState({ data, loading: false, error: null });
     } catch (caught) {
       setState((current) => ({ ...current, loading: false, error: loadErrorText(caught) }));
     }
-  }, []);
+  }, [cacheKey]);
 
   useEffect(() => {
     void load();
@@ -351,57 +368,55 @@ export function SupportLogsView(props: SupportLogsViewProps) {
 
   return (
     <section className="desk-panel fill support">
-      <header className="support-head">
-        <div className="support-head-text">
-          <p className="desk-kicker">Suporte</p>
-          <div className="support-title-row">
-            <h1 className="support-title">Logs</h1>
-            {data && (
-              <Pill tone={severityTone(worst)}>
-                {attention === 0
-                  ? "Tudo em ordem"
-                  : `${attention} ${attention === 1 ? "ponto" : "pontos"} de atenção`}
-              </Pill>
+      <PageHeader
+        kicker="Suporte"
+        title="Logs"
+        meta={
+          data && (
+            <Pill tone={severityTone(worst)}>
+              {attention === 0
+                ? "Tudo em ordem"
+                : `${attention} ${attention === 1 ? "ponto" : "pontos"} de atenção`}
+            </Pill>
+          )
+        }
+        description="Saúde das balanças, pedidos do site, envios ao OMIE e erros deste navegador — para achar a falha sem depender de ligação."
+        actions={
+          <>
+            {data ? (
+              <span className="support-generated" title={formatStamp(data.generatedAt, true)}>
+                gerado às {formatClock(data.generatedAt)}
+              </span>
+            ) : loading ? (
+              <span className="support-generated" role="status" aria-label="Carregando">
+                <Skeleton width={96} height={12} />
+              </span>
+            ) : (
+              <span className="support-generated">sem dados da nuvem</span>
             )}
-          </div>
-          <p className="support-lead">
-            Saúde das balanças, pedidos do site, envios ao OMIE e erros deste navegador — para achar
-            a falha sem depender de ligação.
-          </p>
-        </div>
-        <div className="support-head-actions">
-          <span
-            className="support-generated"
-            title={data ? formatStamp(data.generatedAt, true) : ""}
-          >
-            {data
-              ? `gerado às ${formatClock(data.generatedAt)}`
-              : loading
-                ? "carregando..."
-                : "sem dados da nuvem"}
-          </span>
-          <button
-            type="button"
-            className={`icon-action support-refresh${loading ? " loading" : ""}`}
-            aria-label="Atualizar"
-            title="Atualizar"
-            disabled={loading}
-            onClick={onRefresh}
-          >
-            <RefreshCw size={15} />
-          </button>
-          <button type="button" className="btn primary" onClick={() => void copyReport()}>
-            {copied ? <Check size={15} /> : <ClipboardCopy size={15} />}
-            {copied ? "Copiado" : "Copiar relatório para o suporte"}
-          </button>
-        </div>
-      </header>
+            <button
+              type="button"
+              className={`icon-action support-refresh${loading ? " loading" : ""}`}
+              aria-label="Atualizar"
+              title="Atualizar"
+              disabled={loading}
+              onClick={onRefresh}
+            >
+              <RefreshCw size={15} />
+            </button>
+            <button type="button" className="btn primary" onClick={() => void copyReport()}>
+              {copied ? <Check size={15} /> : <ClipboardCopy size={15} />}
+              {copied ? "Copiado" : "Copiar relatório para o suporte"}
+            </button>
+          </>
+        }
+      />
 
       {error && (
-        <Alert kind="error">
-          {error}
-          {data ? ` Mostrando os dados de ${formatClock(data.generatedAt)}.` : ""}
-        </Alert>
+        <ErrorState
+          message={`${error}${data ? ` Mostrando os dados de ${formatClock(data.generatedAt)}.` : ""}`}
+          onRetry={onRefresh}
+        />
       )}
 
       <HealthCards cards={cards} active={tab} onSelect={onTabChange} />
@@ -413,10 +428,7 @@ export function SupportLogsView(props: SupportLogsViewProps) {
           <BrowserTab {...props} />
         ) : !data ? (
           loading ? (
-            <div className="support-loading">
-              <RefreshCw size={16} />
-              Carregando os logs da nuvem...
-            </div>
+            <SkeletonRows rows={5} columns={5} />
           ) : (
             <EmptyState
               title="Sem dados da nuvem."
@@ -524,35 +536,28 @@ function SupportTabs({
   badges: Record<SupportTab, TabBadge | null>;
   onChange: (tab: SupportTab) => void;
 }) {
-  const navRef = useRef<HTMLElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   // No celular as abas rolam de lado: a ativa (vinda de um cartao ou do ?aba=) fica a vista.
   useEffect(() => {
-    const nav = navRef.current;
-    const current = nav?.querySelector<HTMLElement>(".support-tab.active");
+    const nav = wrapRef.current?.querySelector<HTMLElement>('[role="tablist"]');
+    const current = nav?.querySelector<HTMLElement>('[aria-selected="true"]');
     if (!nav || !current || nav.scrollWidth <= nav.clientWidth) return;
     nav.scrollLeft = current.offsetLeft - (nav.clientWidth - current.offsetWidth) / 2;
   }, [active]);
   return (
-    <nav ref={navRef} className="tabs support-tabs" role="tablist" aria-label="Seções dos logs">
-      {SUPPORT_TABS.map((tab) => {
-        const Icon = TAB_ICONS[tab.id];
-        const badge = badges[tab.id];
-        return (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={tab.id === active}
-            className={`tab support-tab${tab.id === active ? " active" : ""}`}
-            onClick={() => onChange(tab.id)}
-          >
-            <Icon size={15} strokeWidth={2} />
-            {tab.label}
-            {badge && <span className={`support-tab-count ${badge.severity}`}>{badge.count}</span>}
-          </button>
-        );
-      })}
-    </nav>
+    <div ref={wrapRef}>
+      <Tabs
+        label="Seções dos logs"
+        active={active}
+        onChange={onChange}
+        tabs={SUPPORT_TABS.map((tab) => ({
+          id: tab.id,
+          label: tab.label,
+          icon: TAB_ICONS[tab.id],
+          count: badges[tab.id]?.count ?? null
+        }))}
+      />
+    </div>
   );
 }
 
@@ -627,12 +632,11 @@ function IdText({ id, prefix }: { id: string | null | undefined; prefix?: string
   );
 }
 
+/** Lista vazia que e boa noticia: a do kit, com o icone de conferido em verde. */
 function AllClear({ title = "Nada de errado aqui", hint }: { title?: string; hint: string }) {
   return (
-    <div className="empty-state support-clear">
-      <CircleCheck size={22} aria-hidden="true" />
-      <strong>{title}</strong>
-      <span>{hint}</span>
+    <div className="support-clear">
+      <EmptyState icon={CircleCheck} title={title} hint={hint} />
     </div>
   );
 }
@@ -984,9 +988,9 @@ function OmieTab({ data, now }: { data: SupportOverview; now: number }) {
         <>
           <div className="support-chips" aria-label="Resumo por motivo">
             {reasons.map((reason) => (
-              <span key={reason.key} className={`support-chip ${reason.severity}`}>
-                <strong>{reason.count}</strong> {reason.label}
-              </span>
+              <Pill key={reason.key} tone={severityTone(reason.severity)}>
+                {reason.count} {reason.label}
+              </Pill>
             ))}
           </div>
           <DataTable

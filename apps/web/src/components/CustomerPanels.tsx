@@ -32,8 +32,8 @@ import { canSee } from "../lib/permissions";
 import { operationCodeLabel } from "../lib/receipt-lookup";
 import { saleInstant } from "../lib/reports";
 import { useAsync } from "../lib/use-async";
-import { EmptyState, Pill, PlateBadge } from "./desk";
-import { Alert, Modal } from "./ui";
+import { PlateBadge } from "./desk";
+import { Alert, EmptyState, ErrorState, Modal, Pill, Skeleton, SkeletonRows } from "./ui";
 
 function kg(value: number | null | undefined): string {
   return (value ?? 0).toLocaleString("pt-BR");
@@ -121,13 +121,21 @@ export function CustomerWeighingsModal({
       validRange
         ? loadCustomerWeighings(user.companyId, customer, period.startIso, period.endIso)
         : Promise.resolve([]),
-    [user.companyId, customer.id, customer.name, period.startIso, period.endIso, validRange]
+    [user.companyId, customer.id, customer.name, period.startIso, period.endIso, validRange],
+    // A unidade filtra na tela; o cliente sem cadastro e achado pelo nome.
+    {
+      key: validRange
+        ? `cliente-pesagens:${user.companyId}:${customer.id ?? ""}:${customer.name}:${period.startIso}:${period.endIso}`
+        : null
+    }
   );
   const rows = useMemo(
     () => (ops.data ?? []).filter((op) => !unitId || op.unit_id === unitId),
     [ops.data, unitId]
   );
   const groups = useMemo(() => groupWeighingsByProduct(rows), [rows]);
+  // Periodo novo a caminho: o esqueleto no lugar da lista do periodo anterior.
+  const shownGroups = ops.loading ? [] : groups;
   const totals = useMemo(() => sumWeighings(rows), [rows]);
   const showReceipts = canSee(user.role, "cupons");
 
@@ -178,19 +186,20 @@ export function CustomerWeighingsModal({
               onChange={(event) => setEnd(event.target.value)}
             />
           </label>
-          {ops.loading && <span className="cp-muted">Carregando...</span>}
         </div>
 
         {!validRange && <Alert kind="error">A data inicial precisa ser anterior à final.</Alert>}
-        {ops.error && <Alert kind="error">{ops.error}</Alert>}
+        {ops.error && <ErrorState message={ops.error} onRetry={() => void ops.reload()} />}
 
         <TotalsStrip totals={totals} />
 
-        {!ops.loading && groups.length === 0 && validRange && (
+        {ops.loading && <SkeletonRows rows={4} columns={6} />}
+
+        {!ops.loading && !ops.error && groups.length === 0 && validRange && (
           <EmptyState title="Nenhuma pesagem deste cliente no período." />
         )}
 
-        {groups.map((group) => (
+        {shownGroups.map((group) => (
           <section key={group.key} className="cp-product">
             <button
               type="button"
@@ -302,7 +311,8 @@ export function CustomerInfoModal({
   const user = useUser();
   const info = useAsync(
     () => loadCustomerInfo(user.companyId, customer.id),
-    [user.companyId, customer.id]
+    [user.companyId, customer.id],
+    { key: `cliente-info:${user.companyId}:${customer.id ?? ""}` }
   );
   const row = info.data?.customer ?? null;
   const specialPrices = info.data?.specialPrices ?? [];
@@ -344,8 +354,8 @@ export function CustomerInfoModal({
           )}
         </div>
 
-        {info.error && <Alert kind="error">{info.error}</Alert>}
-        {info.loading && <p className="cp-muted">Carregando cadastro...</p>}
+        {info.error && <ErrorState message={info.error} onRetry={() => void info.reload()} />}
+        {info.loading && <SkeletonRows rows={4} columns={3} />}
         {!info.loading && !row && !info.error && (
           <Alert kind="info">
             Esta venda foi feita sem cadastro de cliente (só o nome ficou na pesagem).
@@ -403,9 +413,10 @@ export function CustomerInfoModal({
             <section className="cp-card">
               <h3>Preços especiais ({specialPrices.length})</h3>
               {specialPrices.length === 0 ? (
-                <p className="cp-muted">
-                  Sem preço especial: o cliente paga o preço padrão de cada produto.
-                </p>
+                <EmptyState
+                  title="Sem preço especial"
+                  hint="O cliente paga o preço padrão de cada produto."
+                />
               ) : (
                 <div className="table-wrap cp-table">
                   <table className="data">
@@ -469,7 +480,8 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
   const user = useUser();
   const credit = useAsync(
     () => loadCreditBalance(user.companyId, customer.id),
-    [user.companyId, customer.id]
+    [user.companyId, customer.id],
+    { key: `cliente-credito:${user.companyId}:${customer.id}` }
   );
   // Sem codigo no OMIE nao ha o que perguntar: nem gasta a chamada. O "Atualizar" pergunta de
   // novo mesmo com a resposta guardada (`loadOmieBalance`).
@@ -502,7 +514,7 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
       </div>
       <dl className="cp-items">
         {omie.loading && !omieData ? (
-          <InfoItem label="Em aberto no OMIE" value="Consultando..." />
+          <InfoItem label="Em aberto no OMIE" value={<Skeleton width={140} height={14} />} />
         ) : omieData?.status === "ok" ? (
           <>
             <InfoItem
@@ -565,7 +577,7 @@ export function CustomerBalanceCard({ customer }: { customer: CustomerRow }) {
                   </span>
                 </span>
               ) : (
-                "Carregando..."
+                <Skeleton width={120} height={14} />
               )
             }
           />

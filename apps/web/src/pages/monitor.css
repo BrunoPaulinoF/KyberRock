@@ -10,27 +10,31 @@
  *   que sobra; cada lista mostra so o que cabe no painel e fecha com "+N".
  * - celular / tablet em pe: a pagina rola uma vez so, com listas curtas e graficos baixos.
  *
- * As cores dos graficos sao desta tela e saem de um conjunto validado (claro e escuro): a serie
- * principal e o ambar da marca; as formas de pagamento usam 6 cores numa ordem que passou na
- * separacao para daltonismo (protan/deutan) e na visao normal, nos dois temas. Texto nunca usa a
- * cor da serie — so a marca ao lado dele.
+ * As cores sao as do kit (`--kr-*` do styles.css), que ja trocam sozinhas com o tema: nada aqui
+ * tem cor propria. A serie principal e o ambar da marca (`--kr-chart-1`); as formas de pagamento
+ * usam as seis `--kr-chart-*` numa ordem escolhida pela separacao na visao normal e na de
+ * daltonismo (protan/deutan), nos dois temas: as cinco cores primeiro e o cinza (`--kr-chart-3`)
+ * por ultimo, e ambar e verde (que o deutan confunde) longe um do outro. "Outras" e um cinza
+ * (`--kr-input-disabled-text`) diferente do `--kr-chart-3` nos dois temas — o `--kr-muted`, no
+ * escuro, e o mesmo tom dele. Texto nunca usa a cor da serie — so a marca ao lado dele.
  */
 
 .mon {
-  --mon-series: #d97706;
-  --mon-compare: #a8a29e;
-  --mon-grid: #efedeb;
-  --mon-axis: #d6d3d1;
-  --mon-track: #f1efed;
-  --mon-other: #a8a29e;
-  --mon-hover: rgba(28, 25, 23, 0.05);
-  --mon-cat-1: #d97706;
-  --mon-cat-2: #1baf7a;
-  --mon-cat-3: #2a78d6;
-  --mon-cat-4: #e87ba4;
-  --mon-cat-5: #008300;
-  --mon-cat-6: #4a3aa7;
-  --mon-live: #16a34a;
+  --mon-series: var(--kr-chart-1);
+  --mon-compare: var(--kr-muted);
+  --mon-grid: var(--kr-border);
+  --mon-axis: var(--kr-input-border);
+  --mon-track: var(--kr-border);
+  --mon-other: var(--kr-input-disabled-text);
+  /* so o realce do mouse/toque: navegador sem `color-mix` (TV antiga) apenas fica sem ele */
+  --mon-hover: color-mix(in srgb, var(--kr-text-strong) 5%, transparent);
+  --mon-cat-1: var(--kr-chart-1);
+  --mon-cat-2: var(--kr-chart-6);
+  --mon-cat-3: var(--kr-chart-2);
+  --mon-cat-4: var(--kr-chart-4);
+  --mon-cat-5: var(--kr-chart-5);
+  --mon-cat-6: var(--kr-chart-3);
+  --mon-live: var(--kr-success);
   --mon-radius: 14px;
   --mon-gap: 12px;
   min-height: 100vh;
@@ -40,23 +44,6 @@
   background: var(--kr-bg);
   color: var(--kr-text);
   overflow-x: clip;
-}
-
-:root[data-theme="dark"] .mon {
-  --mon-series: #d97706;
-  --mon-compare: #78716c;
-  --mon-grid: #26211e;
-  --mon-axis: #44403c;
-  --mon-track: #26211e;
-  --mon-other: #78716c;
-  --mon-hover: rgba(250, 250, 249, 0.05);
-  --mon-cat-1: #d97706;
-  --mon-cat-2: #199e70;
-  --mon-cat-3: #3987e5;
-  --mon-cat-4: #d55181;
-  --mon-cat-5: #008300;
-  --mon-cat-6: #9085e9;
-  --mon-live: #4ade80;
 }
 
 .mon h1,
@@ -158,8 +145,8 @@
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: var(--kr-accent);
-  color: #1c1206;
+  background: var(--kr-primary-strong);
+  color: var(--kr-primary-text);
   font-size: 12px;
   font-weight: 800;
 }
@@ -349,7 +336,7 @@
 .mon-segmented button[aria-pressed="true"] {
   background: var(--kr-surface);
   color: var(--kr-text-strong);
-  box-shadow: 0 1px 2px rgba(28, 25, 23, 0.12);
+  box-shadow: var(--kr-shadow);
 }
 :root[data-theme="dark"] .mon-segmented button[aria-pressed="true"] {
   background: var(--kr-surface-elevated);
@@ -629,6 +616,12 @@
   flex-basis: 100%;
   min-width: 0;
 }
+/* o "?" fica na borda direita do painel: a explicacao abre para a esquerda, dentro dele (o painel
+   de parede corta o que passa da borda) */
+.mon-card-actions .help-tip-bubble {
+  left: auto;
+  right: -6px;
+}
 .mon-levels li.is-normal svg {
   color: var(--kr-success);
 }
@@ -639,26 +632,13 @@
   color: var(--kr-danger);
 }
 
-.mon-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+/* lista vazia: o `EmptyState` do kit, com a letra desta tela (no painel de parede, ver `.is-fit`) */
+.mon .empty-state {
   justify-content: center;
-  gap: 6px;
-  padding: 24px 12px;
-  text-align: center;
-  color: var(--kr-muted);
-  border: 1px dashed var(--kr-border);
-  border-radius: 12px;
   font-size: 13px;
 }
-.mon-empty strong {
-  color: var(--kr-text-strong);
+.mon .empty-state strong {
   font-size: 15px;
-}
-.mon-card.mon-empty {
-  border-style: solid;
-  padding: 40px 16px;
 }
 
 .mon-btn {
@@ -785,8 +765,8 @@
   flex-shrink: 0;
   padding: 0 7px;
   border-radius: 999px;
-  background: var(--kr-accent);
-  color: #1c1206;
+  background: var(--kr-primary-strong);
+  color: var(--kr-primary-text);
   font-size: 12px;
   line-height: 1.6;
   font-weight: 800;
@@ -1087,7 +1067,7 @@
   border: 1px solid var(--kr-tooltip-border);
   background: var(--kr-tooltip-bg);
   color: var(--kr-tooltip-text);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--kr-shadow-pop);
   font-size: 12px;
   pointer-events: none;
 }
@@ -1328,7 +1308,7 @@
   z-index: 50;
   display: flex;
   justify-content: flex-end;
-  background: rgba(12, 10, 9, 0.45);
+  background: var(--kr-overlay);
   animation: mon-fade 160ms ease-out;
 }
 .mon-drawer {
@@ -1338,7 +1318,7 @@
   flex-direction: column;
   background: var(--kr-surface);
   border-left: 1px solid var(--kr-border);
-  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--kr-shadow-pop);
   animation: mon-slide-in 200ms ease-out;
   outline: none;
 }
@@ -1498,8 +1478,8 @@ label.mon-fieldset .mon-legend-text {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  background: var(--kr-surface-elevated);
+  box-shadow: var(--kr-shadow);
   transition: transform 140ms ease;
 }
 .mon-switch input:checked + .mon-switch-track {
@@ -1541,9 +1521,9 @@ label.mon-fieldset .mon-legend-text {
   border-radius: 6px;
   background: linear-gradient(
     90deg,
-    var(--mon-track) 25%,
-    var(--kr-surface-soft) 50%,
-    var(--mon-track) 75%
+    var(--kr-skeleton) 25%,
+    var(--kr-skeleton-shine) 50%,
+    var(--kr-skeleton) 75%
   );
   background-size: 200% 100%;
   animation: mon-shimmer 1.4s ease-in-out infinite;
@@ -1762,7 +1742,7 @@ label.mon-fieldset .mon-legend-text {
 .mon.is-fit .mon-card-head {
   flex-shrink: 0;
 }
-.mon.is-fit .mon-empty:not(.mon-card) {
+.mon.is-fit .mon-board .empty-state {
   flex: 1 1 0;
   min-height: 0;
   overflow: hidden;

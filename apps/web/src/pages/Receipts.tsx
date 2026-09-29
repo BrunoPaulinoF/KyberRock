@@ -4,8 +4,16 @@ import { Printer, ReceiptText, Search } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 
-import { DeskPanel, EmptyState, PlateBadge } from "../components/desk";
-import { Alert, Badge } from "../components/ui";
+import { DeskPanel, PlateBadge } from "../components/desk";
+import {
+  Alert,
+  EmptyState,
+  PageHeader,
+  Pill,
+  SkeletonRows,
+  Tabs,
+  type PillTone
+} from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { operationStatusLabel } from "../lib/customer-report";
@@ -31,11 +39,11 @@ function kg(value: number | null | undefined): string {
   return value === null || value === undefined ? "—" : `${value.toLocaleString("pt-BR")} kg`;
 }
 
-function statusKind(status: string): "ok" | "warn" | "err" | "accent" {
-  if (status === "cancelled" || status === "sync_error") return "err";
-  if (status === "synced") return "ok";
-  if (["closed_local", "pending_cloud", "pending_omie"].includes(status)) return "accent";
-  return "warn";
+function statusTone(status: string): PillTone {
+  if (status === "cancelled" || status === "sync_error") return "danger";
+  if (status === "synced") return "success";
+  if (["closed_local", "pending_cloud", "pending_omie"].includes(status)) return "info";
+  return "warning";
 }
 
 /**
@@ -109,20 +117,17 @@ export function Receipts() {
 
   return (
     <DeskPanel>
+      <PageHeader
+        kicker="Operacional"
+        title="Cupons"
+        description={
+          <>
+            Digite o <strong>COD</strong> que aparece no topo do cupom (ex.: 3249) ou o número da
+            via (ex.: 4038-4) para ver o cupom e as informações da pesagem.
+          </>
+        }
+      />
       <div className="rc">
-        <header className="rc-head">
-          <span className="rc-head-icon" aria-hidden="true">
-            <ReceiptText size={20} />
-          </span>
-          <div>
-            <h1 className="desk-title">Cupons</h1>
-            <p className="rc-head-text">
-              Digite o <strong>COD</strong> que aparece no topo do cupom (ex.: 3249) ou o número da
-              via (ex.: 4038-4) para ver o cupom e as informações da pesagem.
-            </p>
-          </div>
-        </header>
-
         <form className="rc-search" onSubmit={submit} role="search">
           <label className="rc-search-field">
             <Search size={16} aria-hidden="true" />
@@ -182,11 +187,13 @@ export function Receipts() {
           </section>
         )}
 
-        {detail && (
+        {detail ? (
           <ReceiptView detail={detail} copyIndex={copyIndex} onCopyChange={setCopyIndex} />
+        ) : (
+          searching && <SkeletonRows rows={6} columns={3} />
         )}
 
-        {!matches && !detail && !error && (
+        {!matches && !detail && !error && !searching && (
           <EmptyState
             title="Busque um cupom"
             hint="O cupom aparece como saiu na impressora da balança, com a pesagem, os valores e o pedido do OMIE."
@@ -226,21 +233,20 @@ function ReceiptView({
     <div className="rc-grid">
       <section className="rc-paper-card" aria-label="Cupom impresso">
         <div className="rc-paper-head">
-          <div className="rc-copies" role="tablist" aria-label="Vias impressas">
-            {copies.map((item, index) => (
-              <button
-                type="button"
-                key={item.id}
-                role="tab"
-                aria-selected={index === copyIndex}
-                className={`rc-copy${index === copyIndex ? " active" : ""}`}
-                onClick={() => onCopyChange(index)}
-                title={`Via ${receiptNumberLabel(item.receipt_number, item.device_number)}`}
-              >
-                {copyLabel(item.copy_number)}
-              </button>
-            ))}
-          </div>
+          {copies.length > 0 ? (
+            <Tabs
+              label="Vias impressas"
+              variant="pill"
+              active={String(copyIndex)}
+              onChange={(id) => onCopyChange(Number(id))}
+              tabs={copies.map((item, index) => ({
+                id: String(index),
+                label: copyLabel(item.copy_number)
+              }))}
+            />
+          ) : (
+            <span />
+          )}
           <button type="button" className="btn" onClick={print} disabled={lines.length === 0}>
             <Printer size={15} />
             Imprimir
@@ -260,9 +266,14 @@ function ReceiptView({
           </pre>
         ) : (
           <div className="rc-paper-empty">
-            {copies.length === 0
-              ? "Esta pesagem ainda não tem cupom impresso."
-              : "A balança não guardou a cópia desta via. As informações ao lado são da pesagem."}
+            <EmptyState
+              icon={ReceiptText}
+              title={
+                copies.length === 0
+                  ? "Esta pesagem ainda não tem cupom impresso."
+                  : "A balança não guardou a cópia desta via. As informações ao lado são da pesagem."
+              }
+            />
           </div>
         )}
       </section>
@@ -277,9 +288,9 @@ function ReceiptView({
             <strong className="rc-summary-name">{operation.customer_name ?? "Sem cliente"}</strong>
           </div>
           <div className="rc-summary-side">
-            <Badge kind={statusKind(operation.status)}>
+            <Pill tone={statusTone(operation.status)}>
               {operationStatusLabel(operation.status)}
-            </Badge>
+            </Pill>
             <span className="rc-summary-total">{formatMoney(operation.total_cents)}</span>
           </div>
         </div>

@@ -162,7 +162,7 @@ export function Picker({
       {open && !disabled && (
         <ul className="picker-list" id={listId} role="listbox">
           {loading && options.length === 0 && (
-            <li className="picker-empty" role="status" aria-label="Carregando" style={{ gap: 10 }}>
+            <li className="picker-empty picker-loading" role="status" aria-label="Carregando">
               <Skeleton width="70%" />
               <Skeleton width="50%" />
               <Skeleton width="60%" />

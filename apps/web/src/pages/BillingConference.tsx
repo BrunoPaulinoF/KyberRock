@@ -1,9 +1,10 @@
 import "./billing-conference.css";
 
-import { Download, Lightbulb } from "lucide-react";
+import { Download } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Picker } from "../components/Picker";
+import { Alert, EmptyState, ErrorState, PageHeader, Pill, SkeletonRows } from "../components/ui";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
@@ -53,7 +54,11 @@ export function BillingConference() {
   const [situations, setSituations] = useState<BillingSituation[]>([]);
   const [search, setSearch] = useState("");
   const [exporting, setExporting] = useState(false);
-  const [exportMessage, setExportMessage] = useState<string | null>(null);
+  // O que a geracao do arquivo respondeu: os nomes gerados (info) ou o que faltou/falhou (erro).
+  const [exportMessage, setExportMessage] = useState<{
+    kind: "info" | "error";
+    text: string;
+  } | null>(null);
   const [formats, setFormats] = useState<{ pdf: boolean; excel: boolean }>({
     pdf: false,
     excel: true
@@ -68,7 +73,9 @@ export function BillingConference() {
     [formats]
   );
 
-  const customers = useAsync(() => loadCustomerOptions(user.companyId), [user.companyId]);
+  const customers = useAsync(() => loadCustomerOptions(user.companyId), [user.companyId], {
+    key: `conferencia-faturamento:clientes:${user.companyId}`
+  });
   const customerOptions = useMemo(
     () =>
       (customers.data ?? []).map((customer) => ({
@@ -79,9 +86,13 @@ export function BillingConference() {
     [customers.data]
   );
 
-  const { data, loading, error, refresh } = useAsync(
+  // Situacao e busca filtram na tela: a leitura e so empresa + unidade + periodo + cliente.
+  const { data, loading, error, reload, refresh } = useAsync(
     () => loadBillingRows(user.companyId, user.unitId, range, customerId || null),
-    [user.companyId, user.unitId, range.start, range.end, customerId]
+    [user.companyId, user.unitId, range.start, range.end, customerId],
+    {
+      key: `conferencia-faturamento:pesagens:${user.companyId}:${user.unitId}:${range.start}:${range.end}:${customerId}`
+    }
   );
   // Pesagem fechada, editada ou cancelada na balanca entra na tela na hora.
   useOnCadastroChange(refresh, CADASTRO_TABLES.operations);
@@ -113,7 +124,7 @@ export function BillingConference() {
   async function handleExport(): Promise<void> {
     if (!report) return;
     if (selectedFormats.length === 0) {
-      setExportMessage("Selecione ao menos um formato: PDF ou Excel.");
+      setExportMessage({ kind: "error", text: "Selecione ao menos um formato: PDF ou Excel." });
       return;
     }
     setExporting(true);
@@ -125,13 +136,18 @@ export function BillingConference() {
         ...files.xls.map((file) => spreadsheetFileName(file.filename))
       ];
       await deliverReports(files);
-      setExportMessage(
-        names.length === 1
-          ? `Arquivo gerado: ${names[0]}`
-          : `${names.length} arquivos gerados:\n${names.join("\n")}`
-      );
+      setExportMessage({
+        kind: "info",
+        text:
+          names.length === 1
+            ? `Arquivo gerado: ${names[0]}`
+            : `${names.length} arquivos gerados:\n${names.join("\n")}`
+      });
     } catch (err) {
-      setExportMessage(err instanceof Error ? err.message : "Falha ao gerar o relatório.");
+      setExportMessage({
+        kind: "error",
+        text: err instanceof Error ? err.message : "Falha ao gerar o relatório."
+      });
     } finally {
       setExporting(false);
     }
@@ -144,30 +160,27 @@ export function BillingConference() {
 
   return (
     <section className="billing-conference">
-      <header className="billing-conference-header">
-        <div className="billing-conference-title-row">
-          <h2 className="billing-conference-title">Conferência de faturamento</h2>
-          <span className="billing-conference-help" role="img" aria-label="Dica" title={HELP}>
-            <Lightbulb size={14} />
-          </span>
-        </div>
-        <button
-          type="button"
-          className="icon-action primary"
-          aria-label={
-            exporting
+      <PageHeader
+        kicker="Análise"
+        title="Conferência de faturamento"
+        help={HELP}
+        actions={
+          <button
+            type="button"
+            className="btn primary"
+            title="Gera os arquivos escolhidos com as pesagens filtradas: a planilha Excel baixa na hora e o PDF abre a impressão do navegador (escolha Salvar como PDF)."
+            disabled={exporting || loading || !report}
+            onClick={() => void handleExport()}
+          >
+            <Download size={16} aria-hidden="true" />
+            {exporting
               ? "Gerando..."
               : selectedFormats.length > 1
                 ? `Gerar ${selectedFormats.length} arquivos`
-                : "Gerar relatório"
-          }
-          title="Gera os arquivos escolhidos com as pesagens filtradas: a planilha Excel baixa na hora e o PDF abre a impressão do navegador (escolha Salvar como PDF)."
-          disabled={exporting || loading || !report}
-          onClick={() => void handleExport()}
-        >
-          <Download size={16} />
-        </button>
-      </header>
+                : "Gerar relatório"}
+          </button>
+        }
+      />
 
       <div className="billing-conference-card billing-conference-filters">
         <div className="billing-conference-filter-grid">
@@ -275,10 +288,23 @@ export function BillingConference() {
         </div>
       </div>
 
-      {combinedError ? <p className="billing-conference-error">{combinedError}</p> : null}
-      {exportMessage ? <p className="billing-conference-info">{exportMessage}</p> : null}
+      {combinedError ? (
+        <ErrorState
+          message={combinedError}
+          onRetry={() => void (error ? reload() : customers.reload())}
+        />
+      ) : null}
+      {exportMessage ? (
+        <Alert kind={exportMessage.kind}>
+          <span className="billing-conference-pre-line">{exportMessage.text}</span>
+        </Alert>
+      ) : null}
 
-      {loading && !report ? <p className="billing-conference-hint">Carregando...</p> : null}
+      {loading && !report ? (
+        <div className="billing-conference-card">
+          <SkeletonRows rows={6} columns={6} />
+        </div>
+      ) : null}
 
       {report && totals && unbilled ? (
         <>
@@ -303,7 +329,7 @@ export function BillingConference() {
           <div className="billing-conference-card">
             <h3 className="billing-conference-card-title">Situação do faturamento</h3>
             {report.bySituation.length === 0 ? (
-              <p className="billing-conference-hint">Sem pesagens no período.</p>
+              <EmptyState title="Sem pesagens no período." />
             ) : (
               <div className="billing-conference-scroll">
                 <table className="billing-conference-table">
@@ -342,7 +368,7 @@ export function BillingConference() {
               Pesagem a pesagem ({formatCount(report.rows.length)})
             </h3>
             {report.rows.length === 0 ? (
-              <p className="billing-conference-hint">Nenhuma pesagem com os filtros escolhidos.</p>
+              <EmptyState title="Nenhuma pesagem com os filtros escolhidos." />
             ) : (
               <div className="billing-conference-scroll tall">
                 <WeighingLinesTable rows={report.rows} totals={totals} />
@@ -385,9 +411,9 @@ function SituationPill({
   title?: string;
 }) {
   return (
-    <span className={`billing-conference-pill ${BILLING_SITUATION_TONE[situation]}`} title={title}>
+    <Pill tone={BILLING_SITUATION_TONE[situation]} title={title}>
       {label}
-    </span>
+    </Pill>
   );
 }
 

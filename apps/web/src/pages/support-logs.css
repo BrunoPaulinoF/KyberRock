@@ -7,42 +7,10 @@
   min-width: 0;
 }
 
-/* ---------- cabecalho ---------- */
-.support-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px 20px;
-  flex-wrap: wrap;
-}
-.support-head-text {
-  min-width: 0;
-  flex: 1 1 360px;
-}
-.support-title-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 2px;
-}
-.support-title {
-  margin: 0;
-  font-size: 22px;
-  line-height: 1.15;
-  color: var(--kr-text-strong);
-}
-.support-lead {
-  margin: 4px 0 0;
-  max-width: 680px;
-  color: var(--kr-muted);
-  font-size: 13px;
-}
-.support-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+/* ---------- topo (PageHeader do kit) ---------- */
+/* O cartao ja separa as partes com o `gap`: a margem do topo do kit dobraria o espaco. */
+.support > .page-header {
+  margin-bottom: 0;
 }
 .support-generated {
   color: var(--kr-muted);
@@ -50,12 +18,11 @@
   font-weight: 600;
   white-space: nowrap;
 }
-.support-head-actions .icon-action {
+.support .page-header-actions .icon-action {
   width: 36px;
   height: 36px;
 }
-.support-refresh.loading svg,
-.support-loading svg {
+.support-refresh.loading svg {
   animation: support-spin 0.9s linear infinite;
 }
 @keyframes support-spin {
@@ -158,60 +125,16 @@
 /* No escuro o "soft" do tema e quase o fundo da cor: oito cartoes assim viram um painel de
    alarme. Aqui so um veu da cor, com a borda e o numero dizendo a gravidade. */
 :root[data-theme="dark"] .support-card.warning {
-  background: rgba(251, 191, 36, 0.07);
+  background: color-mix(in srgb, var(--kr-warning) 7%, transparent);
 }
 :root[data-theme="dark"] .support-card.danger {
-  background: rgba(248, 113, 113, 0.08);
+  background: color-mix(in srgb, var(--kr-danger) 8%, transparent);
 }
 .support-card.warning.current {
   box-shadow: inset 0 0 0 1px var(--kr-warning);
 }
 .support-card.danger.current {
   box-shadow: inset 0 0 0 1px var(--kr-danger);
-}
-
-/* ---------- abas (o `.tabs` do site, com contador e rolando de lado no celular) ---------- */
-.support-tabs {
-  position: relative;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  border-bottom: none;
-  box-shadow: inset 0 -1px 0 var(--kr-border);
-  scrollbar-width: thin;
-}
-.support-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  flex-shrink: 0;
-  margin-bottom: 0;
-  padding: 8px 11px;
-  white-space: nowrap;
-}
-.support-tab svg {
-  flex-shrink: 0;
-}
-.support-tab-count {
-  min-width: 18px;
-  padding: 0 6px;
-  border-radius: 999px;
-  border: 1px solid var(--kr-border);
-  background: var(--kr-surface-soft);
-  color: var(--kr-muted);
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 16px;
-  text-align: center;
-}
-.support-tab-count.warning {
-  background: var(--kr-warning-soft);
-  border-color: var(--kr-warning-border);
-  color: var(--kr-warning);
-}
-.support-tab-count.danger {
-  background: var(--kr-danger-soft);
-  border-color: var(--kr-danger-border);
-  color: var(--kr-danger);
 }
 
 /* ---------- conteudo ---------- */
@@ -235,19 +158,7 @@
   min-width: 190px;
   height: 36px;
 }
-.support-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 36px 16px;
-  color: var(--kr-muted);
-  font-weight: 600;
-}
-.support-clear {
-  align-items: center;
-}
-.support-clear svg {
+.support-clear .empty-state-icon {
   color: var(--kr-success);
 }
 .support-ok {
@@ -425,28 +336,6 @@
   gap: 6px;
   margin-bottom: 10px;
 }
-.support-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--kr-border);
-  background: var(--kr-surface-soft);
-  color: var(--kr-text);
-  font-size: 12px;
-  font-weight: 600;
-}
-.support-chip.warning {
-  background: var(--kr-warning-soft);
-  border-color: var(--kr-warning-border);
-  color: var(--kr-warning);
-}
-.support-chip.danger {
-  background: var(--kr-danger-soft);
-  border-color: var(--kr-danger-border);
-  color: var(--kr-danger);
-}
 
 /* ---------- aba Navegador ---------- */
 .support-browser {
@@ -586,10 +475,10 @@
   }
 }
 @media (max-width: 520px) {
-  .support-head-actions {
+  .support .page-header-actions {
     width: 100%;
   }
-  .support-head-actions .btn {
+  .support .page-header-actions .btn {
     flex: 1 1 auto;
   }
   .support-generated {
@@ -621,7 +510,6 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .support-refresh.loading svg,
-  .support-loading svg,
   .support-long-chevron {
     animation: none;
     transition: none;

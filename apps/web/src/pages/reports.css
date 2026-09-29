@@ -1,15 +1,5 @@
 /* Relatorios e fechamento diario (pages/SalesReport.tsx) */
 
-.reports-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.reports-actions .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
 .reports-page .section-head {
   margin-top: 14px;
 }
@@ -18,11 +8,6 @@
 }
 .reports-picker {
   min-width: 240px;
-}
-.reports-loading {
-  align-self: center;
-  color: var(--kr-muted);
-  font-size: 13px;
 }
 .reports-kpis {
   margin-bottom: 12px;
@@ -63,6 +48,7 @@
 
 @media print {
   body:has(.reports-page) .sidebar,
+  .reports-page .page-header-actions,
   .reports-no-print {
     display: none !important;
   }

@@ -14,17 +14,12 @@
   align-content: start;
 }
 
-/* ---------- busca ---------- */
+/* ---------- busca (no cartao do topo, entre o PageHeader e as abas) ---------- */
 .krdoc-search-bar {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: var(--kr-surface);
-  border: 1px solid var(--kr-border);
-  box-shadow: var(--kr-shadow);
 }
 .krdoc-search-label {
   display: inline-flex;
@@ -56,41 +51,6 @@
   font-size: 12px;
   font-weight: 700;
   flex-shrink: 0;
-}
-
-/* ---------- abas ---------- */
-.krdoc-tab-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.krdoc-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: 999px;
-  border: 1px solid var(--kr-border);
-  background: var(--kr-surface);
-  color: var(--kr-muted);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease,
-    border-color 0.12s ease;
-}
-.krdoc-tab:hover {
-  background: var(--kr-card-hover);
-  color: var(--kr-text-strong);
-}
-.krdoc-tab-active,
-.krdoc-tab-active:hover {
-  background: var(--kr-primary-strong);
-  border-color: var(--kr-primary-strong);
-  color: var(--kr-primary-text);
 }
 
 /* ---------- botoes ---------- */
@@ -223,25 +183,6 @@
 .krdoc-shrink-0 {
   flex-shrink: 0;
 }
-.krdoc-empty-state {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: center;
-  justify-content: center;
-  padding: 30px 26px;
-  border-radius: 16px;
-  background: var(--kr-surface);
-  border: 1px solid var(--kr-border);
-  color: var(--kr-muted);
-  font-size: 13px;
-  line-height: 1.5;
-  text-align: center;
-}
-.krdoc-empty-title {
-  color: var(--kr-text-strong);
-  font-size: 14px;
-}
 
 /* ---------- cartoes ---------- */
 .krdoc-panel {
@@ -307,16 +248,6 @@
   grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
   gap: 12px;
   align-items: start;
-}
-.krdoc-progress-badge {
-  flex-shrink: 0;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--kr-accent-soft);
-  border: 1px solid var(--kr-accent-border);
-  color: var(--kr-info-text);
-  font-size: 12px;
-  font-weight: 900;
 }
 .krdoc-progress-track {
   height: 8px;
@@ -611,36 +542,6 @@
 }
 
 /* ---------- aba Duvidas ---------- */
-.krdoc-category-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.krdoc-chip {
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--kr-border);
-  background: var(--kr-surface);
-  color: var(--kr-muted);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease,
-    border-color 0.12s ease;
-}
-.krdoc-chip:hover {
-  color: var(--kr-text-strong);
-  border-color: var(--kr-accent);
-}
-.krdoc-chip-active,
-.krdoc-chip-active:hover {
-  background: var(--kr-accent-soft);
-  border-color: var(--kr-accent-border);
-  color: var(--kr-info-text);
-}
 .krdoc-faq-list {
   display: grid;
   gap: 8px;

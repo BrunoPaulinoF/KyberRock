@@ -1,8 +1,18 @@
 import { useState } from "react";
 
-import { EmptyState, IconAction, NewButton, Pill, SectionHead } from "../components/desk";
-import { Alert, DataTable, Field, Modal, useToast } from "../components/ui";
+import { IconAction, NewButton, SectionHead } from "../components/desk";
+import {
+  Alert,
+  DataTable,
+  ErrorState,
+  Field,
+  Modal,
+  Pill,
+  useConfirm,
+  useToast
+} from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
+import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import { useAsync } from "../lib/use-async";
@@ -79,14 +89,17 @@ const CHANNEL_LABEL: Record<Channel, string> = {
 };
 
 export function ReportRecipients() {
+  const user = useUser();
   const toast = useToast();
+  const confirm = useConfirm();
   const { data, loading, error, reload, refresh } = useAsync(
     async () =>
       (await callWebApi("list_report_recipients")) as unknown as {
         recipients: Recipient[];
         channels: Channels;
       },
-    []
+    [user.companyId],
+    { key: `relatorios:destinatarios:${user.companyId}` }
   );
   useOnCadastroChange(refresh, CADASTRO_TABLES.reportRecipients);
   const [form, setForm] = useState<FormState | null>(null);
@@ -139,7 +152,21 @@ export function ReportRecipients() {
 
   async function remove(recipient: Recipient) {
     const name = recipient.display_name || recipient.email || recipient.whatsapp_phone || "";
-    if (!window.confirm(`Remover o destinatário ${name}?`)) return;
+    const ok = await confirm({
+      title: "Remover destinatário?",
+      message: name ? (
+        <>
+          Remover o destinatário <strong>{name}</strong>? Os relatórios deixam de ser enviados para
+          ele.
+        </>
+      ) : (
+        "Os relatórios deixam de ser enviados para este destinatário."
+      ),
+      confirmLabel: "Remover",
+      tone: "danger",
+      irreversible: true
+    });
+    if (!ok) return;
     try {
       await callWebApi("delete_report_recipient", { id: recipient.id });
       toast.push("Destinatário removido.");
@@ -166,7 +193,7 @@ export function ReportRecipients() {
           </NewButton>
         }
       />
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <ErrorState message={error} onRetry={() => void reload()} />}
       {channels && (
         <div className="recipients-channels">
           <span>
@@ -192,14 +219,13 @@ export function ReportRecipients() {
           <small>O SMTP, o WhatsApp e o horário dos envios são configurados na balança.</small>
         </div>
       )}
-      {!loading && recipients.length === 0 ? (
-        <EmptyState title="Nenhum destinatário cadastrado." />
-      ) : (
+      {!error && (
         <DataTable
           rows={recipients}
           rowKey={(row) => row.id}
           rowClassName={(row) => (row.is_active ? undefined : "inactive")}
-          empty={loading ? "Carregando..." : "Nenhum destinatário cadastrado."}
+          loading={loading}
+          empty="Nenhum destinatário cadastrado."
           columns={[
             { key: "name", header: "Nome", render: (row) => row.display_name ?? "-" },
             { key: "channel", header: "Canal", render: (row) => CHANNEL_LABEL[channelOf(row)] },

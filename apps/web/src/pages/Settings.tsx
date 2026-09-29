@@ -1,9 +1,20 @@
-import { RefreshCw } from "lucide-react";
+import { Cloud, Printer, RefreshCw, Scale } from "lucide-react";
 import { useMemo } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 
-import { DeskPanel, EmptyState, IconAction, Pill } from "../components/desk";
-import { Alert, DataTable, useToast } from "../components/ui";
+import { DeskPanel, IconAction, SectionHead } from "../components/desk";
+import {
+  DataTable,
+  EmptyState,
+  ErrorState,
+  PageHeader,
+  Pill,
+  Skeleton,
+  SkeletonRows,
+  Tabs,
+  useToast,
+  type TabItem
+} from "../components/ui";
 import { callWebApi } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
@@ -43,10 +54,13 @@ interface UnitDevice {
 }
 
 function useUnitDevices() {
+  const user = useUser();
+  // As balancas da unidade do login: a mesma lista serve as abas Balanca e Cloud.
   return useAsync(
     async () =>
       ((await callWebApi("unit_devices")) as unknown as { devices: UnitDevice[] }).devices,
-    []
+    [],
+    { key: `configuracoes:balancas:${user.companyId}:${user.unitId}` }
   );
 }
 
@@ -70,12 +84,40 @@ function isTab(value: string | undefined): value is SettingsTab {
   return value === "balanca" || value === "impressao" || value === "cloud";
 }
 
+/** As mesmas tres entradas da engrenagem do menu; cada aba e um endereco (`/configuracoes/:tab`). */
+const SETTINGS_TABS: Array<TabItem<SettingsTab>> = [
+  { id: "balanca", label: "Balança", icon: Scale },
+  { id: "impressao", label: "Impressão", icon: Printer },
+  { id: "cloud", label: "Cloud", icon: Cloud }
+];
+
 export function Settings() {
   const params = useParams();
+  const navigate = useNavigate();
   const tab: SettingsTab = isTab(params.tab) ? params.tab : "balanca";
-  if (tab === "impressao") return <PrintingSettings />;
-  if (tab === "cloud") return <CloudSettings />;
-  return <ScaleSettings />;
+  return (
+    <>
+      <DeskPanel>
+        <PageHeader
+          title="Configurações"
+          description="O estado das balanças da unidade, dos cupons pedidos pelo site e do envio ao OMIE. A conexão da balança e a impressora são configuradas no KyberRock Desktop de cada computador."
+        />
+        <Tabs
+          label="Seções das configurações"
+          tabs={SETTINGS_TABS}
+          active={tab}
+          onChange={(next) => navigate(`/configuracoes/${next}`)}
+        />
+      </DeskPanel>
+      {tab === "impressao" ? (
+        <PrintingSettings />
+      ) : tab === "cloud" ? (
+        <CloudSettings />
+      ) : (
+        <ScaleSettings />
+      )}
+    </>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -90,22 +132,20 @@ function ScaleSettings() {
   return (
     <div className="settings-grid">
       <DeskPanel>
-        <div className="desk-title-row">
-          <h1 className="desk-title">Balanças da unidade</h1>
-          <RefreshButton onClick={() => void devices.reload()} />
-        </div>
-        <p className="desk-muted" style={{ marginTop: 0, marginBottom: 12 }}>
-          Os computadores de balança desta pedreira. A conexão com a balança (rede, USB ou serial) é
-          configurada em cada computador, na tela Balança do KyberRock Desktop.
-        </p>
-        {devices.error && <Alert kind="error">{devices.error}</Alert>}
-        {rows.length === 0 && !devices.loading ? (
-          <EmptyState title="Nenhuma balança ativada nesta unidade." />
-        ) : (
+        <SectionHead
+          title="Balanças da unidade"
+          description="Os computadores de balança desta pedreira. A conexão com a balança (rede, USB ou serial) é configurada em cada computador, na tela Balança do KyberRock Desktop."
+          action={<RefreshButton onClick={() => void devices.reload()} />}
+        />
+        {devices.error && (
+          <ErrorState message={devices.error} onRetry={() => void devices.reload()} />
+        )}
+        {!(devices.error && rows.length === 0) && (
           <DataTable
             rows={rows}
             rowKey={(row) => row.id}
-            empty={devices.loading ? "Carregando..." : "Nenhuma balança."}
+            loading={devices.loading}
+            empty="Nenhuma balança ativada nesta unidade."
             columns={[
               {
                 key: "name",
@@ -160,19 +200,23 @@ function ScaleSettings() {
       </DeskPanel>
 
       <DeskPanel>
-        <h2 className="desk-title">Leitura ao vivo</h2>
+        <SectionHead title="Leitura ao vivo" />
         <div className="settings-live">
-          <strong>
-            {!executor
-              ? "Verificando..."
-              : !executor.executor
+          {!executor ? (
+            <div role="status" aria-label="Verificando a balança executora">
+              <Skeleton width="70%" height={18} />
+            </div>
+          ) : (
+            <strong>
+              {!executor.executor
                 ? "Nenhuma balança executa o site"
                 : executor.executor.needsUpdate
                   ? `${executor.executor.name} precisa ser atualizada (versão ${executor.executor.minVersion ?? "mais nova"})`
                   : executor.executor.online
                     ? `${executor.executor.name} conectada`
                     : `${executor.executor.name} fora do ar`}
-          </strong>
+            </strong>
+          )}
           <span>
             O site não lê o peso da balança: no fechamento pelo site o peso é digitado, e a balança
             executora registra a pesagem com as mesmas regras do botão "Capturar peso". A Nova
@@ -195,9 +239,11 @@ function ScaleSettings() {
 function PrintingSettings() {
   const user = useUser();
   const since = useMemo(() => new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), []);
+  // Memoria pela empresa: a janela de 7 dias anda com o relogio, mas e a mesma lista.
   const requests = useAsync(
     () => q.operationRequests(user.companyId, since),
-    [user.companyId, since]
+    [user.companyId, since],
+    { key: `configuracoes:impressao:${user.companyId}` }
   );
   const printed = (requests.data ?? []).filter((request) => request.print_status);
   const executor = useExecutorStatus();
@@ -212,9 +258,7 @@ function PrintingSettings() {
   return (
     <div className="settings-grid">
       <DeskPanel>
-        <div className="desk-title-row">
-          <h1 className="desk-title">Perfil de cupom 80 mm</h1>
-        </div>
+        <SectionHead title="Perfil de cupom 80 mm" />
         <div className="settings-live" style={{ minHeight: 0 }}>
           <strong>Impressora da balança {executor?.executor?.name ?? "executora"}</strong>
           <span>
@@ -227,22 +271,20 @@ function PrintingSettings() {
       </DeskPanel>
 
       <DeskPanel>
-        <div className="desk-title-row">
-          <h2 className="desk-title">Cupons emitidos pelo site</h2>
-          <RefreshButton onClick={() => void requests.reload()} />
-        </div>
-        <p className="desk-muted" style={{ marginTop: 0, marginBottom: 12 }}>
-          Últimos 7 dias. Cupom que não imprimiu aparece em vermelho, com o motivo que a balança
-          devolveu.
-        </p>
-        {requests.error && <Alert kind="error">{requests.error}</Alert>}
-        {printed.length === 0 && !requests.loading ? (
-          <EmptyState title="Nenhum cupom emitido pelo site ainda." />
-        ) : (
+        <SectionHead
+          title="Cupons emitidos pelo site"
+          description="Últimos 7 dias. Cupom que não imprimiu aparece em vermelho, com o motivo que a balança devolveu."
+          action={<RefreshButton onClick={() => void requests.reload()} />}
+        />
+        {requests.error && (
+          <ErrorState message={requests.error} onRetry={() => void requests.reload()} />
+        )}
+        {!(requests.error && printed.length === 0) && (
           <DataTable
             rows={printed}
             rowKey={(row) => row.id}
-            empty={requests.loading ? "Carregando..." : "Nenhum cupom."}
+            loading={requests.loading}
+            empty="Nenhum cupom emitido pelo site ainda."
             columns={[
               {
                 key: "when",
@@ -323,9 +365,11 @@ function CloudSettings() {
     const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
     return { startIso: start.toISOString(), endIso: end.toISOString() };
   }, []);
+  // Memoria pela empresa: a janela de 30 dias anda com o relogio, mas e a mesma lista.
   const closed = useAsync(
     () => q.closedOperations(user.companyId, period.startIso, period.endIso),
-    [user.companyId, period.startIso, period.endIso]
+    [user.companyId, period.startIso, period.endIso],
+    { key: `configuracoes:cloud:${user.companyId}` }
   );
   // O pedido chegando ao OMIE (ou a nota saindo) na balanca some desta lista na hora.
   useOnCadastroChange(closed.refresh, CADASTRO_TABLES.operations);
@@ -349,7 +393,7 @@ function CloudSettings() {
     <div className="settings-grid">
       <div className="settings-stack">
         <DeskPanel>
-          <h1 className="desk-title">Sincronização Supabase</h1>
+          <SectionHead title="Sincronização Supabase" />
           <p className="settings-status">
             <strong>Status:</strong> Conectado
           </p>
@@ -359,21 +403,20 @@ function CloudSettings() {
           </p>
         </DeskPanel>
         <DeskPanel>
-          <div className="desk-title-row">
-            <h2 className="desk-title">Fila OMIE (fechamentos a enviar)</h2>
-            <RefreshButton onClick={() => void closed.reload()} />
-          </div>
-          {closed.error && <Alert kind="error">{closed.error}</Alert>}
-          {pendingOmie.length === 0 ? (
-            <p className="desk-muted" style={{ marginTop: 0 }}>
-              {closed.loading
-                ? "Carregando..."
-                : "Nenhum item na fila: todos os fechamentos dos últimos 30 dias chegaram ao OMIE."}
-            </p>
-          ) : (
+          <SectionHead
+            title="Fila OMIE (fechamentos a enviar)"
+            action={<RefreshButton onClick={() => void closed.reload()} />}
+          />
+          {closed.error && (
+            <ErrorState message={closed.error} onRetry={() => void closed.reload()} />
+          )}
+          {!(closed.error && pendingOmie.length === 0) && (
             <DataTable
               rows={pendingOmie}
               rowKey={({ row }) => row.id}
+              loading={closed.loading}
+              empty="Nenhum item na fila"
+              emptyHint="Todos os fechamentos dos últimos 30 dias chegaram ao OMIE."
               columns={[
                 {
                   key: "op",
@@ -413,12 +456,16 @@ function CloudSettings() {
       </div>
 
       <DeskPanel>
-        <h2 className="desk-title">Status OMIE</h2>
-        {devices.error && <Alert kind="error">{devices.error}</Alert>}
+        <SectionHead title="Status OMIE" />
+        {devices.error && (
+          <ErrorState message={devices.error} onRetry={() => void devices.reload()} />
+        )}
         {(devices.data ?? []).length === 0 ? (
-          <p className="desk-muted">
-            {devices.loading ? "Carregando status OMIE..." : "Nenhuma balança nesta unidade."}
-          </p>
+          devices.loading ? (
+            <SkeletonRows rows={3} columns={2} />
+          ) : (
+            !devices.error && <EmptyState title="Nenhuma balança nesta unidade." />
+          )
         ) : (
           <div className="settings-devices">
             {(devices.data ?? []).map((device) => (

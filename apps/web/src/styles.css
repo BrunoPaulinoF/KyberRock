@@ -625,22 +625,6 @@ h3 {
 .panel-body {
   padding: 14px 16px;
 }
-.toolbar {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--kr-border);
-  background: var(--kr-surface-soft);
-}
-.toolbar label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--kr-muted);
-  font-weight: 600;
-}
 .kpis {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -883,42 +867,6 @@ input[type="radio"] {
   opacity: 0.55;
   cursor: not-allowed;
 }
-
-/* ---------- etiquetas (o SituationPill do desktop) ---------- */
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-  background: var(--kr-surface-soft);
-  border: 1px solid var(--kr-border);
-  color: var(--kr-muted);
-}
-.badge.ok {
-  background: var(--kr-success-soft);
-  border-color: var(--kr-success-border);
-  color: var(--kr-success);
-}
-.badge.warn {
-  background: var(--kr-warning-soft);
-  border-color: var(--kr-warning-border);
-  color: var(--kr-warning);
-}
-.badge.err {
-  background: var(--kr-danger-soft);
-  border-color: var(--kr-danger-border);
-  color: var(--kr-danger);
-}
-.badge.accent,
-.badge.info {
-  background: var(--kr-info-bg);
-  border-color: var(--kr-info-border);
-  color: var(--kr-info-text);
-}
-
 /* ---------- avisos e toast ---------- */
 .alert {
   border-radius: 12px;
@@ -1094,6 +1042,7 @@ input[type="radio"] {
   color: var(--kr-text-strong);
 }
 .confirm-message {
+  white-space: pre-line;
   font-size: var(--kr-font-md);
   line-height: 1.5;
   color: var(--kr-text);
@@ -1286,36 +1235,6 @@ input[type="radio"] {
     padding: 22px 18px;
   }
 }
-
-/* ---------- sub-abas (o subTabs do desktop) ---------- */
-.tabs {
-  display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--kr-border);
-  flex-wrap: wrap;
-}
-.tab {
-  border: none;
-  background: none;
-  padding: 8px 12px;
-  cursor: pointer;
-  color: var(--kr-muted);
-  font-weight: 600;
-  font-size: 14px;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  border-radius: 8px 8px 0 0;
-}
-.tab:hover {
-  color: var(--kr-text-strong);
-  background: var(--kr-surface-soft);
-}
-.tab.active {
-  color: var(--kr-text-strong);
-  border-bottom-color: var(--kr-accent);
-  font-weight: 700;
-}
-
 /* ---------- operacao pelo site: busca, pedidos ao vivo, peso ---------- */
 .picker {
   position: relative;
@@ -1379,6 +1298,10 @@ input[type="radio"] {
 .picker-empty,
 .picker-none {
   color: var(--kr-muted);
+}
+.picker-list li.picker-loading {
+  gap: 10px;
+  cursor: default;
 }
 .request-feed {
   list-style: none;
@@ -1445,11 +1368,6 @@ input[type="radio"] {
   font-weight: 800;
   letter-spacing: 0.02em;
 }
-.page-head .actions .badge {
-  font-size: 12px;
-  padding: 4px 10px;
-}
-
 /* ---------- tela do carregador (celular e tablet, dentro da pedreira) ---------- */
 .loading-shell {
   min-height: 100vh;
@@ -1648,21 +1566,6 @@ input[type="radio"] {
   border: 1px solid var(--kr-border);
   color: var(--kr-text-strong);
 }
-.loading-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 36px 16px;
-  text-align: center;
-  border: 1px dashed var(--kr-border);
-  border-radius: 14px;
-  color: var(--kr-muted);
-}
-.loading-empty strong {
-  color: var(--kr-text-strong);
-  font-size: 16px;
-}
 .loading-list {
   list-style: none;
   margin: 0;
@@ -1853,11 +1756,6 @@ input[type="radio"] {
   flex-direction: column;
   min-height: calc(100vh - 20px);
 }
-.desk-title {
-  margin: 0 0 4px;
-  font-size: 15px;
-  color: var(--kr-text-strong);
-}
 .desk-kicker {
   margin: 0;
   color: var(--kr-muted);
@@ -1870,16 +1768,6 @@ input[type="radio"] {
   color: var(--kr-muted);
   font-size: 14px;
   margin: 12px 0 0;
-}
-.desk-title-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.desk-title-row .desk-title {
-  margin: 0;
 }
 .icon-tabs {
   display: flex;
@@ -1968,6 +1856,15 @@ input[type="radio"] {
   align-items: flex-start;
   gap: 12px;
   margin: 20px 0 12px;
+}
+.desk-panel > .section-head:first-child,
+.page-header + .section-head {
+  margin-top: 0;
+}
+/* Abas dentro de janela (ficha do cliente): o conteudo da aba nao cola nelas. */
+.modal-body .icon-tabs,
+.modal-body .pill-tabs {
+  margin-bottom: 14px;
 }
 .section-head h2 {
   display: flex;
@@ -2163,6 +2060,8 @@ input[type="radio"] {
 .pill {
   display: inline-flex;
   align-items: center;
+  /* Em coluna (celula de tabela, cartao) a etiqueta nao estica; numa linha centralizada, fica no
+     meio da linha (regra logo abaixo). */
   justify-self: start;
   align-self: flex-start;
   padding: 2px 8px;
@@ -2179,11 +2078,23 @@ input[type="radio"] {
   color: var(--kr-success);
   border-color: var(--kr-success-border);
 }
-.pill.warning,
+.pill.warning {
+  background: var(--kr-warning-soft);
+  color: var(--kr-warning);
+  border-color: var(--kr-warning-border);
+}
+/* Informacao e contorno, atencao e cheia: nas duas em ambar a pessoa nao sabia qual pedia
+   cuidado ("Enviado" e "Pendente" ficavam iguais). */
 .pill.info {
-  background: var(--kr-info-bg);
-  color: var(--kr-info-text);
-  border-color: var(--kr-info-border);
+  background: transparent;
+  color: var(--kr-link);
+  border-color: var(--kr-accent-border);
+}
+.page-header-meta .pill,
+.section-head .pill,
+.loading-card-top .pill,
+.kit-row .pill {
+  align-self: center;
 }
 .pill.danger {
   background: var(--kr-danger-soft);
@@ -2328,13 +2239,6 @@ input[type="radio"] {
   gap: 5px;
   min-width: 0;
 }
-.executor-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 /* Campo com botao ao lado (CNPJ + "Buscar CNPJ" no cadastro do cliente). */
 .input-with-action {
   display: flex;
@@ -2553,34 +2457,21 @@ input[type="radio"] {
   .desk-panel {
     padding: 12px;
   }
-  .desk-title-row,
   .section-head {
     flex-wrap: wrap;
   }
   .section-head > .btn {
     flex: 1 1 auto;
   }
-  .toolbar > .input,
-  .toolbar > .select,
-  .toolbar > label {
-    flex: 1 1 160px;
-  }
-  .badge {
-    white-space: normal;
-  }
-
   /* abas numa linha so que rola para o lado, em vez de quebrar em varias linhas */
-  .tabs,
   .icon-tabs {
     flex-wrap: nowrap;
     overflow-x: auto;
     scrollbar-width: none;
   }
-  .tabs::-webkit-scrollbar,
   .icon-tabs::-webkit-scrollbar {
     display: none;
   }
-  .tab,
   .icon-tab {
     flex-shrink: 0;
     min-height: 40px;
@@ -2644,8 +2535,7 @@ input[type="radio"] {
   }
 }
 
-.modal-body .alert,
-.modal-body .toolbar {
+.modal-body .alert {
   margin-bottom: 12px;
 }
 
@@ -2794,33 +2684,6 @@ input[type="radio"] {
   gap: 8px;
   flex-wrap: wrap;
 }
-.file-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 0 0 14px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--kr-border);
-}
-.file-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--kr-border);
-  border-radius: 999px;
-  padding: 6px 12px;
-  background: var(--kr-surface);
-  color: var(--kr-muted);
-  font-weight: 700;
-  font-size: 12px;
-  cursor: pointer;
-}
-.file-tab.active {
-  border-color: transparent;
-  background: var(--kr-primary-strong);
-  color: var(--kr-primary-text);
-}
-
 /* ---------- kit no celular ---------- */
 @media (max-width: 800px) {
   .page-header-title h1,

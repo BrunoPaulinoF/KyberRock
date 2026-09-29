@@ -1,7 +1,7 @@
 import { CheckCircle2, Download, History, LogOut, Moon, RotateCcw, Sun } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { Alert, Modal } from "../components/ui";
+import { EmptyState, ErrorState, Modal, Pill, Skeleton, useToast } from "../components/ui";
 import { useAuth, useUser } from "../lib/auth";
 import {
   countByProduct,
@@ -34,6 +34,7 @@ export function Loading() {
   const user = useUser();
   const { logout } = useAuth();
   const { theme, toggle } = useTheme();
+  const toast = useToast();
   const [items, setItems] = useState<LoadingItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -138,6 +139,14 @@ export function Loading() {
       next.delete(item.id);
       return next;
     });
+    if (!updateError && completedAt) {
+      // Concluiu sem querer: o "Desfazer" e o mesmo "Cancelar carga" da lista "Concluídas há
+      // pouco" (a carga volta para a fila), sem precisar abrir a lista.
+      const done = { ...item, loaderCompletedAt: completedAt };
+      toast.push("Carga concluída.", "ok", {
+        action: { label: "Desfazer", onClick: () => void mark(done, null) }
+      });
+    }
   }
 
   const queue = useMemo(() => inProgress(items), [items]);
@@ -217,14 +226,7 @@ export function Loading() {
           </div>
         )}
 
-        {error && (
-          <Alert kind="error">
-            {error}{" "}
-            <button type="button" className="btn link" onClick={() => void load()}>
-              Tentar de novo
-            </button>
-          </Alert>
-        )}
+        {error && <ErrorState message={error} onRetry={() => void load()} />}
 
         {late.length > 0 && (
           <div className="loading-late" role="alert">
@@ -248,15 +250,12 @@ export function Loading() {
         </div>
 
         {loading ? (
-          <div className="loading-empty">
-            <strong>Carregando fila...</strong>
-            <span>Buscando cargas em aberto da unidade.</span>
-          </div>
+          <QueueSkeleton />
         ) : queue.length === 0 ? (
-          <div className="loading-empty">
-            <strong>Nenhuma carga aguardando</strong>
-            <span>Quando uma operação entrar na fila, ela aparecerá aqui.</span>
-          </div>
+          <EmptyState
+            title="Nenhuma carga aguardando"
+            hint="Quando uma operação entrar na fila, ela aparecerá aqui."
+          />
         ) : (
           <ol className="loading-list">
             {queue.map((item, index) => (
@@ -267,7 +266,7 @@ export function Loading() {
                   <span className="loading-time" title="Chegada">
                     {formatArrival(item.createdAt, timeZone, now)}
                   </span>
-                  {lateIds.has(item.id) && <span className="badge warn">Acima da média</span>}
+                  {lateIds.has(item.id) && <Pill tone="warning">Acima da média</Pill>}
                 </div>
                 <strong className="loading-customer" title={item.customerName}>
                   {item.customerName}
@@ -305,10 +304,10 @@ export function Loading() {
           }
         >
           {completed.length === 0 ? (
-            <div className="empty">
-              Nenhuma carga concluída nos últimos 30 minutos. As cargas que você concluir aparecem
-              aqui por meia hora.
-            </div>
+            <EmptyState
+              title="Nenhuma carga concluída nos últimos 30 minutos"
+              hint="As cargas que você concluir aparecem aqui por meia hora."
+            />
           ) : (
             <ul className="loading-completed">
               {completed.map((item) => (
@@ -379,6 +378,30 @@ export function Loading() {
           )}
         </Modal>
       )}
+    </div>
+  );
+}
+
+/** A fila enquanto a primeira leitura chega: cartoes cinzas no formato dos de verdade. */
+function QueueSkeleton() {
+  return (
+    <div role="status" aria-label="Carregando a fila">
+      <ol className="loading-list" aria-hidden="true">
+        {Array.from({ length: 3 }, (_, index) => (
+          <li key={index} className="loading-card">
+            <div className="loading-card-top">
+              <Skeleton width={26} height={18} />
+              <Skeleton width={104} height={28} radius={6} />
+              <span className="loading-time">
+                <Skeleton width={44} height={14} />
+              </span>
+            </div>
+            <Skeleton width="65%" height={16} />
+            <Skeleton width="45%" height={12} />
+            <Skeleton height={52} radius={12} />
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }
