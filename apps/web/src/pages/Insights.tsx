@@ -40,13 +40,14 @@ import {
   seriesTotals,
   tickIndexes,
   type DailySeriesPoint,
-  type InsightsPeriod,
   type ProductReport,
   type SalesPivotGroupBy
 } from "../lib/insights";
 import { q } from "../lib/queries";
 import { useAsync } from "../lib/use-async";
+import { useUrlState } from "../lib/url-state";
 import { downloadSpreadsheet, printReportHtml } from "../lib/report-output";
+import { FilterInput, usePeriodParams } from "./url-filters";
 
 /** As cores dos graficos do site (`--kr-chart-*` em `styles.css`), as mesmas nos dois temas. */
 const CHART_PALETTE = [
@@ -72,12 +73,19 @@ const TIPS = {
 export function Insights() {
   const user = useUser();
   const toast = useToast();
-  const [period, setPeriod] = useState<InsightsPeriod>("7d");
-  const [customStart, setCustomStart] = useState(() => todayIso());
-  const [customEnd, setCustomEnd] = useState(() => todayIso());
+  const today = todayIso();
+  // Periodo e os filtros da tabela dinamica ficam no endereco e voltam quando a pessoa sai e
+  // volta pelo menu (`useUrlState`).
+  const { period, setPeriod, customStart, setCustomStart, customEnd, setCustomEnd } =
+    usePeriodParams(
+      INSIGHTS_PERIOD_OPTIONS.map((option) => option.id),
+      "7d",
+      today,
+      today
+    );
   const [pivotGroupBy, setPivotGroupBy] = useState<SalesPivotGroupBy>("customer");
-  const [pivotCustomerId, setPivotCustomerId] = useState("");
-  const [pivotProductId, setPivotProductId] = useState("");
+  const [pivotCustomerId, setPivotCustomerId] = useUrlState("cliente");
+  const [pivotProductId, setPivotProductId] = useUrlState("produto");
   const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
 
   const range = useMemo(
@@ -101,11 +109,16 @@ export function Insights() {
   useOnCadastroChange(operations.refresh, CADASTRO_TABLES.operations);
   useOnCadastroChange(openOperations.refresh, CADASTRO_TABLES.operations);
 
-  // Trocar de periodo pode invalidar os filtros selecionados.
+  // Trocar de periodo pode invalidar os filtros selecionados. Na abertura da tela nao: o cliente
+  // e o produto que vieram no endereco (ou lembrados) continuam valendo.
+  const rangeKey = `${range.start}|${range.end}`;
+  const previousRange = useRef(rangeKey);
   useEffect(() => {
-    setPivotCustomerId("");
-    setPivotProductId("");
-  }, [range.start, range.end]);
+    if (previousRange.current === rangeKey) return;
+    previousRange.current = rangeKey;
+    if (pivotCustomerId) setPivotCustomerId("");
+    if (pivotProductId) setPivotProductId("");
+  }, [rangeKey]);
 
   const rows = useMemo(() => operations.data ?? [], [operations.data]);
   const loading = operations.loading;
@@ -197,7 +210,7 @@ export function Insights() {
       />
 
       <div className="insights-period">
-        <Tabs<InsightsPeriod>
+        <Tabs
           label="Período"
           variant="pill"
           active={period}
@@ -209,22 +222,24 @@ export function Insights() {
           <div className="insights-custom-dates">
             <label>
               De
-              <input
+              <FilterInput
                 type="date"
                 className="input"
                 value={customStart}
                 max={customEnd || undefined}
-                onChange={(event) => setCustomStart(event.target.value)}
+                onValue={setCustomStart}
+                keepLastValid
               />
             </label>
             <label>
               Até
-              <input
+              <FilterInput
                 type="date"
                 className="input"
                 value={customEnd}
                 min={customStart || undefined}
-                onChange={(event) => setCustomEnd(event.target.value)}
+                onValue={setCustomEnd}
+                keepLastValid
               />
             </label>
           </div>

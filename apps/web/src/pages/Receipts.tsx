@@ -1,8 +1,7 @@
 import "./receipts.css";
 
 import { Printer, ReceiptText, Search } from "lucide-react";
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { DeskPanel, PlateBadge } from "../components/desk";
 import {
@@ -35,6 +34,7 @@ import {
   type ReceiptMatch
 } from "../lib/receipt-lookup";
 import { printReportHtml } from "../lib/report-output";
+import { useUrlState } from "../lib/url-state";
 
 function kg(value: number | null | undefined): string {
   return value === null || value === undefined ? "—" : `${value.toLocaleString("pt-BR")} kg`;
@@ -53,9 +53,13 @@ function statusTone(status: string): PillTone {
  */
 export function Receipts() {
   const user = useUser();
-  const [params, setParams] = useSearchParams();
-  const initial = params.get("codigo") ?? "";
-  const [text, setText] = useState(initial);
+  // `?codigo=` e o link direto do cupom (a busca rapida e as pesagens do cliente usam) e o
+  // ultimo cupom buscado, lembrado ao voltar pelo menu (`useUrlState`).
+  const [code, setCode] = useUrlState("codigo");
+  const [text, setText] = useState(code);
+  // O codigo que ja foi buscado: o formulario grava no endereco depois de buscar, e o endereco
+  // mudando nao pode buscar de novo.
+  const searched = useRef<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [matches, setMatches] = useState<ReceiptMatch[] | null>(null);
@@ -103,16 +107,21 @@ export function Receipts() {
     [user.companyId, open]
   );
 
-  // Endereco com ?codigo= (link compartilhado) ja abre buscando.
+  // Endereco com ?codigo= (link compartilhado, busca rapida, cupom lembrado) ja abre buscando —
+  // tambem quando o link chega com a tela de Cupons ja aberta.
   useEffect(() => {
-    if (initial) void search(initial);
-    // So na abertura da tela: depois quem busca e o formulario.
-  }, []);
+    const value = code.trim();
+    if (!value || value === searched.current) return;
+    searched.current = value;
+    setText(value);
+    void search(value);
+  }, [code, search]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
     const value = text.trim();
-    setParams(value ? { codigo: value } : {}, { replace: true });
+    searched.current = value;
+    setCode(value);
     void search(value);
   }
 

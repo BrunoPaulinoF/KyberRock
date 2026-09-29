@@ -1,0 +1,171 @@
+/*
+ * Tela do carregador (`/carregamento`): o que foi acrescentado na Etapa 5 — escolhas do aparelho
+ * (som de nova carga e modo sol), botoes de toque de 48 px e o "Modo sol". O resto das classes
+ * `loading-*` continua no `styles.css`. Os seletores levam `.loading-shell` na frente para
+ * valerem por cima dos de la sem depender da ordem em que o navegador carrega os arquivos.
+ */
+
+/* ---------- escolhas deste aparelho (som e modo sol) ---------- */
+.loading-prefs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.loading-pref {
+  min-height: 52px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--kr-border);
+  border-radius: 12px;
+  background: var(--kr-surface);
+  color: var(--kr-text-strong);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.loading-pref svg {
+  flex-shrink: 0;
+  color: var(--kr-muted);
+}
+.loading-pref.is-on {
+  border-color: var(--kr-success-border);
+  background: var(--kr-success-soft);
+}
+.loading-pref.is-on svg {
+  color: var(--kr-success);
+}
+.loading-pref:focus-visible {
+  outline: 3px solid var(--kr-focus-ring);
+  outline-offset: 2px;
+}
+.loading-pref-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.loading-pref-label {
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.loading-pref-state {
+  color: var(--kr-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.loading-pref.is-on .loading-pref-state {
+  color: var(--kr-success);
+}
+
+/* ---------- alvos de toque: nada menor que 48 px (dedo de luva) ---------- */
+.loading-shell .loading-top-btn {
+  min-width: 48px;
+  height: 48px;
+}
+.loading-shell .loading-undo,
+.loading-shell .modal-foot .btn,
+.loading-shell .error-state .btn {
+  min-height: 48px;
+}
+.loading-shell .modal-close {
+  width: 48px;
+  height: 48px;
+  margin: -10px -8px -10px 0;
+}
+
+/* ======================================================================================
+ * Modo sol: alto contraste para ler no patio com sol forte. Fundo branco puro, texto preto,
+ * bordas grossas e escuras, placa e "Concluir" maiores. Troca os tokens do kit SO dentro da
+ * tela do carregador, entao vale igual com o tema claro ou escuro do resto do site.
+ * ==================================================================================== */
+.loading-shell.is-sun {
+  color-scheme: light;
+  --kr-bg: #ffffff;
+  --kr-surface: #ffffff;
+  --kr-surface-soft: #ffffff;
+  --kr-surface-elevated: #ffffff;
+  --kr-border: #000000;
+  --kr-text: #000000;
+  --kr-text-strong: #000000;
+  /* o texto "secundario" tambem precisa ler no sol: quase preto, nao cinza */
+  --kr-muted: #292524;
+  --kr-input-bg: #ffffff;
+  --kr-input-border: #000000;
+  --kr-primary: #000000;
+  --kr-primary-strong: #000000;
+  --kr-primary-text: #ffffff;
+  --kr-card-bg: #ffffff;
+  --kr-card-border: #000000;
+  --kr-card-hover: #f5f5f4;
+  --kr-shadow: none;
+  --kr-plate-bg: #000000;
+  --kr-plate-border: #000000;
+  --kr-plate-text: #ffffff;
+  --kr-success: #14532d;
+  --kr-success-soft: #dcfce7;
+  --kr-success-border: #14532d;
+  /* "acima da media": amarelo forte com borda marrom, texto preto por cima */
+  --kr-warning: #000000;
+  --kr-warning-soft: #fde047;
+  --kr-warning-border: #78350f;
+  --kr-danger: #7f1d1d;
+  --kr-danger-soft: #fee2e2;
+  --kr-danger-border: #7f1d1d;
+  --kr-skeleton: #d6d3d1;
+  --kr-skeleton-shine: #e7e5e4;
+  --kr-overlay: rgba(0, 0, 0, 0.6);
+  --kr-focus-ring: #000000;
+  background: #ffffff;
+  color: #000000;
+}
+.loading-shell.is-sun .loading-top {
+  border-bottom-width: 2px;
+}
+.loading-shell.is-sun .loading-top-btn,
+.loading-shell.is-sun .loading-pref,
+.loading-shell.is-sun .loading-stat,
+.loading-shell.is-sun .loading-history,
+.loading-shell.is-sun .loading-history-count,
+.loading-shell.is-sun .loading-product,
+.loading-shell.is-sun .loading-late,
+.loading-shell.is-sun .loading-head-count,
+.loading-shell.is-sun .loading-card,
+.loading-shell.is-sun .loading-completed li {
+  border-width: 2px;
+}
+.loading-shell.is-sun .loading-card.late {
+  border-width: 3px;
+}
+.loading-shell.is-sun .loading-head p,
+.loading-shell.is-sun .loading-meta {
+  font-size: 15px;
+  font-weight: 600;
+}
+.loading-shell.is-sun .loading-position,
+.loading-shell.is-sun .loading-time {
+  font-size: 18px;
+  color: #000000;
+}
+.loading-shell.is-sun .loading-customer {
+  font-size: 18px;
+}
+.loading-shell.is-sun .loading-card .loading-plate:not(.small) {
+  font-size: 26px;
+  padding: 4px 12px;
+  border-radius: 8px;
+}
+.loading-shell.is-sun .loading-done {
+  min-height: 64px;
+  border: 2px solid #000000;
+  background: #14532d;
+  color: #ffffff;
+  font-size: 21px;
+}
+.loading-shell.is-sun .loading-done svg {
+  width: 24px;
+  height: 24px;
+}

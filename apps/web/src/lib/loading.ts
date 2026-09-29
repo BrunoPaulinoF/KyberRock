@@ -95,6 +95,25 @@ export function overtime(
   );
 }
 
+/** Liga/desliga o bipe de carga nova (guardado no aparelho). */
+export const LOADER_SOUND_STORAGE_KEY = "kyberrock.loader.sound";
+/** Liga/desliga o "Modo sol" (alto contraste para ler no sol, guardado no aparelho). */
+export const LOADER_SUN_STORAGE_KEY = "kyberrock.loader.sun";
+
+/**
+ * Cargas que entraram na fila desde a leitura anterior — as que merecem o aviso (bipe e
+ * vibracao). Compara os ids: `previousIds` sao TODOS os da leitura anterior (inclusive as ja
+ * concluidas pelo carregador), entao a carga devolvida para a fila pelo "Desfazer" nao conta
+ * como nova. Na primeira leitura (`null`) nada e novo: abrir a tela nao apita a fila inteira.
+ */
+export function newQueueArrivals(
+  previousIds: ReadonlySet<string> | null,
+  items: LoadingItem[]
+): LoadingItem[] {
+  if (!previousIds) return [];
+  return inProgress(items).filter((item) => !previousIds.has(item.id));
+}
+
 /** Concluidas nos ultimos 30 minutos, mais recente primeiro — as que ainda podem ser desfeitas. */
 export function recentlyCompleted(
   items: LoadingItem[],

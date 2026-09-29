@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   activityAt,
+  attentionState,
   buildHealthPills,
   classifyOpenAge,
   formatDashTons,
@@ -131,6 +132,41 @@ describe("requestBacklog", () => {
         { status: "failed" }
       ])
     ).toEqual({ waiting: 2, failed: 1 });
+  });
+});
+
+describe("attentionState", () => {
+  const calm = {
+    ready: true,
+    openTones: [] as const,
+    omie: { pending: 0, failed: 0 },
+    requests: { waiting: 0, failed: 0 },
+    executorDown: false
+  };
+
+  it("tudo conferido e em dia", () => {
+    expect(attentionState(calm)).toBe("clear");
+  });
+
+  it("aberta dentro do tempo normal nao e pendencia; passou de 2 h e", () => {
+    expect(attentionState({ ...calm, openTones: ["neutral", "neutral"] })).toBe("clear");
+    expect(attentionState({ ...calm, openTones: ["neutral", "warning"] })).toBe("pending");
+    expect(attentionState({ ...calm, openTones: ["danger"] })).toBe("pending");
+  });
+
+  it("OMIE, pedido do site e balanca executora fora do ar sao pendencia", () => {
+    expect(attentionState({ ...calm, omie: { pending: 1, failed: 0 } })).toBe("pending");
+    expect(attentionState({ ...calm, omie: { pending: 0, failed: 2 } })).toBe("pending");
+    expect(attentionState({ ...calm, requests: { waiting: 1, failed: 0 } })).toBe("pending");
+    expect(attentionState({ ...calm, requests: { waiting: 0, failed: 1 } })).toBe("pending");
+    expect(attentionState({ ...calm, executorDown: true })).toBe("pending");
+  });
+
+  it("antes de todas as respostas nao afirma 'em dia', mas pendencia ja conhecida aparece", () => {
+    expect(attentionState({ ...calm, ready: false, omie: null, requests: null })).toBe("checking");
+    expect(
+      attentionState({ ...calm, ready: false, omie: null, requests: { waiting: 3, failed: 0 } })
+    ).toBe("pending");
   });
 });
 

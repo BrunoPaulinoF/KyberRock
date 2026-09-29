@@ -1,12 +1,29 @@
-import { CheckCircle2, Download, History, LogOut, Moon, RotateCcw, Sun } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import "./loading.css";
+
+import {
+  Bell,
+  BellOff,
+  CheckCircle2,
+  Download,
+  History,
+  LogOut,
+  Moon,
+  RotateCcw,
+  Sun,
+  SunMedium
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EmptyState, ErrorState, Modal, Pill, Skeleton, useToast } from "../components/ui";
 import { useAuth, useUser } from "../lib/auth";
+import { readDeviceFlag, writeDeviceFlag } from "../lib/device-prefs";
 import {
+  LOADER_SOUND_STORAGE_KEY,
+  LOADER_SUN_STORAGE_KEY,
   countByProduct,
   formatArrival,
   inProgress,
+  newQueueArrivals,
   overtime,
   recentlyCompleted,
   type LoadingItem
@@ -18,12 +35,128 @@ import { useTheme } from "../lib/theme";
 const COLUMNS =
   "id,plate,customer_name,driver_name,product_description,created_at,loader_completed_at";
 
+/** Vibra, para, vibra: da para sentir no bolso com o caminhao ligado do lado. */
+const NEW_LOAD_VIBRATION = [220, 120, 220];
+
+type AudioContextCtor = typeof AudioContext;
+
+function audioContextCtor(): AudioContextCtor | null {
+  if (typeof window === "undefined") return null;
+  if ("AudioContext" in window) return window.AudioContext;
+  // Safari antigo (iPhone com iOS < 14.5) so tem o nome com prefixo.
+  return (window as Window & { webkitAudioContext?: AudioContextCtor }).webkitAudioContext ?? null;
+}
+
+/** Um bipe curto gerado na hora (sem arquivo de som): sobe rapido, dura 1/4 de segundo e some. */
+function playBeep(context: AudioContext): void {
+  try {
+    const start = context.currentTime + 0.01;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(880, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.35, start + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.25);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(start);
+    oscillator.stop(start + 0.27);
+  } catch {
+    // Aparelho sem saida de audio: o aviso fica so na vibracao.
+  }
+}
+
+/**
+ * O aviso de carga nova: vibra (se o aparelho vibra) e, com o som ligado, toca o bipe. O
+ * navegador so deixa tocar som depois de um toque da pessoa, entao o audio nasce no toque que
+ * liga o som (`unlock`) — e, com o som ja ligado de uma visita anterior, no primeiro toque na tela.
+ */
+function useNewLoadAlert(soundOn: boolean) {
+  const contextRef = useRef<AudioContext | null>(null);
+  const soundOnRef = useRef(soundOn);
+
+  useEffect(() => {
+    soundOnRef.current = soundOn;
+  }, [soundOn]);
+
+  /** Chamar DENTRO de um toque: cria o audio (ou acorda o que estava parado). */
+  const unlock = useCallback((): AudioContext | null => {
+    let context = contextRef.current;
+    if (!context) {
+      const Ctor = audioContextCtor();
+      if (!Ctor) return null;
+      try {
+        context = new Ctor();
+      } catch {
+        return null;
+      }
+      contextRef.current = context;
+    }
+    if (context.state === "suspended") void context.resume().catch(() => undefined);
+    return context;
+  }, []);
+
+  useEffect(() => {
+    if (!soundOn) return undefined;
+    const onGesture = () => {
+      if (contextRef.current?.state !== "running") unlock();
+    };
+    window.addEventListener("pointerdown", onGesture);
+    window.addEventListener("keydown", onGesture);
+    return () => {
+      window.removeEventListener("pointerdown", onGesture);
+      window.removeEventListener("keydown", onGesture);
+    };
+  }, [soundOn, unlock]);
+
+  useEffect(
+    () => () => {
+      void contextRef.current?.close().catch(() => undefined);
+      contextRef.current = null;
+    },
+    []
+  );
+
+  const alert = useCallback(() => {
+    try {
+      if (typeof navigator.vibrate === "function") navigator.vibrate(NEW_LOAD_VIBRATION);
+    } catch {
+      // Sem vibracao (ou bloqueada ate o primeiro toque): segue so com o som.
+    }
+    const context = contextRef.current;
+    // Audio ainda travado (ninguem tocou na tela desde que abriu): tocar agora sairia atrasado
+    // no proximo toque, fora de hora. Melhor nao tocar.
+    if (soundOnRef.current && context?.state === "running") playBeep(context);
+  }, []);
+
+  /** Ligou o som: destrava o audio e toca um bipe de amostra (a pessoa ouve que funciona). */
+  const preview = useCallback((): boolean => {
+    const context = unlock();
+    if (!context) return false;
+    if (context.state === "running") playBeep(context);
+    else
+      void context
+        .resume()
+        .then(() => playBeep(context))
+        .catch(() => undefined);
+    return true;
+  }, [unlock]);
+
+  return { alert, preview };
+}
+
 /**
  * Tela do carregador: a fila de carregamento da unidade dele, e nada mais. Mesmas regras e as
  * mesmas informacoes da tela que existia no KyberRock Portal (`apps/loader-web`), que deixou de
  * receber o carregador. Feita para o celular na mao e para o tablet no patio: botoes grandes,
  * "Concluir" na largura do cartao, faixa de produtos que rola de lado, e em tablet os cartoes
  * vao para duas colunas. Instala como app (o mesmo "Instalar app" do portal).
+ *
+ * Carga nova na fila (id que nao estava na leitura anterior) vibra o aparelho e, com o "Som de
+ * nova carga" ligado, toca um bipe. O "Modo sol" troca a tela por alto contraste (fundo branco,
+ * texto preto, placa e "Concluir" maiores) para ler no patio. As duas escolhas ficam no aparelho
+ * (`loading.css` tem o visual; `styles.css` continua com o resto das classes `loading-*`).
  *
  * Unica escrita direta do site: marcar/desmarcar `loader_completed_at`. E um carimbo
  * operacional da solicitacao (nao cadastro), a politica "loader can mark loading request as
@@ -44,10 +177,30 @@ export function Loading() {
   const [now, setNow] = useState(() => Date.now());
   const [showCompleted, setShowCompleted] = useState(false);
   const [showInstallHelp, setShowInstallHelp] = useState(false);
+  const [soundOn, setSoundOn] = useState(() => readDeviceFlag(LOADER_SOUND_STORAGE_KEY, false));
+  const [sunOn, setSunOn] = useState(() => readDeviceFlag(LOADER_SUN_STORAGE_KEY, false));
   const { isInstalled, install } = useInstallPrompt();
+  const { alert: alertNewLoad, preview: previewSound } = useNewLoadAlert(soundOn);
+  /** Ids da leitura anterior (todas as abertas, inclusive as ja concluidas); `null` antes da 1a. */
+  const seenIdsRef = useRef<ReadonlySet<string> | null>(null);
 
   async function installApp() {
     if ((await install()) === "instructions") setShowInstallHelp(true);
+  }
+
+  function toggleSound() {
+    const next = !soundOn;
+    setSoundOn(next);
+    writeDeviceFlag(LOADER_SOUND_STORAGE_KEY, next);
+    if (next && !previewSound()) {
+      toast.push("Este aparelho não toca o aviso sonoro. A carga nova só vibra.", "warn");
+    }
+  }
+
+  function toggleSun() {
+    const next = !sunOn;
+    setSunOn(next);
+    writeDeviceFlag(LOADER_SUN_STORAGE_KEY, next);
   }
 
   const load = useCallback(async () => {
@@ -62,17 +215,21 @@ export function Loading() {
       setLoading(false);
       return;
     }
-    setItems(
-      (data ?? []).map((row) => ({
-        id: row.id,
-        plate: row.plate ?? "",
-        customerName: row.customer_name ?? "",
-        driverName: row.driver_name ?? "",
-        productDescription: row.product_description ?? "",
-        createdAt: row.created_at,
-        loaderCompletedAt: row.loader_completed_at
-      }))
-    );
+    const next: LoadingItem[] = (data ?? []).map((row) => ({
+      id: row.id,
+      plate: row.plate ?? "",
+      customerName: row.customer_name ?? "",
+      driverName: row.driver_name ?? "",
+      productDescription: row.product_description ?? "",
+      createdAt: row.created_at,
+      loaderCompletedAt: row.loader_completed_at
+    }));
+    // Compara com a leitura anterior DEPOIS da resposta: duas leituras cruzadas (aviso do
+    // Realtime + tique) nao apitam duas vezes a mesma carga.
+    const arrivals = newQueueArrivals(seenIdsRef.current, next);
+    seenIdsRef.current = new Set(next.map((item) => item.id));
+    if (arrivals.length > 0) alertNewLoad();
+    setItems(next);
     setError(null);
     setLoading(false);
     // Tempo medio dentro da pedreira (a balanca projeta na unidade): destaca quem passou dele.
@@ -84,7 +241,7 @@ export function Loading() {
     const avg = Number(unit?.avg_quarry_minutes ?? 0);
     setAvgMinutes(Number.isFinite(avg) && avg > 0 ? avg : null);
     setTimeZone(unit?.timezone?.trim() || null);
-  }, [user.unitId]);
+  }, [user.unitId, alertNewLoad]);
 
   // Realtime avisa na hora; o tique de 15 s cobre evento perdido e queda de conexao.
   useEffect(() => {
@@ -156,7 +313,7 @@ export function Loading() {
   const completed = useMemo(() => recentlyCompleted(items, now), [items, now]);
 
   return (
-    <div className="loading-shell">
+    <div className={`loading-shell${sunOn ? " is-sun" : ""}`}>
       <header className="loading-top">
         <span className="loading-avatar" aria-hidden="true">
           {(user.name || "C").slice(0, 1).toUpperCase()}
@@ -176,15 +333,18 @@ export function Loading() {
             <span className="loading-top-label">Instalar app</span>
           </button>
         )}
-        <button
-          type="button"
-          className="loading-top-btn"
-          onClick={toggle}
-          aria-label="Alternar tema"
-          title={theme === "light" ? "Tema escuro" : "Tema claro"}
-        >
-          {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
-        </button>
+        {/* No modo sol a tela e sempre clara: o tema claro/escuro volta quando ele desliga. */}
+        {!sunOn && (
+          <button
+            type="button"
+            className="loading-top-btn"
+            onClick={toggle}
+            aria-label="Alternar tema"
+            title={theme === "light" ? "Tema escuro" : "Tema claro"}
+          >
+            {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
+          </button>
+        )}
         <button
           type="button"
           className="loading-top-btn"
@@ -198,6 +358,43 @@ export function Loading() {
       </header>
 
       <main className="loading-main">
+        <div className="loading-prefs" role="group" aria-label="Preferências deste aparelho">
+          <button
+            type="button"
+            className={`loading-pref${soundOn ? " is-on" : ""}`}
+            aria-pressed={soundOn}
+            onClick={toggleSound}
+            title={
+              soundOn
+                ? "Desligar o bipe quando entrar carga nova"
+                : "Tocar um bipe quando entrar carga nova"
+            }
+          >
+            {soundOn ? (
+              <Bell size={20} aria-hidden="true" />
+            ) : (
+              <BellOff size={20} aria-hidden="true" />
+            )}
+            <span className="loading-pref-text">
+              <span className="loading-pref-label">Som de nova carga</span>
+              <span className="loading-pref-state">{soundOn ? "Ligado" : "Desligado"}</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            className={`loading-pref${sunOn ? " is-on" : ""}`}
+            aria-pressed={sunOn}
+            onClick={toggleSun}
+            title={sunOn ? "Voltar ao tema normal" : "Alto contraste para ler no sol"}
+          >
+            <SunMedium size={20} aria-hidden="true" />
+            <span className="loading-pref-text">
+              <span className="loading-pref-label">Modo sol</span>
+              <span className="loading-pref-state">{sunOn ? "Ligado" : "Desligado"}</span>
+            </span>
+          </button>
+        </div>
+
         <section className="loading-toolbar" aria-label="Resumo da fila">
           <div className="loading-stat" aria-label={`${queue.length} cargas em aberto`}>
             <strong>{queue.length}</strong>

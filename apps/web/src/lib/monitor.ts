@@ -721,6 +721,19 @@ export function parseMonitorFilters(raw: string | null | undefined): MonitorFilt
   };
 }
 
+/**
+ * "Trocar sozinho" (TV na parede): a medida alterna Toneladas <-> Faturamento sozinha. Fica numa
+ * chave propria, fora dos filtros: e escolha do APARELHO (a TV troca, o celular do gestor nao).
+ */
+export const MONITOR_AUTO_SWAP_STORAGE_KEY = "kr-monitor-auto-swap-v1";
+/** De quanto em quanto tempo a medida troca com o "Trocar sozinho" ligado. */
+export const MONITOR_AUTO_SWAP_MS = 30_000;
+
+/** A outra medida: a proxima do "Trocar sozinho". */
+export function otherMetric(metric: MonitorMetric): MonitorMetric {
+  return metric === "tons" ? "revenue" : "tons";
+}
+
 export function serializeMonitorFilters(filters: MonitorFilters): string {
   return JSON.stringify({
     period: filters.period,

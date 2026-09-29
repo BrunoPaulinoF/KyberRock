@@ -1,26 +1,33 @@
-import { Ban, Check, Clock, type LucideIcon } from "lucide-react";
+import "./operation.css";
+
+import {
+  Ban,
+  Check,
+  Clock,
+  Package,
+  Pencil,
+  Printer,
+  Truck,
+  UserRound,
+  type LucideIcon
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode
 } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 
-import {
-  CountBadge,
-  DeskPanel,
-  IconAction,
-  LoaderLight,
-  PillTabs,
-  PlateBadge
-} from "../components/desk";
+import { CountBadge, DeskPanel, LoaderLight, PillTabs, PlateBadge } from "../components/desk";
 import { Picker, type PickerOption } from "../components/Picker";
 import {
+  ActionMenu,
   Alert,
   EmptyState,
   ErrorState,
@@ -76,6 +83,7 @@ import { q, type Operation } from "../lib/queries";
 import { supabase } from "../lib/supabase";
 import { closedPeriodBounds } from "../lib/closed-operations";
 import { invoiceNumberLabel } from "../lib/desktop/invoice-number-label";
+import { rememberedKey, useUrlState } from "../lib/url-state";
 import { useAsync } from "../lib/use-async";
 import { usePaged } from "../lib/use-paged";
 import { useDebounced } from "./Customers";
@@ -332,7 +340,7 @@ export async function sendRequest(
 function InvoiceNumberCell({ number, internal }: { number: string | null; internal: boolean }) {
   const label = invoiceNumberLabel(number, internal ? "internal" : "invoice");
   return (
-    <span className="op-cell" title={label.title ?? undefined}>
+    <span className="op-cell op-line" data-label="Nota fiscal" title={label.title ?? undefined}>
       {label.state === "number" ? <strong>NF {label.text}</strong> : <small>{label.text}</small>}
     </span>
   );
@@ -419,7 +427,8 @@ function RequestFeed({ requests }: { requests: OperationRequest[] }) {
 // ---------------------------------------------------------------------------
 
 type OperationsTab = "abertas" | "canceladas" | "concluidas";
-type CanceledPeriod = "day" | "week" | "month";
+/** O valor vai no endereco (`?periodo=semana`), por isso em portugues. */
+type CanceledPeriod = "hoje" | "semana" | "mes";
 
 const OPERATIONS_TABS: Array<{ id: OperationsTab; label: string; icon: LucideIcon }> = [
   { id: "abertas", label: "Abertas", icon: Clock },
@@ -431,13 +440,92 @@ function isOperationsTab(value: string | null): value is OperationsTab {
   return value === "abertas" || value === "canceladas" || value === "concluidas";
 }
 
+function isCanceledPeriod(value: string): value is CanceledPeriod {
+  return value === "hoje" || value === "semana" || value === "mes";
+}
+
 /** Inicio do periodo das canceladas (Hoje / Ultimos 7 dias / Este mes), como no desktop. */
 function canceledSince(period: CanceledPeriod, now: Date = new Date()): string {
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
-  if (period === "week") start.setDate(start.getDate() - 6);
-  if (period === "month") start.setDate(1);
+  if (period === "semana") start.setDate(start.getDate() - 6);
+  if (period === "mes") start.setDate(1);
   return start.toISOString();
+}
+
+/**
+ * Dia (AAAA-MM-DD) vindo do endereco. Endereco editado a mao com data invalida viraria erro na
+ * conta do periodo (`toISOString` de data invalida lanca); fica como "sem data".
+ */
+function isoDayOrEmpty(value: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) ? value : "";
+}
+
+// ---------------------------------------------------------------------------
+// Filtros no endereco (`lib/url-state.ts`)
+// ---------------------------------------------------------------------------
+
+/** Esquece o filtro lembrado desta tela sem mexer no endereco. */
+function forgetRemembered(pathname: string, key: string): void {
+  try {
+    window.sessionStorage.removeItem(rememberedKey(pathname, key));
+  } catch {
+    // Navegador sem armazenamento: nao ha o que esquecer.
+  }
+}
+
+/**
+ * Campo digitado (busca, data) que mora no endereco. O roteador troca o endereco dentro de uma
+ * transicao, e o campo controlado por ela volta ao valor antigo a cada tecla (o cursor pula para
+ * o fim e letra digitada rapido se perde). Por isso o campo guarda o que se digita e so copia o
+ * endereco quando a mudanca vem de fora — link da busca rapida, "Todas as datas" —, isto e, com
+ * o campo sem foco. Devolve o valor do endereco (o que filtra) e as props do campo.
+ */
+function useUrlField(key: string, clean: (value: string) => string = (value) => value) {
+  const [raw, setValue] = useUrlState(key);
+  const value = clean(raw);
+  const [draft, setDraft] = useState(value);
+  const editing = useRef(false);
+  useEffect(() => {
+    if (!editing.current) setDraft(value);
+  }, [value]);
+  const input = {
+    value: draft,
+    onFocus: () => {
+      editing.current = true;
+    },
+    onBlur: () => {
+      editing.current = false;
+    },
+    onChange: (event: ChangeEvent<HTMLInputElement>) => {
+      setDraft(event.target.value);
+      setValue(event.target.value);
+    }
+  };
+  return [value, input] as const;
+}
+
+/**
+ * Limpa varios filtros num clique so. Dois `set` do `useUrlState` seguidos partem do mesmo
+ * endereco (o do ultimo desenho da tela), e o segundo devolveria o que o primeiro tirou.
+ */
+function useClearUrlFilters() {
+  const [, setParams] = useSearchParams();
+  const { pathname } = useLocation();
+  return useCallback(
+    (keys: string[]) => {
+      for (const key of keys) forgetRemembered(pathname, key);
+      setParams(
+        (current) => {
+          const copy = new URLSearchParams(current);
+          for (const key of keys) copy.delete(key);
+          return copy;
+        },
+        { replace: true }
+      );
+    },
+    [pathname, setParams]
+  );
 }
 
 /** A fila enquanto a primeira leitura chega: a moldura da tabela com as linhas em cinza. */
@@ -458,19 +546,41 @@ type Dialog =
 export function Operations() {
   const user = useUser();
   const toast = useToast();
-  const [params, setParams] = useSearchParams();
-  const tabParam = params.get("aba");
-  const tab: OperationsTab = isOperationsTab(tabParam) ? tabParam : "abertas";
+  const location = useLocation();
+  const [params] = useSearchParams();
   const executor = useExecutorStatus();
   const catalog = useCatalog(user.companyId);
   const [now, setNow] = useState(() => Date.now());
-  const [plateSearch, setPlateSearch] = useState("");
-  const [canceledPeriod, setCanceledPeriod] = useState<CanceledPeriod>("day");
+
+  // Filtros no endereco e lembrados ao voltar pelo menu (`lib/url-state.ts`): a placa das
+  // abertas (`?placa=`, tambem o link da busca rapida), o periodo das canceladas e a busca, as
+  // datas e o produto das concluidas.
+  const [plateSearch, plateInput] = useUrlField("placa");
+  const [periodParam, setCanceledPeriod] = useUrlState("periodo", "hoje");
+  const canceledPeriod: CanceledPeriod = isCanceledPeriod(periodParam) ? periodParam : "hoje";
   // Periodo opcional: sem data, a lista traz todas as concluidas, da mais nova para a mais antiga.
-  const [closedStart, setClosedStart] = useState("");
-  const [closedEnd, setClosedEnd] = useState("");
-  const [closedProduct, setClosedProduct] = useState("all");
-  const [closedSearch, setClosedSearch] = useState("");
+  const [closedStart, closedStartInput] = useUrlField("de", isoDayOrEmpty);
+  const [closedEnd, closedEndInput] = useUrlField("ate", isoDayOrEmpty);
+  const [closedProduct, setClosedProduct] = useUrlState("produto");
+  const [closedSearch, closedSearchInput] = useUrlField("busca");
+  const clearUrlFilters = useClearUrlFilters();
+
+  // Link direto da busca rapida (`/operacoes?placa=ABC1D23`, sem `aba`) pede a fila de abertas:
+  // a aba lembrada de outra visita (Concluidas, por exemplo) nao pode esconder o caminhao
+  // procurado, entao ela e esquecida ANTES de o `useUrlState` da aba ler a memoria. So conta
+  // endereco novo (`location.key`): o mesmo endereco redesenhado (o relogio da fila) enquanto a
+  // aba recem-escolhida ainda esta a caminho do endereco nao apaga a escolha.
+  const handledPlateLink = useRef<string | null>(null);
+  if (params.has("placa") && !params.has("aba") && handledPlateLink.current !== location.key) {
+    handledPlateLink.current = location.key;
+    forgetRemembered(location.pathname, "aba");
+  }
+  // A aba vem DEPOIS dos outros filtros de proposito. Voltando pelo menu, cada filtro lembrado
+  // volta ao endereco no efeito do seu `useUrlState`, e na mesma rodada o ultimo a escrever
+  // vence: com a aba por ultimo, ela chega ao endereco antes da placa, e nunca aparece um
+  // endereco com placa e sem aba — que a regra acima leria como o link da busca rapida.
+  const [tabParam, setTab] = useUrlState("aba", "abertas");
+  const tab: OperationsTab = isOperationsTab(tabParam) ? tabParam : "abertas";
   const [dialog, setDialog] = useState<Dialog | null>(null);
 
   const open = useAsync(
@@ -507,7 +617,7 @@ export function Operations() {
             {
               startIso: closedPeriod.startIso,
               endIso: closedPeriod.endIso,
-              product: closedProduct === "all" ? null : closedProduct,
+              product: closedProduct || null,
               search: closedSearchText
             },
             from,
@@ -626,6 +736,90 @@ export function Operations() {
     return <span className="row-actions">{children}</span>;
   }
 
+  // Cada linha tem UM botao visivel — o que mais se faz ali — e o resto no "⋯", com o nome
+  // escrito. O lapis e so "Alterar pesagem" (a janela com todos os campos), nas duas abas.
+  function openActions(row: Operation) {
+    return actionsFor(
+      row,
+      <>
+        <button
+          type="button"
+          className="btn primary op-main-action"
+          onClick={() => setDialog({ kind: "close", operation: row })}
+        >
+          <Check size={16} aria-hidden="true" />
+          Fechar saída
+        </button>
+        <ActionMenu
+          label={`Mais ações — ${operationLabel(row)}`}
+          actions={[
+            {
+              label: "Alterar pesagem",
+              icon: Pencil,
+              hint: "Placa, motorista, pagamento, preço e os demais campos",
+              onClick: () => setDialog({ kind: "edit", operation: row })
+            },
+            {
+              label: "Alterar material",
+              icon: Package,
+              onClick: () => setDialog({ kind: "edit", operation: row, only: "productId" })
+            },
+            {
+              label: "Alterar cliente",
+              icon: UserRound,
+              onClick: () => setDialog({ kind: "edit", operation: row, only: "customerId" })
+            },
+            {
+              label: "Alterar transportadora",
+              icon: Truck,
+              onClick: () => setDialog({ kind: "edit", operation: row, only: "carrierId" })
+            },
+            {
+              label: "Cancelar pesagem",
+              icon: Ban,
+              tone: "danger",
+              onClick: () => setDialog({ kind: "cancel", operation: row })
+            }
+          ]}
+        />
+      </>
+    );
+  }
+
+  function closedActions(row: Operation) {
+    return actionsFor(
+      row,
+      <>
+        <button
+          type="button"
+          className="btn op-main-action"
+          title="Reimprimir o cupom na impressora da balança"
+          onClick={() => void reprint(row)}
+        >
+          <Printer size={16} aria-hidden="true" />
+          Reimprimir
+        </button>
+        <ActionMenu
+          label={`Mais ações — ${operationLabel(row)}`}
+          actions={[
+            {
+              label: "Alterar pesagem",
+              icon: Pencil,
+              hint: "Cliente, produto ou transportadora",
+              onClick: () => setDialog({ kind: "edit", operation: row })
+            },
+            {
+              label: "Cancelar venda",
+              icon: Ban,
+              tone: "danger",
+              onClick: () => setDialog({ kind: "cancel", operation: row })
+            }
+          ]}
+        />
+      </>
+    );
+  }
+
   const error = open.error ?? closed.error ?? canceled.error ?? catalog.error;
   const catalogReload = catalog.reload;
   function retry() {
@@ -650,16 +844,14 @@ export function Operations() {
         }
         actions={
           tab === "abertas" && (
-            <label className="op-filter">
+            <label className="op-filter op-plate-search">
               Buscar placa
               <input
                 className="input"
                 type="search"
-                value={plateSearch}
+                {...plateInput}
                 placeholder="Placa do caminhão"
                 aria-label="Buscar operação aberta pela placa"
-                style={{ minWidth: 240 }}
-                onChange={(event) => setPlateSearch(event.target.value)}
               />
             </label>
           )
@@ -667,84 +859,70 @@ export function Operations() {
       />
 
       <div className="op-toolbar">
-        <PillTabs
-          label="Situação das operações"
-          tabs={tabs}
-          active={tab}
-          onChange={(next) => setParams(next === "abertas" ? {} : { aba: next }, { replace: true })}
-        />
+        <PillTabs label="Situação das operações" tabs={tabs} active={tab} onChange={setTab} />
         {tab === "canceladas" && (
           <div className="op-filters">
-            <label className="op-filter">
+            <label className="op-filter op-period">
               Período
               <select
                 className="select"
                 value={canceledPeriod}
-                style={{ minWidth: 150 }}
-                onChange={(event) => setCanceledPeriod(event.target.value as CanceledPeriod)}
+                onChange={(event) => setCanceledPeriod(event.target.value)}
               >
-                <option value="day">Hoje</option>
-                <option value="week">Últimos 7 dias</option>
-                <option value="month">Este mês</option>
+                <option value="hoje">Hoje</option>
+                <option value="semana">Últimos 7 dias</option>
+                <option value="mes">Este mês</option>
               </select>
             </label>
           </div>
         )}
         {tab === "concluidas" && (
           <div className="op-filters">
-            <label className="op-filter">
+            <label className="op-filter op-date">
               De
               <input
                 className="input"
                 type="date"
-                value={closedStart}
+                {...closedStartInput}
                 aria-label="Data inicial (opcional)"
-                onChange={(event) => setClosedStart(event.target.value)}
               />
             </label>
-            <label className="op-filter">
+            <label className="op-filter op-date">
               Até
               <input
                 className="input"
                 type="date"
-                value={closedEnd}
+                {...closedEndInput}
                 aria-label="Data final (opcional)"
-                onChange={(event) => setClosedEnd(event.target.value)}
               />
             </label>
             {(closedStart || closedEnd) && (
               <button
                 type="button"
-                className="btn"
-                style={{ alignSelf: "flex-end" }}
-                onClick={() => {
-                  setClosedStart("");
-                  setClosedEnd("");
-                }}
+                className="btn op-clear-dates"
+                onClick={() => clearUrlFilters(["de", "ate"])}
               >
                 Todas as datas
               </button>
             )}
-            <div className="op-filter" style={{ minWidth: 220 }}>
+            <div className="op-filter op-product">
               Produto
               <Picker
-                value={closedProduct === "all" ? "" : closedProduct}
+                value={closedProduct}
                 options={closedProducts.map((product) => ({ value: product, label: product }))}
-                onChange={(product) => setClosedProduct(product || "all")}
+                onChange={setClosedProduct}
                 placeholder="Buscar produto..."
                 allowEmpty
                 emptyLabel="Todos"
               />
             </div>
-            <label className="op-filter">
+            <label className="op-filter op-search">
               Buscar
               <input
                 className="input"
                 type="search"
-                value={closedSearch}
+                {...closedSearchInput}
                 placeholder="Cliente, placa, produto ou NF"
-                style={{ minWidth: 240 }}
-                onChange={(event) => setClosedSearch(event.target.value)}
               />
             </label>
           </div>
@@ -796,65 +974,43 @@ export function Operations() {
                   key={row.id}
                   className={`op-row open${pendingOps.has(row.id) ? " waiting" : ""}`}
                 >
+                  {/* `op-line` + `data-label`: no celular cada dado vira "rotulo: valor" do
+                      cartao (operation.css); no computador a linha fica como era. */}
                   <span className="op-plate">
                     <PlateBadge plate={formatPlate(row.plate ?? "")} />
-                    <LoaderLight completedAt={loaderDone.get(row.id)} />
+                    <span className="op-line" data-label="Carregador">
+                      <LoaderLight completedAt={loaderDone.get(row.id)} />
+                    </span>
                   </span>
                   <span className="op-cell">
-                    <strong>{row.customer_name || "Cliente não informado"}</strong>
-                    <span>{row.product_description || "Produto não informado"}</span>
-                    <small>Motorista: {row.driver_name || "—"}</small>
-                  </span>
-                  <span className="op-cell">
-                    <strong>{formatWeightNumber(row.entry_weight_kg)}</strong>
-                    <span>{formatMoney(row.unit_price_cents)}/ton</span>
-                    <small title={formatDateTime(row.created_at)}>
-                      Entrou {formatElapsedSince(row.created_at, now)}
+                    <strong className="op-title">
+                      {row.customer_name || "Cliente não informado"}
+                    </strong>
+                    <span className="op-line" data-label="Produto">
+                      {row.product_description || "Produto não informado"}
+                    </span>
+                    <small className="op-line" data-label="Motorista">
+                      <span className="op-desk-label">Motorista: </span>
+                      {row.driver_name || "—"}
                     </small>
                   </span>
-                  {actionsFor(
-                    row,
-                    <>
-                      <IconAction
-                        icon="file-text"
-                        label="Ver / editar operação"
-                        onClick={() => setDialog({ kind: "edit", operation: row })}
-                      />
-                      <IconAction
-                        icon="swap"
-                        label="Alterar material"
-                        onClick={() =>
-                          setDialog({ kind: "edit", operation: row, only: "productId" })
-                        }
-                      />
-                      <IconAction
-                        icon="edit"
-                        label="Alterar cliente"
-                        onClick={() =>
-                          setDialog({ kind: "edit", operation: row, only: "customerId" })
-                        }
-                      />
-                      <IconAction
-                        icon="truck"
-                        label="Alterar transportadora"
-                        onClick={() =>
-                          setDialog({ kind: "edit", operation: row, only: "carrierId" })
-                        }
-                      />
-                      <IconAction
-                        icon="check"
-                        label="Fechar operação"
-                        tone="primary"
-                        onClick={() => setDialog({ kind: "close", operation: row })}
-                      />
-                      <IconAction
-                        icon="ban"
-                        label="Cancelar operação"
-                        tone="danger"
-                        onClick={() => setDialog({ kind: "cancel", operation: row })}
-                      />
-                    </>
-                  )}
+                  <span className="op-cell">
+                    <strong className="op-line" data-label="Peso de entrada (kg)">
+                      {formatWeightNumber(row.entry_weight_kg)}
+                    </strong>
+                    <span className="op-line" data-label="Preço">
+                      {formatMoney(row.unit_price_cents)}/ton
+                    </span>
+                    <small
+                      className="op-line"
+                      data-label="Entrou"
+                      title={formatDateTime(row.created_at)}
+                    >
+                      <span className="op-desk-label">Entrou </span>
+                      {formatElapsedSince(row.created_at, now)}
+                    </small>
+                  </span>
+                  {openActions(row)}
                 </div>
               ))}
               <LoadMore
@@ -888,11 +1044,19 @@ export function Operations() {
               <div key={row.id} className="op-row canceled">
                 <PlateBadge plate={formatPlate(row.plate ?? "")} />
                 <span className="op-cell">
-                  <strong>{row.customer_name || "Cliente não informado"}</strong>
-                  <span>{row.product_description || "Produto não informado"}</span>
+                  <strong className="op-title">
+                    {row.customer_name || "Cliente não informado"}
+                  </strong>
+                  <span className="op-line" data-label="Produto">
+                    {row.product_description || "Produto não informado"}
+                  </span>
                 </span>
-                <span>{formatDateTime(row.updated_at)}</span>
-                <span>{row.cancel_reason || "Sem motivo registrado"}</span>
+                <span className="op-line" data-label="Cancelada em">
+                  {formatDateTime(row.updated_at)}
+                </span>
+                <span className="op-line" data-label="Motivo">
+                  {row.cancel_reason || "Sem motivo registrado"}
+                </span>
               </div>
             ))}
             <LoadMore
@@ -937,44 +1101,39 @@ export function Operations() {
                 >
                   <PlateBadge plate={formatPlate(row.plate ?? "")} />
                   <span className="op-cell">
-                    <strong>{row.customer_name || "Cliente não informado"}</strong>
-                    <span>{row.product_description || "Produto não informado"}</span>
-                    <small>Motorista: {row.driver_name || "—"}</small>
+                    <strong className="op-title">
+                      {row.customer_name || "Cliente não informado"}
+                    </strong>
+                    <span className="op-line" data-label="Produto">
+                      {row.product_description || "Produto não informado"}
+                    </span>
+                    <small className="op-line" data-label="Motorista">
+                      <span className="op-desk-label">Motorista: </span>
+                      {row.driver_name || "—"}
+                    </small>
                   </span>
                   <span className="op-cell">
-                    <strong>{formatWeightNumber(row.net_weight_kg)}</strong>
-                    <span>{formatMoney(row.total_cents)}</span>
+                    <strong className="op-line" data-label="Peso líquido (kg)">
+                      {formatWeightNumber(row.net_weight_kg)}
+                    </strong>
+                    <span className="op-line" data-label="Receita">
+                      {formatMoney(row.total_cents)}
+                    </span>
                   </span>
-                  <span>{formatDateTime(row.closed_at ?? row.created_at)}</span>
+                  <span className="op-line" data-label="Concluída em">
+                    {formatDateTime(row.closed_at ?? row.created_at)}
+                  </span>
                   <InvoiceNumberCell
                     number={row.omie_invoice_number}
                     internal={row.operation_type === "internal"}
                   />
-                  <span className="op-cell">
-                    <Pill tone={fiscal.tone}>{fiscal.label}</Pill>
-                    <small>{fiscal.detail}</small>
+                  <span className="op-cell op-line" data-label="Fiscal OMIE">
+                    <span className="op-cell op-value">
+                      <Pill tone={fiscal.tone}>{fiscal.label}</Pill>
+                      <small>{fiscal.detail}</small>
+                    </span>
                   </span>
-                  {actionsFor(
-                    row,
-                    <>
-                      <IconAction
-                        icon="printer"
-                        label="Reimprimir nota"
-                        onClick={() => void reprint(row)}
-                      />
-                      <IconAction
-                        icon="edit"
-                        label="Editar cliente, produto ou transportadora"
-                        onClick={() => setDialog({ kind: "edit", operation: row })}
-                      />
-                      <IconAction
-                        icon="ban"
-                        label="Venda cancelada"
-                        tone="danger"
-                        onClick={() => setDialog({ kind: "cancel", operation: row })}
-                      />
-                    </>
-                  )}
+                  {closedActions(row)}
                 </div>
               );
             })}

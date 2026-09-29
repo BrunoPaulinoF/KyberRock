@@ -22,6 +22,7 @@ import { useOnCadastroChange } from "../lib/cadastro-live-provider";
 import {
   OMIE_BACKLOG_DAYS,
   activityAt,
+  attentionState,
   buildHealthPills,
   classifyOpenAge,
   dashboardQueries,
@@ -54,9 +55,13 @@ const REFRESH_MS = 30_000;
 const EMPTY_VALUE = "—";
 
 /**
- * "Painel operacional" — a tela inicial do KyberRock Desktop (`DashboardView.tsx`), lendo a
- * nuvem. A faixa de saude troca balanca/impressora/fila local pela balanca executora do site,
- * pelos envios ao OMIE e pelos pedidos do site; o resto tem a mesma disposicao.
+ * "Painel" (o "Painel operacional" do KyberRock Desktop, `DashboardView.tsx`), lendo a nuvem. A
+ * faixa de saude troca balanca/impressora/fila local pela balanca executora do site, pelos envios
+ * ao OMIE e pelos pedidos do site.
+ *
+ * E a central do dia do gestor e da operacao: com pendencia (`attentionState`), o cartao Atencao
+ * vem PRIMEIRO, na largura toda, antes dos numeros; sem pendencia, os numeros vem primeiro e o
+ * "Operacao em dia" e uma linha discreta embaixo deles.
  */
 export function Dashboard() {
   const user = useUser();
@@ -161,13 +166,6 @@ export function Dashboard() {
   const alarmed = staleOpen.filter((item) => item.tone !== "neutral").slice(0, 3);
   const calm = staleOpen.filter((item) => item.tone === "neutral").length;
   const executorDown = Boolean(executorInfo && !executorInfo.online);
-  const hasPendingAttention =
-    staleOpen.length > 0 ||
-    (omie?.pending ?? 0) > 0 ||
-    (omie?.failed ?? 0) > 0 ||
-    (siteRequests?.waiting ?? 0) > 0 ||
-    (siteRequests?.failed ?? 0) > 0 ||
-    executorDown;
 
   const loadError =
     open.error ?? closedToday.error ?? recentClosed.error ?? omieRows.error ?? requests.error;
@@ -185,13 +183,158 @@ export function Dashboard() {
   const dayLoaded = closedToday.data !== null;
   const attentionReady =
     open.data !== null && omieRows.data !== null && requests.data !== null && executor !== null;
+  /*
+   * A "central do dia": com pendencia, o cartao Atencao vem PRIMEIRO e largo; sem ela, os
+   * numeros vem primeiro e o "em dia" e uma linha discreta embaixo deles.
+   */
+  const attention = attentionState({
+    ready: attentionReady,
+    openTones: staleOpen.map((item) => item.tone),
+    omie,
+    requests: siteRequests,
+    executorDown
+  });
+  const attentionTone: DashboardTone =
+    executorDown ||
+    staleOpen.some((item) => item.tone === "danger") ||
+    (omie?.failed ?? 0) > 0 ||
+    (siteRequests?.failed ?? 0) > 0
+      ? "danger"
+      : "warning";
+  const openOperations = () => navigate("/operacoes");
+
+  const attentionCard = (
+    <article
+      className={`dash-card dash-attention ${attentionTone}`}
+      aria-labelledby="dash-attention"
+    >
+      <header className="dash-card-head">
+        <div>
+          <p className="desk-kicker">Atenção</p>
+          <h2 className="dash-card-title" id="dash-attention">
+            O que precisa de você agora
+          </h2>
+        </div>
+      </header>
+
+      <div className="dash-attention-list">
+        {executorDown && executorInfo && (
+          <PendingSection title="Balança executora fora do ar" tone="danger">
+            <PendingRow
+              label={`${executorInfo.name} sem sinal`}
+              detail={
+                executorInfo.seenAt
+                  ? `Último sinal em ${formatDateTime(executorInfo.seenAt)} - os pedidos do site esperam ela voltar`
+                  : "Os pedidos do site esperam ela voltar"
+              }
+              action={{ label: "Abrir operações", onClick: openOperations }}
+              tone="danger"
+            />
+          </PendingSection>
+        )}
+
+        {alarmed.length > 0 && (
+          <PendingSection
+            title="Pesagens abertas há muito tempo"
+            tone={alarmed.some((item) => item.tone === "danger") ? "danger" : "warning"}
+          >
+            {alarmed.map(({ operation, tone }) => (
+              <PendingRow
+                key={operation.id}
+                label={`${formatPlate(operation.plate) || "--"} - ${operation.customer_name || "cliente"}`}
+                detail={`${operation.product_description || "produto"} - ${formatElapsed(operation.created_at, now)}`}
+                action={{ label: "Abrir operações", onClick: openOperations }}
+                tone={tone}
+              />
+            ))}
+            {calm > 0 && (
+              <PendingRow
+                label={`${calm} ${plural(calm, "aberta recente", "abertas recentes")}`}
+                detail="Sem alerta, dentro do tempo normal"
+                action={{ label: "Abrir operações", onClick: openOperations }}
+                tone="neutral"
+              />
+            )}
+          </PendingSection>
+        )}
+
+        {omie && omie.failed > 0 && (
+          <PendingSection title="Envios ao OMIE com falha" tone="danger">
+            <PendingRow
+              label={`${omie.failed} ${plural(omie.failed, "pesagem não aceita", "pesagens não aceitas")} pelo OMIE`}
+              detail="Recusa do OMIE ou cadastro incompleto - veja a coluna Fiscal OMIE"
+              action={{
+                label: "Ver concluídas",
+                onClick: () => navigate("/operacoes?aba=concluidas")
+              }}
+              tone="danger"
+            />
+          </PendingSection>
+        )}
+
+        {omie && omie.pending > 0 && (
+          <PendingSection title="Pedidos OMIE pendentes" tone="warning">
+            <PendingRow
+              label={`${omie.pending} ${plural(omie.pending, "pedido aguardando", "pedidos aguardando")} envio`}
+              detail="A balança envia ao OMIE na próxima sincronização"
+              action={{
+                label: "Ver concluídas",
+                onClick: () => navigate("/operacoes?aba=concluidas")
+              }}
+              tone="warning"
+            />
+          </PendingSection>
+        )}
+
+        {siteRequests && (siteRequests.waiting > 0 || siteRequests.failed > 0) && (
+          <PendingSection
+            title="Pedidos do site"
+            tone={siteRequests.failed > 0 ? "danger" : "warning"}
+          >
+            {siteRequests.waiting > 0 && (
+              <PendingRow
+                label={`${siteRequests.waiting} ${plural(siteRequests.waiting, "pedido aguardando", "pedidos aguardando")} a balança`}
+                detail={
+                  executorInfo?.online
+                    ? "Balança conectada - registrando"
+                    : "Balança fora do ar - registra quando voltar a conexão"
+                }
+                action={{ label: "Abrir operações", onClick: openOperations }}
+                tone="warning"
+              />
+            )}
+            {siteRequests.failed > 0 && (
+              <PendingRow
+                label={`${siteRequests.failed} ${plural(siteRequests.failed, "pedido não registrado", "pedidos não registrados")}`}
+                detail="A balança devolveu sem registrar (últimas 12 h)"
+                action={{ label: "Abrir operações", onClick: openOperations }}
+                tone="danger"
+              />
+            )}
+          </PendingSection>
+        )}
+
+        {/* Pendencia de outro tipo com o patio andando normal: as abertas aparecem sem alarme. */}
+        {alarmed.length === 0 && calm > 0 && (
+          <PendingSection title="Pesagens abertas" tone="neutral">
+            <PendingRow
+              label={`${calm} ${plural(calm, "aberta recente", "abertas recentes")}`}
+              detail="Sem alerta, dentro do tempo normal"
+              action={{ label: "Abrir operações", onClick: openOperations }}
+              tone="neutral"
+            />
+          </PendingSection>
+        )}
+      </div>
+    </article>
+  );
 
   return (
     <section className="dash">
       <PageHeader
-        kicker="Tela inicial"
-        title="Painel operacional"
-        help="Visão rápida do turno: situação da balança, movimento do dia e o que precisa de atenção agora."
+        kicker="Central do dia"
+        title="Painel"
+        description="Painel operacional: a balança, o movimento de hoje e o que precisa de atenção agora."
         actions={
           <>
             <button type="button" className="btn" onClick={() => navigate("/operacoes")}>
@@ -216,181 +359,79 @@ export function Dashboard() {
 
       {loadError && <ErrorState message={loadError} onRetry={reloadAll} />}
 
+      {attention === "pending" && attentionCard}
+
       <HealthPills pills={healthPills} onNavigate={navigate} />
 
-      <div className="dash-columns">
-        <article className="dash-card">
-          <header className="dash-card-head">
-            <div>
-              <p className="desk-kicker">Hoje</p>
-              <h2 className="dash-card-title">Resumo do turno</h2>
-            </div>
-            <span className="dash-muted">
-              {now.toLocaleDateString("pt-BR", {
-                weekday: "long",
-                day: "2-digit",
-                month: "long",
-                timeZone: "America/Sao_Paulo"
-              })}
-            </span>
-          </header>
-          <div className="dash-kpis">
-            <KpiCell
-              icon={ClipboardList}
-              accent="1"
-              label="Operações"
-              value={dayLoaded ? kpis.operations.toLocaleString("pt-BR") : EMPTY_VALUE}
-              hint="Fechadas hoje"
-            />
-            <KpiCell
-              icon={Scale}
-              accent="5"
-              label="Peso líquido"
-              value={dayLoaded ? formatDashTons(kpis.weightKg) : EMPTY_VALUE}
-              hint={
-                dayLoaded ? `${formatKg(kpis.weightKg)} kg` : <Skeleton width={70} height={10} />
-              }
-            />
-            <KpiCell
-              icon={BadgeDollarSign}
-              accent="3"
-              label="Faturamento"
-              value={dayLoaded ? formatMoney(kpis.totalCents) : EMPTY_VALUE}
-              hint="Soma das operações fechadas"
-            />
-            <KpiCell
-              icon={Receipt}
-              accent="6"
-              label="Ticket médio"
-              value={dayLoaded ? formatMoney(kpis.ticketCents) : EMPTY_VALUE}
-              hint="Por operação fechada"
-            />
+      <article className="dash-card">
+        <header className="dash-card-head">
+          <div>
+            <p className="desk-kicker">Hoje</p>
+            <h2 className="dash-card-title">Resumo do turno</h2>
           </div>
-        </article>
+          <span className="dash-muted">
+            {now.toLocaleDateString("pt-BR", {
+              weekday: "long",
+              day: "2-digit",
+              month: "long",
+              timeZone: "America/Sao_Paulo"
+            })}
+          </span>
+        </header>
+        <div className="dash-kpis">
+          <KpiCell
+            icon={ClipboardList}
+            accent="1"
+            label="Operações"
+            value={dayLoaded ? kpis.operations.toLocaleString("pt-BR") : EMPTY_VALUE}
+            hint="Fechadas hoje"
+          />
+          <KpiCell
+            icon={Scale}
+            accent="5"
+            label="Peso líquido"
+            value={dayLoaded ? formatDashTons(kpis.weightKg) : EMPTY_VALUE}
+            hint={dayLoaded ? `${formatKg(kpis.weightKg)} kg` : <Skeleton width={70} height={10} />}
+          />
+          <KpiCell
+            icon={BadgeDollarSign}
+            accent="3"
+            label="Faturamento"
+            value={dayLoaded ? formatMoney(kpis.totalCents) : EMPTY_VALUE}
+            hint="Soma das operações fechadas"
+          />
+          <KpiCell
+            icon={Receipt}
+            accent="6"
+            label="Ticket médio"
+            value={dayLoaded ? formatMoney(kpis.ticketCents) : EMPTY_VALUE}
+            hint="Por operação fechada"
+          />
+        </div>
+      </article>
 
-        <article className="dash-card">
-          <header className="dash-card-head">
-            <div>
-              <p className="desk-kicker">Atenção</p>
-            </div>
-            {attentionReady && !hasPendingAttention && <Pill>Operação em dia</Pill>}
-          </header>
-
-          {executorDown && executorInfo && (
-            <PendingSection title="Balança executora fora do ar" tone="danger">
-              <PendingRow
-                label={`${executorInfo.name} sem sinal`}
-                detail={
-                  executorInfo.seenAt
-                    ? `Último sinal em ${formatDateTime(executorInfo.seenAt)} - os pedidos do site esperam ela voltar`
-                    : "Os pedidos do site esperam ela voltar"
-                }
-                action={{ label: "Abrir operações", onClick: () => navigate("/operacoes") }}
-                tone="danger"
-              />
-            </PendingSection>
+      {attention === "clear" && (
+        <div className="dash-ok" role="status">
+          <CheckCircle2 size={16} aria-hidden="true" />
+          <strong>Operação em dia</strong>
+          <span className="dash-ok-detail">
+            {calm > 0
+              ? `${calm} ${plural(calm, "pesagem aberta", "pesagens abertas")} dentro do tempo normal, sem envio ao OMIE nem pedido do site esperando.`
+              : "Nenhuma pendência no momento."}
+          </span>
+          {calm > 0 && (
+            <button type="button" className="dash-ok-action" onClick={openOperations}>
+              Abrir operações
+            </button>
           )}
-
-          {staleOpen.length > 0 && (
-            <PendingSection
-              title="Pesagens abertas há muito tempo"
-              tone={staleOpen.some((item) => item.tone === "danger") ? "danger" : "warning"}
-            >
-              {alarmed.map(({ operation, tone }) => (
-                <PendingRow
-                  key={operation.id}
-                  label={`${formatPlate(operation.plate) || "--"} - ${operation.customer_name || "cliente"}`}
-                  detail={`${operation.product_description || "produto"} - ${formatElapsed(operation.created_at, now)}`}
-                  action={{ label: "Abrir operações", onClick: () => navigate("/operacoes") }}
-                  tone={tone}
-                />
-              ))}
-              {calm > 0 && (
-                <PendingRow
-                  label={`${calm} ${plural(calm, "aberta recente", "abertas recentes")}`}
-                  detail="Sem alerta, dentro do tempo normal"
-                  action={{ label: "Abrir operações", onClick: () => navigate("/operacoes") }}
-                  tone="neutral"
-                />
-              )}
-            </PendingSection>
-          )}
-
-          {omie && omie.failed > 0 && (
-            <PendingSection title="Envios ao OMIE com falha" tone="danger">
-              <PendingRow
-                label={`${omie.failed} ${plural(omie.failed, "pesagem não aceita", "pesagens não aceitas")} pelo OMIE`}
-                detail="Recusa do OMIE ou cadastro incompleto - veja a coluna Fiscal OMIE"
-                action={{
-                  label: "Ver concluídas",
-                  onClick: () => navigate("/operacoes?aba=concluidas")
-                }}
-                tone="danger"
-              />
-            </PendingSection>
-          )}
-
-          {omie && omie.pending > 0 && (
-            <PendingSection title="Pedidos OMIE pendentes" tone="warning">
-              <PendingRow
-                label={`${omie.pending} ${plural(omie.pending, "pedido aguardando", "pedidos aguardando")} envio`}
-                detail="A balança envia ao OMIE na próxima sincronização"
-                action={{
-                  label: "Ver concluídas",
-                  onClick: () => navigate("/operacoes?aba=concluidas")
-                }}
-                tone="warning"
-              />
-            </PendingSection>
-          )}
-
-          {siteRequests && (siteRequests.waiting > 0 || siteRequests.failed > 0) && (
-            <PendingSection
-              title="Pedidos do site"
-              tone={siteRequests.failed > 0 ? "danger" : "warning"}
-            >
-              {siteRequests.waiting > 0 && (
-                <PendingRow
-                  label={`${siteRequests.waiting} ${plural(siteRequests.waiting, "pedido aguardando", "pedidos aguardando")} a balança`}
-                  detail={
-                    executorInfo?.online
-                      ? "Balança conectada - registrando"
-                      : "Balança fora do ar - registra quando voltar a conexão"
-                  }
-                  action={{ label: "Abrir operações", onClick: () => navigate("/operacoes") }}
-                  tone="warning"
-                />
-              )}
-              {siteRequests.failed > 0 && (
-                <PendingRow
-                  label={`${siteRequests.failed} ${plural(siteRequests.failed, "pedido não registrado", "pedidos não registrados")}`}
-                  detail="A balança devolveu sem registrar (últimas 12 h)"
-                  action={{ label: "Abrir operações", onClick: () => navigate("/operacoes") }}
-                  tone="danger"
-                />
-              )}
-            </PendingSection>
-          )}
-
-          {attentionReady && !hasPendingAttention && (
-            <EmptyState
-              icon={CheckCircle2}
-              title="Nenhuma pendência no momento."
-              hint="As pesagens abertas estão dentro do tempo normal e não há envio ao OMIE nem pedido do site esperando."
-            />
-          )}
-          {!attentionReady && !hasPendingAttention && !loadError && (
-            <div
-              className="dash-pending-skeleton"
-              role="status"
-              aria-label="Verificando pendências"
-            >
-              <Skeleton height={40} radius={8} />
-              <Skeleton height={40} radius={8} />
-            </div>
-          )}
-        </article>
-      </div>
+        </div>
+      )}
+      {attention === "checking" && !loadError && (
+        <div className="dash-ok is-checking" role="status" aria-label="Verificando pendências">
+          <Skeleton width={16} height={16} radius={8} />
+          <span className="dash-ok-detail">Verificando pendências...</span>
+        </div>
+      )}
 
       <article className="dash-card">
         <header className="dash-card-head">
