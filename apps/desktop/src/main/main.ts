@@ -478,12 +478,12 @@ function registerIpcHandlers(): void {
     return runtime.listClosedOperationProductDescriptions();
   });
 
-  ipcMain.handle("desktop:list-closed-operations-omie-attention", () => {
+  ipcMain.handle("desktop:list-closed-operations-not-in-omie", () => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
     }
 
-    return runtime.listClosedOperationsNeedingOmieAttention();
+    return runtime.listClosedOperationsNotInOmie();
   });
 
   ipcMain.handle(

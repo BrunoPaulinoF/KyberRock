@@ -149,7 +149,7 @@ import {
   listCanceledWeighingOperations,
   countClosedWeighingOperations,
   listClosedOperationProductDescriptions,
-  listClosedOperationsNeedingOmieAttention,
+  listClosedOperationsNotInOmie,
   listClosedWeighingOperations,
   listClosedWeighingOperationsUpdatedSince,
   listRecentClosedWeighingOperations,
@@ -170,6 +170,7 @@ import {
   type UpdateWeighingOperationDetailsInput
 } from "./weighing-operations.js";
 import type {
+  ClosedOperationsNotInOmie,
   ClosedWeighingOperationFilters,
   ListClosedWeighingOperationsOptions
 } from "./weighing-operations.js";
@@ -2227,9 +2228,9 @@ export class DesktopRuntime {
     return listClosedOperationProductDescriptions(this.database);
   }
 
-  listClosedOperationsNeedingOmieAttention(): WeighingOperationSummary[] {
+  listClosedOperationsNotInOmie(): ClosedOperationsNotInOmie {
     this.assertDesktopAccess();
-    return listClosedOperationsNeedingOmieAttention(this.database);
+    return listClosedOperationsNotInOmie(this.database);
   }
 
   listClosedWeighingOperationsUpdatedSince(

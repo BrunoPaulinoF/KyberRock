@@ -1226,9 +1226,19 @@ disparava. `renderer/internet-status.ts` pergunta ao processo principal (`deskto
 Cloudflare e, de reserva, o Supabase da empresa) a cada 10 s (5 s offline); 2 falhas seguidas
 travam, 1 sucesso libera, e o evento `offline` da placa trava na hora.
 
-**Telas.** Sem internet so ficam Nova entrada, Insights e Configuracoes (`renderer/offline-lock.ts`).
-Toda troca de tela passa por `setActiveView`, que recusa as outras; quem estava numa bloqueada
-volta para a Nova entrada. O estado vai ao processo principal (`desktop:set-internet-online`).
+**Telas.** Sem internet so ficam Nova entrada, Operacoes, Insights e Configuracoes
+(`renderer/offline-lock.ts`). Operacoes entrou depois: e la o unico botao de fechar, e com ela
+bloqueada o caminhao que entrou sem internet nao saia ate a conexao voltar — o fechamento nunca
+dependeu da nuvem (`registerExit` grava local e enfileira). Toda troca de tela passa por
+`setActiveView`, que recusa as outras; quem estava numa bloqueada volta para a Nova entrada. O
+estado vai ao processo principal (`desktop:set-internet-online`).
+
+**O que ainda nao chegou ao OMIE.** O aviso do topo de Operacoes (`PendingOmieAlert`, em todas as
+abas) lista as concluidas sem pedido/OS no OMIE (`listClosedOperationsNotInOmie`), com o horario
+do fechamento e ha quanto tempo esperam; as recusadas e de cadastro incompleto vem primeiro, e a
+linha da aba Concluidas ganha a mesma cor. O recorte e a MESMA regra de `getFiscalBillingStatus`
+(nao verde) e de `resolveSituation` — `renderer/not-in-omie.test.ts` varre as combinacoes. Sem
+internet o rotulo vira "Aguardando a internet voltar" e o fechamento nao diz "enviado ao OMIE".
 
 **Cadastro.** Sem internet a balanca CADASTRA, mas nao EDITA o que ja existia
 (`assertCadastroEditable` no runtime, nao so na tela): a nuvem grava por id sem comparar hora, e a

@@ -43,8 +43,8 @@ const desktopApi = {
     ipcRenderer.invoke("desktop:list-recent-closed-weighing-operations", limit),
   listClosedOperationProductDescriptions: () =>
     ipcRenderer.invoke("desktop:list-closed-operation-products"),
-  listClosedOperationsNeedingOmieAttention: () =>
-    ipcRenderer.invoke("desktop:list-closed-operations-omie-attention"),
+  listClosedOperationsNotInOmie: () =>
+    ipcRenderer.invoke("desktop:list-closed-operations-not-in-omie"),
   listClosedWeighingOperationsUpdatedSince: (sinceIso: string, alsoIds?: string[]) =>
     ipcRenderer.invoke("desktop:list-closed-weighing-operations-since", sinceIso, alsoIds),
   operationOmieIssue: (operationId: string) =>

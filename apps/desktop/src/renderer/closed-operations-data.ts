@@ -1,5 +1,8 @@
 import type { KyberRockDesktopApi } from "../preload/api-types";
-import type { WeighingOperationSummary } from "../services/weighing-operations";
+import type {
+  ClosedOperationsNotInOmie,
+  WeighingOperationSummary
+} from "../services/weighing-operations";
 import type { OmieDeliveryState } from "./omie-delivery-notifications";
 
 /**
@@ -15,9 +18,9 @@ import type { OmieDeliveryState } from "./omie-delivery-notifications";
  * Aqui cada consumidor ganha o SEU recorte, todos pequenos e todos exatos:
  *
  * - `page` / `total`: a tabela, paginada.
- * - `omieAttention`: superconjunto do alerta fiscal (ver
- *   `listClosedOperationsNeedingOmieAttention`); a tela aplica nele a mesma
- *   `getFiscalBillingStatus` de sempre.
+ * - `notInOmie`: as concluidas que ainda nao chegaram ao OMIE (ver
+ *   `listClosedOperationsNotInOmie`) -- o aviso do topo da tela Operacoes, com as
+ *   recusadas primeiro e o total a parte.
  * - `products`: o seletor, por `SELECT DISTINCT`.
  * - `recent`: serve o painel (numeros do dia e atividade recente) e os avisos de envio ao
  *   OMIE. Inclui explicitamente as operacoes ainda PENDENTES do ciclo anterior: e o que
@@ -57,8 +60,8 @@ export interface ClosedOperationsData {
   total: number;
   /** Produtos distintos, para o seletor. */
   products: string[];
-  /** Superconjunto exato do alerta fiscal. */
-  omieAttention: WeighingOperationSummary[];
+  /** Concluidas que ainda nao chegaram ao OMIE: o aviso do topo da tela Operacoes. */
+  notInOmie: ClosedOperationsNotInOmie;
   /** Recorte recente + pendentes: painel e avisos de envio ao OMIE. */
   recent: WeighingOperationSummary[];
 }
@@ -68,7 +71,7 @@ type ClosedOperationsApi = Pick<
   | "listClosedWeighingOperations"
   | "countClosedWeighingOperations"
   | "listClosedOperationProductDescriptions"
-  | "listClosedOperationsNeedingOmieAttention"
+  | "listClosedOperationsNotInOmie"
   | "listClosedWeighingOperationsUpdatedSince"
   | "listRecentClosedWeighingOperations"
 >;
@@ -110,14 +113,14 @@ export async function loadClosedOperationsData(
   const now = options.now ?? new Date();
   const since = new Date(now.getTime() - RECENT_WINDOW_MS).toISOString();
 
-  const [page, total, products, omieAttention, doDia, ultimas] = await Promise.all([
+  const [page, total, products, notInOmie, doDia, ultimas] = await Promise.all([
     // Com busca a tabela precisa do conjunto inteiro para pontuar; sem busca, so a pagina.
     api.listClosedWeighingOperations(
       buscando ? filters : { ...filters, limit: options.pageSize ?? CLOSED_PAGE_SIZE, offset: 0 }
     ),
     api.countClosedWeighingOperations(filters),
     api.listClosedOperationProductDescriptions(),
-    api.listClosedOperationsNeedingOmieAttention(),
+    api.listClosedOperationsNotInOmie(),
     api.listClosedWeighingOperationsUpdatedSince(since, [...(options.pendingOmieIds ?? [])]),
     api.listRecentClosedWeighingOperations(RECENT_ACTIVITY_LIMIT)
   ]);
@@ -129,7 +132,7 @@ export async function loadClosedOperationsData(
   for (const operacao of [...doDia, ...ultimas]) porId.set(operacao.id, operacao);
   const recent = [...porId.values()];
 
-  return { page, total, products, omieAttention, recent };
+  return { page, total, products, notInOmie, recent };
 }
 
 /**

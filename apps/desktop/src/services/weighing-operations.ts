@@ -2485,14 +2485,9 @@ export function listClosedOperationProductDescriptions(database: DesktopDatabase
 }
 
 /**
- * As operacoes concluidas cujo estado fiscal pode exigir atencao.
- *
- * E o SUPERCONJUNTO exato do alerta do topo da aba Concluidas. Quem decide o tom
- * (`getFiscalBillingStatus`, no renderer) tem nove ramos, e traduzi-los para SQL seria a
- * chance de o alerta mudar em silencio. Aqui o SQL so estreita: TODO retorno `warning` ou
- * `danger` daquela funcao exige que `omie_billing_status` seja um destes tres valores --
- * os demais ramos devolvem `success` ou `neutral`. O renderer aplica a MESMA funcao sobre
- * este recorte, entao o resultado e identico ao de varrer a lista inteira.
+ * Status fiscais que exigem o operador: o OMIE recusou ou falta cadastro. Sao os unicos que
+ * `getFiscalBillingStatus` (renderer) pinta de `warning`/`danger` -- ha teste que varre as
+ * combinacoes. Aqui servem para colocar essas operacoes no TOPO do aviso de envio pendente.
  */
 export const OMIE_ATTENTION_BILLING_STATUSES = [
   "cadastro_incompleto",
@@ -2500,18 +2495,61 @@ export const OMIE_ATTENTION_BILLING_STATUSES = [
   "failed"
 ] as const;
 
-export function listClosedOperationsNeedingOmieAttention(
-  database: DesktopDatabase
-): WeighingOperationSummary[] {
-  const placeholders = OMIE_ATTENTION_BILLING_STATUSES.map(() => "?").join(", ");
-  return database
+/**
+ * Quantas operacoes o aviso "nao enviadas ao OMIE" traz de uma vez. O total vem a parte
+ * (`total`), entao passar disso so encurta a lista, nunca esconde que existem mais.
+ */
+export const NOT_IN_OMIE_LIMIT = 300;
+
+/**
+ * A operacao concluida que ainda NAO esta no OMIE -- a mesma leitura de `resolveSituation`
+ * (`weighing-billing-situation.ts`) e de `getFiscalBillingStatus`: faturada, ou com o pedido
+ * (venda) / a ordem de servico (interna) criado la, ja chegou; o resto nao.
+ */
+const NOT_IN_OMIE_SQL = `
+         AND o.omie_billing_status IS NOT 'billed'
+         AND CASE
+               WHEN o.operation_type = 'invoice' THEN COALESCE(o.omie_sales_order_id, 0) = 0
+               ELSE COALESCE(o.omie_service_order_id, 0) = 0
+             END`;
+
+export interface ClosedOperationsNotInOmie {
+  /** As operacoes, recusadas/cadastro incompleto primeiro, depois da mais recente. */
+  operations: WeighingOperationSummary[];
+  /** Quantas existem ao todo (a lista para em `NOT_IN_OMIE_LIMIT`). */
+  total: number;
+}
+
+/**
+ * As operacoes concluidas que ainda nao chegaram ao OMIE: as que esperam a vez na fila (ou
+ * a internet voltar) e as que o OMIE recusou. Alimenta o aviso do topo da tela Operacoes,
+ * que precisa deixar claro O QUE ficou para tras e DESDE QUANDO -- sobretudo depois de uma
+ * queda de internet, quando a balanca fecha pesagens que so sobem na volta.
+ *
+ * As que precisam do operador vem primeiro: o corte em `NOT_IN_OMIE_LIMIT` nunca esconde
+ * uma recusa atras de uma lista de pendentes que vao subir sozinhas.
+ */
+export function listClosedOperationsNotInOmie(
+  database: DesktopDatabase,
+  limit = NOT_IN_OMIE_LIMIT
+): ClosedOperationsNotInOmie {
+  const attention = OMIE_ATTENTION_BILLING_STATUSES.map(() => "?").join(", ");
+  const operations = database
     .prepare(
-      `${CLOSED_OPERATION_SELECT}${CLOSED_OPERATION_WHERE}
-         AND o.omie_billing_status IN (${placeholders})
-${CLOSED_OPERATION_ORDER}`
+      `${CLOSED_OPERATION_SELECT}${CLOSED_OPERATION_WHERE}${NOT_IN_OMIE_SQL}
+       ORDER BY CASE WHEN o.omie_billing_status IN (${attention}) THEN 0 ELSE 1 END,
+                COALESCE(o.exit_weight_captured_at, o.created_at) DESC, o.created_at DESC
+       LIMIT ?`
     )
-    .all(...OMIE_ATTENTION_BILLING_STATUSES)
+    .all(...OMIE_ATTENTION_BILLING_STATUSES, limit)
     .map((row) => mapOperationRow(row as OperationRow));
+  const { total } = database
+    .prepare(
+      `SELECT COUNT(*) AS total
+       FROM weighing_operations o${CLOSED_OPERATION_WHERE}${NOT_IN_OMIE_SQL}`
+    )
+    .get() as { total: number };
+  return { operations, total };
 }
 
 /**

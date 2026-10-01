@@ -77,6 +77,26 @@ describe("tela de operacoes concluidas", () => {
     expect(alert).toContain("getFiscalBillingStatus(operation)");
   });
 
+  it("o aviso de nao enviadas ao OMIE mostra o horario e vale para todas as abas", () => {
+    const alert = sliceBetween(appSource, "function PendingOmieAlert(", "\nfunction ");
+    // Depois de uma queda de internet o operador precisa saber O QUE ficou para tras e
+    // DESDE QUANDO.
+    expect(alert).toContain("Fechada em {formatDbDateTime(closedAt)}");
+    expect(alert).toContain("formatElapsedSince(closedAt, now)");
+    // Antes so a aba Concluidas mostrava -- e so as recusadas, nao as que esperavam a vez.
+    expect(appSource).toContain("{closedNotInOmie.total > 0 ? (");
+    expect(appSource).not.toContain('operationsTab === "closed" && closedNotSentToOmie');
+    // A linha da tabela ganha a mesma cor do aviso.
+    expect(appSource).toContain("...notInOmieRowStyle(operation),");
+  });
+
+  it("sem internet a tela nao diz que o pedido foi enviado ao OMIE", () => {
+    const close = sliceBetween(appSource, "async function handleCloseOperation(", "\n  }\n");
+    expect(close).toContain("const offline = !isOnlineRef.current;");
+    expect(close).toContain("vai para o OMIE quando a conexao voltar");
+    expect(appSource).toContain('"Aguardando a internet voltar"');
+  });
+
   it("abre o dialogo de correcao pela operacao com pendencia", () => {
     const dialog = sliceBetween(appSource, "function FixOmieCadastroDialog(", "\nfunction ");
 
