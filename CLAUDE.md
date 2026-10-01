@@ -223,7 +223,9 @@ These recur across the codebase and are easy to violate accidentally:
   `updated_at` no futuro pela hora dela (`_shared/future-timestamp.ts`).
 - **Sem internet** (AGENTS.md "Sem internet: telas travadas e cadastro que espera conferencia"):
   a internet e o teste REAL (`renderer/internet-status.ts`), nao o `navigator.onLine`. Sem ela so
-  ficam Nova entrada, Insights e Configuracoes; o runtime recusa editar cadastro que ja existia
+  ficam Nova entrada, Operacoes (onde se fecha a pesagem), Insights e Configuracoes, e o topo de
+  Operacoes lista as concluidas que ainda nao chegaram ao OMIE, com o horario; o runtime recusa
+  editar cadastro que ja existia
   e marca o novo (`offline_pending`). Nada sobe enquanto houver marcado: na volta ele puxa a
   nuvem e junta o gemeo (`services/offline-cadastro.ts`) — sempre ficando o que ja existia.
 - **Queda de conexao nao condena o envio** (AGENTS.md "Queda longa nao para a fila"): a fila

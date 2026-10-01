@@ -21,7 +21,7 @@ describe("carga da aba Concluidas", () => {
       listClosedWeighingOperations: vi.fn().mockResolvedValue([]),
       countClosedWeighingOperations: vi.fn().mockResolvedValue(0),
       listClosedOperationProductDescriptions: vi.fn().mockResolvedValue([]),
-      listClosedOperationsNeedingOmieAttention: vi.fn().mockResolvedValue([]),
+      listClosedOperationsNotInOmie: vi.fn().mockResolvedValue({ operations: [], total: 0 }),
       listClosedWeighingOperationsUpdatedSince: vi.fn().mockResolvedValue([]),
       listRecentClosedWeighingOperations: vi.fn().mockResolvedValue([])
     };
@@ -88,13 +88,13 @@ describe("carga da aba Concluidas", () => {
     expect(api.listClosedOperationProductDescriptions).toHaveBeenCalledWith();
   });
 
-  it("o alerta fiscal nao e filtrado nem paginado", async () => {
-    // O alerta e sobre a pedreira inteira: filtrar por produto ou por pagina esconderia
-    // operacao com problema fiscal que o operador precisa ver.
+  it("o aviso de nao enviadas ao OMIE nao e filtrado nem paginado", async () => {
+    // O aviso e sobre a pedreira inteira: filtrar por produto ou por pagina esconderia
+    // operacao parada antes do OMIE que o operador precisa ver.
     const api = fakeApi();
     await loadClosedOperationsData(api, { productFilter: "Brita 1", pageSize: 10 });
 
-    expect(api.listClosedOperationsNeedingOmieAttention).toHaveBeenCalledWith();
+    expect(api.listClosedOperationsNotInOmie).toHaveBeenCalledWith();
   });
 
   it("o recorte recente leva a janela e as pendentes do ciclo anterior", async () => {
@@ -121,7 +121,10 @@ describe("carga da aba Concluidas", () => {
     api.listClosedWeighingOperations.mockResolvedValue([{ id: "pagina" }]);
     api.countClosedWeighingOperations.mockResolvedValue(42);
     api.listClosedOperationProductDescriptions.mockResolvedValue(["Brita 1"]);
-    api.listClosedOperationsNeedingOmieAttention.mockResolvedValue([{ id: "alerta" }]);
+    api.listClosedOperationsNotInOmie.mockResolvedValue({
+      operations: [{ id: "alerta" }],
+      total: 7
+    });
     api.listClosedWeighingOperationsUpdatedSince.mockResolvedValue([{ id: "recente" }]);
     api.listRecentClosedWeighingOperations.mockResolvedValue([{ id: "ultima" }]);
 
@@ -130,7 +133,7 @@ describe("carga da aba Concluidas", () => {
     expect(data.page).toEqual([{ id: "pagina" }]);
     expect(data.total).toBe(42);
     expect(data.products).toEqual(["Brita 1"]);
-    expect(data.omieAttention).toEqual([{ id: "alerta" }]);
+    expect(data.notInOmie).toEqual({ operations: [{ id: "alerta" }], total: 7 });
     expect(data.recent).toEqual([{ id: "recente" }, { id: "ultima" }]);
   });
 

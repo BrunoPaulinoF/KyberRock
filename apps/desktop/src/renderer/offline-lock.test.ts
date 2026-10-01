@@ -8,8 +8,17 @@ describe("isViewBlockedOffline", () => {
     }
   });
 
-  it("sem internet libera so nova entrada, insights e configuracoes", () => {
-    for (const view of ["new-weighing", "insights", "scale", "printing", "cloud"]) {
+  it("sem internet libera so nova entrada, operacoes, insights e configuracoes", () => {
+    // Operacoes tem o unico botao de fechar a pesagem: bloqueada, o caminhao que entrou sem
+    // internet so conseguia sair quando a conexao voltasse.
+    for (const view of [
+      "new-weighing",
+      "open-operations",
+      "insights",
+      "scale",
+      "printing",
+      "cloud"
+    ]) {
       expect(isViewBlockedOffline(view, false)).toBe(false);
     }
   });
@@ -17,7 +26,6 @@ describe("isViewBlockedOffline", () => {
   it("sem internet bloqueia as demais telas", () => {
     for (const view of [
       "dashboard",
-      "open-operations",
       "wallet",
       "registrations",
       "truck-control",

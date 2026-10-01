@@ -90,6 +90,7 @@ import {
 import type { OperationEditFormState } from "./operation-details";
 import { buildClosingTotalPreview } from "./closing-total";
 import type {
+  ClosedOperationsNotInOmie,
   OperationFreightInput,
   OperationOmieIssue,
   OperationType,
@@ -530,7 +531,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [closedOperations, setClosedOperations] = useState<WeighingOperationSummary[]>([]);
   const [closedTotal, setClosedTotal] = useState(0);
   const [closedProducts, setClosedProducts] = useState<string[]>([]);
-  const [closedOmieAttention, setClosedOmieAttention] = useState<WeighingOperationSummary[]>([]);
+  const [closedNotInOmie, setClosedNotInOmie] = useState<ClosedOperationsNotInOmie>({
+    operations: [],
+    total: 0
+  });
   /** Recorte recente + pendentes: alimenta o painel e os avisos de envio ao OMIE. */
   const [recentClosedOperations, setRecentClosedOperations] = useState<WeighingOperationSummary[]>(
     []
@@ -606,7 +610,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const [activeView, setActiveViewState] = useState<ActiveView>("new-weighing");
   const [formError, setFormError] = useState<string | null>(null);
   const [message, setMessage] = useState("");
-  // Sem internet so ficam liberadas Nova entrada, Insights e as Configuracoes
+  // Sem internet so ficam liberadas Nova entrada, Operacoes, Insights e as Configuracoes
   // (`offline-lock.ts`). Toda troca de tela passa por `setActiveView`, que recusa
   // as bloqueadas; o ref deixa a funcao estavel para os atalhos de teclado.
   const probeInternet = useMemo(
@@ -756,20 +760,6 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   const filteredClosedOperations = useMemo(
     () => filterClosedOperationsBySearch(closedOperations, closedSearch),
     [closedOperations, closedSearch]
-  );
-  // Operacoes concluidas que ainda nao chegaram ao OMIE: alimentam o alerta do topo da
-  // aba Concluidas, com o motivo e o atalho para corrigir o cadastro.
-  // A MESMA regra de sempre (`getFiscalBillingStatus`), so que aplicada sobre o recorte em
-  // SQL em vez da lista inteira. O recorte e um superconjunto provado: todo retorno
-  // `warning`/`danger` daquela funcao exige um dos status de
-  // `OMIE_ATTENTION_BILLING_STATUSES` (ha teste que varre as 64 combinacoes).
-  const closedNotSentToOmie = useMemo(
-    () =>
-      closedOmieAttention.filter((operation) => {
-        const status = getFiscalBillingStatus(operation);
-        return status.tone === "warning" || status.tone === "danger";
-      }),
-    [closedOmieAttention]
   );
   // A fila como o operador ve na tela: as cargas ja concluidas pelo carregador no topo,
   // na ordem em que foram concluidas (a primeira concluida e a primeira a ser fechada), e
@@ -971,7 +961,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     setClosedOperations(data.page);
     setClosedTotal(data.total);
     setClosedProducts(data.products);
-    setClosedOmieAttention(data.omieAttention);
+    setClosedNotInOmie(data.notInOmie);
     setRecentClosedOperations(data.recent);
   }, [desktopApi, closedProductFilter, closedSearchForLoad, closedPageSize]);
 
@@ -2182,8 +2172,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         scaleCaptureId
       });
       setForm(initialWeighingForm);
-      // Sem internet a tela de operacoes esta bloqueada e o operador fica na Nova
-      // entrada; a mensagem vem depois para nao ser trocada pelo aviso da trava.
+      // A guarda fica para o dia em que Operacoes voltar a ser bloqueada sem internet; a
+      // mensagem vem depois para nao ser trocada pelo aviso da trava.
       if (!isViewBlockedOffline("open-operations", isOnlineRef.current)) {
         setActiveView("open-operations");
       }
@@ -2203,11 +2193,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
     // O faturamento (NF-e/NFS-e) e feito INTEIRAMENTE no OMIE: o fechamento apenas cria o
     // registro na etapa "Faturar" — pedido de venda na operacao fiscal, ordem de servico na
-    // interna. Nao exigimos internet no fechamento (o envio sobe na proxima sincronizacao).
+    // interna. Nao exigimos internet no fechamento (o envio sobe na proxima sincronizacao),
+    // mas sem ela a tela nao pode dizer "enviado": o pedido fica na fila deste computador.
+    const offline = !isOnlineRef.current;
+    const offlineOmieNote =
+      "Sem internet: a pesagem fica salva neste computador e vai para o OMIE quando a conexao voltar.";
     setMessage(
-      operationType === "invoice"
-        ? "Fechando operacao fiscal e enviando o pedido ao OMIE."
-        : "Fechando operacao interna e enviando a ordem de servico ao OMIE."
+      offline
+        ? `Fechando a operacao sem internet. ${offlineOmieNote}`
+        : operationType === "invoice"
+          ? "Fechando operacao fiscal e enviando o pedido ao OMIE."
+          : "Fechando operacao interna e enviando a ordem de servico ao OMIE."
     );
 
     try {
@@ -2227,9 +2223,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           operationId: operation.id,
           status: "running",
           step: "billing",
-          title: "Enviando pedido ao OMIE",
-          detail:
-            'O pedido de venda sobe ao OMIE na etapa "Faturar". A emissao da NF-e e feita no proprio OMIE.'
+          title: offline ? "Pedido na fila do OMIE" : "Enviando pedido ao OMIE",
+          detail: offline
+            ? offlineOmieNote
+            : 'O pedido de venda sobe ao OMIE na etapa "Faturar". A emissao da NF-e e feita no proprio OMIE.'
         });
         setFiscalCloseProgress({
           operationId: operation.id,
@@ -2251,8 +2248,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
       }
       const operationLabel =
         operationType === "invoice" ? "Operacao fiscal fechada" : "Operacao interna fechada";
-      const fiscalStatus =
-        operationType === "invoice"
+      const fiscalStatus = offline
+        ? `${offlineOmieNote} `
+        : operationType === "invoice"
           ? 'Pedido enviado ao OMIE para faturar (coluna "Faturar"). '
           : 'Ordem de servico enviada ao OMIE para faturar (etapa "Faturar"). ';
       setMessage(
@@ -2264,7 +2262,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
           status: "success",
           step: "receipt",
           title: "Saida fiscal concluida",
-          detail: 'Pedido enviado ao OMIE. Emita a NF-e no OMIE (coluna "Faturar").'
+          detail: offline
+            ? offlineOmieNote
+            : 'Pedido enviado ao OMIE. Emita a NF-e no OMIE (coluna "Faturar").'
         });
       }
       await refreshOpenOperations();
@@ -2294,7 +2294,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     if (!desktopApi) return;
 
     const isInternal = operationType !== "invoice";
-    if (!navigator.onLine) {
+    if (!navigator.onLine || !isOnlineRef.current) {
       setMessage(
         isInternal
           ? "Reenvio da ordem de servico exige internet conectada para falar com o OMIE."
@@ -3188,8 +3188,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 <WifiOff size={18} style={{ flexShrink: 0 }} />
                 <div>
                   <strong>A conexao com a internet caiu.</strong> Enquanto ela nao voltar, so ficam
-                  liberadas Nova entrada, Insights e as Configuracoes. As entradas registradas agora
-                  ficam guardadas neste computador e sobem sozinhas quando a internet voltar.
+                  liberadas Nova entrada, Operacoes, Insights e as Configuracoes. As entradas e os
+                  fechamentos feitos agora ficam guardados neste computador e sobem sozinhos (para a
+                  nuvem e para o OMIE) quando a internet voltar.
                 </div>
               </div>
             ) : null}
@@ -3659,9 +3660,15 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   ) : null}
                 </div>
 
-                {operationsTab === "closed" && closedNotSentToOmie.length > 0 ? (
+                {/*
+                  Em TODAS as abas: depois de uma queda de internet o operador precisa ver, sem
+                  procurar, quais pesagens fechadas ainda nao estao no OMIE e desde quando.
+                */}
+                {closedNotInOmie.total > 0 ? (
                   <PendingOmieAlert
-                    operations={closedNotSentToOmie}
+                    operations={closedNotInOmie.operations}
+                    total={closedNotInOmie.total}
+                    isOnline={isOnline}
                     onFix={(operationId) => setOmieIssueOperationId(operationId)}
                   />
                 ) : null}
@@ -3982,6 +3989,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         style={{
                           ...styles.closedOperationsTableRow,
                           cursor: "pointer",
+                          ...notInOmieRowStyle(operation),
                           ...operationOutlineStyle(operation)
                         }}
                       >
@@ -3998,6 +4006,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         <span>{formatDbDateTime(operation.closedAt ?? operation.createdAt)}</span>
                         <FiscalBillingStatus
                           operation={operation}
+                          isOnline={isOnline}
                           retrying={retryingFiscalOperationId === operation.id}
                           onRetry={() =>
                             void handleRetryFiscalBilling(operation.id, operation.operationType)
@@ -5335,21 +5344,43 @@ function OmieDeliveryToast({
 }
 
 /**
- * Alerta do topo da aba Concluidas: lista as operacoes que ja fecharam mas nao chegaram
- * ao OMIE, com o motivo de cada uma e o atalho para corrigir o cadastro que faltou.
+ * Alerta do topo da tela Operacoes (todas as abas): lista as operacoes que ja fecharam mas
+ * ainda nao chegaram ao OMIE, com o horario do fechamento, ha quanto tempo esperam e o
+ * motivo -- e o atalho para corrigir o cadastro quando e ele que trava.
+ *
+ * Existe sobretudo para a queda de internet: a balanca fecha a pesagem no SQLite e o pedido
+ * so sobe na volta. Sem o aviso, o operador nao tinha como saber o que ficou para tras.
  */
 function PendingOmieAlert({
   operations,
+  total,
+  isOnline,
   onFix
 }: {
   operations: WeighingOperationSummary[];
+  total: number;
+  isOnline: boolean;
   onFix: (operationId: string) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
-  const blocking = operations.filter(
-    (operation) => getFiscalBillingStatus(operation).tone === "danger"
-  );
-  const tone = blocking.length > 0 ? "danger" : "warning";
+  const statuses = operations.map((operation) => getFiscalBillingStatus(operation));
+  const blocking = statuses.filter((status) => status.tone === "danger").length;
+  const needsFix = statuses.filter((status) => status.canRetry).length;
+  const tone = blocking > 0 ? "danger" : "warning";
+  // Recalcula o "ha X min" a cada minuto, mesmo sem a lista mudar.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  const summary = !isOnline
+    ? "Sem internet: estas pesagens estao salvas neste computador e vao para o OMIE sozinhas quando a conexao voltar."
+    : needsFix > 0
+      ? needsFix === 1
+        ? "1 precisa de correcao para seguir (botao Editar itens). As demais sobem sozinhas."
+        : `${needsFix} precisam de correcao para seguir (botao Editar itens). As demais sobem sozinhas.`
+      : "O envio e automatico: elas saem desta lista assim que o OMIE confirmar.";
 
   return (
     <div
@@ -5364,11 +5395,14 @@ function PendingOmieAlert({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-        <strong style={{ flex: 1, fontSize: "13px" }}>
-          {operations.length === 1
-            ? "1 operacao concluida nao foi enviada ao OMIE"
-            : `${operations.length} operacoes concluidas nao foram enviadas ao OMIE`}
-        </strong>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <strong style={{ display: "block", fontSize: "13px" }}>
+            {total === 1
+              ? "1 operacao concluida nao foi enviada ao OMIE"
+              : `${total} operacoes concluidas nao foram enviadas ao OMIE`}
+          </strong>
+          <span style={{ display: "block", fontSize: "12px", opacity: 0.9 }}>{summary}</span>
+        </span>
         <button
           type="button"
           onClick={() => setCollapsed((current) => !current)}
@@ -5383,13 +5417,23 @@ function PendingOmieAlert({
             fontSize: "11px"
           }}
         >
-          {collapsed ? "Ver motivos" : "Ocultar"}
+          {collapsed ? "Ver lista" : "Ocultar"}
         </button>
       </div>
       {collapsed ? null : (
-        <ul style={{ margin: "8px 0 0", padding: 0, listStyle: "none" }}>
-          {operations.map((operation) => {
-            const status = getFiscalBillingStatus(operation);
+        <ul
+          style={{
+            margin: "8px 0 0",
+            padding: 0,
+            listStyle: "none",
+            maxHeight: "260px",
+            overflowY: "auto"
+          }}
+        >
+          {operations.map((operation, index) => {
+            const status = statuses[index];
+            const closedAt = operation.closedAt ?? operation.createdAt;
+            const label = fiscalStatusLabel(status, isOnline);
             return (
               <li
                 key={operation.id}
@@ -5407,35 +5451,71 @@ function PendingOmieAlert({
                     {operation.plate || "SEM PLACA"} —{" "}
                     {operation.customerName || "Cliente nao informado"}
                   </strong>
-                  <span style={{ display: "block", fontWeight: 700 }}>{status.label}</span>
+                  <span style={{ display: "block", fontWeight: 700 }}>
+                    Fechada em {formatDbDateTime(closedAt)} ({formatElapsedSince(closedAt, now)})
+                  </span>
+                  <span style={{ display: "block", fontWeight: 700 }}>{label}</span>
                   <span style={{ display: "block", wordBreak: "break-word", opacity: 0.9 }}>
                     {status.detail}
                   </span>
                 </span>
-                <button
-                  type="button"
-                  onClick={() => onFix(operation.id)}
-                  style={{
-                    border: "1px solid currentColor",
-                    background: "transparent",
-                    color: "inherit",
-                    borderRadius: "10px",
-                    padding: "6px 10px",
-                    cursor: "pointer",
-                    fontWeight: 800,
-                    fontSize: "11px",
-                    whiteSpace: "nowrap"
-                  }}
-                >
-                  Editar itens
-                </button>
+                {status.canRetry ? (
+                  <button
+                    type="button"
+                    onClick={() => onFix(operation.id)}
+                    style={{
+                      border: "1px solid currentColor",
+                      background: "transparent",
+                      color: "inherit",
+                      borderRadius: "10px",
+                      padding: "6px 10px",
+                      cursor: "pointer",
+                      fontWeight: 800,
+                      fontSize: "11px",
+                      whiteSpace: "nowrap"
+                    }}
+                  >
+                    Editar itens
+                  </button>
+                ) : null}
               </li>
             );
           })}
         </ul>
       )}
+      {!collapsed && total > operations.length ? (
+        <span style={{ display: "block", marginTop: "6px", fontSize: "11px", opacity: 0.9 }}>
+          Mostrando {operations.length} de {total}. As que precisam de correcao aparecem primeiro.
+        </span>
+      ) : null}
     </div>
   );
+}
+
+/**
+ * Rotulo do estado fiscal como a tela mostra. "Enviando ao OMIE" sem internet seria mentira:
+ * nada esta saindo agora, o pedido espera na fila deste computador.
+ */
+function fiscalStatusLabel(
+  status: ReturnType<typeof getFiscalBillingStatus>,
+  isOnline: boolean
+): string {
+  return status.tone === "neutral" && !isOnline ? "Aguardando a internet voltar" : status.label;
+}
+
+/**
+ * Linha da tabela de Concluidas que ainda nao esta no OMIE: faixa a esquerda e fundo na cor
+ * do aviso do topo, para a mesma operacao ser achada de relance nas duas listas.
+ */
+function notInOmieRowStyle(operation: WeighingOperationSummary): React.CSSProperties {
+  const tone = getFiscalBillingStatus(operation).tone;
+  if (tone === "success") return {};
+  const danger = tone === "danger";
+  return {
+    background: danger ? "var(--kr-danger-soft)" : "var(--kr-warning-soft)",
+    borderLeft: `4px solid ${danger ? "var(--kr-danger)" : "var(--kr-warning)"}`,
+    paddingLeft: "6px"
+  };
 }
 
 /**
@@ -9504,18 +9584,21 @@ function FiscalProgressDialog({
 
 function FiscalBillingStatus({
   operation,
+  isOnline,
   retrying,
   onRetry
 }: {
   operation: WeighingOperationSummary;
+  isOnline: boolean;
   retrying: boolean;
   onRetry: () => void;
 }) {
   const status = getFiscalBillingStatus(operation);
+  const label = fiscalStatusLabel(status, isOnline);
 
   return (
     <span style={styles.operationCellStack}>
-      <span style={fiscalBillingPillStyle(status.tone)}>{status.label}</span>
+      <span style={fiscalBillingPillStyle(status.tone)}>{label}</span>
       <small>{status.detail}</small>
       {status.canRetry ? (
         <IconActionButton

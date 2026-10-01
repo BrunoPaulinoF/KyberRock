@@ -9,6 +9,7 @@ import type { DesktopStatusSnapshot } from "../services/status";
 import type { UpdateState } from "../services/update-flow";
 import type { UpdateRing } from "../services/update-candidates";
 import type {
+  ClosedOperationsNotInOmie,
   ClosedWeighingOperationFilters,
   ListClosedWeighingOperationsOptions,
   OperationFreightInput,
@@ -168,7 +169,7 @@ export interface KyberRockDesktopApi {
   countClosedWeighingOperations: (filters?: ClosedWeighingOperationFilters) => Promise<number>;
   listRecentClosedWeighingOperations: (limit: number) => Promise<WeighingOperationSummary[]>;
   listClosedOperationProductDescriptions: () => Promise<string[]>;
-  listClosedOperationsNeedingOmieAttention: () => Promise<WeighingOperationSummary[]>;
+  listClosedOperationsNotInOmie: () => Promise<ClosedOperationsNotInOmie>;
   listClosedWeighingOperationsUpdatedSince: (
     sinceIso: string,
     alsoIds?: string[]
