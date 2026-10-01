@@ -8,17 +8,18 @@
  * endereco digitado a mao volta para a tela inicial dele:
  *   - `loader`        carregador: so a fila de carregamento da propria unidade;
  *   - `monitoramento` so o painel de vendas em tempo real, sem configuracoes;
- *   - `comercial`     aba Comercial (a tela do portal, e so dele), o Ranking de clientes (tambem so
- *                     dele), insights, conferencia de faturamento,
+ *   - `comercial`     aba Comercial (a tela do portal, e so dele), o Ranking de clientes,
+ *                     insights, conferencia de faturamento,
  *                     relatorios, controle de caminhoes, relatorio por cliente, cupons,
  *                     cadastros e o Monitoramento (o painel de vendas em tempo real, que abre em
  *                     tela cheia com o botao "Voltar ao sistema") —
  *                     cadastra tudo e muda preco sem senha; sem configuracoes. E o unico (com o
  *                     administrador) que ve a tela "Senha de preco", o codigo rotativo que ele
  *                     passa para a operacao mudar preco;
- *   - `gestor`        tudo (menos Comercial e Monitoramento), com configuracoes;
- *   - `operacao`      tudo (menos Comercial e Monitoramento), com configuracoes; mudar preco sempre pede
- *                     a senha da pedreira;
+ *   - `gestor`        tudo (menos Comercial e Monitoramento), com configuracoes — inclusive o
+ *                     Ranking de clientes;
+ *   - `operacao`      tudo (menos Comercial, Ranking de clientes e Monitoramento), com
+ *                     configuracoes; mudar preco sempre pede a senha da pedreira;
  *   - `administrador` tudo (menos Comercial e Monitoramento), sem senha, mais os logs de suporte e a senha
  *                     de preco, com configuracoes.
  *
@@ -75,8 +76,9 @@ export type Screen = (typeof SCREENS)[number];
 
 /**
  * As telas do KyberRock Desktop (menu lateral), na ordem dele, menos a Nova entrada, a aba
- * Comercial, o Ranking de clientes e o Monitoramento — a aba Comercial e o Ranking sao so do
- * perfil comercial, e o Monitoramento e do perfil de mesmo nome e do comercial.
+ * Comercial, o Ranking de clientes e o Monitoramento — a aba Comercial e so do perfil comercial,
+ * o Ranking e do comercial, do gestor e do administrador (a operacao nao ve), e o Monitoramento e
+ * do perfil de mesmo nome e do comercial.
  */
 const DESK_SCREENS: readonly Screen[] = [
   "painel",
@@ -110,10 +112,11 @@ export const SCREENS_BY_ROLE: Record<Role, readonly Screen[]> = {
     "monitoramento"
   ],
   // A consulta de cupom e so do site: na balanca o cupom se reimprime pela propria operacao.
-  gestor: [...DESK_SCREENS, "cupons"],
+  // O Ranking de clientes tambem: e analise de venda, de quem decide (a operacao nao ve).
+  gestor: [...DESK_SCREENS, "cupons", "ranking-clientes"],
   operacao: [...DESK_SCREENS, "cupons"],
   // A senha de preco nao e tela do desktop: la ninguem a ve, so digita.
-  administrador: [...DESK_SCREENS, "cupons", "senha-preco", "suporte"]
+  administrador: [...DESK_SCREENS, "cupons", "ranking-clientes", "senha-preco", "suporte"]
 };
 
 export function canSee(role: Role, screen: Screen): boolean {

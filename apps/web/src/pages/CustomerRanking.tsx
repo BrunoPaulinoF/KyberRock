@@ -108,7 +108,7 @@ function customerReportLink(customerId: string, start: string, end: string): str
 }
 
 /**
- * Ranking de clientes (perfil comercial): quem mais comprou no periodo escolhido, com a
+ * Ranking de clientes (perfis comercial, gestor e administrador): quem mais comprou no periodo escolhido, com a
  * comparacao contra o periodo anterior, o podio, a curva ABC, os materiais de cada cliente e a
  * lista de quem parou de comprar. As contas moram em `lib/customer-ranking.ts`.
  */
