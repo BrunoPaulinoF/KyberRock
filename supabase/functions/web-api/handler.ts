@@ -59,6 +59,12 @@ import {
   newPriceCodeSecret,
   verifyPriceCode
 } from "../_shared/price-code.ts";
+import {
+  activePriceUnlock,
+  parsePriceUnlockRequest,
+  priceUnlockRow,
+  type PriceUnlock
+} from "../_shared/price-unlock.ts";
 import { CnpjLookupError, lookupCnpj, type CnpjLookupResult } from "../_shared/cnpj-lookup.ts";
 import {
   matchInvoiceProduct,
@@ -197,7 +203,8 @@ export const WEB_API_ACTIONS = [
   "lookup_cnpj",
   "customer_balance",
   "lookup_future_billing_invoice",
-  "price_code"
+  "price_code",
+  "set_price_unlock"
 ] as const;
 
 export type WebApiAction = (typeof WEB_API_ACTIONS)[number];
@@ -300,8 +307,14 @@ export const SUPPORT_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>(
   "support_overview"
 ]);
 
-/** A senha rotativa de preco que o comercial le para a operacao (`canSeePriceCode`). */
-export const PRICE_CODE_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>(["price_code"]);
+/**
+ * A senha rotativa de preco que o comercial le para a operacao, e liberar a balanca sem ela
+ * (`canSeePriceCode`): quem pode ditar a senha pode tambem dispensa-la.
+ */
+export const PRICE_CODE_ACTIONS: ReadonlySet<WebApiAction> = new Set<WebApiAction>([
+  "price_code",
+  "set_price_unlock"
+]);
 
 /**
  * O que o perfil pode executar, ou a mensagem do 403. Toda acao cai em exatamente um grupo —
@@ -2175,7 +2188,61 @@ async function priceCode(ctx: ActionContext): Promise<Row> {
     );
   }
   const nowMs = Date.parse(ctx.nowIso);
-  return { ...(await currentPriceCode(secret, nowMs)), serverTime: ctx.nowIso };
+  return {
+    ...(await currentPriceCode(secret, nowMs)),
+    serverTime: ctx.nowIso,
+    unlock: await readPriceUnlock(ctx)
+  };
+}
+
+/**
+ * A liberacao da balanca sem senha que vale agora (`_shared/price-unlock.ts`), ou `null` (pede
+ * senha). `undefined` quando a tabela ainda nao existe (migracao `202610010001` pendente): a tela
+ * esconde a opcao em vez de mostrar "pede senha" sem poder mudar.
+ */
+async function readPriceUnlock(ctx: ActionContext): Promise<PriceUnlock | null | undefined> {
+  try {
+    const [row] = await ctx.store.listRows(
+      "price_unlocks",
+      ctx.session.companyId,
+      "indefinite, unlocked_until, created_by_name, created_at",
+      [],
+      { orderBy: { column: "created_at", ascending: false }, limit: 1 }
+    );
+    return activePriceUnlock(row, Date.parse(ctx.nowIso));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Liberar a balanca sem a senha de preco por um tempo, sem prazo, ou voltar a pedir a senha. Cada
+ * pedido e uma linha nova (o historico de quem liberou); a balanca fica sabendo no proximo
+ * `desktop-status`. O site nao muda: quem tem `requiresPricePassword` continua digitando.
+ */
+async function setPriceUnlock(ctx: ActionContext): Promise<Row> {
+  const request = parsePriceUnlockRequest(ctx.payload);
+  if (!request) {
+    throw new WebApiError(400, "Escolha por quanto tempo liberar a balanca.");
+  }
+  try {
+    await ctx.store.insertRow(
+      "price_unlocks",
+      priceUnlockRow(request, {
+        id: ctx.newId(),
+        companyId: ctx.session.companyId,
+        userId: ctx.session.userId,
+        userName: ctx.session.name,
+        nowIso: ctx.nowIso
+      })
+    );
+  } catch {
+    throw new WebApiError(
+      503,
+      "Liberar a balanca sem senha ainda nao esta disponivel para esta pedreira. Fale com o suporte."
+    );
+  }
+  return { unlock: (await readPriceUnlock(ctx)) ?? null, serverTime: ctx.nowIso };
 }
 
 async function checkPricePassword(ctx: ActionContext): Promise<void> {
@@ -2486,6 +2553,8 @@ async function runAction(action: WebApiAction, ctx: ActionContext): Promise<Row>
       return lookupFutureBillingInvoice(ctx);
     case "price_code":
       return priceCode(ctx);
+    case "set_price_unlock":
+      return setPriceUnlock(ctx);
   }
 }
 

@@ -233,6 +233,43 @@
   background: var(--kr-surface-soft);
 }
 
+/* Liberar a balanca sem senha */
+.pc-unlock.on {
+  border-color: var(--kr-success-border);
+}
+.pc-unlock-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.pc-unlock-left {
+  color: var(--kr-muted);
+  font-size: 13px;
+}
+.pc-unlock-actions {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.pc-unlock-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  color: var(--kr-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.pc-card p.pc-unlock-note {
+  margin-top: 10px;
+  color: var(--kr-muted);
+  font-size: 12px;
+}
+
 @media (max-width: 960px) {
   .pc-grid {
     grid-template-columns: minmax(0, 1fr);

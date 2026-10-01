@@ -17,7 +17,7 @@ import {
   type DesktopUpdateNotice
 } from "./update-notice.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
-import { applyPriceCodeFromCloud } from "./price-code.js";
+import { applyPriceCodeFromCloud, applyPriceUnlockFromCloud } from "./price-code.js";
 import {
   CLOUD_CLOCK_OFFSET_SETTING,
   measureCloudClockOffset,
@@ -167,6 +167,11 @@ interface DesktopStatusResponse {
    * ainda, e a balanca mantem a que ja tinha.
    */
   priceCodeSecret?: string;
+  /**
+   * Balanca liberada sem a senha de preco (`services/price-code.ts`). `null` = pede senha;
+   * ausente = nuvem antiga, e a balanca mantem o que ja sabia.
+   */
+  priceUnlock?: { indefinite: boolean; until: string | null } | null;
   checkedAt?: string;
 }
 
@@ -433,6 +438,11 @@ export async function validateDesktopAccess(
         });
       } catch {
         // Ignora: a chave e o relogio gravados continuam valendo.
+      }
+      try {
+        applyPriceUnlockFromCloud(database, data.priceUnlock);
+      } catch {
+        // Ignora: a liberacao gravada continua valendo.
       }
       // Atualiza a legenda multi-desktop (nome + cor de cada computador da
       // unidade). Best-effort: nunca derruba a validacao de acesso.

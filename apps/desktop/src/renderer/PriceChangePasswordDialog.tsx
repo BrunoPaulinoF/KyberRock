@@ -11,12 +11,45 @@ export const PRICE_CODE_NOTE =
 /** Mensagem de senha recusada: errada ou ja vencida. */
 export const PRICE_CODE_REJECTED = "Senha incorreta ou vencida. Peca ao comercial a senha atual.";
 
+/** Liberacao sem senha dada pelo comercial no site (`getPriceUnlockStatus`). */
+export interface PriceUnlockView {
+  indefinite: boolean;
+  until: string | null;
+}
+
+/** "Liberada pelo comercial ate 15:30" / "... sem prazo": o que a janela diz no lugar da senha. */
+export function priceUnlockMessage(unlock: PriceUnlockView, now: Date = new Date()): string {
+  if (unlock.indefinite || !unlock.until) {
+    return "Balanca liberada pelo comercial, sem prazo. Nao precisa de senha.";
+  }
+  const until = new Date(unlock.until);
+  const time = until.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  const sameDay = until.toDateString() === now.toDateString();
+  const when = sameDay
+    ? time
+    : `${until.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} as ${time}`;
+  return `Balanca liberada pelo comercial ate ${when}. Nao precisa de senha.`;
+}
+
+/**
+ * A descricao de quem abre a janela costuma terminar com "Digite a senha..." / "Peca a senha...".
+ * Liberada, essas frases mentem: saem, e o resto (o que a acao faz) fica.
+ */
+export function withoutPasswordHint(description: string): string {
+  return description
+    .split(/(?<=\.)\s+/)
+    .filter((sentence) => !/^(digite|peca) a senha/i.test(sentence.trim()))
+    .join(" ")
+    .trim();
+}
+
 interface PriceChangePasswordDialogProps {
   title?: string;
   description?: string;
   error: string | null;
   submitting?: boolean;
   onCancel: () => void;
+  /** Liberada pelo comercial, chega `""`: o processo principal aceita sem senha. */
   onSubmit: (password: string) => void;
 }
 
@@ -29,19 +62,61 @@ export function PriceChangePasswordDialog({
   onSubmit
 }: PriceChangePasswordDialogProps) {
   const [password, setPassword] = useState("");
+  const [unlock, setUnlock] = useState<PriceUnlockView | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     setPassword("");
-    window.setTimeout(() => inputRef.current?.focus(), 0);
   }, []);
+
+  // O comercial pode ter liberado a balanca no site: primeiro o que esta gravado (na hora), depois
+  // a nuvem (o "liberei agora" vale sem esperar o ping de 30 s). Recusa da senha tambem confere de
+  // novo — a liberacao pode ter vencido com a janela aberta.
+  useEffect(() => {
+    const api = typeof window === "undefined" ? undefined : window.kyberrockDesktop;
+    if (!api?.getPriceUnlockStatus) return;
+    let active = true;
+    let refreshed = false;
+    void api
+      .getPriceUnlockStatus(false)
+      .then((next) => {
+        if (active && !refreshed) setUnlock(next);
+      })
+      .catch(() => undefined);
+    if (!error) {
+      void api
+        .getPriceUnlockStatus(true)
+        .then((next) => {
+          refreshed = true;
+          if (active) setUnlock(next);
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      active = false;
+    };
+  }, [error]);
+
+  // Liberada: o foco vai para o Confirmar (Enter confirma). Voltou a pedir senha (venceu ou o
+  // comercial tirou): o campo aparece e recebe o foco.
+  useEffect(() => {
+    window.setTimeout(() => (unlock ? confirmRef.current : inputRef.current)?.focus(), 0);
+  }, [unlock]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
+    if (submitting) return;
+    if (unlock) {
+      onSubmit("");
+      return;
+    }
     const trimmedPassword = password.trim();
-    if (!trimmedPassword || submitting) return;
+    if (!trimmedPassword) return;
     onSubmit(trimmedPassword);
   }
+
+  const shownDescription = unlock ? withoutPasswordHint(description) : description;
 
   return (
     <div
@@ -54,19 +129,27 @@ export function PriceChangePasswordDialog({
         <h2 id="price-password-title" style={styles.title}>
           {title}
         </h2>
-        <p style={styles.text}>{description}</p>
-        <p style={styles.note}>{PRICE_CODE_NOTE}</p>
-        <input
-          ref={inputRef}
-          type="password"
-          inputMode="numeric"
-          autoComplete="off"
-          maxLength={7}
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          style={styles.input}
-          disabled={submitting}
-        />
+        {shownDescription ? <p style={styles.text}>{shownDescription}</p> : null}
+        {unlock ? (
+          <p style={styles.unlocked} role="status">
+            {priceUnlockMessage(unlock)}
+          </p>
+        ) : (
+          <>
+            <p style={styles.note}>{PRICE_CODE_NOTE}</p>
+            <input
+              ref={inputRef}
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={7}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              style={styles.input}
+              disabled={submitting}
+            />
+          </>
+        )}
         {error ? <p style={styles.error}>{error}</p> : null}
         <div style={styles.actions}>
           <button
@@ -78,9 +161,10 @@ export function PriceChangePasswordDialog({
             Cancelar
           </button>
           <button
+            ref={confirmRef}
             type="submit"
             style={styles.primaryButton}
-            disabled={submitting || !password.trim()}
+            disabled={submitting || (!unlock && !password.trim())}
           >
             {submitting ? "Validando..." : "Confirmar"}
           </button>
@@ -138,6 +222,16 @@ const styles = {
     color: "var(--kr-text)",
     fontSize: "12px",
     fontWeight: 600
+  },
+  unlocked: {
+    margin: 0,
+    padding: "10px 12px",
+    borderRadius: "8px",
+    border: "1px solid var(--kr-success-border)",
+    background: "var(--kr-success-soft)",
+    color: "var(--kr-success)",
+    fontSize: "13px",
+    fontWeight: 700
   },
   error: {
     margin: 0,

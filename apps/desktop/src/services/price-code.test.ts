@@ -8,8 +8,10 @@ import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import {
   applyPriceCodeFromCloud,
+  applyPriceUnlockFromCloud,
   priceCodeForStep,
   priceCodeStep,
+  readPriceUnlock,
   verifyPriceCode,
   verifyStoredPriceCode
 } from "./price-code";
@@ -85,6 +87,54 @@ describe("senha rotativa de preco (balanca)", () => {
     applyPriceCodeFromCloud(database, { secret: RFC_SECRET, receivedAtMs: 60_000 });
     applyPriceCodeFromCloud(database, { secret: null, receivedAtMs: 60_000 });
     expect(verifyStoredPriceCode(database, "287082", 60_000)).toBe(true);
+    database.close();
+  });
+});
+
+describe("balanca liberada sem senha pelo comercial", () => {
+  it("o prazo vence pelo relogio da nuvem, mesmo sem internet", () => {
+    const database = openTemporaryDatabase();
+    // Este computador esta 50 s atrasado em relacao a nuvem.
+    applyPriceCodeFromCloud(database, {
+      secret: RFC_SECRET,
+      serverTime: new Date(60_000).toISOString(),
+      receivedAtMs: 10_000
+    });
+    applyPriceUnlockFromCloud(database, {
+      indefinite: false,
+      until: new Date(120_000).toISOString()
+    });
+    // 60 s aqui = 110 s na nuvem: ainda liberada.
+    expect(readPriceUnlock(database, 60_000)).toEqual({
+      indefinite: false,
+      until: new Date(120_000).toISOString()
+    });
+    // 70 s aqui = 120 s na nuvem: venceu.
+    expect(readPriceUnlock(database, 70_000)).toBeNull();
+    database.close();
+  });
+
+  it("sem prazo nao vence; o comercial tirando, volta a pedir senha", () => {
+    const database = openTemporaryDatabase();
+    expect(readPriceUnlock(database, 0)).toBeNull();
+    applyPriceUnlockFromCloud(database, { indefinite: true, until: null });
+    expect(readPriceUnlock(database, Number.MAX_SAFE_INTEGER / 2)).toEqual({
+      indefinite: true,
+      until: null
+    });
+    applyPriceUnlockFromCloud(database, null);
+    expect(readPriceUnlock(database, 0)).toBeNull();
+    database.close();
+  });
+
+  it("resposta sem o campo (nuvem antiga) mantem o que a balanca ja sabia", () => {
+    const database = openTemporaryDatabase();
+    applyPriceUnlockFromCloud(database, { indefinite: true, until: null });
+    applyPriceUnlockFromCloud(database, undefined);
+    expect(readPriceUnlock(database, 0)).toEqual({ indefinite: true, until: null });
+    // Lixo vindo da nuvem conta como "pede senha", nunca como liberada.
+    applyPriceUnlockFromCloud(database, { indefinite: "sim", until: "amanha" });
+    expect(readPriceUnlock(database, 0)).toBeNull();
     database.close();
   });
 });

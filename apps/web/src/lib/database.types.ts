@@ -2242,6 +2242,44 @@ export type Database = {
           }
         ];
       };
+      price_unlocks: {
+        Row: {
+          company_id: string;
+          created_at: string;
+          created_by: string | null;
+          created_by_name: string | null;
+          id: string;
+          indefinite: boolean;
+          unlocked_until: string | null;
+        };
+        Insert: {
+          company_id: string;
+          created_at?: string;
+          created_by?: string | null;
+          created_by_name?: string | null;
+          id?: string;
+          indefinite?: boolean;
+          unlocked_until?: string | null;
+        };
+        Update: {
+          company_id?: string;
+          created_at?: string;
+          created_by?: string | null;
+          created_by_name?: string | null;
+          id?: string;
+          indefinite?: boolean;
+          unlocked_until?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "price_unlocks_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "companies";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
       print_receipts: {
         Row: {
           cloud_synced_at: string;

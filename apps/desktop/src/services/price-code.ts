@@ -30,6 +30,7 @@ export const PRICE_CODE_DIGITS = 6;
 const PERIOD_MS = PRICE_CODE_PERIOD_SECONDS * 1000;
 const SECRET_SETTING = "price_code_secret";
 const CLOCK_OFFSET_SETTING = "price_code_clock_offset_ms";
+const UNLOCK_SETTING = "price_unlock";
 
 /** Numero da janela de 45 s em que `nowMs` cai (o contador do HOTP). */
 export function priceCodeStep(nowMs: number): number {
@@ -98,7 +99,62 @@ export function verifyStoredPriceCode(
 ): boolean | null {
   const secret = readStringLocalSetting(database, SECRET_SETTING);
   if (!isUsablePriceCodeSecret(secret)) return null;
+  return verifyPriceCode(secret, typed, nowMs + readClockOffsetMs(database));
+}
+
+/**
+ * Liberacao sem senha que o comercial deu no site (tela "Senha de preco",
+ * `supabase/functions/_shared/price-unlock.ts`): por um tempo (`until`) ou sem prazo.
+ */
+export interface PriceUnlockStatus {
+  indefinite: boolean;
+  /** ISO de quando volta a pedir senha (hora da nuvem); `null` quando e sem prazo. */
+  until: string | null;
+}
+
+function readClockOffsetMs(database: DesktopDatabase): number {
   const offset = readLocalSetting<unknown>(database, CLOCK_OFFSET_SETTING);
-  const offsetMs = typeof offset === "number" && Number.isFinite(offset) ? offset : 0;
-  return verifyPriceCode(secret, typed, nowMs + offsetMs);
+  return typeof offset === "number" && Number.isFinite(offset) ? offset : 0;
+}
+
+/**
+ * Guarda a liberacao que o `desktop-status` mandou. `undefined` e "nuvem antiga" (ou migracao
+ * pendente): o que ja estava gravado continua valendo. `null` e "pede senha" — e o que desfaz a
+ * liberacao quando o comercial tira.
+ */
+export function applyPriceUnlockFromCloud(database: DesktopDatabase, unlock: unknown): void {
+  if (unlock === undefined) return;
+  let next: PriceUnlockStatus | null = null;
+  if (unlock && typeof unlock === "object") {
+    const value = unlock as { indefinite?: unknown; until?: unknown };
+    if (value.indefinite === true) {
+      next = { indefinite: true, until: null };
+    } else if (typeof value.until === "string" && Number.isFinite(Date.parse(value.until))) {
+      next = { indefinite: false, until: value.until };
+    }
+  }
+  // O ping e de 30 s: so grava quando mudou, como a chave.
+  const current = readLocalSetting<unknown>(database, UNLOCK_SETTING);
+  if (JSON.stringify(current) !== JSON.stringify(next)) {
+    writeLocalSetting(database, UNLOCK_SETTING, next);
+  }
+}
+
+/**
+ * A liberacao em vigor agora, ou `null` (pede senha). O prazo e conferido aqui, pelo relogio da
+ * nuvem: liberacao por 30 min vence na hora certa mesmo com a balanca sem internet.
+ */
+export function readPriceUnlock(
+  database: DesktopDatabase,
+  // Relogio REAL, pelo mesmo motivo de `verifyStoredPriceCode`.
+  nowMs: number = realNowMs()
+): PriceUnlockStatus | null {
+  const stored = readLocalSetting<unknown>(database, UNLOCK_SETTING);
+  if (!stored || typeof stored !== "object") return null;
+  const value = stored as { indefinite?: unknown; until?: unknown };
+  if (value.indefinite === true) return { indefinite: true, until: null };
+  if (typeof value.until !== "string") return null;
+  const untilMs = Date.parse(value.until);
+  if (!Number.isFinite(untilMs) || untilMs <= nowMs + readClockOffsetMs(database)) return null;
+  return { indefinite: false, until: value.until };
 }

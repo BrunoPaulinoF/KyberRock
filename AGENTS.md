@@ -558,6 +558,20 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   a chave nao existe (migracao pendente na `web-api`; balanca que ainda nao falou com a nuvem
   depois de atualizar). Ela protege tambem limpar operacoes e liberar o relatorio financeiro na
   balanca.
+- **Balanca liberada sem senha** (migracao `202610010001_liberar_balanca_sem_senha`): na mesma
+  tela `/senha-preco` o comercial libera as balancas da pedreira por um tempo (15 min a 8 h; o
+  servidor aceita de 1 min a 24 h) ou sem prazo, e volta a pedir a senha quando quiser (acao
+  `set_price_unlock`, mesma permissao de `price_code`). Cada mudanca e UMA linha em
+  `price_unlocks` (so a chave de servico le) e vale a mais recente — o historico de quem liberou
+  vem de graca. O `desktop-status` manda `priceUnlock` ja conferido contra a hora da nuvem (`null`
+  = pede senha; leitura que falhou OMITE o campo e a balanca mantem o que sabia), e a balanca
+  confere o prazo sozinha, sem internet, com o mesmo deslocamento de relogio da senha
+  (`readPriceUnlock` em `services/price-code.ts`). Quem decide e o RUNTIME
+  (`verifyPriceChangePassword`, `assertSpecialPricePassword`): liberada, qualquer senha passa,
+  inclusive vazia. A janela `PriceChangePasswordDialog` continua aparecendo — ela tambem e a
+  confirmacao de acao destrutiva (limpar operacoes) —, so que sem o campo, e ao abrir pergunta a
+  nuvem (`getPriceUnlockStatus(true)`, ate 5 s) para o "liberei agora" valer sem esperar o ping de
+  30 s. So a balanca: no site, quem tem `requiresPricePassword` continua digitando.
 - **Preco especial na balanca pede a senha NO RUNTIME, e fica no historico.** Adicionar, trocar
   ou excluir preco especial de cliente chama `setCustomerSpecialPrice`/`removeCustomerSpecialPrice`
   com a senha, conferida no processo principal (`assertSpecialPricePassword`) — a tela so repassa.

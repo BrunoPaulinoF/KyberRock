@@ -418,9 +418,10 @@ da empresa (sem senha, claro).
 
 ### 4.13 Senha de preço (comercial e administrador)
 
-| Ação         | Payload | Devolve                                                             |
-| ------------ | ------- | ------------------------------------------------------------------- |
-| `price_code` | —       | `code` (6 dígitos), `expiresAt`, `periodSeconds` (45), `serverTime` |
+| Ação               | Payload                                                          | Devolve                                                                       |
+| ------------------ | ---------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `price_code`       | —                                                                | `code` (6 dígitos), `expiresAt`, `periodSeconds` (45), `serverTime`, `unlock` |
+| `set_price_unlock` | `mode`: `minutes` (com `minutes`, 1–1440), `indefinite` ou `off` | `unlock`, `serverTime`                                                        |
 
 O código que libera mudar preço (e excluir cadastro, §4.2/§4.4) para quem tem
 `requiresPricePassword` no site e para **todos** na balança (que não tem login). Troca a cada 45 segundos, sem fim, e o vencido não vale mais. Sai de
@@ -429,6 +430,14 @@ uma linha por pedreira e o gatilho cria a da pedreira nova; se faltar, esta aç�
 relógio: HOTP da RFC 4226 (`_shared/price-code.ts`). A chave nunca sai na resposta. A tela conta
 os segundos pelo `serverTime`, não pelo relógio do computador do comercial. A balança recebe a
 chave no `desktop-status` e confere o código sem internet (`apps/desktop/src/services/price-code.ts`).
+
+**Liberar a balança sem senha** (`set_price_unlock`, migração `202610010001`): o comercial (e o
+administrador) libera as balanças da pedreira por um tempo ou sem prazo, e `off` volta a pedir a
+senha. Cada pedido é uma linha nova em `price_unlocks` (só a chave de serviço lê); vale a mais
+recente. `unlock` é `{ indefinite, until, byName, at }` enquanto valer, `null` quando a balança
+pede senha, e **ausente** em `price_code` quando a tabela ainda não existe (a tela esconde a
+opção). O `desktop-status` leva `priceUnlock` (`{ indefinite, until }` ou `null`) e a balança
+confere o prazo sem internet. Só a balança: no site a senha continua sendo pedida.
 
 ### 4.14 O que ainda não está na `web-api` (próximas versões)
 

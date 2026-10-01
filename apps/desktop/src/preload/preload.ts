@@ -402,6 +402,8 @@ const desktopApi = {
   virtualScaleConnect: () => ipcRenderer.invoke("desktop:virtual-scale-connect"),
   verifyPriceChangePassword: (password: string) =>
     ipcRenderer.invoke("desktop:verify-price-password", password),
+  getPriceUnlockStatus: (refresh?: boolean) =>
+    ipcRenderer.invoke("desktop:price-unlock-status", refresh),
   omieConfig: () => ipcRenderer.invoke("desktop:omie-config"),
   lookupCep: (cep: string) => ipcRenderer.invoke("desktop:lookup-cep", cep),
   lookupCnpj: (cnpj: string) => ipcRenderer.invoke("desktop:lookup-cnpj", cnpj),
