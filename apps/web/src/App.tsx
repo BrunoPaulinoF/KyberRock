@@ -25,6 +25,7 @@ function page<K extends string>(
 
 const BillingConference = page(SCREEN_MODULES["conferencia-faturamento"], "BillingConference");
 const Comercial = page(SCREEN_MODULES.comercial, "Comercial");
+const CustomerRanking = page(SCREEN_MODULES["ranking-clientes"], "CustomerRanking");
 const CustomerReport = page(SCREEN_MODULES["relatorio-cliente"], "CustomerReport");
 const Dashboard = page(SCREEN_MODULES.painel, "Dashboard");
 const Documentation = page(SCREEN_MODULES.documentacao, "Documentation");
@@ -182,6 +183,10 @@ export function App() {
                     <Route path="/senha-preco" element={only("senha-preco", <PriceCodePage />)} />
                     <Route path="/cupons" element={only("cupons", <Receipts />)} />
                     <Route path="/comercial" element={only("comercial", <Comercial />)} />
+                    <Route
+                      path="/ranking-clientes"
+                      element={only("ranking-clientes", <CustomerRanking />)}
+                    />
                     <Route path="/insights" element={only("insights", <Insights />)} />
                     <Route
                       path="/controle-caminhoes"

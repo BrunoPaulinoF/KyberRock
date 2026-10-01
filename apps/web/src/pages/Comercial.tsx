@@ -1,6 +1,6 @@
 import "./comercial.css";
 
-import { KeyRound, Tags, UserSearch, Users, type LucideIcon } from "lucide-react";
+import { KeyRound, Tags, Trophy, UserSearch, Users, type LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -53,6 +53,7 @@ const SHORTCUT_ICONS: Record<ComercialShortcutId, LucideIcon> = {
   clientes: Users,
   precos: Tags,
   "senha-preco": KeyRound,
+  "ranking-clientes": Trophy,
   "relatorio-cliente": UserSearch
 };
 

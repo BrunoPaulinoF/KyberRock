@@ -1,0 +1,537 @@
+/*
+ * Tela Ranking de clientes. Cartoes, KPIs e tabela seguem o desenho do Insights (mesmas
+ * superficies, bordas e sombra do tema); o podio usa ouro, prata e bronze, que leem bem nos dois
+ * temas. Setas: verde subindo, vermelho caindo, cinza parado.
+ */
+
+.ranking {
+  --ranking-gold: #d4a017;
+  --ranking-silver: #8b95a1;
+  --ranking-bronze: #b8733e;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.ranking > .page-header {
+  margin-bottom: 0;
+}
+
+/* ---------- periodo e filtros ---------- */
+.ranking-period {
+  display: flex;
+  align-items: center;
+  gap: 8px 10px;
+  flex-wrap: wrap;
+}
+.ranking-dates {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ranking-dates label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--kr-muted);
+}
+.ranking-dates .input {
+  border-radius: 8px;
+  padding: 5px 8px;
+}
+.ranking-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+  background: var(--kr-card-bg);
+  border: 1px solid var(--kr-card-border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: var(--kr-shadow);
+}
+.ranking-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 170px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--kr-muted);
+}
+.ranking-field > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ranking-search {
+  flex: 1 1 220px;
+  max-width: 340px;
+}
+.ranking-search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.ranking-search-box svg {
+  position: absolute;
+  left: 10px;
+  color: var(--kr-muted);
+  pointer-events: none;
+}
+.ranking-search-box .input {
+  width: 100%;
+  padding-left: 32px;
+}
+
+/* ---------- KPIs ---------- */
+/* Tres por linha (duas linhas iguais); seis lado a lado so em tela bem larga, dois no celular.
+   Com `auto-fit` sobrava um cartao sozinho na segunda linha. */
+.ranking-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (min-width: 1700px) {
+  .ranking-kpis {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+.ranking-kpi {
+  background: var(--kr-card-bg);
+  border: 1px solid var(--kr-card-border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  box-shadow: var(--kr-shadow);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ranking-kpi p {
+  margin: 0;
+}
+.ranking-kpi-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--kr-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ranking .ranking-kpi-value {
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--kr-text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ranking-kpi-hint {
+  font-size: 12px;
+  color: var(--kr-muted);
+}
+
+/* ---------- variacao e movimento ---------- */
+.ranking-change {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ranking-change.up {
+  color: var(--kr-success);
+}
+.ranking-change.down {
+  color: var(--kr-danger);
+}
+.ranking-change.flat {
+  color: var(--kr-muted);
+}
+.ranking-change.new {
+  color: var(--kr-link);
+}
+.ranking-change-suffix {
+  margin-left: 3px;
+  font-weight: 500;
+  color: var(--kr-muted);
+}
+.ranking-move {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+}
+.ranking-move.up {
+  color: var(--kr-success);
+}
+.ranking-move.down {
+  color: var(--kr-danger);
+}
+.ranking-move.flat {
+  color: var(--kr-muted);
+}
+.ranking-move.new {
+  color: var(--kr-link);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+/* ---------- podio ---------- */
+.ranking-podium {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 10px;
+}
+.ranking-podium-card {
+  --place-color: var(--ranking-bronze);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--kr-card-border);
+  border-top: 4px solid var(--place-color);
+  background: var(--kr-card-bg);
+  box-shadow: var(--kr-shadow);
+}
+.ranking-podium-card.place-1 {
+  --place-color: var(--ranking-gold);
+}
+.ranking-podium-card.place-2 {
+  --place-color: var(--ranking-silver);
+}
+.ranking-podium-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ranking-podium-medal {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--place-color);
+  background: color-mix(in srgb, var(--place-color) 16%, transparent);
+  flex-shrink: 0;
+}
+.ranking-podium-place {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--kr-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: auto;
+}
+.ranking-podium-name {
+  font-size: 16px;
+  color: var(--kr-text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 4px;
+}
+.ranking-podium-value {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--kr-text-strong);
+  margin-top: 2px;
+}
+.ranking-podium-meta {
+  font-size: 12px;
+  color: var(--kr-muted);
+}
+
+/* ---------- cartoes e tabela ---------- */
+.ranking-card {
+  background: var(--kr-card-bg);
+  border: 1px solid var(--kr-card-border);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: var(--kr-shadow);
+  min-width: 0;
+}
+.ranking-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 8px;
+}
+.ranking-card-head h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--kr-text-strong);
+  margin: 0;
+}
+.ranking-card-head span {
+  font-size: 12px;
+  color: var(--kr-muted);
+}
+.ranking-table-wrap {
+  overflow-x: auto;
+}
+.ranking-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 820px;
+}
+.ranking-table.ranking-lost {
+  min-width: 600px;
+}
+.ranking-table th,
+.ranking-table td {
+  padding: 8px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--kr-card-border);
+  white-space: nowrap;
+  color: var(--kr-text-strong);
+}
+.ranking-table th {
+  color: var(--kr-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom-width: 2px;
+  /* Titulo pode quebrar em duas linhas: e ele que alargava a coluna de numero curto. */
+  white-space: normal;
+  vertical-align: bottom;
+}
+.ranking-table .is-text {
+  text-align: left;
+  white-space: normal;
+}
+.ranking-table td.is-text {
+  min-width: 220px;
+}
+.ranking-table tfoot td {
+  border-bottom: 0;
+  border-top: 2px solid var(--kr-card-border);
+}
+.ranking-row {
+  cursor: pointer;
+}
+.ranking-row:hover,
+.ranking-row.open {
+  background: var(--kr-card-hover);
+}
+.ranking-col-pos {
+  width: 52px;
+  text-align: center !important;
+}
+.ranking-col-pos .ranking-move {
+  display: flex;
+  justify-content: center;
+  margin-top: 3px;
+}
+.ranking-pos {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 13px;
+  background: var(--kr-surface-soft);
+  border: 1px solid var(--kr-border);
+}
+.ranking-pos.pos-1 {
+  background: var(--ranking-gold);
+  border-color: var(--ranking-gold);
+  color: #1c1917;
+}
+.ranking-pos.pos-2 {
+  background: var(--ranking-silver);
+  border-color: var(--ranking-silver);
+  color: #1c1917;
+}
+.ranking-pos.pos-3 {
+  background: var(--ranking-bronze);
+  border-color: var(--ranking-bronze);
+  color: #1c1917;
+}
+.ranking-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ranking-name svg {
+  flex-shrink: 0;
+  color: var(--kr-muted);
+}
+.ranking-name:focus-visible {
+  outline: 2px solid var(--kr-focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.ranking-sub {
+  display: block;
+  font-size: 12px;
+  color: var(--kr-muted);
+  margin-top: 2px;
+}
+.ranking-name + .ranking-sub {
+  padding-left: 20px;
+}
+.ranking-col-share {
+  width: 140px;
+}
+.ranking-share {
+  display: inline-block;
+  vertical-align: middle;
+  width: 64px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--kr-surface-soft);
+  border: 1px solid var(--kr-border);
+  overflow: hidden;
+  margin-right: 8px;
+}
+.ranking-share-bar {
+  display: block;
+  height: 100%;
+  background: var(--kr-chart-1);
+  border-radius: 999px;
+}
+.ranking-share-text {
+  display: inline-block;
+  min-width: 48px;
+}
+
+/* ---------- detalhe do cliente (linha aberta) ---------- */
+.ranking-detail > td {
+  background: var(--kr-surface-soft);
+  white-space: normal;
+  text-align: left;
+}
+.ranking-detail-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 4px 0 6px;
+}
+.ranking-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 16px;
+  width: 100%;
+  margin: 0;
+}
+.ranking-facts div {
+  min-width: 0;
+}
+.ranking-facts dt {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--kr-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ranking-facts dd {
+  margin: 2px 0 0;
+  font-weight: 700;
+  color: var(--kr-text-strong);
+}
+.ranking-products {
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: min(560px, 100%);
+}
+.ranking-products th,
+.ranking-products td {
+  padding: 6px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--kr-border);
+  white-space: nowrap;
+}
+.ranking-products th {
+  font-size: 11px;
+  color: var(--kr-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ranking-products .is-text {
+  text-align: left;
+  white-space: normal;
+}
+
+.ranking-card .skeleton-rows,
+.ranking-card .empty-state {
+  margin-top: 8px;
+}
+
+.show-phone {
+  display: none !important;
+}
+
+/* celular: filtros um embaixo do outro, KPIs dois a dois e a tabela so com o essencial (os
+   numeros escondidos aparecem embaixo do nome e no detalhe do cliente) */
+@media (max-width: 640px) {
+  .ranking-field,
+  .ranking-search {
+    flex: 1 1 100%;
+    max-width: none;
+    min-width: 0;
+  }
+  .ranking-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .ranking .ranking-kpi-value {
+    font-size: 17px;
+  }
+  .ranking-table,
+  .ranking-table.ranking-lost {
+    min-width: 0;
+  }
+  .ranking-table td.is-text {
+    min-width: 0;
+  }
+  .ranking-table th,
+  .ranking-table td {
+    padding: 8px 6px;
+  }
+  .ranking-table .hide-phone {
+    display: none;
+  }
+  .ranking-table .show-phone {
+    display: block !important;
+  }
+  /* CNPJ e cidade nao seguram a largura da coluna do nome */
+  .ranking-table .ranking-sub {
+    overflow-wrap: anywhere;
+  }
+  .ranking-name + .ranking-sub,
+  .ranking-name ~ .ranking-sub {
+    padding-left: 0;
+  }
+  .ranking-products {
+    min-width: 0;
+    width: 100%;
+  }
+}

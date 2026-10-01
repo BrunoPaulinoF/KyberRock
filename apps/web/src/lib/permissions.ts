@@ -8,7 +8,8 @@
  * endereco digitado a mao volta para a tela inicial dele:
  *   - `loader`        carregador: so a fila de carregamento da propria unidade;
  *   - `monitoramento` so o painel de vendas em tempo real, sem configuracoes;
- *   - `comercial`     aba Comercial (a tela do portal, e so dele), insights, conferencia de faturamento,
+ *   - `comercial`     aba Comercial (a tela do portal, e so dele), o Ranking de clientes (tambem so
+ *                     dele), insights, conferencia de faturamento,
  *                     relatorios, controle de caminhoes, relatorio por cliente, cupons,
  *                     cadastros e o Monitoramento (o painel de vendas em tempo real, que abre em
  *                     tela cheia com o botao "Voltar ao sistema") —
@@ -57,6 +58,7 @@ export const SCREENS = [
   "senha-preco",
   "cupons",
   "comercial",
+  "ranking-clientes",
   "insights",
   "controle-caminhoes",
   "relatorio-cliente",
@@ -73,8 +75,8 @@ export type Screen = (typeof SCREENS)[number];
 
 /**
  * As telas do KyberRock Desktop (menu lateral), na ordem dele, menos a Nova entrada, a aba
- * Comercial e o Monitoramento — a aba Comercial e so do perfil comercial, e o Monitoramento e do
- * perfil de mesmo nome e do comercial.
+ * Comercial, o Ranking de clientes e o Monitoramento — a aba Comercial e o Ranking sao so do
+ * perfil comercial, e o Monitoramento e do perfil de mesmo nome e do comercial.
  */
 const DESK_SCREENS: readonly Screen[] = [
   "painel",
@@ -96,6 +98,7 @@ export const SCREENS_BY_ROLE: Record<Role, readonly Screen[]> = {
   monitoramento: ["monitoramento"],
   comercial: [
     "comercial",
+    "ranking-clientes",
     "cadastros",
     "senha-preco",
     "cupons",

@@ -1,13 +1,19 @@
 /**
  * Atalhos grandes do topo da aba Comercial: o que o comercial mais faz no dia (abrir o cliente,
- * mexer em preco, passar a senha de preco, tirar o relatorio de um cliente). Cada atalho so
+ * mexer em preco, passar a senha de preco, ver quem mais compra, tirar o relatorio de um
+ * cliente). Cada atalho so
  * aparece para quem VE a tela de destino (`canSee`) — atalho para tela recusada levaria a
  * pessoa de volta para a tela inicial dela.
  */
 
 import { canSee, type Role, type Screen } from "./permissions";
 
-export type ComercialShortcutId = "clientes" | "precos" | "senha-preco" | "relatorio-cliente";
+export type ComercialShortcutId =
+  | "clientes"
+  | "precos"
+  | "senha-preco"
+  | "ranking-clientes"
+  | "relatorio-cliente";
 
 export interface ComercialShortcut {
   id: ComercialShortcutId;
@@ -40,6 +46,13 @@ export const COMERCIAL_SHORTCUTS: readonly ComercialShortcut[] = [
     to: "/senha-preco",
     label: "Senha de preço",
     hint: "O código que libera mudar preço"
+  },
+  {
+    id: "ranking-clientes",
+    screen: "ranking-clientes",
+    to: "/ranking-clientes",
+    label: "Ranking de clientes",
+    hint: "Quem mais compra no período"
   },
   {
     id: "relatorio-cliente",

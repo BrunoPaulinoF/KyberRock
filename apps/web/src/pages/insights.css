@@ -278,3 +278,26 @@
   font-weight: 800;
   border-bottom: 0;
 }
+
+/* ---------- barrinha do "Top produtos por peso" ---------- */
+.insights-range {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--kr-muted);
+}
+.insights-range input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--kr-accent);
+  cursor: pointer;
+}
+.insights-range-value {
+  min-width: 56px;
+  text-align: right;
+  color: var(--kr-text-strong);
+  font-variant-numeric: tabular-nums;
+}

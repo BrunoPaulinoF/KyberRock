@@ -25,8 +25,9 @@ describe("telas de cada perfil", () => {
     ]);
   });
 
-  it("so o perfil comercial ve a aba Comercial", () => {
+  it("so o perfil comercial ve a aba Comercial e o Ranking de clientes", () => {
     expect(ROLES.filter((role) => canSee(role, "comercial"))).toEqual(["comercial"]);
+    expect(ROLES.filter((role) => canSee(role, "ranking-clientes"))).toEqual(["comercial"]);
   });
 
   it("comercial ve a aba Comercial, as telas de analise, o monitoramento, os cadastros e a senha de preco", () => {
@@ -36,6 +37,7 @@ describe("telas de cada perfil", () => {
         "senha-preco",
         "cupons",
         "comercial",
+        "ranking-clientes",
         "conferencia-faturamento",
         "controle-caminhoes",
         "insights",
@@ -53,12 +55,13 @@ describe("telas de cada perfil", () => {
     expect((SCREENS as readonly string[]).includes("nova-entrada")).toBe(false);
   });
 
-  it("gestor ve tudo menos os logs, a aba Comercial e o monitoramento", () => {
+  it("gestor ve tudo menos os logs, a aba Comercial, o ranking e o monitoramento", () => {
     const hidden = SCREENS.filter((screen) => !canSee("gestor", screen));
     expect(hidden.sort()).toEqual([
       "carregamento",
       "comercial",
       "monitoramento",
+      "ranking-clientes",
       "senha-preco",
       "suporte"
     ]);
@@ -69,13 +72,15 @@ describe("telas de cada perfil", () => {
       "carregamento",
       "comercial",
       "monitoramento",
+      "ranking-clientes",
       "senha-preco",
       "suporte"
     ]);
     expect(SCREENS.filter((screen) => !canSee("administrador", screen)).sort()).toEqual([
       "carregamento",
       "comercial",
-      "monitoramento"
+      "monitoramento",
+      "ranking-clientes"
     ]);
   });
 

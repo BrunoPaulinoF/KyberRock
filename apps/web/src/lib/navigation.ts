@@ -12,6 +12,7 @@ import {
   Receipt,
   ReceiptText,
   ScrollText,
+  Trophy,
   Truck,
   UserSearch,
   Wallet,
@@ -91,6 +92,13 @@ export const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
         label: "Comercial",
         icon: Handshake,
         keywords: ["relatório de vendas", "vendas"]
+      },
+      {
+        screen: "ranking-clientes",
+        to: "/ranking-clientes",
+        label: "Ranking de clientes",
+        icon: Trophy,
+        keywords: ["clientes que mais compram", "maiores clientes", "top clientes", "curva ABC"]
       },
       {
         screen: "insights",

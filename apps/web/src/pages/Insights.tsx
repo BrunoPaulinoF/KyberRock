@@ -60,6 +60,11 @@ const CHART_PALETTE = [
 ] as const;
 /** Cancelada fica no vermelho de erro do tema, como no desktop — nao numa cor da paleta. */
 const CANCELLED_COLOR = "var(--kr-danger)";
+/**
+ * Quantos produtos o grafico "Top produtos por peso" mostra ao abrir. A barrinha embaixo dele
+ * aumenta de um em um (6, 7, 8...) ate todos os produtos do periodo.
+ */
+const TOP_PRODUCTS_DEFAULT = 5;
 
 const TIPS = {
   title: "Acompanhe o andamento da operação com KPIs, gráficos e status de sincronização.",
@@ -87,6 +92,7 @@ export function Insights() {
   const [pivotCustomerId, setPivotCustomerId] = useUrlState("cliente");
   const [pivotProductId, setPivotProductId] = useUrlState("produto");
   const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
+  const [productCount, setProductCount] = useState(TOP_PRODUCTS_DEFAULT);
 
   const range = useMemo(
     () => resolveInsightsRange(period, customStart, customEnd, new Date()),
@@ -123,7 +129,13 @@ export function Insights() {
   const rows = useMemo(() => operations.data ?? [], [operations.data]);
   const loading = operations.loading;
   const series = useMemo(() => dailySeries(rows, range), [rows, range]);
-  const topProducts = useMemo(() => reportByProduct(rows, range).slice(0, 5), [rows, range]);
+  const allProducts = useMemo(() => reportByProduct(rows, range), [rows, range]);
+  // O numero escolhido fica guardado; o periodo com menos produtos mostra todos os que tem.
+  const shownProducts = Math.min(productCount, allProducts.length);
+  const topProducts = useMemo(
+    () => allProducts.slice(0, shownProducts),
+    [allProducts, shownProducts]
+  );
   const mix = useMemo(() => operationMix(rows, range), [rows, range]);
   const totals = useMemo(() => seriesTotals(series), [series]);
   const pivot = useMemo(
@@ -156,7 +168,13 @@ export function Insights() {
       if (kind === "pdf") {
         const codes = await loadProductCodes(user.companyId).catch(() => new Map());
         await printReportHtml(
-          insightsReportHtml(rows, range, codes),
+          insightsReportHtml(
+            rows,
+            range,
+            codes,
+            new Date(),
+            Math.max(TOP_PRODUCTS_DEFAULT, shownProducts)
+          ),
           `insights-${range.start}-a-${range.end}.pdf`
         );
       } else {
@@ -288,13 +306,36 @@ export function Insights() {
             <WeightAreaChart series={series} />
           )}
         </ChartCard>
-        <ChartCard title="Top 5 produtos por peso" hint={range.label}>
+        <ChartCard
+          title={`Top ${shownProducts || TOP_PRODUCTS_DEFAULT} produtos por peso`}
+          hint={range.label}
+        >
           {loading ? (
             <ChartSkeleton />
           ) : topProducts.length === 0 ? (
             <EmptyState title="Sem produtos vendidos no período." />
           ) : (
-            <ProductBarChart products={topProducts} />
+            <>
+              <ProductBarChart products={topProducts} />
+              {allProducts.length > TOP_PRODUCTS_DEFAULT && (
+                <label className="insights-range">
+                  <span>Mostrar</span>
+                  <input
+                    type="range"
+                    min={TOP_PRODUCTS_DEFAULT}
+                    max={allProducts.length}
+                    step={1}
+                    value={Math.max(TOP_PRODUCTS_DEFAULT, shownProducts)}
+                    onChange={(event) => setProductCount(Number(event.target.value))}
+                    aria-label="Quantos produtos mostrar no gráfico"
+                    aria-valuetext={`${shownProducts} de ${allProducts.length} produtos`}
+                  />
+                  <span className="insights-range-value">
+                    {shownProducts} de {allProducts.length}
+                  </span>
+                </label>
+              )}
+            </>
           )}
         </ChartCard>
         <ChartCard title="Mix de operações" hint={range.label}>
@@ -520,6 +561,8 @@ function ChartTooltip({ tip }: { tip: TooltipState | null }) {
 }
 
 const CHART_HEIGHT = 240;
+/** Altura minima de cada barra do "Top produtos": com mais produtos o grafico cresce. */
+const PRODUCT_BAND_MIN = 28;
 const tonTick = (value: number) => `${(value / 1000).toFixed(0)}t`;
 
 function WeightAreaChart({ series }: { series: DailySeriesPoint[] }) {
@@ -658,8 +701,13 @@ function ProductBarChart({ products }: { products: ProductReport[] }) {
   const { ref, width } = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
   const margin = { top: 8, right: 24, bottom: 30, left: 8 + 120 };
+  // Ate 7 produtos cabe na altura dos outros graficos; dali em diante cada barra ganha espaco.
+  const height = Math.max(
+    CHART_HEIGHT,
+    margin.top + margin.bottom + products.length * PRODUCT_BAND_MIN
+  );
   const plotW = Math.max(0, width - margin.left - margin.right);
-  const plotH = CHART_HEIGHT - margin.top - margin.bottom;
+  const plotH = height - margin.top - margin.bottom;
   const max = Math.max(...products.map((p) => p.totalWeightKg), 0);
   const ticks = niceTicks(max);
   const top = ticks[ticks.length - 1] || 1;
@@ -669,9 +717,9 @@ function ProductBarChart({ products }: { products: ProductReport[] }) {
   const product = hover !== null ? products[hover] : null;
 
   return (
-    <div ref={ref} className="insights-chart" style={{ height: CHART_HEIGHT }}>
+    <div ref={ref} className="insights-chart" style={{ height }}>
       {width > 0 && (
-        <svg width={width} height={CHART_HEIGHT} onMouseLeave={() => setHover(null)}>
+        <svg width={width} height={height} onMouseLeave={() => setHover(null)}>
           <g className="insights-grid">
             {ticks.map((t) => (
               <line key={t} x1={xOf(t)} x2={xOf(t)} y1={margin.top} y2={margin.top + plotH} />
