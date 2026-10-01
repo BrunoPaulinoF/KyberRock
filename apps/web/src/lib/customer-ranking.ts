@@ -1,5 +1,5 @@
 /**
- * Ranking de clientes (tela `/ranking-clientes`, do perfil comercial): quem mais comprou no
+ * Ranking de clientes (tela `/ranking-clientes`, do comercial, gestor e administrador): quem mais comprou no
  * periodo, do primeiro ao ultimo, comparado com o periodo anterior. As contas seguem as regras
  * do Insights e do relatorio de vendas, para os numeros baterem entre as telas:
  *

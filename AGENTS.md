@@ -526,9 +526,11 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   pelo `only`/`Private`.
 - `monitoramento` so ve `/monitoramento`; `comercial` a aba `/comercial`, o `/ranking-clientes`,
   as cinco telas de analise, Cadastros, `/cupons`, `/senha-preco` e tambem `/monitoramento` (abre
-  em tela cheia, com "Voltar ao sistema" no lugar do "Sair"). `/comercial` e `/ranking-clientes`
-  sao **so** do comercial; `/monitoramento` e do perfil de mesmo nome e do comercial. `gestor` e `operacao` veem todo o resto (com `/cupons`, que nao existe no
-  desktop); `administrador` o mesmo mais `/suporte` (Logs) e `/senha-preco`.
+  em tela cheia, com "Voltar ao sistema" no lugar do "Sair"). `/comercial` e **so** do comercial;
+  `/ranking-clientes` e do comercial, do `gestor` e do `administrador` (a `operacao` nao ve);
+  `/monitoramento` e do perfil de mesmo nome e do comercial. `gestor` e `operacao` veem todo o
+  resto (com `/cupons`, que nao existe no desktop); `administrador` o mesmo mais `/suporte` (Logs)
+  e `/senha-preco`.
   So gestor, operacao e administrador tem a engrenagem de configuracoes; os outros tem so o botao
   Sair.
 - **Ranking de clientes** (`/ranking-clientes`, `pages/CustomerRanking.tsx`, contas em

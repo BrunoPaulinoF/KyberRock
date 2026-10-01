@@ -20,10 +20,11 @@ describe("atalhos da aba Comercial", () => {
         expect(canSee(role, shortcut.screen)).toBe(true);
       }
     }
-    // O gestor nao ve a senha de preco nem o ranking; o carregador e o monitoramento, nada.
+    // O gestor nao ve a senha de preco; o carregador e o monitoramento, nada.
     expect(comercialShortcuts("gestor").map((shortcut) => shortcut.id)).toEqual([
       "clientes",
       "precos",
+      "ranking-clientes",
       "relatorio-cliente"
     ]);
     expect(comercialShortcuts("loader")).toEqual([]);
