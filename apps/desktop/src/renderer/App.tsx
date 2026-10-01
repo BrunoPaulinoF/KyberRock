@@ -181,6 +181,7 @@ import { TruckControlView, formatMinutes } from "./TruckControlView";
 import { WalletView } from "./WalletView";
 import { CustomersView } from "./CustomersView";
 import { HelpTooltip, Tooltip } from "./Tooltip";
+import { OPENING_ANIMATION_MS, OPENING_EXIT_MS, OpeningAnimation } from "./OpeningAnimation";
 import { IconActionButton, OpIcon } from "./IconActionButton";
 import { PRICE_CODE_REJECTED, PriceChangePasswordDialog } from "./PriceChangePasswordDialog";
 import { PriceMasterNotice, priceMasterHint, usePriceAuthority } from "./PriceMasterNotice";
@@ -647,10 +648,10 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     detail: "Validando acesso antes de carregar os dados.",
     mode: "running"
   });
-  const [openingVideoDone, setOpeningVideoDone] = useState(false);
-  const [openingVideoExiting, setOpeningVideoExiting] = useState(false);
+  const [openingAnimationDone, setOpeningAnimationDone] = useState(false);
+  const [openingExiting, setOpeningExiting] = useState(false);
   const [bootstrapReady, setBootstrapReady] = useState(false);
-  const openingVideoFallbackRef = useRef<number | null>(null);
+  const openingAnimationTimerRef = useRef<number | null>(null);
   const openingUnlockFallbackRef = useRef<number | null>(null);
   const [cloudStatus, setCloudStatus] = useState<{
     totalOperations: number;
@@ -1341,16 +1342,16 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   const handleUnlocked = useCallback(() => setPhase("bootstrapping_cloud"), []);
 
-  const finishOpeningVideo = useCallback(() => {
-    if (openingVideoFallbackRef.current !== null) {
-      window.clearTimeout(openingVideoFallbackRef.current);
-      openingVideoFallbackRef.current = null;
+  const finishOpeningAnimation = useCallback(() => {
+    if (openingAnimationTimerRef.current !== null) {
+      window.clearTimeout(openingAnimationTimerRef.current);
+      openingAnimationTimerRef.current = null;
     }
-    setOpeningVideoDone(true);
+    setOpeningAnimationDone(true);
 
     if (openingUnlockFallbackRef.current === null) {
       openingUnlockFallbackRef.current = window.setTimeout(() => {
-        setOpeningVideoExiting(true);
+        setOpeningExiting(true);
         setPhase("unlocked");
         openingUnlockFallbackRef.current = null;
       }, 4000);
@@ -1359,34 +1360,34 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
   useEffect(() => {
     if (phase !== "bootstrapping_cloud") return;
-    if (openingVideoFallbackRef.current !== null) {
-      window.clearTimeout(openingVideoFallbackRef.current);
-      openingVideoFallbackRef.current = null;
+    if (openingAnimationTimerRef.current !== null) {
+      window.clearTimeout(openingAnimationTimerRef.current);
+      openingAnimationTimerRef.current = null;
     }
     if (openingUnlockFallbackRef.current !== null) {
       window.clearTimeout(openingUnlockFallbackRef.current);
       openingUnlockFallbackRef.current = null;
     }
-    setOpeningVideoDone(false);
-    setOpeningVideoExiting(false);
+    setOpeningAnimationDone(false);
+    setOpeningExiting(false);
     setBootstrapReady(false);
 
-    openingVideoFallbackRef.current = window.setTimeout(() => {
-      setOpeningVideoDone(true);
-      openingVideoFallbackRef.current = null;
-    }, 10000);
+    openingAnimationTimerRef.current = window.setTimeout(
+      finishOpeningAnimation,
+      OPENING_ANIMATION_MS
+    );
 
     return () => {
-      if (openingVideoFallbackRef.current !== null) {
-        window.clearTimeout(openingVideoFallbackRef.current);
-        openingVideoFallbackRef.current = null;
+      if (openingAnimationTimerRef.current !== null) {
+        window.clearTimeout(openingAnimationTimerRef.current);
+        openingAnimationTimerRef.current = null;
       }
       if (openingUnlockFallbackRef.current !== null) {
         window.clearTimeout(openingUnlockFallbackRef.current);
         openingUnlockFallbackRef.current = null;
       }
     };
-  }, [phase]);
+  }, [phase, finishOpeningAnimation]);
 
   useEffect(() => {
     if (phase !== "bootstrapping_cloud") return;
@@ -1394,36 +1395,36 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     function handleOpeningKeyDown(event: KeyboardEvent): void {
       if (event.key === "Enter") {
         event.preventDefault();
-        finishOpeningVideo();
+        finishOpeningAnimation();
       }
     }
 
     window.addEventListener("keydown", handleOpeningKeyDown);
     return () => window.removeEventListener("keydown", handleOpeningKeyDown);
-  }, [phase, finishOpeningVideo]);
+  }, [phase, finishOpeningAnimation]);
 
   useEffect(() => {
-    if (phase !== "bootstrapping_cloud" || !openingVideoDone || bootstrapReady) return;
+    if (phase !== "bootstrapping_cloud" || !openingAnimationDone || bootstrapReady) return;
 
     const timeout = window.setTimeout(() => setBootstrapReady(true), 2500);
     return () => window.clearTimeout(timeout);
-  }, [phase, openingVideoDone, bootstrapReady]);
+  }, [phase, openingAnimationDone, bootstrapReady]);
 
   useEffect(() => {
     if (
       phase !== "bootstrapping_cloud" ||
-      !openingVideoDone ||
+      !openingAnimationDone ||
       !bootstrapReady ||
-      openingVideoExiting
+      openingExiting
     ) {
       return;
     }
 
-    setOpeningVideoExiting(true);
-  }, [phase, openingVideoDone, bootstrapReady, openingVideoExiting]);
+    setOpeningExiting(true);
+  }, [phase, openingAnimationDone, bootstrapReady, openingExiting]);
 
   useEffect(() => {
-    if (phase !== "bootstrapping_cloud" || !openingVideoExiting) return;
+    if (phase !== "bootstrapping_cloud" || !openingExiting) return;
 
     const timeout = window.setTimeout(() => {
       if (openingUnlockFallbackRef.current !== null) {
@@ -1431,9 +1432,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
         openingUnlockFallbackRef.current = null;
       }
       setPhase("unlocked");
-    }, 650);
+    }, OPENING_EXIT_MS);
     return () => window.clearTimeout(timeout);
-  }, [phase, openingVideoExiting]);
+  }, [phase, openingExiting]);
 
   useEffect(() => {
     if (!desktopApi || phase !== "bootstrapping_cloud") return;
@@ -2831,59 +2832,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
   }
 
   if (phase === "bootstrapping_cloud") {
-    return (
-      <main style={styles.openingVideoScreen}>
-        <video
-          src="midia/kyberrockvideo.mp4"
-          autoPlay
-          muted
-          playsInline
-          preload="auto"
-          onLoadedMetadata={(event) => {
-            const duration = event.currentTarget.duration;
-            if (Number.isFinite(duration) && duration > 0) {
-              if (openingVideoFallbackRef.current !== null) {
-                window.clearTimeout(openingVideoFallbackRef.current);
-              }
-              openingVideoFallbackRef.current = window.setTimeout(
-                finishOpeningVideo,
-                Math.ceil(duration * 1000) + 600
-              );
-            }
-          }}
-          onTimeUpdate={(event) => {
-            const video = event.currentTarget;
-            if (Number.isFinite(video.duration) && video.duration > 0) {
-              if (video.currentTime >= video.duration - 0.12) finishOpeningVideo();
-            }
-          }}
-          onEnded={finishOpeningVideo}
-          onError={finishOpeningVideo}
-          style={{
-            ...styles.openingVideo,
-            opacity: openingVideoExiting ? 0 : 1,
-            transform: openingVideoExiting ? "scale(1.025)" : "scale(1)"
-          }}
-        />
-        <button
-          type="button"
-          onClick={finishOpeningVideo}
-          style={{
-            ...styles.openingSkipButton,
-            opacity: openingVideoExiting ? 0 : 1
-          }}
-        >
-          Aperte Enter para pular
-        </button>
-        <div
-          style={{
-            ...styles.openingVideoFade,
-            opacity: openingVideoExiting ? 1 : 0
-          }}
-        />
-        <span style={styles.visuallyHidden}>{cloudBootstrapStatus.title}</span>
-      </main>
-    );
+    return <OpeningAnimation exiting={openingExiting} statusTitle={cloudBootstrapStatus.title} />;
   }
 
   if (!desktopApi) {
@@ -14006,59 +13955,6 @@ const styles = {
     background: "var(--kr-surface)",
     border: "1px solid var(--kr-border)",
     boxShadow: "var(--kr-shadow)"
-  },
-  openingVideoScreen: {
-    position: "fixed" as const,
-    inset: 0,
-    width: "100vw",
-    height: "100vh",
-    overflow: "hidden" as const,
-    background: "#020617",
-    display: "grid",
-    placeItems: "center",
-    zIndex: 9999
-  },
-  openingVideo: {
-    width: "100%",
-    height: "100%",
-    objectFit: "cover" as const,
-    transition: "opacity 620ms ease, transform 620ms ease"
-  },
-  openingSkipButton: {
-    position: "absolute" as const,
-    left: "50%",
-    bottom: "28px",
-    transform: "translateX(-50%)",
-    border: "1px solid rgba(255,255,255,0.32)",
-    borderRadius: "999px",
-    padding: "10px 18px",
-    background: "rgba(2, 6, 23, 0.46)",
-    color: "#ffffff",
-    fontSize: "13px",
-    fontWeight: 800,
-    letterSpacing: "0.02em",
-    cursor: "pointer",
-    backdropFilter: "blur(10px)",
-    boxShadow: "0 14px 34px rgba(0,0,0,0.28)",
-    transition: "opacity 220ms ease, background 160ms ease"
-  },
-  openingVideoFade: {
-    position: "absolute" as const,
-    inset: 0,
-    background: "#020617",
-    pointerEvents: "none" as const,
-    transition: "opacity 620ms ease"
-  },
-  visuallyHidden: {
-    position: "absolute" as const,
-    width: "1px",
-    height: "1px",
-    padding: 0,
-    margin: "-1px",
-    overflow: "hidden" as const,
-    clip: "rect(0, 0, 0, 0)",
-    whiteSpace: "nowrap" as const,
-    border: 0
   },
   entryShell: {
     // flex 1 + minHeight 0: preenche o contentBody para os 3 cards descerem ate o
