@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { DesktopDatabase } from "../database/sqlite";
 import { writeLocalSetting } from "./local-settings";
-import { priceCodeForStep, priceCodeStep } from "./price-code";
+import { applyPriceUnlockFromCloud, priceCodeForStep, priceCodeStep } from "./price-code";
 import { DesktopRuntime, SPECIAL_PRICE_PASSWORD_REJECTED } from "./runtime";
 
 /**
@@ -97,6 +97,51 @@ describe("Preco especial com a senha do comercial", () => {
         })
       ).toThrow(SPECIAL_PRICE_PASSWORD_REJECTED);
       expect(specialPrices(database)).toEqual([]);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("liberada pelo comercial, grava sem senha ate o prazo vencer", async () => {
+    const { runtime, database } = createRuntime(tempDirectories);
+    try {
+      const input = { customerId: "customer-1", productId: "product-1", unitPriceCents: 6500 };
+      applyPriceUnlockFromCloud(database, {
+        indefinite: false,
+        until: new Date(Date.now() + 30 * 60_000).toISOString()
+      });
+      expect(await runtime.getPriceUnlockStatus()).toMatchObject({ indefinite: false });
+      expect(runtime.verifyPriceChangePassword("")).toBe(true);
+      runtime.setCustomerSpecialPrice(input);
+      expect(specialPrices(database)).toEqual([6500]);
+
+      // 31 minutos depois a liberacao venceu: volta a pedir a senha.
+      vi.setSystemTime(Date.now() + 31 * 60_000);
+      expect(await runtime.getPriceUnlockStatus()).toBeNull();
+      expect(runtime.verifyPriceChangePassword("")).toBe(false);
+      expect(() => runtime.removeCustomerSpecialPrice("customer-1", "product-1")).toThrow(
+        SPECIAL_PRICE_PASSWORD_REJECTED
+      );
+      expect(specialPrices(database)).toEqual([6500]);
+    } finally {
+      runtime.close();
+    }
+  });
+
+  it("sem prazo vale ate o comercial voltar a pedir senha", () => {
+    const { runtime, database } = createRuntime(tempDirectories);
+    try {
+      applyPriceUnlockFromCloud(database, { indefinite: true, until: null });
+      // Dias depois (dentro do prazo offline da balanca), continua liberada.
+      vi.setSystemTime(Date.now() + 3 * 24 * 60 * 60_000);
+      runtime.removeCustomerSpecialPrice("customer-1", "product-1");
+      expect(runtime.verifyPriceChangePassword("")).toBe(true);
+
+      applyPriceUnlockFromCloud(database, null);
+      expect(runtime.verifyPriceChangePassword("")).toBe(false);
+      expect(() => runtime.removeCustomerSpecialPrice("customer-1", "product-1")).toThrow(
+        SPECIAL_PRICE_PASSWORD_REJECTED
+      );
     } finally {
       runtime.close();
     }

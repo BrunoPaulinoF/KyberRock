@@ -129,7 +129,7 @@ const WEB_OPERATION_POLL_INTERVAL_MS = 30_000;
 /** Balanca que nao e a executora so volta a perguntar se virou executora a cada 5 min. */
 const WEB_OPERATION_NON_EXECUTOR_RECHECK_MS = 5 * 60_000;
 import { readUpdateChannel, type DesktopUpdateChannel } from "./update-channel.js";
-import { verifyStoredPriceCode } from "./price-code.js";
+import { readPriceUnlock, verifyStoredPriceCode, type PriceUnlockStatus } from "./price-code.js";
 import { currentSpecialPriceCents, recordSpecialPriceChange } from "./price-change-log.js";
 import {
   checkCustomerOmieReadiness,
@@ -686,6 +686,9 @@ export interface StartWeighingInput {
   settleFromAdvance?: boolean;
   scaleCaptureId?: string;
 }
+
+/** Quanto a tela da senha espera a nuvem confirmar a liberacao antes de pedir a senha. */
+const PRICE_UNLOCK_REFRESH_TIMEOUT_MS = 5_000;
 
 /** Recusa da senha de preco especial (mesma frase da tela: `PRICE_CODE_REJECTED`). */
 export const SPECIAL_PRICE_PASSWORD_REJECTED =
@@ -3020,9 +3023,11 @@ export class DesktopRuntime {
   /**
    * A senha das acoes protegidas (preco, limpar historico, relatorio financeiro) e o codigo
    * rotativo de 45 s que o comercial ve no site (`services/price-code.ts`). A senha fixa antiga
-   * so vale enquanto esta balanca ainda nao recebeu a chave da nuvem.
+   * so vale enquanto esta balanca ainda nao recebeu a chave da nuvem. Com a balanca liberada
+   * pelo comercial (`getPriceUnlockStatus`) qualquer coisa passa — inclusive nada digitado.
    */
   verifyPriceChangePassword(password: string): boolean {
+    if (readPriceUnlock(this.database)) return true;
     const byCode = verifyStoredPriceCode(this.database, password);
     if (byCode !== null) return byCode;
     const identity = this.ensureIdentity();
@@ -3031,6 +3036,31 @@ export class DesktopRuntime {
       .get(identity.companyId) as { price_change_password: string } | undefined;
     if (!row) return false;
     return safeStringEquals(row.price_change_password, password);
+  }
+
+  /**
+   * O comercial liberou esta balanca sem a senha de preco (tela "Senha de preco" do site)?
+   * `null` = pede senha. Com `refresh`, pergunta a nuvem antes de responder (no maximo
+   * `PRICE_UNLOCK_REFRESH_TIMEOUT_MS`): e o que faz o "liberei, pode tentar" do comercial valer
+   * na hora, sem esperar o ping de 30 s. Sem internet, responde pelo que ja sabia.
+   */
+  async getPriceUnlockStatus(refresh = false): Promise<PriceUnlockStatus | null> {
+    if (refresh) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          this.validateDesktopAccess(undefined, true),
+          new Promise((resolve) => {
+            timer = setTimeout(resolve, PRICE_UNLOCK_REFRESH_TIMEOUT_MS);
+          })
+        ]);
+      } catch {
+        // Sem nuvem: vale o que ja estava gravado.
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+    return readPriceUnlock(this.database);
   }
 
   close(): void {
@@ -4250,6 +4280,7 @@ export class DesktopRuntime {
   }
 
   private assertSpecialPricePassword(password: string | undefined): void {
+    if (readPriceUnlock(this.database)) return;
     const typed = typeof password === "string" ? password.trim() : "";
     if (!typed || !this.verifyPriceChangePassword(typed)) {
       throw new Error(SPECIAL_PRICE_PASSWORD_REJECTED);

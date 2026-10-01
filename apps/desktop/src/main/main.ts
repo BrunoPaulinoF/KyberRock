@@ -1909,6 +1909,11 @@ function registerIpcHandlers(): void {
     return runtime.verifyPriceChangePassword(password);
   });
 
+  ipcMain.handle("desktop:price-unlock-status", (_event, refresh?: boolean) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getPriceUnlockStatus(refresh === true);
+  });
+
   ipcMain.handle("desktop:get-omie-status", () => {
     if (!runtime) throw new Error("Desktop runtime is not ready.");
     return runtime.getOmieSyncStatus();

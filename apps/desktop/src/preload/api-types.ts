@@ -735,6 +735,13 @@ export interface KyberRockDesktopApi {
   virtualScaleSetWeight: (weightKg: number) => Promise<void>;
   virtualScaleConnect: () => Promise<void>;
   verifyPriceChangePassword: (password: string) => Promise<boolean>;
+  /**
+   * O comercial liberou a balanca sem a senha de preco? `null` = pede senha. `refresh` pergunta a
+   * nuvem antes (ate 5 s), para a liberacao recem-dada valer na hora.
+   */
+  getPriceUnlockStatus: (
+    refresh?: boolean
+  ) => Promise<{ indefinite: boolean; until: string | null } | null>;
   omieConfig: () => Promise<{ configured: boolean; appKeyMasked: string | null }>;
   omieSync: () => Promise<{
     customersPulled: number;

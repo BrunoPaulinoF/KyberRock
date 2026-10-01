@@ -53,7 +53,8 @@ export type WebApiAction =
   | "lookup_cnpj"
   | "customer_balance"
   | "lookup_future_billing_invoice"
-  | "price_code";
+  | "price_code"
+  | "set_price_unlock";
 
 export class WebApiError extends Error {
   constructor(

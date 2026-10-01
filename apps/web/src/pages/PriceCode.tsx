@@ -5,6 +5,8 @@ import {
   CheckCircle2,
   Copy,
   ListChecks,
+  Lock,
+  LockOpen,
   ShieldCheck,
   Tag,
   Trash2,
@@ -14,14 +16,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DeskPanel } from "../components/desk";
 import { PriceHistory } from "../components/PriceHistory";
-import { ErrorState, PageHeader, Pill, Skeleton, useToast } from "../components/ui";
+import { ErrorState, PageHeader, Pill, Skeleton, useConfirm, useToast } from "../components/ui";
 import { callWebApi, errorMessage } from "../lib/api";
 import {
   formatPriceCode,
+  isUnlockActive,
+  PRICE_UNLOCK_OPTIONS,
   readPriceCode,
+  readPriceUnlock,
   secondsLeft,
+  unlockTimeLeft,
   type PriceCodeResponse,
-  type PriceCodeState
+  type PriceCodeState,
+  type PriceUnlock
 } from "../lib/price-code";
 
 /** Nova tentativa quando a busca falha (sem internet, nuvem fora do ar). */
@@ -41,6 +48,8 @@ const DIGIT_SKELETON = ["d0", "d1", "d2", "gap", "d3", "d4", "d5"];
 export function PriceCodePage() {
   const toast = useToast();
   const [state, setState] = useState<PriceCodeState | null>(null);
+  // Liberacao da balanca sem senha. `undefined` = a nuvem ainda nao tem a opcao (cartao some).
+  const [unlock, setUnlock] = useState<PriceUnlock | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const fetching = useRef(false);
@@ -54,6 +63,7 @@ export function PriceCodePage() {
       const next = readPriceCode(result as unknown as Partial<PriceCodeResponse>, Date.now());
       if (!next) throw new Error("A nuvem respondeu sem a senha. Tente de novo.");
       setState(next);
+      setUnlock(readPriceUnlock(result.unlock));
       setError(null);
     } catch (loadError) {
       setError(errorMessage(loadError, "Não foi possível buscar a senha."));
@@ -189,6 +199,15 @@ export function PriceCodePage() {
           </section>
 
           <div className="pc-info">
+            {unlock !== undefined && (
+              <PriceUnlockCard
+                unlock={unlock}
+                now={now}
+                clockOffsetMs={state?.clockOffsetMs ?? 0}
+                onChange={setUnlock}
+              />
+            )}
+
             <section className="pc-card">
               <h2>
                 <ListChecks size={16} aria-hidden="true" /> Como usar
@@ -257,5 +276,144 @@ export function PriceCodePage() {
         <PriceHistory />
       </div>
     </DeskPanel>
+  );
+}
+
+/** Hora curta ("15:30"), com o dia quando nao e hoje ("02/10 às 02:00"). */
+function formatUnlockTime(iso: string, nowMs: number): string {
+  const date = new Date(iso);
+  const time = date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  if (date.toDateString() === new Date(nowMs).toDateString()) return time;
+  return `${date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} às ${time}`;
+}
+
+/**
+ * Liberar a balanca sem senha (acao `set_price_unlock`): por um tempo ou sem prazo, e voltar a
+ * pedir a senha quando quiser. Vale para todas as balancas da pedreira; o site nao muda.
+ */
+function PriceUnlockCard({
+  unlock,
+  now,
+  clockOffsetMs,
+  onChange
+}: {
+  unlock: PriceUnlock | null;
+  now: number;
+  clockOffsetMs: number;
+  onChange: (next: PriceUnlock | null) => void;
+}) {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [choice, setChoice] = useState("30");
+  const [busy, setBusy] = useState(false);
+  const active = isUnlockActive(unlock, now, clockOffsetMs) ? unlock : null;
+
+  async function save(payload: Record<string, unknown>, done: string) {
+    setBusy(true);
+    try {
+      const result = await callWebApi("set_price_unlock", payload);
+      onChange(readPriceUnlock(result.unlock) ?? null);
+      toast.push(done);
+    } catch (saveError) {
+      toast.push(errorMessage(saveError, "Não foi possível mudar a liberação."), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function release() {
+    const option = PRICE_UNLOCK_OPTIONS.find((item) => item.value === choice);
+    if (!option) return;
+    if (option.minutes === null) {
+      const ok = await confirm({
+        title: "Liberar a balança sem prazo?",
+        message:
+          "A balança não vai pedir a senha até você voltar aqui e clicar em “Voltar a pedir senha”.",
+        confirmLabel: "Liberar sem prazo"
+      });
+      if (!ok) return;
+      await save({ mode: "indefinite" }, "Balança liberada sem prazo.");
+      return;
+    }
+    await save(
+      { mode: "minutes", minutes: option.minutes },
+      `Balança liberada por ${option.label}.`
+    );
+  }
+
+  return (
+    <section className={`pc-card pc-unlock${active ? " on" : ""}`}>
+      <h2>
+        {active ? <LockOpen size={16} aria-hidden="true" /> : <Lock size={16} aria-hidden="true" />}{" "}
+        Liberar a balança sem senha
+      </h2>
+
+      {active ? (
+        <div className="pc-unlock-status" role="status">
+          <Pill tone="success">
+            {active.indefinite
+              ? "Liberada sem prazo"
+              : `Liberada até ${formatUnlockTime(active.until ?? "", now)}`}
+          </Pill>
+          {!active.indefinite && active.until && (
+            <span className="pc-unlock-left">
+              {unlockTimeLeft(active.until, now, clockOffsetMs)}
+            </span>
+          )}
+        </div>
+      ) : (
+        <div className="pc-unlock-status" role="status">
+          <Pill>Pedindo senha</Pill>
+        </div>
+      )}
+
+      <p>
+        {active
+          ? `${active.byName ? `Liberada por ${active.byName}. ` : ""}A balança não pede a senha para mudar preço, limpar operações e liberar o relatório financeiro.`
+          : "Escolha um tempo para a balança não pedir a senha. Quando acabar, ela volta a pedir sozinha."}
+      </p>
+
+      <div className="pc-unlock-actions">
+        <label className="pc-unlock-field">
+          <span>{active ? "Trocar o tempo" : "Liberar por"}</span>
+          <select
+            className="select"
+            value={choice}
+            onChange={(event) => setChoice(event.target.value)}
+            disabled={busy}
+          >
+            {PRICE_UNLOCK_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          className="btn primary"
+          onClick={() => void release()}
+          disabled={busy}
+        >
+          <LockOpen size={15} />
+          {active ? "Trocar" : "Liberar"}
+        </button>
+        {active && (
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void save({ mode: "off" }, "A balança voltou a pedir a senha.")}
+            disabled={busy}
+          >
+            <Lock size={15} />
+            Voltar a pedir senha
+          </button>
+        )}
+      </div>
+
+      <p className="pc-unlock-note">
+        Vale para todas as balanças da pedreira. No site, a senha continua sendo pedida.
+      </p>
+    </section>
   );
 }

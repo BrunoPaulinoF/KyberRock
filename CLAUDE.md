@@ -127,7 +127,10 @@ These recur across the codebase and are easy to violate accidentally:
   `apps/desktop/src/services/price-code.ts`, testadas contra os mesmos valores: mudou uma, mude a
   outra. A balanca recebe a chave no `desktop-status` e confere offline, com o relogio corrigido
   pelo da nuvem. So vale o codigo da janela atual; a senha fixa antiga
-  (`companies.price_change_password`) so vale enquanto a chave nao chegou.
+  (`companies.price_change_password`) so vale enquanto a chave nao chegou. Na mesma tela o
+  comercial pode **liberar a balanca sem senha** por um tempo ou sem prazo (`price_unlocks`,
+  migracao `202610010001`, acao `set_price_unlock`): o `desktop-status` leva `priceUnlock` e o
+  runtime da balanca aceita sem senha enquanto valer, conferindo o prazo offline. O site nao muda.
 - **Data ownership is split**: KyberRock owns operations, coupons, prices, vehicles/drivers and
   loading requests; OMIE owns customer/product/payment cadastros — OMIE-owned fields are locked
   locally. See the ownership table in `docs/ARCHITECTURE.md`.

@@ -1297,6 +1297,78 @@ describe("web-api: senha rotativa de preco", () => {
   });
 });
 
+describe("web-api: liberar a balanca sem senha", () => {
+  function commercial(role: WebSession["role"] = "comercial") {
+    const h = harness({ role });
+    h.store.seed("company_price_codes", [{ company_id: COMPANY, secret: "12345678901234567890" }]);
+    return h;
+  }
+
+  it("o comercial libera por um tempo e a tela ve ate quando e quem liberou", async () => {
+    const h = commercial();
+    const result = await h.call("set_price_unlock", { mode: "minutes", minutes: 30 });
+    expect(result.status).toBe(200);
+    expect(result.body.unlock).toEqual({
+      indefinite: false,
+      until: "2026-09-22T15:30:00.000Z",
+      byName: "Rafaela",
+      at: NOW
+    });
+    const code = await h.call("price_code");
+    expect(code.body.unlock).toMatchObject({
+      indefinite: false,
+      until: "2026-09-22T15:30:00.000Z"
+    });
+  });
+
+  it("sem prazo vale ate voltar a pedir senha, e cada mudanca fica no historico", async () => {
+    const h = commercial();
+    await h.call("set_price_unlock", { mode: "indefinite" });
+    expect((await h.call("price_code")).body.unlock).toMatchObject({
+      indefinite: true,
+      until: null
+    });
+    // A proxima mudanca e mais recente (a hora do teste e fixa: a linha nova vem um pouco depois).
+    h.store.rows("price_unlocks")[0].created_at = "2026-09-22T14:00:00.000Z";
+    const off = await h.call("set_price_unlock", { mode: "off" });
+    expect(off.status).toBe(200);
+    expect(off.body.unlock).toBeNull();
+    expect((await h.call("price_code")).body.unlock).toBeNull();
+    expect(h.store.rows("price_unlocks")).toHaveLength(2);
+  });
+
+  it("prazo vencido volta a pedir senha", async () => {
+    const h = commercial();
+    h.store.seed("price_unlocks", [
+      {
+        id: "old",
+        company_id: COMPANY,
+        indefinite: false,
+        unlocked_until: "2026-09-22T14:59:00.000Z",
+        created_at: "2026-09-22T14:00:00.000Z"
+      }
+    ]);
+    expect((await h.call("price_code")).body.unlock).toBeNull();
+  });
+
+  it("so quem ve a senha pode dispensa-la", async () => {
+    for (const role of ["operacao", "gestor", "monitoramento"] as const) {
+      const result = await commercial(role).call("set_price_unlock", { mode: "indefinite" });
+      expect(result.status, role).toBe(403);
+    }
+    expect(
+      (await commercial("administrador").call("set_price_unlock", { mode: "indefinite" })).status
+    ).toBe(200);
+  });
+
+  it("recusa tempo invalido sem gravar nada", async () => {
+    const h = commercial();
+    const result = await h.call("set_price_unlock", { mode: "minutes", minutes: 0 });
+    expect(result.status).toBe(400);
+    expect(h.store.rows("price_unlocks")).toHaveLength(0);
+  });
+});
+
 describe("web-api: logs de suporte", () => {
   function seeded(role: WebSession["role"] = "administrador") {
     const h = harness({ role });

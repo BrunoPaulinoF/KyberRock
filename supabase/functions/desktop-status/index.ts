@@ -5,6 +5,7 @@ import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 import { deviceHealthColumns, normalizeDeviceHealth } from "../_shared/device-health.ts";
 import { orderedTouchAttempts, shouldWriteDeviceTouch } from "../_shared/device-touch.ts";
 import { isUsablePriceCodeSecret } from "../_shared/price-code.ts";
+import { activePriceUnlock } from "../_shared/price-unlock.ts";
 import {
   resolveUpdateNotice,
   type DeliveredUpdateNotice
@@ -351,6 +352,19 @@ Deno.serve(async (req) => {
   const storedSecret: unknown = priceCodeRow?.secret;
   const priceCodeSecret = isUsablePriceCodeSecret(storedSecret) ? storedSecret : undefined;
 
+  // Balanca liberada sem a senha de preco pelo comercial (`_shared/price-unlock.ts`). Vai o estado
+  // ja conferido contra a hora da nuvem: `null` = pede senha. Leitura que falhou (tabela nova,
+  // migracao pendente) OMITE o campo, e a balanca mantem o que ja sabia.
+  const { data: priceUnlockRows, error: priceUnlockError } = await supabase
+    .from("price_unlocks")
+    .select("indefinite, unlocked_until")
+    .eq("company_id", typedDevice.company_id)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const priceUnlock = priceUnlockError
+    ? undefined
+    : activePriceUnlock(priceUnlockRows?.[0], Date.parse(checkedAt));
+
   return jsonResponse({
     status: "approved",
     allowed: true,
@@ -389,6 +403,13 @@ Deno.serve(async (req) => {
     unitDevices: unitDevices ?? [],
     // Ausente = nuvem sem a chave ainda: a balanca mantem o que ja sabia (ou a senha fixa).
     ...(priceCodeSecret ? { priceCodeSecret } : {}),
+    ...(priceUnlock === undefined
+      ? {}
+      : {
+          priceUnlock: priceUnlock
+            ? { indefinite: priceUnlock.indefinite, until: priceUnlock.until }
+            : null
+        }),
     checkedAt
   });
 });
