@@ -13,6 +13,7 @@ export const SCREEN_MODULES = {
   "senha-preco": () => import("../pages/PriceCode"),
   cupons: () => import("../pages/Receipts"),
   comercial: () => import("../pages/Comercial"),
+  "ranking-clientes": () => import("../pages/CustomerRanking"),
   insights: () => import("../pages/Insights"),
   "controle-caminhoes": () => import("../pages/TruckControl"),
   "relatorio-cliente": () => import("../pages/CustomerReport"),

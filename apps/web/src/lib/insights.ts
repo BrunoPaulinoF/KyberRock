@@ -630,15 +630,20 @@ function renderTotalBar(items: Array<{ label: string; value: string; emphasis?: 
   return `<table cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;margin-top:18px;background:#1d4ed8;color:#fff;border-radius:10px;break-inside:avoid;page-break-inside:avoid"><tbody><tr><td style="${cell};font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;white-space:nowrap">Total do periodo</td>${cells}</tr></tbody></table>`;
 }
 
-/** O "Painel de Insights" A4 do botao Exportar PDF (`exportInsightsToHtml`). */
+/**
+ * O "Painel de Insights" A4 do botao Exportar PDF (`exportInsightsToHtml`). `topProductsCount`
+ * e quantos produtos a tabela "Top produtos por peso" leva: 5, como no desktop, ou o que a
+ * barrinha do grafico da tela estiver mostrando.
+ */
 export function insightsReportHtml(
   operations: InsightsOperation[],
   range: InsightsDateRange,
   productCodes: ReadonlyMap<string, string> = new Map(),
-  generatedAt: Date = new Date()
+  generatedAt: Date = new Date(),
+  topProductsCount = 5
 ): string {
   const series = dailySeries(operations, range);
-  const topProducts = reportByProduct(operations, range, productCodes).slice(0, 5);
+  const topProducts = reportByProduct(operations, range, productCodes).slice(0, topProductsCount);
   const topCustomers = reportByCustomer(operations, range).slice(0, 10);
   const mix = operationMix(operations, range);
   const { operations: count, weightKg, totalCents, ticketCents } = seriesTotals(series);
@@ -744,7 +749,7 @@ tfoot td{font-weight:bold;background:#eef2ff;border-top:2px solid var(--brand)}
   )}</div></div>
 <div class="kpis">${kpiCards}</div>
 <section><h2>Mix de operacoes</h2><table><thead><tr><th>Tipo</th><th class="num">Operacoes</th><th class="num">% oper.</th><th class="num">Peso</th><th class="num">Faturamento</th></tr></thead><tbody>${mixBody}</tbody></table></section>
-<section><h2>Top 5 produtos por peso</h2><table><thead><tr><th class="num">#</th><th>Produto</th><th>Codigo</th><th class="num">Operacoes</th><th class="num">Peso</th><th class="num">Valor produto</th></tr></thead><tbody>${productsBody}</tbody></table></section>
+<section><h2>Top ${topProductsCount} produtos por peso</h2><table><thead><tr><th class="num">#</th><th>Produto</th><th>Codigo</th><th class="num">Operacoes</th><th class="num">Peso</th><th class="num">Valor produto</th></tr></thead><tbody>${productsBody}</tbody></table></section>
 <section><h2>Vendas por cliente</h2><table><thead><tr><th class="num">#</th><th>Cliente</th><th class="num">Operacoes</th><th class="num">Peso</th><th class="num">Preco medio</th><th class="num">Total</th></tr></thead><tbody>${customersBody}</tbody></table></section>
 <section><h2>Evolucao diaria</h2><table><thead><tr><th>Data</th><th class="num">Operacoes</th><th class="num">Peso liquido</th><th class="num">Faturamento</th></tr></thead><tbody>${seriesBody}</tbody><tfoot><tr><td>Total</td><td class="num">${count.toLocaleString(
     "pt-BR"

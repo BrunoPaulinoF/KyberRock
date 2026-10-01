@@ -4,11 +4,12 @@ import { COMERCIAL_SHORTCUTS, comercialShortcuts } from "./comercial-shortcuts";
 import { ROLES, canSee } from "./permissions";
 
 describe("atalhos da aba Comercial", () => {
-  it("o comercial ve os quatro, na ordem da fileira", () => {
+  it("o comercial ve os cinco, na ordem da fileira", () => {
     expect(comercialShortcuts("comercial").map((shortcut) => shortcut.label)).toEqual([
       "Clientes",
       "Preços",
       "Senha de preço",
+      "Ranking de clientes",
       "Relatório por cliente"
     ]);
   });
@@ -19,7 +20,7 @@ describe("atalhos da aba Comercial", () => {
         expect(canSee(role, shortcut.screen)).toBe(true);
       }
     }
-    // O gestor nao ve a senha de preco; o carregador e o monitoramento, nada.
+    // O gestor nao ve a senha de preco nem o ranking; o carregador e o monitoramento, nada.
     expect(comercialShortcuts("gestor").map((shortcut) => shortcut.id)).toEqual([
       "clientes",
       "precos",

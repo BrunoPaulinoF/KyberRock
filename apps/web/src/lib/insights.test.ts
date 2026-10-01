@@ -309,6 +309,22 @@ describe("exportacao", () => {
     expect(html).toContain("R$ 700,00");
   });
 
+  it("PDF leva quantos produtos a barrinha da tela estiver mostrando", () => {
+    const many = Array.from({ length: 8 }, (_, i) =>
+      op({
+        product_id: `p${i}`,
+        product_description: `PRODUTO ${i}`,
+        net_weight_kg: 1000 * (i + 1)
+      })
+    );
+    const html = insightsReportHtml(many, range, new Map(), new Date("2026-09-12T12:00:00Z"), 7);
+    expect(html).toContain("Top 7 produtos por peso");
+    expect(html).toContain("PRODUTO 7");
+    expect(html).toContain("PRODUTO 1");
+    // O mais leve (PRODUTO 0) fica de fora dos 7 primeiros.
+    expect(html).not.toContain("PRODUTO 0");
+  });
+
   it("planilha traz as cargas com preco por tonelada", () => {
     const html = rangeSpreadsheetHtml(ops, range, new Date("2026-09-12T12:00:00Z"));
     expect(html).toContain("Carregamentos do periodo");

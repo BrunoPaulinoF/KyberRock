@@ -524,13 +524,19 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   `homeFor`; o app instalado abre no `/login`), `/whatsapp/:token` e publica, e `/admin` e o
   painel da plataforma, com login proprio (ver "Painel administrativo"). Nenhuma das tres passa
   pelo `only`/`Private`.
-- `monitoramento` so ve `/monitoramento`; `comercial` a aba `/comercial`, as cinco telas de
-  analise, Cadastros, `/cupons`, `/senha-preco` e tambem `/monitoramento` (abre em tela cheia, com
-  "Voltar ao sistema" no lugar do "Sair"). `/comercial` e **so** do comercial; `/monitoramento` e
-  do perfil de mesmo nome e do comercial. `gestor` e `operacao` veem todo o resto (com `/cupons`, que nao existe no
+- `monitoramento` so ve `/monitoramento`; `comercial` a aba `/comercial`, o `/ranking-clientes`,
+  as cinco telas de analise, Cadastros, `/cupons`, `/senha-preco` e tambem `/monitoramento` (abre
+  em tela cheia, com "Voltar ao sistema" no lugar do "Sair"). `/comercial` e `/ranking-clientes`
+  sao **so** do comercial; `/monitoramento` e do perfil de mesmo nome e do comercial. `gestor` e `operacao` veem todo o resto (com `/cupons`, que nao existe no
   desktop); `administrador` o mesmo mais `/suporte` (Logs) e `/senha-preco`.
   So gestor, operacao e administrador tem a engrenagem de configuracoes; os outros tem so o botao
   Sair.
+- **Ranking de clientes** (`/ranking-clientes`, `pages/CustomerRanking.tsx`, contas em
+  `lib/customer-ranking.ts`): quem mais comprou no periodo, por faturamento (`total_cents`,
+  produto + frete), peso ou cargas, comparado com o periodo anterior — o mesmo tanto de dias logo
+  antes, ou o MESMO pedaco do mes/ano anterior em "Mes atual" e "Ano atual". Le a EMPRESA inteira
+  (como o relatorio de vendas da aba Comercial) e recorta pelo dia do FECHAMENTO, como todo
+  relatorio de dinheiro. Curva ABC pelo acumulado ANTES do cliente (o 1o e sempre A).
 - O que cada perfil **grava** mora na `web-api` (`_shared/web-session.ts`, `actionDenial` no
   `handler.ts`) — esconder a tela nao protege nada. O monitoramento so consulta; o comercial
   grava todo o cadastro (cliente, bloco comercial, frota e preco), mas nao pesa nem mexe em
