@@ -5,8 +5,8 @@ import { describePaymentCondition } from "./payment-condition-helpers";
 /**
  * Legenda do campo de condicao de pagamento: mostra o que o texto digitado gera
  * (previa) e como escrever cada formato aceito. Os prazos abaixo sao os mesmos que
- * seguem para o OMIE — um periodo ("s+20") e so uma forma curta de escrever o prazo
- * em dias, e a parcela cai exatamente no mesmo dia.
+ * seguem para o OMIE. Um periodo ("q+15") conta do FIM do periodo em que a venda caiu,
+ * entao a previa mostra a data em que a venda de hoje venceria.
  *
  * A previa fica sempre a vista (e ela que responde ao que esta sendo digitado); a
  * tabela de formatos vive dentro de um "Como escrever" recolhido, para a legenda
@@ -21,12 +21,12 @@ export const PAYMENT_CONDITION_FORMATS: readonly PaymentConditionFormat[] = [
   { example: "30", meaning: "so o numero = 1 parcela 30 dias apos a venda" },
   { example: "7 14 21", meaning: "3 parcelas nesses prazos (igual a 7/14/21)" },
   { example: "3 parcelas", meaning: "3 parcelas mensais (30, 60 e 90 dias)" },
-  { example: "s + 20", meaning: "semana (7) + 20 dias = 1 parcela em 27 dias" },
-  { example: "d + 20", meaning: "dezena (10) + 20 dias = 1 parcela em 30 dias" },
-  { example: "q + 20", meaning: "quinzena (15) + 20 dias = 1 parcela em 35 dias" },
-  { example: "m + 20", meaning: "mes (30) + 20 dias = 1 parcela em 50 dias" },
-  { example: "2s / 3m", meaning: "multiplo do periodo: 2 semanas (14) e 3 meses (90)" },
-  { example: "s+20/d+20", meaning: "periodos na lista = 2 parcelas (27 e 30 dias)" },
+  { example: "q + 15", meaning: "fim da quinzena + 15 dias: venda de 01 a 15 vence dia 30" },
+  { example: "m + 10", meaning: "fim do mes + 10 dias: vence dia 10 do mes seguinte" },
+  { example: "d + 20", meaning: "fim da dezena (dia 10, 20 ou ultimo) + 20 dias" },
+  { example: "s + 20", meaning: "fim da semana (domingo) + 20 dias" },
+  { example: "2q", meaning: "fim da quinzena seguinte a da venda" },
+  { example: "q/q+15", meaning: "periodos na lista = 2 parcelas" },
   { example: "A Vista", meaning: "sem prazo; o campo vazio tambem vale a vista" }
 ];
 
@@ -108,9 +108,9 @@ export function PaymentConditionLegend({ value, style }: PaymentConditionLegendP
           ))}
         </ul>
         <p style={{ margin: "6px 0 0 0" }}>
-          Periodos: <strong>s</strong> = semana (7 dias), <strong>d</strong> = dezena (10 dias),{" "}
-          <strong>q</strong> = quinzena (15 dias), <strong>m</strong> = mes (30 dias). As parcelas
-          vao para o OMIE nos mesmos dias.
+          Periodos: <strong>s</strong> = semana (segunda a domingo), <strong>d</strong> = dezena
+          (1-10, 11-20, 21-fim), <strong>q</strong> = quinzena (1-15, 16-fim), <strong>m</strong> =
+          mes. O prazo conta do fim do periodo em que a venda caiu, e a data vai assim para o OMIE.
         </p>
       </details>
     </div>

@@ -7,6 +7,7 @@ import {
   isClosedOperationStatus
 } from "./weighing-operations.js";
 import { customerIdentityKey, resolveCustomerIdGroup } from "./customer-identity.js";
+import { conditionDueDaysForSale } from "./payment-condition-parser.js";
 
 /**
  * Relatorio por cliente: todos os dados das operacoes de um cliente num periodo
@@ -754,7 +755,8 @@ export class CustomerReportService {
            COALESCE(opt.installment_days_json, pt.installment_days_json) as term_days_json,
            COALESCE(opt.first_installment_days, pt.first_installment_days) as term_first_days,
            COALESCE(opt.installment_interval_days, pt.installment_interval_days) as term_interval_days,
-           COALESCE(opt.installment_count, pt.installment_count) as term_count
+           COALESCE(opt.installment_count, pt.installment_count) as term_count,
+           pt.rules_json as term_rules_json
          FROM weighing_operations o
          LEFT JOIN products p ON p.id = o.product_id
          LEFT JOIN vehicles v ON v.id = o.vehicle_id
@@ -778,7 +780,7 @@ export class CustomerReportService {
     for (const row of rows) {
       const customer = readCustomerKey(row);
       const baseDate = (row.exit_at ?? row.created_at).slice(0, 10);
-      const dueDays = resolveInstallmentDueDays(row);
+      const dueDays = resolveInstallmentDueDays(row, baseDate);
       const amounts = splitInstallmentAmounts(row.total_cents ?? 0, dueDays.length);
 
       dueDays.forEach((days, index) => {
@@ -835,6 +837,7 @@ interface InstallmentSourceRow extends CustomerColumns {
   term_first_days: number | null;
   term_interval_days: number | null;
   term_count: number | null;
+  term_rules_json: string | null;
 }
 
 /**
@@ -844,7 +847,11 @@ interface InstallmentSourceRow extends CustomerColumns {
  * quantidade de parcelas (manual da operacao tem precedencia, como no rotulo da lista
  * de operacoes) em intervalos mensais de 30 dias; sem nada disso, a vista (0 dias).
  */
-function resolveInstallmentDueDays(row: InstallmentSourceRow): number[] {
+function resolveInstallmentDueDays(row: InstallmentSourceRow, saleDate: string): number[] {
+  // Condicao em periodo ("q+15") vence no fim do periodo da venda mais os dias: o prazo
+  // depende da data, e e o mesmo calculo que vai para o pedido do OMIE.
+  const periodDays = conditionDueDaysForSale(conditionRaw(row.term_rules_json), saleDate);
+  if (periodDays) return periodDays;
   if (row.term_days_json) {
     try {
       const parsed = JSON.parse(row.term_days_json) as unknown;
@@ -869,6 +876,16 @@ function resolveInstallmentDueDays(row: InstallmentSourceRow): number[] {
   const count = row.manual_installments ?? termCount ?? 1;
   if (!Number.isInteger(count) || count <= 1) return [0];
   return Array.from({ length: count }, (_, index) => MONTHLY_INSTALLMENT_DAYS * (index + 1));
+}
+
+function conditionRaw(rulesJson: string | null): string | null {
+  if (!rulesJson) return null;
+  try {
+    const rules = JSON.parse(rulesJson) as { raw?: unknown };
+    return typeof rules.raw === "string" ? rules.raw : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Rotulo da condicao: parcelamento manual tem precedencia sobre a condicao cadastrada. */

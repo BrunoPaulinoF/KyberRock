@@ -2,7 +2,10 @@ import { readAllCacheRows } from "./cache-rows";
 
 import type { KyberRockDesktopApi } from "../preload/api-types";
 import type { PaymentTermCacheEntry } from "../services/cache-store";
-import { tryParsePaymentCondition } from "../services/payment-condition-parser";
+import {
+  installmentDueDaysForSale,
+  tryParsePaymentCondition
+} from "../services/payment-condition-parser";
 
 // As regras de comparacao moram em `services/`: a balanca executora tambem as usa ao resolver a
 // condicao digitada num pedido do site (`runtime.ts`), e o processo principal nao importa tela.
@@ -44,7 +47,10 @@ function formatDayList(days: number[]): string {
  * em linguagem de operador ("1 parcela em 27 dias apos a venda"). E a previa
  * mostrada na legenda do campo, para o operador conferir antes de capturar o peso.
  */
-export function describePaymentCondition(text: string): PaymentConditionPreview {
+export function describePaymentCondition(
+  text: string,
+  today: Date = new Date()
+): PaymentConditionPreview {
   const value = (text ?? "").trim();
   if (!value) {
     return { status: "empty", message: "Vazio = a vista (vencimento no dia da venda)." };
@@ -55,6 +61,23 @@ export function describePaymentCondition(text: string): PaymentConditionPreview 
     return {
       status: "invalid",
       message: "Condicao nao reconhecida. Use um dos formatos abaixo."
+    };
+  }
+
+  // Periodo ("q+15") conta do FIM do periodo da venda: o prazo muda com o dia, entao a
+  // previa mostra a data em que a venda de hoje venceria.
+  if (parsed.installments.some((installment) => installment.period)) {
+    const saleDate = localIsoDate(today);
+    const dates = installmentDueDaysForSale(parsed, saleDate).map((days) =>
+      dayMonthLabel(addDaysIso(saleDate, days))
+    );
+    const list =
+      dates.length === 1
+        ? dates[0]
+        : `${dates.slice(0, -1).join(", ")} e ${dates[dates.length - 1]}`;
+    return {
+      status: "ok",
+      message: `${parsed.summary.charAt(0).toUpperCase()}${parsed.summary.slice(1)}. Venda hoje (${dayMonthLabel(saleDate)}) vence em ${list}.`
     };
   }
 
@@ -107,4 +130,21 @@ export async function resolveConditionTermId(
     condition: parsed.raw
   })) as { id: string };
   return created.id;
+}
+
+/** yyyy-mm-dd do dia local (o dia que o operador ve no relogio). */
+function localIsoDate(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function addDaysIso(isoDate: string, days: number): string {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+/** "2026-10-30" -> "30/10". */
+function dayMonthLabel(isoDate: string): string {
+  return `${isoDate.slice(8, 10)}/${isoDate.slice(5, 7)}`;
 }

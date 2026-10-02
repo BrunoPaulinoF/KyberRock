@@ -61,6 +61,7 @@ import type {
 import { getFreightModalityInfo, type FreightRule } from "./desktop/freight";
 import { formatCouponNumber } from "./desktop/invoice-closing-cycle";
 import { invoiceNumberText } from "./desktop/invoice-number-label";
+import { conditionDueDaysForSale } from "./desktop/payment-condition-parser";
 import { localDay, normalizeDocument, periodToIso } from "./format";
 import type { ReportFile } from "./report-output";
 import { supabase, type Tables } from "./supabase";
@@ -386,7 +387,7 @@ interface IndexedLookups {
   products: Map<string, { code: string; description: string; unit: string }>;
   carriers: Map<string, { name: string; document: string | null }>;
   paymentMethods: Map<string, string>;
-  paymentTerms: Map<string, { name: string; dueDays: number[] }>;
+  paymentTerms: Map<string, { name: string; dueDays: number[]; raw: string | null }>;
 }
 
 export function indexLookups(lookups: ReportLookups): IndexedLookups {
@@ -398,7 +399,11 @@ export function indexLookups(lookups: ReportLookups): IndexedLookups {
     paymentTerms: new Map(
       lookups.paymentTerms.map((row) => [
         row.id,
-        { name: row.name, dueDays: dueDaysFromRules(row.rules_json) }
+        {
+          name: row.name,
+          dueDays: dueDaysFromRules(row.rules_json),
+          raw: rawFromRules(row.rules_json)
+        }
       ])
     )
   };
@@ -425,11 +430,36 @@ export function dueDaysFromRules(rules: unknown): number[] {
   return days.every((value) => Number.isInteger(value) && value >= 0) ? days : [0];
 }
 
+/** O texto da condicao (`rules_json.raw`), ou null quando ele nao veio. */
+export function rawFromRules(rules: unknown): string | null {
+  let parsed: unknown = rules;
+  if (typeof rules === "string") {
+    try {
+      parsed = JSON.parse(rules) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const raw = (parsed as { raw?: unknown }).raw;
+  return typeof raw === "string" ? raw : null;
+}
+
+/**
+ * Folga da leitura para a condicao em periodo ("q+15"): ela vence no FIM do periodo da
+ * venda mais os dias, e com multiplicador ("2m") pode passar alguns dias do prazo nominal.
+ */
+const PERIOD_LOOKBACK_MARGIN_DAYS = 31;
+
 /** O prazo mais longo entre as condicoes: quanto a leitura das parcelas precisa voltar. */
 export function maxDueDays(lookups: Pick<ReportLookups, "paymentTerms">): number {
   let max = 0;
   for (const term of lookups.paymentTerms) {
-    for (const days of dueDaysFromRules(term.rules_json)) max = Math.max(max, days);
+    const margin =
+      conditionDueDaysForSale(rawFromRules(term.rules_json), "2000-01-01") !== null
+        ? PERIOD_LOOKBACK_MARGIN_DAYS
+        : 0;
+    for (const days of dueDaysFromRules(term.rules_json)) max = Math.max(max, days + margin);
   }
   return max;
 }
@@ -604,7 +634,9 @@ export function buildInstallments(
     const baseDate = operationSaleDay(row);
     if (baseDate > endDate) continue;
     const term = row.payment_term_id ? lookups.paymentTerms.get(row.payment_term_id) : undefined;
-    const dueDays = term?.dueDays ?? [0];
+    // Condicao em periodo ("q+15") vence no fim do periodo da venda mais os dias — o mesmo
+    // calculo que a balanca manda para o pedido do OMIE.
+    const dueDays = term ? (conditionDueDaysForSale(term.raw, baseDate) ?? term.dueDays) : [0];
     const amounts = splitInstallmentAmounts(row.total_cents ?? 0, dueDays.length);
     const customer = readCustomerKey(row, lookups);
     const product = row.product_id ? lookups.products.get(row.product_id) : undefined;

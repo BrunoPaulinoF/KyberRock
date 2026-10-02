@@ -41,11 +41,17 @@ describe("describePaymentCondition", () => {
 
   it("explica o prazo unico digitado em dias ou em periodo", () => {
     expect(describePaymentCondition("30").message).toBe("1 parcela em 30 dias apos a venda.");
-    // "s+20" cai no mesmo dia que "27": periodo e so uma forma curta de escrever o prazo.
-    expect(describePaymentCondition("s + 20").message).toBe("1 parcela em 27 dias apos a venda.");
-    expect(describePaymentCondition("d+20").message).toBe("1 parcela em 30 dias apos a venda.");
-    expect(describePaymentCondition("q+20").message).toBe("1 parcela em 35 dias apos a venda.");
-    expect(describePaymentCondition("m+20").message).toBe("1 parcela em 50 dias apos a venda.");
+    // Periodo conta do fim do periodo da venda: a previa mostra a data da venda de hoje.
+    const today = new Date(2026, 9, 2);
+    expect(describePaymentCondition("q + 15", today).message).toBe(
+      "1 parcela no fim da quinzena + 15 dias. Venda hoje (02/10) vence em 30/10."
+    );
+    expect(describePaymentCondition("m+10", today).message).toBe(
+      "1 parcela no fim do mes + 10 dias. Venda hoje (02/10) vence em 10/11."
+    );
+    expect(describePaymentCondition("q/m+10", new Date(2026, 9, 20)).message).toBe(
+      "2 parcelas (fim da quinzena / fim do mes + 10 dias). Venda hoje (20/10) vence em 31/10 e 10/11."
+    );
   });
 
   it("explica o parcelamento em lista e por quantidade", () => {

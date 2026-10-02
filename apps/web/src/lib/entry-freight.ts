@@ -15,7 +15,10 @@ import {
   type FreightModality,
   type FreightRule
 } from "./desktop/freight";
-import { tryParsePaymentCondition } from "./desktop/payment-condition-parser";
+import {
+  installmentDueDaysForSale,
+  tryParsePaymentCondition
+} from "./desktop/payment-condition-parser";
 
 export type FreightCalculationType = "per_ton" | "per_ton_km" | "fixed_plus_ton";
 
@@ -274,12 +277,12 @@ export const PAYMENT_CONDITION_FORMATS: ReadonlyArray<{ example: string; meaning
   { example: "30", meaning: "só o número = 1 parcela 30 dias após a venda" },
   { example: "7 14 21", meaning: "3 parcelas nesses prazos (igual a 7/14/21)" },
   { example: "3 parcelas", meaning: "3 parcelas mensais (30, 60 e 90 dias)" },
-  { example: "s + 20", meaning: "semana (7) + 20 dias = 1 parcela em 27 dias" },
-  { example: "d + 20", meaning: "dezena (10) + 20 dias = 1 parcela em 30 dias" },
-  { example: "q + 20", meaning: "quinzena (15) + 20 dias = 1 parcela em 35 dias" },
-  { example: "m + 20", meaning: "mês (30) + 20 dias = 1 parcela em 50 dias" },
-  { example: "2s / 3m", meaning: "múltiplo do período: 2 semanas (14) e 3 meses (90)" },
-  { example: "s+20/d+20", meaning: "períodos na lista = 2 parcelas (27 e 30 dias)" },
+  { example: "q + 15", meaning: "fim da quinzena + 15 dias: venda de 01 a 15 vence dia 30" },
+  { example: "m + 10", meaning: "fim do mês + 10 dias: vence dia 10 do mês seguinte" },
+  { example: "d + 20", meaning: "fim da dezena (dia 10, 20 ou último) + 20 dias" },
+  { example: "s + 20", meaning: "fim da semana (domingo) + 20 dias" },
+  { example: "2q", meaning: "fim da quinzena seguinte à da venda" },
+  { example: "q/q+15", meaning: "períodos na lista = 2 parcelas" },
   { example: "A Vista", meaning: "sem prazo; o campo vazio também vale à vista" }
 ];
 
@@ -299,7 +302,10 @@ function formatDayList(days: number[]): string {
 }
 
 /** A previa embaixo do campo: o parcelamento que o texto digitado gera. */
-export function describePaymentCondition(text: string): {
+export function describePaymentCondition(
+  text: string,
+  today: Date = new Date()
+): {
   status: PaymentConditionPreviewStatus;
   message: string;
 } {
@@ -309,6 +315,23 @@ export function describePaymentCondition(text: string): {
   if (!parsed) {
     return { status: "invalid", message: "Condição não reconhecida. Use um dos formatos abaixo." };
   }
+  // Periodo ("q+15") conta do FIM do periodo da venda: o prazo muda com o dia, entao a
+  // previa mostra a data em que a venda de hoje venceria.
+  if (parsed.installments.some((installment) => installment.period)) {
+    const saleDate = localIsoDate(today);
+    const dates = installmentDueDaysForSale(parsed, saleDate).map((days) =>
+      dayMonthLabel(addDaysIso(saleDate, days))
+    );
+    const list =
+      dates.length === 1
+        ? dates[0]
+        : `${dates.slice(0, -1).join(", ")} e ${dates[dates.length - 1]}`;
+    return {
+      status: "ok",
+      message: `${parsed.summary.charAt(0).toUpperCase()}${parsed.summary.slice(1)}. Venda hoje (${dayMonthLabel(saleDate)}) vence em ${list}.`
+    };
+  }
+
   const days = parsed.installments.map((installment) => installment.dueDays);
   if (days.length === 1) {
     return {
@@ -330,4 +353,21 @@ export function conditionTextOf(rulesJson: unknown, name: string): string {
   const payload = asPayload(rulesJson);
   const raw = payload && typeof payload.raw === "string" ? payload.raw : "";
   return raw || name;
+}
+
+/** yyyy-mm-dd do dia local (o dia que o operador ve no relogio). */
+function localIsoDate(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function addDaysIso(isoDate: string, days: number): string {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+/** "2026-10-30" -> "30/10". */
+function dayMonthLabel(isoDate: string): string {
+  return `${isoDate.slice(8, 10)}/${isoDate.slice(5, 7)}`;
 }

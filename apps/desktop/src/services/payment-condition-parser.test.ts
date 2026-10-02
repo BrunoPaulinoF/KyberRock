@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   PaymentConditionParseError,
+  conditionDueDaysForSale,
+  installmentDueDaysForSale,
   parsePaymentCondition,
+  periodDueDate,
   tryParsePaymentCondition
 } from "./payment-condition-parser.js";
 
@@ -70,14 +73,16 @@ describe("parsePaymentCondition", () => {
     expect(result.installments.map((i) => i.dueDays)).toEqual([30, 60, 90]);
   });
 
-  it("formato 6: periodo + dias (semana, dezena, quinzena e mes)", () => {
-    expect(parsePaymentCondition("s + 20").installments).toEqual([{ number: 1, dueDays: 27 }]);
-    expect(parsePaymentCondition("d + 20").installments).toEqual([{ number: 1, dueDays: 30 }]);
-    expect(parsePaymentCondition("q + 20").installments).toEqual([{ number: 1, dueDays: 35 }]);
-    expect(parsePaymentCondition("m + 20").installments).toEqual([{ number: 1, dueDays: 50 }]);
+  it("formato 6: periodo + dias guarda o periodo e o prazo nominal", () => {
+    expect(parsePaymentCondition("q + 15").installments).toEqual([
+      { number: 1, dueDays: 30, period: { unit: "q", count: 1, extraDays: 15 } }
+    ]);
+    expect(parsePaymentCondition("s + 20").installments[0].dueDays).toBe(27);
+    expect(parsePaymentCondition("d + 20").installments[0].dueDays).toBe(30);
+    expect(parsePaymentCondition("m + 20").installments[0].dueDays).toBe(50);
   });
 
-  it("periodo sozinho vale o proprio prazo (s=7, d=10, q=15, m=30)", () => {
+  it("prazo nominal do periodo sozinho (s=7, d=10, q=15, m=30)", () => {
     expect(parsePaymentCondition("s").installments[0].dueDays).toBe(7);
     expect(parsePaymentCondition("d").installments[0].dueDays).toBe(10);
     expect(parsePaymentCondition("q").installments[0].dueDays).toBe(15);
@@ -108,19 +113,23 @@ describe("parsePaymentCondition", () => {
     expect(parsePaymentCondition("dezena + 20").raw).toBe("d+20");
   });
 
-  it("periodo vale dentro da lista de parcelas e leva os mesmos dias", () => {
+  it("periodo vale dentro da lista de parcelas", () => {
     const result = parsePaymentCondition("s+20/d+20/m/A Vista");
     expect(result.kind).toBe("fixed_days");
     expect(result.installments.map((i) => i.dueDays)).toEqual([27, 30, 30, 0]);
     expect(result.raw).toBe("s+20/d+20/m/A Vista");
-    // O periodo e apenas uma forma curta de escrever o prazo: cai nos mesmos dias.
-    expect(result.installments).toEqual(parsePaymentCondition("27/30/30/0").installments);
+    expect(result.installments.map((i) => i.period?.unit ?? null)).toEqual(["s", "d", "m", null]);
   });
 
-  it("periodo gera o mesmo summary do prazo equivalente em dias", () => {
-    expect(parsePaymentCondition("s+20").summary).toBe("1 parcela em 27 dias");
-    expect(parsePaymentCondition("d+20").summary).toBe("1 parcela em 30 dias");
-    expect(parsePaymentCondition("s/d/q").summary).toBe("3 parcelas (7/10/15 dias)");
+  it("summary do periodo diz que conta do fim do periodo", () => {
+    expect(parsePaymentCondition("q+15").summary).toBe("1 parcela no fim da quinzena + 15 dias");
+    expect(parsePaymentCondition("m").summary).toBe("1 parcela no fim do mes");
+    expect(parsePaymentCondition("2q+10").summary).toBe(
+      "1 parcela no fim da 2a quinzena + 10 dias"
+    );
+    expect(parsePaymentCondition("q/30").summary).toBe("2 parcelas (fim da quinzena / 30 dias)");
+    // Sem periodo, o summary de sempre.
+    expect(parsePaymentCondition("7/14/21").summary).toBe("3 parcelas (7/14/21 dias)");
   });
 
   it("rejeita periodo sem prazo valido", () => {
@@ -180,5 +189,64 @@ describe("parsePaymentCondition", () => {
   it("tryParsePaymentCondition retorna null em erro", () => {
     expect(tryParsePaymentCondition("nada")).toBeNull();
     expect(tryParsePaymentCondition("10/20")).not.toBeNull();
+  });
+});
+
+describe("vencimento da condicao em periodo (fora periodo)", () => {
+  const q15 = { unit: "q", count: 1, extraDays: 15 } as const;
+
+  it("q+15: venda de 01 a 15 vence dia 30, de 16 em diante vence dia 15 do mes seguinte", () => {
+    expect(periodDueDate("2026-10-01", q15)).toBe("2026-10-30");
+    expect(periodDueDate("2026-10-10", q15)).toBe("2026-10-30");
+    expect(periodDueDate("2026-10-15", q15)).toBe("2026-10-30");
+    expect(periodDueDate("2026-10-16", q15)).toBe("2026-11-15");
+    expect(periodDueDate("2026-10-31", q15)).toBe("2026-11-15");
+    // Virada de ano.
+    expect(periodDueDate("2026-12-20", q15)).toBe("2027-01-15");
+  });
+
+  it("m+10 vence dia 10 do mes seguinte, qualquer que seja o dia da venda", () => {
+    const m10 = { unit: "m", count: 1, extraDays: 10 } as const;
+    expect(periodDueDate("2026-10-01", m10)).toBe("2026-11-10");
+    expect(periodDueDate("2026-10-31", m10)).toBe("2026-11-10");
+    expect(periodDueDate("2026-02-14", m10)).toBe("2026-03-10");
+  });
+
+  it("dezena fecha nos dias 10, 20 e no ultimo dia do mes", () => {
+    const d0 = { unit: "d", count: 1, extraDays: 0 } as const;
+    expect(periodDueDate("2026-10-03", d0)).toBe("2026-10-10");
+    expect(periodDueDate("2026-10-11", d0)).toBe("2026-10-20");
+    expect(periodDueDate("2026-10-21", d0)).toBe("2026-10-31");
+    expect(periodDueDate("2026-02-25", d0)).toBe("2026-02-28");
+  });
+
+  it("semana termina no domingo", () => {
+    const s0 = { unit: "s", count: 1, extraDays: 0 } as const;
+    // 2026-10-02 e sexta; 2026-10-04 e domingo.
+    expect(periodDueDate("2026-10-02", s0)).toBe("2026-10-04");
+    expect(periodDueDate("2026-10-04", s0)).toBe("2026-10-04");
+    expect(periodDueDate("2026-10-05", { ...s0, extraDays: 10 })).toBe("2026-10-21");
+  });
+
+  it("multiplicador avanca para o fim do periodo seguinte", () => {
+    expect(periodDueDate("2026-10-02", { unit: "q", count: 2, extraDays: 0 })).toBe("2026-10-31");
+    expect(periodDueDate("2026-10-20", { unit: "q", count: 2, extraDays: 0 })).toBe("2026-11-15");
+    expect(periodDueDate("2026-10-20", { unit: "m", count: 2, extraDays: 5 })).toBe("2026-12-05");
+  });
+
+  it("prazo em dias contado da venda, que e o que vai para o OMIE", () => {
+    expect(installmentDueDaysForSale(parsePaymentCondition("q+15"), "2026-10-02")).toEqual([28]);
+    expect(installmentDueDaysForSale(parsePaymentCondition("q+15"), "2026-10-15")).toEqual([15]);
+    // Parcela em dias fica como esta; so a em periodo depende da data.
+    expect(installmentDueDaysForSale(parsePaymentCondition("A Vista/q+15"), "2026-10-20")).toEqual([
+      0, 26
+    ]);
+  });
+
+  it("le o texto gravado, e so responde quando ha periodo", () => {
+    expect(conditionDueDaysForSale("q+12", "2026-10-02")).toEqual([25]);
+    expect(conditionDueDaysForSale("30", "2026-10-02")).toBeNull();
+    expect(conditionDueDaysForSale("texto qualquer", "2026-10-02")).toBeNull();
+    expect(conditionDueDaysForSale(null, "2026-10-02")).toBeNull();
   });
 });
