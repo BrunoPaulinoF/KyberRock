@@ -390,7 +390,7 @@ export function Overview({
               ))}
               {overview.attention.length > 8 && (
                 <li className="adm-list-more">
-                  e mais {overview.attention.length - 8} — veja em Acessos do sistema
+                  e mais {overview.attention.length - 8} — veja em Balanças
                 </li>
               )}
             </ul>

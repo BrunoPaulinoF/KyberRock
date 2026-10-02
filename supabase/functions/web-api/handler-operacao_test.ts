@@ -208,7 +208,7 @@ describe("web-api: pesagem pelo site", () => {
       data: { exitWeightKg: 40000 }
     });
     expect(result.status).toBe(409);
-    expect(String(result.body.error)).toContain("Acessos do sistema");
+    expect(String(result.body.error)).toContain("Pesagens pedidas pelo site");
   });
 
   it("executora fora do ar: aceita e avisa que fica na fila", async () => {

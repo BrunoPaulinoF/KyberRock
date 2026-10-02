@@ -74,7 +74,7 @@ falar com o suporte, sem contar como erro.
 O KyberRock Portal (`apps/loader-web`) sai do ar: carregador, comercial e o painel `/admin` já
 estão no site.
 
-Quem cria usuários é o painel `/admin` da Kybernan: aba **Acessos do sistema** (um login por
+Quem cria usuários é o painel `/admin` da Kybernan: aba **Balanças** (um login por
 computador cadastrado, coluna "Login do site", gravado com `user_profiles.device_id`) ou
 **Usuários do site** (login sem computador). O perfil troca na própria linha
 (`update_user_role` na `admin-api`).
@@ -342,7 +342,7 @@ Se a balança da unidade estiver desligada, o pedido fica `pending` até ela lig
 faturas, pelo mesmo motivo: a conta da pesagem (preço na entrada, frete, crédito/adiantamento,
 faturamento futuro, pedido do OMIE, fila do carregador, número da pesagem, cupom) vive inteira
 no desktop. A ação grava um pedido em `operation_requests` (migração `202609250001`); a balança
-marcada no painel como **executora da unidade** (Acessos do sistema → "Pesagem do site") é
+marcada no painel como **executora da unidade** (Balanças → Configurar → "Pesagens pedidas pelo site") é
 avisada pelo Realtime (`operation_request_pings`, 1 a 3 s; tique de 30 s de reserva), executa
 pelas mesmas funções dos botões do desktop e devolve o resultado.
 

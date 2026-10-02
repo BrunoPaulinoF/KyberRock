@@ -2334,7 +2334,7 @@ async function requestOperation(ctx: ActionContext): Promise<Row> {
   if (!executor) {
     throw new WebApiError(
       409,
-      "Nenhuma balanca desta unidade esta marcada para executar os pedidos do site. Marque uma no painel (Acessos do sistema)."
+      "Nenhuma balanca desta unidade esta marcada para executar os pedidos do site. Marque uma no painel (Balancas → Configurar → Pesagens pedidas pelo site)."
     );
   }
 
