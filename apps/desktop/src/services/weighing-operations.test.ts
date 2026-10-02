@@ -3130,9 +3130,9 @@ describe("weighing operations", () => {
     }
   });
 
-  // Periodo ("s+20" = semana + 20 dias) e so uma forma curta de escrever o prazo: o
-  // que segue para o OMIE sao os mesmos dias de vencimento do prazo equivalente.
-  it("envia ao OMIE os dias das parcelas de uma condicao digitada em periodos", () => {
+  // Periodo ("q+15") conta do FIM do periodo em que a venda caiu: a venda de 02/10 vence
+  // 15/10 + 15 = 30/10. O OMIE soma os dias a emissao, entao o pedido leva 28 dias.
+  it("envia ao OMIE o prazo da condicao em periodo contado do fim do periodo da venda", () => {
     const database = createDatabase();
 
     try {
@@ -3142,10 +3142,9 @@ describe("weighing operations", () => {
 
       const term = createPaymentTerm(database, {
         companyId: identity.companyId,
-        name: "Semana + 20 dias",
-        condition: "s + 20"
+        name: "Quinzena + 15 dias",
+        condition: "q + 15"
       });
-      expect(term.installment_days_json).toBe("[27]");
 
       const operation = createWeighingOperation(database, {
         identity,
@@ -3163,22 +3162,25 @@ describe("weighing operations", () => {
         operationType: "invoice"
       });
 
-      const payloadJson = database
-        .prepare("SELECT payload_json FROM sync_queue WHERE target = 'omie'")
-        .pluck()
-        .get() as string;
-      const payload = JSON.parse(payloadJson) as {
-        paymentTermInstallmentCount: number | null;
-        paymentTermInstallmentDays: number[] | null;
-      };
-      expect(payload.paymentTermInstallmentDays).toEqual([27]);
+      const setExit = database.prepare(
+        "UPDATE weighing_operations SET exit_weight_captured_at = ? WHERE id = ?"
+      );
+      setExit.run("2026-10-02T13:00:00.000Z", operation.id);
+      let payload = buildOmieBillingJob(database, operation.id)!.payload;
+      expect(payload.issueDate).toBe("2026-10-02");
+      expect(payload.paymentTermInstallmentDays).toEqual([28]);
       expect(payload.paymentTermInstallmentCount).toBe(1);
+
+      // Segunda quinzena: 31/10 + 15 = 15/11, 26 dias depois de 20/10.
+      setExit.run("2026-10-20T13:00:00.000Z", operation.id);
+      payload = buildOmieBillingJob(database, operation.id)!.payload;
+      expect(payload.paymentTermInstallmentDays).toEqual([26]);
     } finally {
       database.close();
     }
   });
 
-  it("envia ao OMIE as parcelas de uma lista com periodos", () => {
+  it("envia ao OMIE as parcelas de uma lista com periodos e dias", () => {
     const database = createDatabase();
 
     try {
@@ -3189,7 +3191,7 @@ describe("weighing operations", () => {
       const term = createPaymentTerm(database, {
         companyId: identity.companyId,
         name: "Periodos",
-        condition: "s+20/d+20/q+20/m+20"
+        condition: "s+20/d+20/q+20/m+20/30"
       });
 
       const operation = createWeighingOperation(database, {
@@ -3207,17 +3209,15 @@ describe("weighing operations", () => {
         exitWeightKg: 18_500,
         operationType: "invoice"
       });
+      database
+        .prepare("UPDATE weighing_operations SET exit_weight_captured_at = ? WHERE id = ?")
+        .run("2026-10-02T13:00:00.000Z", operation.id);
 
-      const payloadJson = database
-        .prepare("SELECT payload_json FROM sync_queue WHERE target = 'omie'")
-        .pluck()
-        .get() as string;
-      const payload = JSON.parse(payloadJson) as {
-        paymentTermInstallmentCount: number | null;
-        paymentTermInstallmentDays: number[] | null;
-      };
-      expect(payload.paymentTermInstallmentDays).toEqual([27, 30, 35, 50]);
-      expect(payload.paymentTermInstallmentCount).toBe(4);
+      const payload = buildOmieBillingJob(database, operation.id)!.payload;
+      // Venda numa sexta (02/10): semana fecha domingo 04/10 (+20 = 24/10), dezena 10/10
+      // (+20 = 30/10), quinzena 15/10 (+20 = 04/11), mes 31/10 (+20 = 20/11); "30" fica 30.
+      expect(payload.paymentTermInstallmentDays).toEqual([22, 28, 33, 49, 30]);
+      expect(payload.paymentTermInstallmentCount).toBe(5);
     } finally {
       database.close();
     }

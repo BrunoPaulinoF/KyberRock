@@ -32,6 +32,7 @@ import { DEFAULT_NFE_EMAIL_KEY } from "./customers.js";
 import { readStringLocalSetting } from "./local-settings.js";
 import { DEFAULT_OMIE_CATEGORY_SETTING_KEY, resolveOrderCategoryCode } from "./omie-categories.js";
 import { consumeQuotation } from "./quotations.js";
+import { conditionDueDaysForSale } from "./payment-condition-parser.js";
 import {
   CLOSED_OPERATION_STATUS_SQL_LIST,
   isClosedOperationStatus,
@@ -1827,6 +1828,14 @@ export function buildOmieBillingJob(
 
   const operation = getWeighingOperation(database, operationId);
 
+  // Prazo de cada parcela, em dias contados da emissao (o OMIE soma ao `issueDate`). A
+  // condicao em periodo ("q+15") depende do dia da venda e vence no fim do periodo mais os
+  // dias — por isso ela manda sobre os dias gravados, que sao so o prazo nominal.
+  const issueDate = (row.exit_weight_captured_at ?? "").slice(0, 10);
+  const installmentDays =
+    conditionDueDaysForSale(conditionRawFromRulesJson(omieParcela?.rules_json), issueDate) ??
+    resolveInstallmentDays(omieParcela);
+
   // Transportadora do pedido OMIE: a ESCOLHIDA na operacao manda. So quando a
   // operacao nao tem transportadora caimos no vinculo do veiculo (mais recente
   // ativo) — antes so o vinculo do veiculo era consultado, entao a transportadora
@@ -1887,11 +1896,11 @@ export function buildOmieBillingJob(
       unitPrice: operation.unitPriceCents ? operation.unitPriceCents / 100 : 0,
       freightTotalCents: invoiceFreightTotalCents,
       freightModalidade,
-      issueDate: (row.exit_weight_captured_at ?? "").slice(0, 10),
+      issueDate,
       paymentTermOmieCode: omieParcela?.code ?? null,
       paymentTermInstallmentCount:
-        omieParcela?.installment_count ?? resolveInstallmentDays(omieParcela)?.length ?? null,
-      paymentTermInstallmentDays: resolveInstallmentDays(omieParcela),
+        omieParcela?.installment_count ?? installmentDays?.length ?? null,
+      paymentTermInstallmentDays: installmentDays,
       paymentMethodOmieCode: omiePayment?.method_code ?? null,
       accountOmieCode: omiePayment?.account_code ?? null,
       accountName: omiePayment?.account_name ?? null,
@@ -2023,6 +2032,17 @@ function dueDaysFromRulesJson(rulesJson: string | null | undefined): number[] | 
     if (!Array.isArray(rules.installments) || rules.installments.length === 0) return null;
     const days = rules.installments.map((installment) => Number(installment?.dueDays));
     return days.every((value) => Number.isInteger(value) && value >= 0) ? days : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Texto da condicao (`rules_json.raw`), ou null quando o JSON nao o traz. */
+function conditionRawFromRulesJson(rulesJson: string | null | undefined): string | null {
+  if (!rulesJson) return null;
+  try {
+    const rules = JSON.parse(rulesJson) as { raw?: unknown };
+    return typeof rules.raw === "string" ? rules.raw : null;
   } catch {
     return null;
   }

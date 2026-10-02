@@ -9,17 +9,26 @@
  *  4. "50"            -> um numero inteiro isolado = prazo em dias de uma unica
  *                       parcela (mesmo significado de "Para 50 dias").
  *  5. "50 Parcelas"   -> 50 parcelas mensais.
- *  6. "s+20"          -> periodo + dias: semana (s = 7 dias), dezena (d = 10 dias),
- *                       quinzena (q = 15 dias) e mes (m = 30 dias). "s+20" = uma
- *                       semana e mais 20 dias (27 dias), "d+20" = 30 dias, "q+20" =
- *                       35 dias, "m+20" = 50 dias. O periodo aceita um multiplicador
- *                       colado ("2s" = 2 semanas) e vale tambem dentro da lista com
+ *  6. "q+15"          -> "fora periodo" + dias: o prazo conta do FIM do periodo em que
+ *                       a venda caiu, e nao da venda. Semana (s, termina no domingo),
+ *                       dezena (d: 1-10, 11-20, 21-fim do mes), quinzena (q: 1-15,
+ *                       16-fim do mes) e mes (m). "q+15": venda de 01 a 15 vence dia 30
+ *                       (15 + 15), venda de 16 a 31 vence dia 15 do mes seguinte;
+ *                       "m+10" vence dia 10 do mes seguinte, qualquer que seja o dia da
+ *                       venda. O periodo aceita um multiplicador colado ("2q" = o fim da
+ *                       quinzena SEGUINTE a da venda) e vale tambem dentro da lista com
  *                       barras ("s+20/m").
  *
- * Todos os formatos terminam em dias de vencimento (`installments[].dueDays`) — e
- * isso que segue para o OMIE (`lista_parcelas` do pedido / `Parcelas` da OS), entao
- * uma condicao em periodos cai exatamente nos mesmos dias que o prazo equivalente
- * digitado em dias.
+ * Por que do fim do periodo: e assim que a pedreira combina com o cliente — "compra na
+ * quinzena, paga 15 dias depois do fechamento dela". Antes o periodo era so um apelido
+ * de dias ("q+15" = 15 + 15 = 30 dias apos a VENDA), e a carga do dia 10 vencia dia 09
+ * do mes seguinte em vez de dia 30.
+ *
+ * Por isso o prazo de uma parcela em periodo depende da data da venda: `dueDays` guarda
+ * so o prazo NOMINAL (quantos dias o periodo "vale" — o mesmo numero de antes, que e o
+ * que casa uma condicao ja gravada com o texto digitado), e quem precisa do vencimento
+ * de verdade passa a data da venda a {@link conditionDueDaysForSale} /
+ * {@link installmentDueDaysForSale}. As parcelas em dias continuam iguais.
  */
 
 export type PaymentConditionKind = "fixed_days" | "single" | "monthly_count";
@@ -27,8 +36,23 @@ export type PaymentConditionKind = "fixed_days" | "single" | "monthly_count";
 export interface ParsedInstallment {
   /** Numero da parcela (1-based). */
   number: number;
-  /** Dias apos o faturamento para o vencimento desta parcela. */
+  /**
+   * Dias apos o faturamento para o vencimento desta parcela. Na parcela em periodo e o
+   * prazo NOMINAL ("q+15" = 30): o vencimento real depende da data da venda — ver
+   * {@link installmentDueDaysForSale}.
+   */
   dueDays: number;
+  /** Presente quando a parcela foi escrita em periodo ("q+15"): conta do fim do periodo. */
+  period?: PaymentConditionPeriod;
+}
+
+/** Periodo de uma parcela "fora periodo": unidade, quantos periodos e os dias somados. */
+export interface PaymentConditionPeriod {
+  unit: PeriodUnit;
+  /** Quantidade de periodos ("2q" = fim da quinzena seguinte a da venda). */
+  count: number;
+  /** Dias somados ao fim do periodo ("q+15" = 15). */
+  extraDays: number;
 }
 
 export interface ParsedPaymentCondition {
@@ -53,7 +77,7 @@ const MAX_DUE_DAYS = 3650;
 /** Dias de cada periodo aceito: semana, dezena, quinzena e mes. */
 const PERIOD_UNIT_DAYS = { s: 7, d: 10, q: 15, m: MONTHLY_INTERVAL_DAYS } as const;
 
-type PeriodUnit = keyof typeof PERIOD_UNIT_DAYS;
+export type PeriodUnit = keyof typeof PERIOD_UNIT_DAYS;
 
 const A_VISTA_CANONICAL = "A Vista";
 const A_VISTA_PATTERN = /^(a|à)\s*vista$/i;
@@ -67,18 +91,13 @@ const INTEGER_PATTERN = /^\d+$/;
 const PERIOD_PATTERN =
   /^(\d+)?\s*(semanas?|s|dezenas?|d|quinzenas?|q|m[eê]ses|m[eê]s|m)\s*(?:\+\s*(\d+)\s*(?:dias?)?)?$/i;
 
-interface PeriodToken {
-  unit: PeriodUnit;
-  /** Quantidade de periodos ("2s" = 2 semanas). */
-  count: number;
-  /** Dias somados ao periodo ("s+20" = 20). */
-  extraDays: number;
-}
+type PeriodToken = PaymentConditionPeriod;
 
 /** Uma parcela ja interpretada: prazo em dias + a forma canonica gravada no raw. */
 interface ConditionToken {
   dueDays: number;
   canonical: string;
+  period?: PeriodToken;
 }
 
 export class PaymentConditionParseError extends Error {
@@ -139,7 +158,8 @@ function parseConditionToken(token: string, context: string): ConditionToken {
   if (period !== null) {
     return {
       dueDays: assertDueDays(periodDueDays(period), context),
-      canonical: formatPeriodToken(period)
+      canonical: formatPeriodToken(period),
+      period
     };
   }
 
@@ -153,8 +173,33 @@ function parseConditionToken(token: string, context: string): ConditionToken {
   return { dueDays: days, canonical: String(days) };
 }
 
+const PERIOD_UNIT_LABEL: Record<PeriodUnit, string> = {
+  s: "semana",
+  d: "dezena",
+  q: "quinzena",
+  m: "mes"
+};
+
+/** "fim da quinzena + 15 dias", "fim do 2o mes", "fim da semana". */
+export function describePeriod(period: PaymentConditionPeriod): string {
+  const masculine = period.unit === "m";
+  const ordinal = period.count > 1 ? `${period.count}${masculine ? "o" : "a"} ` : "";
+  const base = `fim ${masculine ? "do" : "da"} ${ordinal}${PERIOD_UNIT_LABEL[period.unit]}`;
+  return period.extraDays > 0 ? `${base} + ${period.extraDays} dias` : base;
+}
+
 function buildSummary(kind: PaymentConditionKind, installments: ParsedInstallment[]): string {
   const count = installments.length;
+  if (installments.some((installment) => installment.period)) {
+    const parts = installments.map((installment) =>
+      installment.period
+        ? describePeriod(installment.period)
+        : installment.dueDays === 0
+          ? "a vista"
+          : `${installment.dueDays} dias`
+    );
+    return count === 1 ? `1 parcela no ${parts[0]}` : `${count} parcelas (${parts.join(" / ")})`;
+  }
   if (count === 1) {
     const days = installments[0].dueDays;
     return days === 0 ? "A vista" : `1 parcela em ${days} dias`;
@@ -167,9 +212,10 @@ function buildSummary(kind: PaymentConditionKind, installments: ParsedInstallmen
 }
 
 function buildFixedDays(raw: string, tokens: ConditionToken[]): ParsedPaymentCondition {
-  const installments = tokens.map((token, index) => ({
+  const installments: ParsedInstallment[] = tokens.map((token, index) => ({
     number: index + 1,
-    dueDays: token.dueDays
+    dueDays: token.dueDays,
+    ...(token.period ? { period: token.period } : {})
   }));
   const kind: PaymentConditionKind = installments.length === 1 ? "single" : "fixed_days";
   return {
@@ -212,13 +258,16 @@ export function parsePaymentCondition(raw: string): ParsedPaymentCondition {
     return buildFixedDays(A_VISTA_CANONICAL, [{ dueDays: 0, canonical: A_VISTA_CANONICAL }]);
   }
 
-  // Formato 6: periodo isolado ("s+20", "q", "2m+5") -> uma unica parcela no dia
-  // equivalente (semana = 7, dezena = 10, quinzena = 15, mes = 30, mais os dias
-  // informados).
+  // Formato 6: periodo isolado ("q+15", "m", "2s+5") -> uma unica parcela contada do
+  // fim do periodo da venda.
   const period = parsePeriodToken(value);
   if (period !== null) {
     return buildFixedDays(formatPeriodToken(period), [
-      { dueDays: assertDueDays(periodDueDays(period), value), canonical: formatPeriodToken(period) }
+      {
+        dueDays: assertDueDays(periodDueDays(period), value),
+        canonical: formatPeriodToken(period),
+        period
+      }
     ]);
   }
 
@@ -280,4 +329,95 @@ export function tryParsePaymentCondition(raw: string): ParsedPaymentCondition | 
   } catch {
     return null;
   }
+}
+
+/** Data ISO (yyyy-mm-dd) -> Date em UTC, para a conta de dias nao sofrer com fuso. */
+function isoToUtcDate(isoDate: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate ?? "");
+  if (!match) return null;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function lastDayOfMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+}
+
+/** Ultimo dia do periodo (semana/dezena/quinzena/mes) que contem `date`. */
+function endOfPeriod(date: Date, unit: PeriodUnit): Date {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
+  const last = lastDayOfMonth(year, month);
+  switch (unit) {
+    case "s": {
+      // Semana de segunda a domingo: termina no domingo (getUTCDay 0).
+      const toSunday = (7 - date.getUTCDay()) % 7;
+      return new Date(Date.UTC(year, month, day + toSunday));
+    }
+    case "d":
+      return new Date(Date.UTC(year, month, day <= 10 ? 10 : day <= 20 ? 20 : last));
+    case "q":
+      return new Date(Date.UTC(year, month, day <= 15 ? 15 : last));
+    case "m":
+      return new Date(Date.UTC(year, month, last));
+  }
+}
+
+function addUtcDays(date: Date, days: number): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + days));
+}
+
+/**
+ * Vencimento (yyyy-mm-dd) de uma parcela "fora periodo" para a venda de `saleDate`: o fim
+ * do periodo da venda — avancando mais `count - 1` periodos —, mais os dias informados.
+ * "q+15" com venda em 02/10 -> 15/10 + 15 = 30/10; com venda em 20/10 -> 31/10 + 15 = 15/11.
+ * Retorna null quando a data da venda nao e uma data ISO.
+ */
+export function periodDueDate(saleDate: string, period: PaymentConditionPeriod): string | null {
+  const sale = isoToUtcDate(saleDate);
+  if (!sale) return null;
+  let end = endOfPeriod(sale, period.unit);
+  for (let index = 1; index < period.count; index++) {
+    end = endOfPeriod(addUtcDays(end, 1), period.unit);
+  }
+  return addUtcDays(end, period.extraDays).toISOString().slice(0, 10);
+}
+
+/**
+ * Prazo REAL, em dias contados da venda, de cada parcela — o numero que vai para o OMIE
+ * (que soma os dias a data de emissao). Parcela em dias fica como esta; parcela em
+ * periodo vira a distancia entre a venda e {@link periodDueDate}.
+ */
+export function installmentDueDaysForSale(
+  parsed: Pick<ParsedPaymentCondition, "installments">,
+  saleDate: string
+): number[] {
+  const sale = isoToUtcDate(saleDate);
+  return parsed.installments.map((installment) => {
+    if (!installment.period || !sale) return installment.dueDays;
+    const due = periodDueDate(saleDate, installment.period);
+    const dueAt = due ? isoToUtcDate(due) : null;
+    if (!dueAt) return installment.dueDays;
+    return Math.round((dueAt.getTime() - sale.getTime()) / 86_400_000);
+  });
+}
+
+/**
+ * Prazos reais de uma condicao gravada (`rules_json.raw`) para a venda de `saleDate`, ou
+ * null quando o texto nao e uma condicao valida OU nao tem parcela em periodo — nesse
+ * caso os prazos gravados ja sao os de verdade e quem chamou fica com eles.
+ *
+ * Le do texto, e nao do `installments` gravado, de proposito: a condicao "q+12" gravada
+ * antes desta regra tem so os dias nominais no rules_json, e e o texto que diz que ela e
+ * em periodo.
+ */
+export function conditionDueDaysForSale(
+  raw: string | null | undefined,
+  saleDate: string
+): number[] | null {
+  if (!raw) return null;
+  const parsed = tryParsePaymentCondition(raw);
+  if (!parsed || !parsed.installments.some((installment) => installment.period)) return null;
+  return installmentDueDaysForSale(parsed, saleDate);
 }
