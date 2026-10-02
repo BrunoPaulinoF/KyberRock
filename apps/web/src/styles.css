@@ -868,6 +868,18 @@ th.num .th-sort {
   font-size: 12px;
   white-space: normal;
 }
+/* Texto longo da celula (nome do cliente) quebra linha em vez de alargar a tabela: com tudo em
+   uma linha so a lista passava da tela e os botoes da direita so apareciam rolando de lado. */
+.cell-wrap {
+  display: block;
+  min-width: 180px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* E-mail e uma palavra so: sem isso ele nao quebra e segura a coluna larga. */
+.cell-break {
+  overflow-wrap: anywhere;
+}
 .empty {
   padding: 28px;
   text-align: center;

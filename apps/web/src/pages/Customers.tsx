@@ -1,4 +1,4 @@
-import { SearchCheck } from "lucide-react";
+import { Power, SearchCheck, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 
@@ -7,6 +7,7 @@ import { CustomerInfoModal } from "../components/CustomerPanels";
 import { IconAction, NewButton, SearchBar, SectionHead } from "../components/desk";
 import { DeleteDialog } from "../components/PricePassword";
 import {
+  ActionMenu,
   Alert,
   DataTable,
   ErrorState,
@@ -207,10 +208,10 @@ export function CustomersSection() {
             key: "name",
             header: "Cliente",
             render: (c) => (
-              <>
+              <span className="cell-wrap">
                 <strong>{c.trade_name || c.legal_name}</strong>
                 <span className="cell-sub">{c.legal_name}</span>
-              </>
+              </span>
             )
           },
           { key: "doc", header: "Documento", render: (c) => formatDocument(c.document) || "—" },
@@ -220,7 +221,7 @@ export function CustomersSection() {
             render: (c) => (
               <>
                 <strong>{maskStored(c.phone, maskPhone) || "—"}</strong>
-                <span className="cell-sub">{c.email || ""}</span>
+                <span className="cell-sub cell-break">{c.email || ""}</span>
               </>
             )
           },
@@ -255,19 +256,29 @@ export function CustomersSection() {
                 {user.canEditCustomers && (
                   <>
                     <IconAction icon="edit" label="Editar cliente" onClick={() => setEditing(c)} />
-                    <IconAction
-                      icon="sliders"
-                      label="Comercial, preços, frete, transporte e entrega futura"
-                      onClick={() => setFile(c)}
-                    />
-                    <button className="btn small" onClick={() => void setActive(c, !c.is_active)}>
-                      {c.is_active ? "Inativar" : "Reativar"}
-                    </button>
-                    <IconAction
-                      icon="trash"
-                      label="Excluir cliente"
-                      tone="danger"
-                      onClick={() => setRemoving(c)}
+                    {/* O resto vai no "⋯": cinco botoes lado a lado empurravam a tabela para
+                        fora da tela e obrigavam a rolar de lado para chegar neles. */}
+                    <ActionMenu
+                      label={`Mais ações — ${c.trade_name || c.legal_name}`}
+                      actions={[
+                        {
+                          label: "Comercial, preços e mais",
+                          icon: SlidersHorizontal,
+                          hint: "Preços, frete, transporte e entrega futura",
+                          onClick: () => setFile(c)
+                        },
+                        {
+                          label: c.is_active ? "Inativar" : "Reativar",
+                          icon: Power,
+                          onClick: () => void setActive(c, !c.is_active)
+                        },
+                        {
+                          label: "Excluir cliente",
+                          icon: Trash2,
+                          tone: "danger",
+                          onClick: () => setRemoving(c)
+                        }
+                      ]}
                     />
                   </>
                 )}
