@@ -227,8 +227,8 @@ function ScaleSettings() {
           </span>
         </div>
         <p className="desk-muted">
-          Quem executa os pedidos do site é marcado no painel admin (Acessos do sistema → "Pesagem
-          do site"), uma balança por unidade.
+          Quem executa os pedidos do site é marcado no painel admin (Balanças → Configurar →
+          "Pesagens pedidas pelo site"), uma balança por unidade.
         </p>
       </DeskPanel>
     </div>
