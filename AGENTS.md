@@ -1486,7 +1486,7 @@ por cima do cliente certo. A expedicao nao percebia: o pull dela ja tinha
    unificacao. Aplicar **depois** do deploy do `desktop-sync`, senao a proxima conferencia de nota
    apaga de novo.
 
-4. **A balanca que nao tem o gemeo acha o cliente** (`services/customer-aliases.ts`, migracao
+4. **A balanca que nao tem o gemeo acha o cliente** (`services/cadastro-aliases.ts`, migracao
    local 61 `customer_aliases`). Antes ela guardava a SUA copia da pesagem sem cliente, e as telas
    dela (Conferencia/fechamento de fatura, relatorios por cliente, carteira) nao achavam essas
    cargas pelo cliente. Agora funciona como `payment_method_aliases` faz para a forma de pagamento:
@@ -1497,31 +1497,53 @@ por cima do cliente certo. A expedicao nao percebia: o pull dela ja tinha
      como esta; id com equivalencia vira o cadastro daqui e o id da nuvem fica guardado em
      `weighing_operations.remote_customer_id`; id desconhecido (cadastro atrasado) mantem o
      cliente local, mas o id da nuvem fica guardado do mesmo jeito;
-   - **o reenvio devolve o id da nuvem** (`cloudCustomerIdForPush`, em `getOperationPayload`).
+   - **o reenvio devolve o id da nuvem** (`cloudCadastroIdForPush`, em `getOperationPayload`).
      Sem isto a conferencia da nota no OMIE reenviaria a carga com o gemeo DAQUI e o
      `customer_id` da nuvem alternaria entre os dois a cada balanca que tocasse nela. A regra
      confere pela equivalencia, nao pela coluna preenchida: se o operador trocou o cliente da
      carga aqui, o cliente local deixa de bater com a equivalencia e sobe a troca — devolver o id
      antigo desfaria a escolha dele. Carga criada aqui sobe com o id daqui, mesmo com a
      equivalencia existindo (a coluna so e preenchida pelo pull);
-   - **a unificacao local leva a equivalencia junto** (`repointCustomerAliases` em
+   - **a unificacao local leva a equivalencia junto** (`repointCadastroAliases` em
      `mergeCustomerInto`), senao ela apontaria para um tombstone e a traducao deixaria de valer;
-   - **as pesagens ja gravadas sem cliente** se curam numa passada inteira: a migracao 61 liga
-     `customer_alias_resync_pending` (so na maquina que ja tinha puxado da nuvem), o proximo pull
+   - **as pesagens ja gravadas sem cliente** se curam numa passada inteira: a migracao liga
+     `cadastro_alias_resync_pending` (so na maquina que ja tinha puxado da nuvem), o proximo pull
      vem inteiro — e so ele traz de volta os gemeos ja descartados e as pesagens antigas. A marca
      sai depois dessa UMA passada, mesmo com aviso de alguma tabela (como a da principal de
      preco): segura-la faria todo pull de 15 s virar passada inteira enquanto o aviso durasse. O
      que ficar de fora volta na varredura completa, que faz a mesma coisa. O `COALESCE` do
      `customer_id` no pull faz o resto: no empate de `updated_at` o vazio local recebe o cliente
-     traduzido.
+     traduzido. (A 61 ligava `customer_alias_resync_pending`; a 62 troca pela marca de nome
+     comum, que vale para as duas equivalencias.)
+
+5. **A transportadora tem a mesma equivalencia** (migracao local 62 `carrier_aliases`, coluna
+   `weighing_operations.remote_carrier_id`). O pull tambem descarta a transportadora da nuvem com
+   o mesmo CNPJ/CPF de uma daqui, e a pesagem da outra balanca chegava sem transportadora. Agora
+   `upsertCloudCarriers` grava a equivalencia, `resolveCloudOperationCarrier` traduz a pesagem e o
+   reenvio devolve o id da nuvem pela mesma regra. Duas diferencas, e as duas vem do fato de que na
+   transportadora **o vazio e escolha** (transporte proprio):
+   - a nuvem mandando vazio limpa a transportadora da pesagem **e** o id lembrado (no cliente o
+     vazio nunca apaga nada);
+   - a pesagem sem transportadora aqui sobe vazia, mesmo com um id lembrado: o operador tirou a
+     transportadora, e devolver a antiga desfaria isso. No cliente o mesmo caso sobe o id da nuvem.
+
+   A transportadora tambem e traduzida onde ela e um vinculo SIMPLES de outro cadastro: a
+   transportadora padrao do cliente (no bloco comercial) e a do veiculo, pelo
+   `resolveCloudCadastroReference`. Esses reenviam o id daqui, sem coluna de id lembrado — cada
+   balanca traduz o que recebe, entao a troca de gemeo na nuvem nao muda nada em nenhuma ponta.
+   A juncao do cadastro feito sem internet (`mergeOfflineInto`) APAGA a transportadora marcada, e
+   por isso repontar a equivalencia ali nao e detalhe: a chave estrangeira de `carrier_aliases`
+   recusaria o `DELETE` e a juncao inteira cairia.
 
 O que ainda nao muda: a passada inteira traz as **2.000 pesagens mais recentes** da unidade
-(`HISTORY_MAX_ROWS` do `desktop-pull`); carga mais antiga que isso, ja gravada sem cliente, continua
-sem cliente nesta balanca. E so a PESAGEM e traduzida — o que se pendura no cliente gemeo (extrato
-de credito, preco especial, frete, nota de entrega futura, placas) continua descartado por
-`existingId` na balanca que nao tem aquele id; o preco tem dono e politica de conflito proprios
-(ver "Balanca principal de precos") e nao deve ganhar traducao sem rever essa regra. A
-transportadora tem o mesmo descarte por documento e ainda nao tem equivalencia.
+(`HISTORY_MAX_ROWS` do `desktop-pull`); carga mais antiga que isso, ja gravada sem o cadastro,
+continua assim nesta balanca. O que se pendura no cliente gemeo (extrato de credito, preco especial,
+frete, nota de entrega futura, placas) continua descartado por `existingId` na balanca que nao tem
+aquele id; o preco tem dono e politica de conflito proprios (ver "Balanca principal de precos") e
+nao deve ganhar traducao sem rever essa regra. Os vinculos N:N da transportadora
+(`customer_carriers`, `driver_carriers`, `vehicle_carriers`) tambem nao sao traduzidos de
+proposito: o par traduzido pode repetir um vinculo que esta balanca ja tem com a gemea dela, e a
+nuvem tem o par como unico — o reenvio derrubaria o lote com 23505.
 
 ## O que a nuvem NAO precisa guardar nem receber
 

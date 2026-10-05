@@ -4,14 +4,15 @@ import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity, type LocalDesktopIdentity } from "./bootstrap";
 import {
-  CUSTOMER_ALIAS_RESYNC_KEY,
-  cloudCustomerIdForPush,
-  isCustomerAliasResyncPending,
-  rememberCustomerAlias,
+  CADASTRO_ALIAS_RESYNC_KEY,
+  cloudCadastroIdForPush,
+  isCadastroAliasResyncPending,
+  rememberCadastroAlias,
   resolveCloudOperationCustomer
-} from "./customer-aliases";
+} from "./cadastro-aliases";
 import { mergeCustomerInto } from "./customer-merge";
 import { InvoiceClosingService } from "./invoice-closing";
+import { listClosedWeighingOperations } from "./weighing-operations";
 import {
   CADASTRO_LAST_PULL_KEY,
   pullDesktopDataFromCloud,
@@ -222,12 +223,8 @@ describe("clientes gemeos entre as balancas", () => {
     const database = createMachine("desktop-b");
 
     try {
-      expect(
-        cloudCustomerIdForPush(database, { customer_id: null, remote_customer_id: OMIE_TWIN_ID })
-      ).toBe(OMIE_TWIN_ID);
-      expect(cloudCustomerIdForPush(database, { customer_id: "x", remote_customer_id: null })).toBe(
-        "x"
-      );
+      expect(cloudCadastroIdForPush(database, "customers", null, OMIE_TWIN_ID)).toBe(OMIE_TWIN_ID);
+      expect(cloudCadastroIdForPush(database, "customers", "x", null)).toBe("x");
     } finally {
       database.close();
     }
@@ -238,7 +235,7 @@ describe("clientes gemeos entre as balancas", () => {
 
     try {
       insertCustomer(database, "levisa-b", LEVISA_DOCUMENT);
-      rememberCustomerAlias(database, "company-1", OMIE_TWIN_ID, "levisa-b");
+      rememberCadastroAlias(database, "customers", "company-1", OMIE_TWIN_ID, "levisa-b");
 
       expect(
         resolveCloudOperationCustomer(database, null, {
@@ -304,7 +301,7 @@ describe("clientes gemeos entre as balancas", () => {
         // Como ficava antes desta versao: espelhada da outra balanca, sem cliente.
         insertLocalOperation(database, "op-da-a", null);
         writeSetting(database, CADASTRO_LAST_PULL_KEY, "2026-09-20T10:00:00.000Z");
-        writeSetting(database, CUSTOMER_ALIAS_RESYNC_KEY, true);
+        writeSetting(database, CADASTRO_ALIAS_RESYNC_KEY, true);
 
         mockPull({
           serverTime: "2026-09-20T12:00:00.000Z",
@@ -321,7 +318,7 @@ describe("clientes gemeos entre as balancas", () => {
           customer_id: "levisa-b",
           remote_customer_id: OMIE_TWIN_ID
         });
-        expect(isCustomerAliasResyncPending(database)).toBe(false);
+        expect(isCadastroAliasResyncPending(database)).toBe(false);
 
         // Feita a passada, o pull frequente volta a ser incremental.
         mockPull({});
@@ -338,14 +335,14 @@ describe("clientes gemeos entre as balancas", () => {
       try {
         const identity = readIdentity(database);
         writeSetting(database, CADASTRO_LAST_PULL_KEY, "2026-09-20T10:00:00.000Z");
-        writeSetting(database, CUSTOMER_ALIAS_RESYNC_KEY, true);
+        writeSetting(database, CADASTRO_ALIAS_RESYNC_KEY, true);
 
         // Uma migracao pendente na nuvem avisa em TODO pull: segurar a marca faria cada ciclo
         // de 15 s baixar o cadastro e o historico inteiros.
         mockPull({ warnings: ["customers: column customers.foo does not exist"] });
         await pullDesktopDataFromCloud(database, identity, { incremental: true });
 
-        expect(isCustomerAliasResyncPending(database)).toBe(false);
+        expect(isCadastroAliasResyncPending(database)).toBe(false);
         mockPull({});
         await pullDesktopDataFromCloud(database, identity, { incremental: true });
         expect(invokeMock.mock.calls.at(-1)?.[1]?.body).toHaveProperty("cadastroSince");
@@ -353,6 +350,166 @@ describe("clientes gemeos entre as balancas", () => {
         database.close();
       }
     });
+  });
+});
+
+const CARRIER_DOCUMENT = "11.222.333/0001-81";
+const CARRIER_TWIN_ID = "omie_supplier_42";
+
+describe("transportadoras gemeas entre as balancas", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue({ data: { ok: true }, error: null });
+  });
+
+  it("a pesagem com a transportadora gemea da outra balanca chega com a daqui", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      insertCarrier(database, "transp-b", CARRIER_DOCUMENT);
+
+      mockPull({ carriers: [cloudCarrier(CARRIER_TWIN_ID, CARRIER_DOCUMENT)] });
+      await pullDesktopDataFromCloud(database, identity);
+      mockPull({ operations: [cloudOperationWithCarrier("op-da-a", CARRIER_TWIN_ID)] });
+      await pullDesktopDataFromCloud(database, identity, { incremental: true });
+
+      expect(
+        database.prepare("SELECT COUNT(*) FROM carriers WHERE id = ?").pluck().get(CARRIER_TWIN_ID)
+      ).toBe(0);
+      expect(readCarrier(database, "op-da-a")).toEqual({
+        carrier_id: "transp-b",
+        remote_carrier_id: CARRIER_TWIN_ID
+      });
+      // A lista de concluidas mostra a transportadora daqui na carga da outra maquina.
+      const [listed] = listClosedWeighingOperations(database);
+      expect(listed).toMatchObject({ id: "op-da-a", carrierId: "transp-b" });
+      expect(listed?.carrierName).toBe("TRANSPORTES DAQUI");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("o reenvio leva a transportadora que a nuvem tem", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      insertCarrier(database, "transp-b", CARRIER_DOCUMENT);
+      mockPull({
+        carriers: [cloudCarrier(CARRIER_TWIN_ID, CARRIER_DOCUMENT)],
+        operations: [cloudOperationWithCarrier("op-da-a", CARRIER_TWIN_ID)]
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      await syncOperationToSupabase(database, "op-da-a", identity);
+
+      expect(lastDesktopSyncBody().operations[0]?.carrier_id).toBe(CARRIER_TWIN_ID);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("trocar ou tirar a transportadora aqui sobe a escolha, e nao a gemea antiga", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      insertCarrier(database, "transp-b", CARRIER_DOCUMENT);
+      insertCarrier(database, "outra-transp", "98.765.432/0001-98");
+      mockPull({
+        carriers: [cloudCarrier(CARRIER_TWIN_ID, CARRIER_DOCUMENT)],
+        operations: [cloudOperationWithCarrier("op-da-a", CARRIER_TWIN_ID)]
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      setOperationCarrier(database, "op-da-a", "outra-transp");
+      await syncOperationToSupabase(database, "op-da-a", identity);
+      expect(lastDesktopSyncBody().operations[0]?.carrier_id).toBe("outra-transp");
+
+      // Transporte proprio: o vazio e a escolha do operador. Na transportadora, diferente do
+      // cliente, ele nao pode ser trocado pelo id lembrado.
+      setOperationCarrier(database, "op-da-a", null);
+      await syncOperationToSupabase(database, "op-da-a", identity);
+      expect(lastDesktopSyncBody().operations[0]?.carrier_id).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("a nuvem tirando a transportadora limpa a daqui e o id lembrado", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      insertCarrier(database, "transp-b", CARRIER_DOCUMENT);
+      mockPull({
+        carriers: [cloudCarrier(CARRIER_TWIN_ID, CARRIER_DOCUMENT)],
+        operations: [cloudOperationWithCarrier("op-da-a", CARRIER_TWIN_ID)]
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      mockPull({
+        operations: [
+          {
+            ...cloudOperationWithCarrier("op-da-a", null),
+            updated_at: "2026-09-10T13:00:00.000Z"
+          }
+        ]
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(readCarrier(database, "op-da-a")).toEqual({
+        carrier_id: null,
+        remote_carrier_id: null
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("a transportadora padrao do cliente e a do veiculo chegam com a gemea daqui", async () => {
+    const database = createMachine("desktop-b");
+
+    try {
+      const identity = readIdentity(database);
+      insertCarrier(database, "transp-b", CARRIER_DOCUMENT);
+
+      mockPull({
+        carriers: [cloudCarrier(CARRIER_TWIN_ID, CARRIER_DOCUMENT)],
+        customers: [
+          {
+            ...cloudCustomer("cliente-da-a", "98.765.432/0001-98"),
+            default_carrier_id: CARRIER_TWIN_ID,
+            commercial_published_at: "2026-08-01T10:00:00.000Z"
+          }
+        ],
+        vehicles: [
+          {
+            id: "veiculo-da-a",
+            company_id: "company-1",
+            plate: "ABC1D23",
+            carrier_id: CARRIER_TWIN_ID,
+            is_active: true,
+            created_at: "2026-08-01T10:00:00.000Z",
+            updated_at: "2026-08-01T10:00:00.000Z"
+          }
+        ]
+      });
+      await pullDesktopDataFromCloud(database, identity);
+
+      expect(
+        database
+          .prepare("SELECT default_carrier_id FROM customers WHERE id = 'cliente-da-a'")
+          .pluck()
+          .get()
+      ).toBe("transp-b");
+      expect(
+        database.prepare("SELECT carrier_id FROM vehicles WHERE id = 'veiculo-da-a'").pluck().get()
+      ).toBe("transp-b");
+    } finally {
+      database.close();
+    }
   });
 });
 
@@ -497,4 +654,50 @@ function readIdentity(database: DesktopDatabase): LocalDesktopIdentity {
     deviceId: JSON.parse(deviceId) as string,
     installationId: "install"
   };
+}
+
+function cloudCarrier(id: string, document: string): Record<string, unknown> {
+  return {
+    id,
+    company_id: "company-1",
+    name: "TRANSPORTES DA OUTRA BALANCA",
+    document,
+    source: "omie",
+    omie_customer_id: 42,
+    is_active: true,
+    created_at: "2026-08-01T10:00:00.000Z",
+    updated_at: "2026-08-01T10:00:00.000Z"
+  };
+}
+
+function cloudOperationWithCarrier(id: string, carrierId: string | null): Record<string, unknown> {
+  return { ...cloudOperation(id, null), carrier_id: carrierId };
+}
+
+function insertCarrier(database: DesktopDatabase, id: string, document: string): void {
+  database
+    .prepare(
+      `INSERT INTO carriers (id, company_id, name, document, source, is_active, created_at, updated_at)
+       VALUES (?, 'company-1', 'TRANSPORTES DAQUI', ?, 'local', 1, ?, ?)`
+    )
+    .run(id, document, "2026-08-02T10:00:00.000Z", "2026-08-02T10:00:00.000Z");
+}
+
+function setOperationCarrier(
+  database: DesktopDatabase,
+  operationId: string,
+  carrierId: string | null
+): void {
+  database
+    .prepare("UPDATE weighing_operations SET carrier_id = ? WHERE id = ?")
+    .run(carrierId, operationId);
+}
+
+function readCarrier(
+  database: DesktopDatabase,
+  id: string
+): { carrier_id: string | null; remote_carrier_id: string | null } {
+  return database
+    .prepare("SELECT carrier_id, remote_carrier_id FROM weighing_operations WHERE id = ?")
+    .get(id) as { carrier_id: string | null; remote_carrier_id: string | null };
 }

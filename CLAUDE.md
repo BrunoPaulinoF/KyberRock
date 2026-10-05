@@ -225,10 +225,11 @@ These recur across the codebase and are easy to violate accidentally:
   mostrava 0 pesagens da Levisa contra 15 na expedicao. O `desktop-sync` agora mantem cliente e
   produto da nuvem quando a copia chega vazia (`keepOperationLinks`), e o filtro de cliente do site
   procura em todos os cadastros do mesmo cliente (mesmo documento ou codigo OMIE). Na balanca, o
-  gemeo descartado vira equivalencia (`customer_aliases`, `services/customer-aliases.ts`): a
-  pesagem chega com o cadastro daqui, guarda o id da nuvem em `remote_customer_id` e o reenvio
-  devolve ESSE id enquanto o cliente local for o equivalente — senao o `customer_id` da nuvem
-  alternaria entre os gemeos.
+  gemeo descartado vira equivalencia (`customer_aliases` e `carrier_aliases`,
+  `services/cadastro-aliases.ts`): a pesagem chega com o cadastro daqui, guarda o id da nuvem em
+  `remote_customer_id` / `remote_carrier_id` e o reenvio devolve ESSE id enquanto o cadastro local
+  for o equivalente — senao o id da nuvem alternaria entre os gemeos. Na transportadora o vazio e
+  escolha (transporte proprio): ele limpa o id lembrado e sobe vazio.
 - **Relogio da nuvem** (AGENTS.md "Relogio da nuvem: todas as balancas na mesma hora"): o
   processo principal e o `'now'` do SQLite usam a hora do SERVIDOR (`services/cloud-clock.ts`),
   medida no `desktop-status` contra o relogio real (`realNowMs`, nunca o `Date` ja corrigido).

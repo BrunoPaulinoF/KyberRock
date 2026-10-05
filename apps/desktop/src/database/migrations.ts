@@ -2165,7 +2165,7 @@ ALTER TABLE drivers ADD COLUMN offline_pending INTEGER NOT NULL DEFAULT 0;
     version: 61,
     name: "customer_aliases",
     sql: `
--- Clientes gemeos entre as balancas da mesma pedreira (\`services/customer-aliases.ts\`).
+-- Clientes gemeos entre as balancas da mesma pedreira (\`services/cadastro-aliases.ts\`).
 --
 -- O mesmo cliente pode ter dois cadastros na nuvem (mesmo CNPJ e codigo OMIE, ids
 -- diferentes), e cada balanca guarda UM: o pull descarta o gemeo por documento. A pesagem
@@ -2190,10 +2190,43 @@ ALTER TABLE weighing_operations ADD COLUMN remote_customer_id TEXT;
 
 -- O proximo pull vem INTEIRO, uma vez: so a passada completa traz de novo os gemeos ja
 -- descartados (para a equivalencia nascer) e as pesagens ja gravadas sem cliente (para
--- serem curadas por ela). Ver CUSTOMER_ALIAS_RESYNC_KEY. So na maquina que ja puxou da
+-- serem curadas por ela). Ver CADASTRO_ALIAS_RESYNC_KEY. So na maquina que ja puxou da
 -- nuvem: a instalacao nova nao tem o que curar, e o primeiro pull dela ja vem inteiro.
 INSERT INTO local_settings (key, value_json, updated_at)
 SELECT 'customer_alias_resync_pending', 'true', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE EXISTS (SELECT 1 FROM local_settings WHERE key = 'cloud_cadastro_last_pull_at')
+ON CONFLICT(key) DO UPDATE SET
+  value_json = excluded.value_json,
+  updated_at = excluded.updated_at;
+`
+  },
+  {
+    version: 62,
+    name: "carrier_aliases",
+    sql: `
+-- Transportadoras gemeas entre as balancas (\`services/cadastro-aliases.ts\`): o mesmo
+-- desenho de \`customer_aliases\` (migracao 61). O pull descarta a transportadora da nuvem
+-- que tem o mesmo CNPJ/CPF de uma daqui, e a pesagem fechada na outra balanca chegava SEM
+-- transportadora — sumia do relatorio de frete e da busca pela transportadora.
+CREATE TABLE IF NOT EXISTS carrier_aliases (
+  remote_id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL,
+  local_id TEXT NOT NULL REFERENCES carriers(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_carrier_aliases_local
+  ON carrier_aliases(company_id, local_id);
+
+-- O id que a NUVEM tem para a transportadora da pesagem, quando aqui ficou a gemea dela.
+ALTER TABLE weighing_operations ADD COLUMN remote_carrier_id TEXT;
+
+-- Uma passada inteira, como na 61, agora com nome que vale para as duas equivalencias. A
+-- marca antiga sai: a passada nova cobre o que ela ainda devia.
+DELETE FROM local_settings WHERE key = 'customer_alias_resync_pending';
+INSERT INTO local_settings (key, value_json, updated_at)
+SELECT 'cadastro_alias_resync_pending', 'true', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE EXISTS (SELECT 1 FROM local_settings WHERE key = 'cloud_cadastro_last_pull_at')
 ON CONFLICT(key) DO UPDATE SET
   value_json = excluded.value_json,
