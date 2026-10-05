@@ -66,6 +66,13 @@ import {
 } from "./weighing-operations.js";
 import { DOCUMENT_KEY_SQL, documentKey } from "./customer-identity.js";
 import {
+  clearCustomerAliasResyncPending,
+  cloudCustomerIdForPush,
+  isCustomerAliasResyncPending,
+  rememberCustomerAlias,
+  resolveCloudOperationCustomer
+} from "./customer-aliases.js";
+import {
   isCadastroIncompleteFault,
   isOmieCustomerRegistrationFault,
   isOmieMissingDocumentFault,
@@ -761,8 +768,11 @@ export async function pullDesktopDataFromCloud(
   // diz o que a principal mudou, nunca o que ela nao tem — e e justamente o cadastro de
   // preco que so existe aqui que precisa sair de cena.
   const priceResyncPending = authority.mode === "follower" && isPriceMasterResyncPending(database);
+  // Equivalencia de clientes recem-criada (migracao local `customer_aliases`): os gemeos ja
+  // descartados e as pesagens ja gravadas sem cliente so voltam numa passada inteira.
+  const customerAliasResyncPending = isCustomerAliasResyncPending(database);
   const since =
-    options.incremental && lastPullAt && !priceResyncPending
+    options.incremental && lastPullAt && !priceResyncPending && !customerAliasResyncPending
       ? new Date(new Date(lastPullAt).getTime() - CADASTRO_INCREMENTAL_OVERLAP_MS).toISOString()
       : undefined;
   const { data, error } = await supabase.functions.invoke<DesktopPullResponse>("desktop-pull", {
@@ -849,6 +859,14 @@ export async function pullDesktopDataFromCloud(
     const printReceipts = applySection(warnings, "print_receipts", () =>
       upsertCloudPrintReceipts(database, payload.printReceipts ?? [])
     );
+    // A passada inteira que a equivalencia de clientes pediu aconteceu. Sai mesmo se alguma
+    // tabela veio com aviso, como a da principal de preco: segurar a marca faria TODO pull
+    // frequente virar passada inteira enquanto o aviso durasse (uma migracao pendente na nuvem
+    // e um aviso que dura dias). O que ficar de fora volta na varredura completa, que registra
+    // a equivalencia e cura a pesagem do mesmo jeito.
+    if (customerAliasResyncPending && !since) {
+      clearCustomerAliasResyncPending(database);
+    }
     writeLocalSetting(database, "cloud_bootstrap_last_pull_at", new Date().toISOString());
     // Marca do relogio do servidor para o proximo pull incremental. Se alguma
     // tabela veio com aviso do servidor, nao avanca a marca: o proximo pull
@@ -2362,6 +2380,10 @@ export function upsertCloudCustomers(
         localTwin,
         integerValue(row.omie_customer_id)
       );
+      // O gemeo nao entra aqui, mas a pesagem fechada na balanca que usa ELE continua
+      // chegando com o id dele: a equivalencia e o que a deixa encontrar o cliente
+      // (ver `services/customer-aliases.ts`).
+      rememberCustomerAlias(database, companyId, id, localTwin.id);
       continue;
     }
     const legalName = stringValue(row.legal_name) || stringValue(row.trade_name) || "Cliente";
@@ -2598,6 +2620,7 @@ type LocalOperationSnapshot = {
   status: string;
   updated_at: string;
   customer_id: string | null;
+  remote_customer_id: string | null;
   product_id: string | null;
   carrier_id: string | null;
   freight_json: string | null;
@@ -2767,8 +2790,8 @@ function upsertCloudOperations(
       remote_plate, remote_driver_name, remote_customer_name, remote_product_description,
       payment_method_id, wallet_settlement_method_id, wallet_settlement_due_date,
       wallet_settled_at, wallet_settlement_note, settle_from_advance, omie_advance_settle_cents,
-      future_billing_nfe_number, future_billing_invoice_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      future_billing_nfe_number, future_billing_invoice_id, remote_customer_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       unit_id = excluded.unit_id,
@@ -2795,6 +2818,9 @@ function upsertCloudOperations(
       -- o fechamento passava a recusa-la com "operacao fiscal sem cliente vinculado" — ou
       -- seja, carga pesada, entregue, e sem ninguem para cobrar.
       customer_id = COALESCE(excluded.customer_id, weighing_operations.customer_id),
+      -- O id que a nuvem tem para o cliente, quando aqui ficou o gemeo dele. Ja chega
+      -- decidido de resolveCloudOperationCustomer (inclusive o "mantem" do vazio).
+      remote_customer_id = excluded.remote_customer_id,
       product_id = COALESCE(excluded.product_id, weighing_operations.product_id),
       payment_term_id = excluded.payment_term_id,
       entry_weight_kg = excluded.entry_weight_kg,
@@ -2853,7 +2879,7 @@ function upsertCloudOperations(
   `);
 
   const readLocal = database.prepare(
-    `SELECT status, updated_at, customer_id, product_id, carrier_id, freight_json,
+    `SELECT status, updated_at, customer_id, remote_customer_id, product_id, carrier_id, freight_json,
        payment_method_id,
        wallet_settlement_method_id, wallet_settlement_due_date, wallet_settled_at,
        wallet_settlement_note, settle_from_advance, omie_advance_settle_cents
@@ -2892,11 +2918,13 @@ function upsertCloudOperations(
       }
     }
     const closedAt = isoStringValue(row.closed_at);
-    const customerId = resolveMirroredId(
+    // Cliente com dois cadastros na nuvem: esta maquina guarda um so, e a pesagem fechada na
+    // balanca que usa o outro chega com o id que nao existe aqui. A equivalencia traduz para o
+    // cadastro daqui e guarda o id da nuvem para o reenvio (ver `services/customer-aliases.ts`).
+    const customer = resolveCloudOperationCustomer(
       database,
-      "customers",
-      row.customer_id,
-      local?.customer_id
+      nullableStringValue(row.customer_id),
+      local
     );
     const productId = resolveMirroredId(database, "products", row.product_id, local?.product_id);
     const carrierId = resolveMirroredId(database, "carriers", row.carrier_id, local?.carrier_id);
@@ -2995,7 +3023,7 @@ function upsertCloudOperations(
         integerValue(row.operation_code),
         mapCloudOperationStatus(row.status),
         mapCloudOperationType(row.operation_type),
-        customerId,
+        customer.customerId,
         vehicleId,
         driverId,
         carrierId,
@@ -3048,7 +3076,8 @@ function upsertCloudOperations(
         // pull. Quando a janela incremental nao trouxe a nota, a pesagem entra so com o
         // numero e o COALESCE acima guarda o vinculo para o pull seguinte — enquanto isso o
         // saldo sai pelo numero congelado, como nas pesagens anteriores a esta versao.
-        existingId(database, "customer_future_billing_invoices", row.future_billing_invoice_id)
+        existingId(database, "customer_future_billing_invoices", row.future_billing_invoice_id),
+        customer.remoteCustomerId
       );
       count++;
     } catch (error) {
@@ -4003,7 +4032,10 @@ function getOperationPayload(
     // Codigo sequencial da operacao (o que sai no topo do cupom). Vai para a nuvem para a
     // outra balanca da pedreira continuar a sequencia de onde ela parou.
     operation_code: operation.operation_code,
-    customer_id: operation.customer_id,
+    // O id que a NUVEM conhece quando esta pesagem chegou de outra balanca apontando para o
+    // gemeo do cliente daqui: sem isto o reenvio trocaria o cliente da nuvem para o gemeo, e
+    // ele alternaria entre os dois a cada balanca que tocasse a carga.
+    customer_id: cloudCustomerIdForPush(database, operation),
     product_id: operation.product_id,
     // Transportadora: as tres trocas permitidas numa operacao aberta sao
     // produto, cliente e transportadora — sem estas duas colunas a terceira

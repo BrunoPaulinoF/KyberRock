@@ -2160,5 +2160,44 @@ ALTER TABLE carriers ADD COLUMN offline_pending INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE vehicles ADD COLUMN offline_pending INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE drivers ADD COLUMN offline_pending INTEGER NOT NULL DEFAULT 0;
 `
+  },
+  {
+    version: 61,
+    name: "customer_aliases",
+    sql: `
+-- Clientes gemeos entre as balancas da mesma pedreira (\`services/customer-aliases.ts\`).
+--
+-- O mesmo cliente pode ter dois cadastros na nuvem (mesmo CNPJ e codigo OMIE, ids
+-- diferentes), e cada balanca guarda UM: o pull descarta o gemeo por documento. A pesagem
+-- fechada na outra balanca aponta para o id DELA, que nao existe aqui — e era gravada sem
+-- cliente, sumindo das telas por cliente desta maquina. Mesmo desenho de
+-- \`payment_method_aliases\` (migracao 49): id da nuvem -> id do cadastro daqui.
+CREATE TABLE IF NOT EXISTS customer_aliases (
+  remote_id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL,
+  local_id TEXT NOT NULL REFERENCES customers(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_aliases_local
+  ON customer_aliases(company_id, local_id);
+
+-- O id que a NUVEM tem para o cliente da pesagem, quando esta maquina gravou outro (o
+-- gemeo daqui). E ele que volta no envio, para o customer_id da nuvem nao alternar entre os
+-- gemeos a cada balanca que reenvia a carga.
+ALTER TABLE weighing_operations ADD COLUMN remote_customer_id TEXT;
+
+-- O proximo pull vem INTEIRO, uma vez: so a passada completa traz de novo os gemeos ja
+-- descartados (para a equivalencia nascer) e as pesagens ja gravadas sem cliente (para
+-- serem curadas por ela). Ver CUSTOMER_ALIAS_RESYNC_KEY. So na maquina que ja puxou da
+-- nuvem: a instalacao nova nao tem o que curar, e o primeiro pull dela ja vem inteiro.
+INSERT INTO local_settings (key, value_json, updated_at)
+SELECT 'customer_alias_resync_pending', 'true', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE EXISTS (SELECT 1 FROM local_settings WHERE key = 'cloud_cadastro_last_pull_at')
+ON CONFLICT(key) DO UPDATE SET
+  value_json = excluded.value_json,
+  updated_at = excluded.updated_at;
+`
   }
 ];
