@@ -1486,9 +1486,42 @@ por cima do cliente certo. A expedicao nao percebia: o pull dela ja tinha
    unificacao. Aplicar **depois** do deploy do `desktop-sync`, senao a proxima conferencia de nota
    apaga de novo.
 
-O que ainda nao muda: a balanca que nao tem o gemeo continua guardando a SUA copia da pesagem sem
-cliente (as telas dela nao acham essas cargas pelo cliente). Faltaria uma tabela de equivalencia
-de cadastro, como `payment_method_aliases` faz para a forma de pagamento.
+4. **A balanca que nao tem o gemeo acha o cliente** (`services/customer-aliases.ts`, migracao
+   local 61 `customer_aliases`). Antes ela guardava a SUA copia da pesagem sem cliente, e as telas
+   dela (Conferencia/fechamento de fatura, relatorios por cliente, carteira) nao achavam essas
+   cargas pelo cliente. Agora funciona como `payment_method_aliases` faz para a forma de pagamento:
+   - **a equivalencia nasce no pull do cadastro**: quando `upsertCloudCustomers` descarta a linha
+     da nuvem por causa do gemeo local, grava em `customer_aliases` o `remote_id` (id da nuvem)
+     apontando para o `local_id` (cadastro daqui);
+   - **a pesagem e traduzida no pull** (`resolveCloudOperationCustomer`): id que existe aqui vale
+     como esta; id com equivalencia vira o cadastro daqui e o id da nuvem fica guardado em
+     `weighing_operations.remote_customer_id`; id desconhecido (cadastro atrasado) mantem o
+     cliente local, mas o id da nuvem fica guardado do mesmo jeito;
+   - **o reenvio devolve o id da nuvem** (`cloudCustomerIdForPush`, em `getOperationPayload`).
+     Sem isto a conferencia da nota no OMIE reenviaria a carga com o gemeo DAQUI e o
+     `customer_id` da nuvem alternaria entre os dois a cada balanca que tocasse nela. A regra
+     confere pela equivalencia, nao pela coluna preenchida: se o operador trocou o cliente da
+     carga aqui, o cliente local deixa de bater com a equivalencia e sobe a troca — devolver o id
+     antigo desfaria a escolha dele. Carga criada aqui sobe com o id daqui, mesmo com a
+     equivalencia existindo (a coluna so e preenchida pelo pull);
+   - **a unificacao local leva a equivalencia junto** (`repointCustomerAliases` em
+     `mergeCustomerInto`), senao ela apontaria para um tombstone e a traducao deixaria de valer;
+   - **as pesagens ja gravadas sem cliente** se curam numa passada inteira: a migracao 61 liga
+     `customer_alias_resync_pending` (so na maquina que ja tinha puxado da nuvem), o proximo pull
+     vem inteiro — e so ele traz de volta os gemeos ja descartados e as pesagens antigas. A marca
+     sai depois dessa UMA passada, mesmo com aviso de alguma tabela (como a da principal de
+     preco): segura-la faria todo pull de 15 s virar passada inteira enquanto o aviso durasse. O
+     que ficar de fora volta na varredura completa, que faz a mesma coisa. O `COALESCE` do
+     `customer_id` no pull faz o resto: no empate de `updated_at` o vazio local recebe o cliente
+     traduzido.
+
+O que ainda nao muda: a passada inteira traz as **2.000 pesagens mais recentes** da unidade
+(`HISTORY_MAX_ROWS` do `desktop-pull`); carga mais antiga que isso, ja gravada sem cliente, continua
+sem cliente nesta balanca. E so a PESAGEM e traduzida — o que se pendura no cliente gemeo (extrato
+de credito, preco especial, frete, nota de entrega futura, placas) continua descartado por
+`existingId` na balanca que nao tem aquele id; o preco tem dono e politica de conflito proprios
+(ver "Balanca principal de precos") e nao deve ganhar traducao sem rever essa regra. A
+transportadora tem o mesmo descarte por documento e ainda nao tem equivalencia.
 
 ## O que a nuvem NAO precisa guardar nem receber
 
