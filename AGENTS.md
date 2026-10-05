@@ -1454,6 +1454,42 @@ Cuidados que nao podem se perder:
   faturado saia da tela com um clique. Quem quer tirar do dia a dia tem **Inativar** (botao novo na
   linha); quem tem cadastro repetido tem **Unificar**.
 
+## Pesagem sem cliente na nuvem: o reenvio vazio nao apaga
+
+A Conferencia de faturamento do site mostrava **0 pesagens** da Levisa de 08 a 19/09/2026; o
+computador da expedicao mostrava **15** (457,6 t, R$ 24.250,68). As 15 estavam na nuvem, mas com
+`customer_id` e `customer_name` vazios — 95 pesagens assim na Pedreira Ibiuna, 57 da Levisa.
+
+**Como o cliente sumia.** A Levisa tem dois cadastros na nuvem (mesmo CNPJ e mesmo codigo OMIE:
+`omie_11488403507` e um criado numa balanca). Cada balanca guarda UM: o pull descarta o gemeo por
+documento (`findLocalCadastroWithDocument`). A pesagem fechada na expedicao aponta para um id; na
+balanca que so tem o outro, `resolveMirroredId` nao acha o cliente e a copia de la fica sem
+cliente. Ao conferir a nota no OMIE, essa balanca reenvia a pesagem com o MESMO `updated_at`
+(`enqueueBillingChangeCloudPush`) — o empate passa pela regra do mais novo, e o vazio era gravado
+por cima do cliente certo. A expedicao nao percebia: o pull dela ja tinha
+`customer_id = COALESCE(excluded.customer_id, ...)`.
+
+**O conserto:**
+
+1. **A nuvem barra o vazio na entrada** (`keepOperationLinks` em `_shared/operation-writes.ts`,
+   usado por `dropStaleOperationWrites` no `desktop-sync`): copia sem cliente ou sem produto
+   recebe o que a nuvem ja tinha, e o nome vai junto. E a mesma regra do pull do desktop — nao
+   existe pesagem sem cliente nem sem produto — e vale para qualquer versao de balanca. Troca de
+   cliente (outro id no payload) continua valendo.
+2. **O site procura em todos os cadastros do cliente** (`dedupeCustomers` em
+   `apps/web/src/lib/billing-conference.ts`): a opcao do seletor leva os ids de todos os gemeos
+   (mesmo documento OU mesmo codigo OMIE, inclusive inativos e excluidos) e a consulta usa
+   `in("customer_id", ids)`. Antes filtrava so pelo primeiro id.
+3. **As que ja tinham perdido o cliente** voltam pela migracao `202610050001`: o cliente sai do
+   documento impresso no cupom (`print_receipts.content_snapshot_json`, linha "Documento:"), que
+   nenhum reenvio altera; entre os cadastros vivos do mesmo documento fica o da regra da
+   unificacao. Aplicar **depois** do deploy do `desktop-sync`, senao a proxima conferencia de nota
+   apaga de novo.
+
+O que ainda nao muda: a balanca que nao tem o gemeo continua guardando a SUA copia da pesagem sem
+cliente (as telas dela nao acham essas cargas pelo cliente). Faltaria uma tabela de equivalencia
+de cadastro, como `payment_method_aliases` faz para a forma de pagamento.
+
 ## O que a nuvem NAO precisa guardar nem receber
 
 O Supabase estava estourando espaco e o banco dava engasgo. A medicao de 16/09/2026 (106 MB de

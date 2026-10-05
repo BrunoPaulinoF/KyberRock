@@ -30,7 +30,7 @@ import {
   renderWeighingBillingReportSpreadsheet,
   weighingBillingReportFileBaseName
 } from "./desktop/weighing-billing-report-render.js";
-import { localDay, periodToIso, todayIso } from "./format";
+import { localDay, normalizeDocument, periodToIso, todayIso } from "./format";
 import type { ReportFile } from "./report-output";
 import { supabase } from "./supabase";
 
@@ -386,6 +386,22 @@ export interface CustomerOption {
   id: string;
   name: string;
   document: string | null;
+  /**
+   * Todos os cadastros do mesmo cliente real, inclusive os inativos e excluidos: a pesagem
+   * aponta para o cadastro da balanca que a fechou, e o filtro precisa achar qualquer um deles.
+   */
+  ids: string[];
+}
+
+export interface CustomerOptionSource {
+  id: string;
+  trade_name: string | null;
+  legal_name: string | null;
+  document: string | null;
+  omie_customer_id: number | null;
+  /** Ausente vale como vivo e ativo. */
+  deleted_at?: string | null;
+  is_active?: boolean | null;
 }
 
 /**
@@ -393,21 +409,15 @@ export interface CustomerOption {
  * codigo OMIE em duas linhas (a do OMIE e a da balanca) aparece uma vez so.
  */
 export async function loadCustomerOptions(companyId: string): Promise<CustomerOption[]> {
-  const rows: Array<{
-    id: string;
-    trade_name: string | null;
-    legal_name: string | null;
-    document: string | null;
-    omie_customer_id: number | null;
-  }> = [];
+  const rows: CustomerOptionSource[] = [];
   for (let page = 0; page < 50; page++) {
+    // Sem filtro de excluido/inativo: eles nao viram opcao, mas entram no grupo do gemeo vivo.
     const { data, error } = await supabase
       .from("customers")
-      .select("id, trade_name, legal_name, document, omie_customer_id")
+      .select("id, trade_name, legal_name, document, omie_customer_id, deleted_at, is_active")
       .eq("company_id", companyId)
-      .is("deleted_at", null)
-      .eq("is_active", true)
       .order("trade_name")
+      .order("id")
       .range(page * PAGE, page * PAGE + PAGE - 1);
     if (error) throw new Error(error.message);
     rows.push(...(data ?? []));
@@ -416,45 +426,74 @@ export async function loadCustomerOptions(companyId: string): Promise<CustomerOp
   return dedupeCustomers(rows);
 }
 
-export function dedupeCustomers(
-  rows: ReadonlyArray<{
-    id: string;
-    trade_name: string | null;
-    legal_name: string | null;
-    document: string | null;
-    omie_customer_id: number | null;
-  }>
-): CustomerOption[] {
-  const seen = new Set<string>();
+/** O que faz dois cadastros serem o mesmo cliente: o documento (com as letras) ou o codigo OMIE. */
+function twinKeys(row: CustomerOptionSource): string[] {
+  const keys: string[] = [];
+  const document = normalizeDocument(row.document ?? "");
+  if (document) keys.push(`doc:${document}`);
+  if (row.omie_customer_id) keys.push(`omie:${row.omie_customer_id}`);
+  return keys;
+}
+
+/**
+ * Uma opcao por cliente real, com os ids de TODOS os cadastros dele.
+ *
+ * Antes a opcao levava so o id do primeiro cadastro e a consulta filtrava por ele. Cliente com
+ * dois cadastros (a Levisa: `omie_11488403507` e o criado numa balanca, mesmo CNPJ e mesmo
+ * codigo OMIE) tinha as pesagens no outro id — e a tela dizia "Sem pesagens no periodo".
+ * Documento OU codigo OMIE juntam o grupo: um cadastro sem documento ainda e o mesmo cliente
+ * do OMIE que o outro.
+ */
+export function dedupeCustomers(rows: readonly CustomerOptionSource[]): CustomerOption[] {
+  const parent = rows.map((_, index) => index);
+  const find = (index: number): number => {
+    let root = index;
+    while (parent[root] !== root) root = parent[root];
+    parent[index] = root;
+    return root;
+  };
+  const firstByKey = new Map<string, number>();
+  rows.forEach((row, index) => {
+    for (const key of twinKeys(row)) {
+      const other = firstByKey.get(key);
+      if (other === undefined) firstByKey.set(key, index);
+      else parent[find(index)] = find(other);
+    }
+  });
+
+  const idsByGroup = new Map<number, string[]>();
+  rows.forEach((row, index) => {
+    const group = find(index);
+    idsByGroup.set(group, [...(idsByGroup.get(group) ?? []), row.id]);
+  });
+
+  const seen = new Set<number>();
   const options: CustomerOption[] = [];
-  for (const row of rows) {
-    // Documento sem pontuacao e sem caixa, mas COM as letras do CNPJ alfanumerico.
-    const document = (row.document ?? "").replace(/[^0-9A-Za-z]/g, "").toUpperCase();
-    const key = row.omie_customer_id
-      ? `omie:${row.omie_customer_id}`
-      : document
-        ? `doc:${document}`
-        : `id:${row.id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+  rows.forEach((row, index) => {
+    if (row.deleted_at || row.is_active === false) return;
+    const group = find(index);
+    if (seen.has(group)) return;
+    seen.add(group);
     options.push({
       id: row.id,
       name: (row.trade_name ?? "").trim() || (row.legal_name ?? "").trim() || "Sem nome",
-      document: row.document
+      document: row.document,
+      ids: idsByGroup.get(group) ?? [row.id]
     });
-  }
+  });
   return options;
 }
 
 /**
  * Pesagens concluidas da unidade no periodo pela data de FECHAMENTO, ja com cliente e
- * produto do cadastro. `customerId` vazio traz todos os clientes.
+ * produto do cadastro. `customerIds` sao os cadastros do cliente escolhido (`CustomerOption.ids`);
+ * vazio traz todos os clientes.
  */
 export async function loadBillingRows(
   companyId: string,
   unitId: string,
   range: { start: string; end: string },
-  customerId: string | null
+  customerIds: readonly string[] | null
 ): Promise<BillingRow[]> {
   const { startIso, endIso } = periodToIso(range.start, range.end);
   const operations: BillingSourceOperation[] = [];
@@ -471,7 +510,7 @@ export async function loadBillingRows(
           `and(closed_at.is.null,created_at.gte."${startIso}",created_at.lt."${endIso}")`
         ].join(",")
       );
-    if (customerId) query = query.eq("customer_id", customerId);
+    if (customerIds?.length) query = query.in("customer_id", [...customerIds]);
     const { data, error } = await query
       .order("closed_at", { ascending: true, nullsFirst: true })
       .order("created_at", { ascending: true })
@@ -481,14 +520,14 @@ export async function loadBillingRows(
     if (!data || data.length < PAGE) break;
   }
 
-  const customerIds = [...new Set(operations.map((op) => op.customer_id).filter(isId))];
+  const operationCustomerIds = [...new Set(operations.map((op) => op.customer_id).filter(isId))];
   const productIds = [...new Set(operations.map((op) => op.product_id).filter(isId))];
   const [customers, products] = await Promise.all([
     byIds<BillingCustomerInfo & { id: string }>(
       "customers",
       "id, trade_name, legal_name, document",
       companyId,
-      customerIds
+      operationCustomerIds
     ),
     byIds<BillingProductInfo & { id: string }>(
       "products",

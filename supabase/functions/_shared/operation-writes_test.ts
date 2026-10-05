@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { cancellationReannouncements, isStaleOperationWrite } from "./operation-writes.ts";
+import {
+  cancellationReannouncements,
+  isStaleOperationWrite,
+  keepOperationLinks
+} from "./operation-writes.ts";
 
 const CANCELLED_AT = "2026-09-18T12:56:45.569Z";
 
@@ -95,5 +99,86 @@ describe("cancellationReannouncements", () => {
         now
       )
     ).toEqual([]);
+  });
+});
+
+describe("keepOperationLinks", () => {
+  const CLOUD = {
+    customer_id: "omie_11488403507",
+    customer_name: "LEVISA DESCARTAVEIS LTDA",
+    product_id: "omie_11455901041",
+    product_description: "Rachão"
+  };
+
+  it("nao deixa a balanca sem o cadastro apagar o cliente da nuvem", () => {
+    // A outra balanca conferiu a nota no OMIE e reenviou a pesagem que ela guarda sem
+    // cliente: o gemeo do cadastro nunca chegou la.
+    const row = keepOperationLinks(CLOUD, {
+      id: "op-1",
+      status: "synced",
+      customer_id: null,
+      customer_name: null,
+      product_id: "omie_11455901041",
+      product_description: "Rachão",
+      omie_invoice_number: "30017"
+    });
+    expect(row).toMatchObject({
+      customer_id: "omie_11488403507",
+      customer_name: "LEVISA DESCARTAVEIS LTDA",
+      omie_invoice_number: "30017"
+    });
+  });
+
+  it("tambem guarda o produto", () => {
+    const row = keepOperationLinks(CLOUD, {
+      id: "op-1",
+      customer_id: "omie_11488403507",
+      product_id: "",
+      product_description: null
+    });
+    expect(row).toMatchObject({ product_id: "omie_11455901041", product_description: "Rachão" });
+  });
+
+  it("aceita a troca de cliente feita na operacao", () => {
+    const row = keepOperationLinks(CLOUD, {
+      id: "op-1",
+      customer_id: "cliente-novo",
+      customer_name: "OUTRO CLIENTE"
+    });
+    expect(row).toMatchObject({ customer_id: "cliente-novo", customer_name: "OUTRO CLIENTE" });
+  });
+
+  it("nao deixa o nome do mesmo cliente sumir", () => {
+    const row = keepOperationLinks(CLOUD, {
+      id: "op-1",
+      customer_id: "omie_11488403507",
+      customer_name: null
+    });
+    expect(row.customer_name).toBe("LEVISA DESCARTAVEIS LTDA");
+  });
+
+  it("nao mexe no nome que chegou com outro cliente", () => {
+    const row = keepOperationLinks(CLOUD, {
+      id: "op-1",
+      customer_id: "cliente-novo",
+      customer_name: null
+    });
+    expect(row).toMatchObject({ customer_id: "cliente-novo", customer_name: null });
+  });
+
+  it("nao inventa coluna que o payload nao trouxe", () => {
+    // Ausente o upsert ja preserva; incluir a coluna mudaria o que a balanca mandou.
+    expect(keepOperationLinks(CLOUD, { id: "op-1", status: "synced" })).toEqual({
+      id: "op-1",
+      status: "synced"
+    });
+  });
+
+  it("nuvem sem cliente aceita o vazio", () => {
+    const row = keepOperationLinks(
+      { customer_id: null, customer_name: null },
+      { id: "op-1", customer_id: null }
+    );
+    expect(row).toEqual({ id: "op-1", customer_id: null });
   });
 });

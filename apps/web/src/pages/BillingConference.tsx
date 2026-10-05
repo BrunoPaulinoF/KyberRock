@@ -103,12 +103,22 @@ export function BillingConference() {
       ? customerParam
       : "";
 
+  // Todos os cadastros do cliente escolhido: a pesagem aponta para o da balanca que a fechou.
+  const customerIds = useMemo(
+    () =>
+      customerId
+        ? (customers.data?.find((customer) => customer.id === customerId)?.ids ?? [customerId])
+        : null,
+    [customers.data, customerId]
+  );
+  const customerKey = customerIds ? customerIds.join(",") : "";
+
   // Situacao e busca filtram na tela: a leitura e so empresa + unidade + periodo + cliente.
   const { data, loading, error, reload, refresh } = useAsync(
-    () => loadBillingRows(user.companyId, user.unitId, range, customerId || null),
-    [user.companyId, user.unitId, range.start, range.end, customerId],
+    () => loadBillingRows(user.companyId, user.unitId, range, customerIds),
+    [user.companyId, user.unitId, range.start, range.end, customerKey],
     {
-      key: `conferencia-faturamento:pesagens:${user.companyId}:${user.unitId}:${range.start}:${range.end}:${customerId}`
+      key: `conferencia-faturamento:pesagens:${user.companyId}:${user.unitId}:${range.start}:${range.end}:${customerKey}`
     }
   );
   // Pesagem fechada, editada ou cancelada na balanca entra na tela na hora.

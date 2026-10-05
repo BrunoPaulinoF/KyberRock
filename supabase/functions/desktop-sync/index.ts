@@ -6,7 +6,13 @@ import { isReadUnavailable, isUnknownColumnError } from "../_shared/db-read-erro
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
 import { scopeRowsToDevice } from "../_shared/device-scope.ts";
 import { priceChangeLogRowsFromDevice } from "../_shared/price-change-log.ts";
-import { cancellationReannouncements, isStaleOperationWrite } from "../_shared/operation-writes.ts";
+import {
+  cancellationReannouncements,
+  isStaleOperationWrite,
+  keepOperationLinks,
+  type OperationLinks,
+  type OperationVersion
+} from "../_shared/operation-writes.ts";
 import {
   MAX_UNKNOWN_COLUMN_ROUNDS,
   type PostgrestLikeError,
@@ -542,14 +548,15 @@ async function dropStaleOperationWrites(
   if (!ids.length) return rows;
   const { data: existing, error } = await supabase
     .from("weighing_operations")
-    .select("id, status, updated_at")
+    .select("id, status, updated_at, customer_id, customer_name, product_id, product_description")
     .in("id", ids);
   // Sem como comparar, mantem o comportamento antigo (upsert direto).
   if (error || !existing) return rows;
   const currentById = new Map(
-    (existing as Array<{ id: string; status: string | null; updated_at: string | null }>).map(
-      (row) => [row.id, row]
-    )
+    (existing as Array<OperationVersion & OperationLinks & { id: string }>).map((row) => [
+      row.id,
+      row
+    ])
   );
   // A balanca que mandou uma copia mais nova de uma carga cancelada nao sabe do cancelamento:
   // a linha volta a ela como a versao mais nova (ver `_shared/operation-writes.ts`). Falhar
@@ -562,14 +569,23 @@ async function dropStaleOperationWrites(
       .eq("status", "cancelled");
   }
   // A regra (inclusive "cancelada e final") vive em `_shared/operation-writes.ts`.
-  return rows.filter((row) => {
-    const current = currentById.get(String(row.id ?? ""));
-    if (!current) return true;
-    return !isStaleOperationWrite(current, {
-      status: row.status as string | null | undefined,
-      updated_at: row.updated_at as string | null | undefined
-    });
-  });
+  return (
+    rows
+      .filter((row) => {
+        const current = currentById.get(String(row.id ?? ""));
+        if (!current) return true;
+        return !isStaleOperationWrite(current, {
+          status: row.status as string | null | undefined,
+          updated_at: row.updated_at as string | null | undefined
+        });
+      })
+      // Copia sem cliente ou sem produto nao apaga o que a nuvem ja sabe: e a balanca que nao
+      // tem aquele cadastro, nao o operador tirando (ver `keepOperationLinks`).
+      .map((row) => {
+        const current = currentById.get(String(row.id ?? ""));
+        return current ? keepOperationLinks(current, row) : row;
+      })
+  );
 }
 
 async function mergeLoadingRequestWrites(
