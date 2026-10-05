@@ -281,7 +281,10 @@ export const q = {
     fail(error);
     return count ?? 0;
   },
-  /** Caminhoes no patio da unidade: pesagem com entrada e sem saida. */
+  /**
+   * Caminhoes no patio da unidade: pesagem com entrada e sem saida, a entrada mais nova primeiro
+   * (igual as abas Concluidas e Canceladas). Painel e Insights reordenam por conta propria.
+   */
   openOperations: (companyId: string, unitId: string) =>
     all<Operation>((from, to) =>
       supabase
@@ -290,7 +293,8 @@ export const q = {
         .eq("company_id", companyId)
         .eq("unit_id", unitId)
         .eq("status", OPEN_STATUS)
-        .order("created_at", { ascending: true })
+        .order("created_at", { ascending: false })
+        .order("id")
         .range(from, to)
     ),
   /** Pesagens canceladas da unidade desde `sinceIso` (a aba Canceladas). */
