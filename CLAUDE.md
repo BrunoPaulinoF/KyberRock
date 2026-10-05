@@ -219,6 +219,12 @@ These recur across the codebase and are easy to violate accidentally:
   pesagem viva. E **excluir cliente** passou a exigir cadastro sem historico nenhum
   (`historyCount`): quem tem carga ou credito usa Inativar ou Unificar, porque excluir nunca
   apagou pesagem — so escondia o caminho ate ela.
+- **Reenvio vazio nao apaga o cliente** (AGENTS.md "Pesagem sem cliente na nuvem"): a balanca
+  que nao tem o cadastro gemeo do cliente guarda a pesagem SEM cliente e, ao conferir a nota no
+  OMIE, reenviava essa copia com o mesmo `updated_at` — a nuvem perdia o cliente e o site
+  mostrava 0 pesagens da Levisa contra 15 na expedicao. O `desktop-sync` agora mantem cliente e
+  produto da nuvem quando a copia chega vazia (`keepOperationLinks`), e o filtro de cliente do site
+  procura em todos os cadastros do mesmo cliente (mesmo documento ou codigo OMIE).
 - **Relogio da nuvem** (AGENTS.md "Relogio da nuvem: todas as balancas na mesma hora"): o
   processo principal e o `'now'` do SQLite usam a hora do SERVIDOR (`services/cloud-clock.ts`),
   medida no `desktop-status` contra o relogio real (`realNowMs`, nunca o `Date` ja corrigido).

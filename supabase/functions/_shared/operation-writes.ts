@@ -93,3 +93,70 @@ export function cancellationReannouncements(
   }
   return [...latest].map(([id, ts]) => ({ id, updatedAt: new Date(ts).toISOString() }));
 }
+
+/**
+ * Cliente e produto da pesagem, com o nome que a projecao leva junto de cada um.
+ *
+ * Ausente e diferente de nulo: coluna que o payload nao traz o upsert ja preserva.
+ */
+export interface OperationLinks {
+  customer_id?: string | null;
+  customer_name?: string | null;
+  product_id?: string | null;
+  product_description?: string | null;
+}
+
+const OPERATION_LINKS = [
+  { id: "customer_id", label: "customer_name" },
+  { id: "product_id", label: "product_description" }
+] as const;
+
+function filled(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+/**
+ * A copia recebida com o cliente (ou o produto) da nuvem no lugar do VAZIO que ela trouxe.
+ *
+ * Nao existe pesagem sem cliente nem sem produto — o espelho do desktop ja segue essa regra
+ * (`customer_id = COALESCE(excluded.customer_id, ...)` em `upsertCloudOperations`) —, entao um
+ * vazio chegando aqui nunca e "o operador tirou": e a balanca que nao sabe quem e o cliente.
+ *
+ * E isso acontecia. Cliente com dois cadastros na nuvem (mesmo CNPJ, ids diferentes) fica com
+ * um so em cada balanca: o pull descarta o gemeo (`findLocalCadastroWithDocument`). A pesagem
+ * fechada na balanca que usa um id chega na outra apontando para o id que ela nao tem, e la
+ * vira pesagem sem cliente. Quando essa outra balanca confere a nota no OMIE ela reenvia a
+ * pesagem com o MESMO `updated_at` — e o vazio apagava o cliente da nuvem. Na Pedreira Ibiuna
+ * foram 95 pesagens, 57 da Levisa: a Conferencia de faturamento do site mostrava 0 pesagens da
+ * Levisa de 08 a 19/09, contra 15 (R$ 24.250,68) no computador da expedicao.
+ *
+ * O nome so e trocado junto com o vinculo, ou quando o vinculo e o mesmo e o nome chegou
+ * vazio: com outro cliente no payload (a troca feita na operacao aberta), vale o payload.
+ */
+export function keepOperationLinks(
+  current: OperationLinks,
+  incoming: Record<string, unknown>
+): Record<string, unknown> {
+  let row = incoming;
+  for (const link of OPERATION_LINKS) {
+    if (!(link.id in incoming)) continue;
+    const currentId = current[link.id];
+    const currentLabel = current[link.label];
+    if (!filled(currentId)) continue;
+    const incomingId = incoming[link.id];
+    if (!filled(incomingId)) {
+      row = { ...row, [link.id]: currentId };
+      if (!filled(incoming[link.label]) && filled(currentLabel)) {
+        row = { ...row, [link.label]: currentLabel };
+      }
+    } else if (
+      incomingId === currentId &&
+      link.label in incoming &&
+      !filled(incoming[link.label]) &&
+      filled(currentLabel)
+    ) {
+      row = { ...row, [link.label]: currentLabel };
+    }
+  }
+  return row;
+}

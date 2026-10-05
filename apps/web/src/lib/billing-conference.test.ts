@@ -369,7 +369,85 @@ describe("dedupeCustomers", () => {
       { id: "4", trade_name: " ", legal_name: null, document: null, omie_customer_id: 9 }
     ]);
     expect(options.map((option) => option.id)).toEqual(["1", "3", "4"]);
+    expect(options[0].ids).toEqual(["1", "2"]);
     expect(options[1].name).toBe("Beta");
     expect(options[2].name).toBe("Sem nome");
+  });
+
+  it("filtra pelos DOIS cadastros da Levisa, nao so pelo primeiro", () => {
+    // A pesagem fechada na expedicao aponta para um id; o seletor mostrava o outro, e a
+    // consulta pelo id unico devolvia "Sem pesagens no periodo".
+    const options = dedupeCustomers([
+      {
+        id: "28cbc2e5-eab5-49e0-8666-72c98d061c83",
+        trade_name: "LEVISA DESCARTAVEIS LTDA",
+        legal_name: "LEVISA DESCARTAVEIS LTDA",
+        document: "06.020.284/0001-64",
+        omie_customer_id: 11488403507
+      },
+      {
+        id: "omie_11488403507",
+        trade_name: "LEVISA DESCARTAVEIS LTDA",
+        legal_name: "LEVISA DESCARTAVEIS LTDA",
+        document: "06020284000164",
+        omie_customer_id: 11488403507
+      }
+    ]);
+    expect(options).toHaveLength(1);
+    expect(options[0].ids).toEqual(["28cbc2e5-eab5-49e0-8666-72c98d061c83", "omie_11488403507"]);
+  });
+
+  it("junta pelo codigo OMIE o cadastro sem documento", () => {
+    const options = dedupeCustomers([
+      { id: "a", trade_name: "Gama", legal_name: null, document: null, omie_customer_id: 7 },
+      {
+        id: "b",
+        trade_name: "Gama",
+        legal_name: null,
+        document: "12.345.345/0100-35",
+        omie_customer_id: 7
+      },
+      {
+        id: "c",
+        trade_name: "Gama filial",
+        legal_name: null,
+        document: "12345345010035",
+        omie_customer_id: null
+      }
+    ]);
+    expect(options.map((option) => option.ids)).toEqual([["a", "b", "c"]]);
+  });
+
+  it("cadastro excluido ou inativo nao vira opcao, mas entra no grupo do vivo", () => {
+    const options = dedupeCustomers([
+      {
+        id: "velho",
+        trade_name: "Delta",
+        legal_name: null,
+        document: "11.222.333/0001-81",
+        omie_customer_id: null,
+        deleted_at: "2026-09-22T00:00:00.000Z"
+      },
+      {
+        id: "inativo",
+        trade_name: "Epsilon",
+        legal_name: null,
+        document: null,
+        omie_customer_id: 5,
+        is_active: false
+      },
+      {
+        id: "vivo",
+        trade_name: "Delta",
+        legal_name: null,
+        document: "11222333000181",
+        omie_customer_id: null,
+        deleted_at: null,
+        is_active: true
+      }
+    ]);
+    expect(options).toEqual([
+      { id: "vivo", name: "Delta", document: "11222333000181", ids: ["velho", "vivo"] }
+    ]);
   });
 });
