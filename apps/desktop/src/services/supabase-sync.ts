@@ -69,10 +69,15 @@ import {
   clearCadastroAliasResyncPending,
   cloudCadastroIdForPush,
   isCadastroAliasResyncPending,
+  hasRemoteLink,
   rememberCadastroAlias,
-  resolveCloudCadastroReference,
+  rememberRemoteLink,
+  resolveCloudCadastroLink,
   resolveCloudOperationCarrier,
-  resolveCloudOperationCustomer
+  resolveCloudOperationCustomer,
+  restoreRemoteLinks,
+  type CloudCadastroLink,
+  type RemoteLinkColumn
 } from "./cadastro-aliases.js";
 import {
   isCadastroIncompleteFault,
@@ -1022,7 +1027,7 @@ function upsertCloudCadastro(
     ],
     [
       "customer_price_tables",
-      () => upsertCloudCustomerPriceTables(database, payload.customerPriceTables ?? [])
+      () => upsertCloudCustomerPriceTables(database, payload.customerPriceTables ?? [], pricePolicy)
     ],
     [
       "customer_freight_rules",
@@ -1147,7 +1152,8 @@ function upsertCloudPriceTableItems(
 
 function upsertCloudCustomerPriceTables(
   database: DesktopDatabase,
-  rows: Array<Record<string, unknown>>
+  rows: Array<Record<string, unknown>>,
+  policy: PriceConflictPolicy = "local"
 ): number {
   const upsert = database.prepare(`
     INSERT INTO customer_price_tables (
@@ -1164,13 +1170,43 @@ function upsertCloudCustomerPriceTables(
       deleted_at = excluded.deleted_at
   `);
 
+  // Vinculo do cliente GEMEO: esta maquina pode ja ter ligado o cliente daqui a uma tabela, e
+  // duas tabelas vivas para o mesmo cliente nao tem desempate previsivel (a unificacao trata do
+  // mesmo jeito, `singlePerCustomer` em `customer-merge.ts`). Entao as duas linhas disputam como
+  // o preco especial: quem perde cede. So vale para a linha traduzida — o vinculo direto segue
+  // como sempre foi.
+  const findLiveForCustomer = database.prepare(
+    `SELECT id, updated_at FROM customer_price_tables
+     WHERE customer_id = ? AND id <> ? AND deleted_at IS NULL LIMIT 1`
+  );
+  const yieldToCloud = database.prepare(
+    `UPDATE customer_price_tables SET deleted_at = ?, updated_at = ?, is_active = 0 WHERE id = ?`
+  );
+
   let count = 0;
   for (const row of rows) {
     const id = stringValue(row.id);
-    const customerId = existingId(database, "customers", row.customer_id);
+    const customer = resolveCloudCadastroLink(
+      database,
+      "customers",
+      nullableStringValue(row.customer_id)
+    );
+    const customerId = customer.id;
     const priceTableId = existingId(database, "price_tables", row.price_table_id);
     if (!id || !customerId || !priceTableId) continue;
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
+    const deletedAt = isoStringValue(row.deleted_at);
+    if (!deletedAt) {
+      const conflict = findLiveForCustomer.get(customerId, id) as PriceConflictRow | undefined;
+      const conflictIsTwin =
+        conflict !== undefined &&
+        hasRemoteLink(database, "customer_price_tables", conflict.id, "customer_id");
+      if (conflict && (customer.remoteId || conflictIsTwin)) {
+        const twinPolicy = twinConflictPolicy(policy, true);
+        if (!cloudRowWins(twinPolicy, { id, updatedAt }, toPriceConflictRow(conflict))) continue;
+        yieldToCloud.run(updatedAt, updatedAt, conflict.id);
+      }
+    }
     upsert.run(
       id,
       customerId,
@@ -1180,8 +1216,9 @@ function upsertCloudCustomerPriceTables(
       booleanToSql(row.is_active, true),
       isoStringValue(row.created_at) || updatedAt,
       updatedAt,
-      isoStringValue(row.deleted_at)
+      deletedAt
     );
+    rememberRemoteLink(database, "customer_price_tables", id, "customer_id", customer.remoteId);
     count++;
   }
   return count;
@@ -1199,6 +1236,21 @@ interface PriceConflictRow {
 
 function toPriceConflictRow(row: PriceConflictRow): { id: string; updatedAt: string | null } {
   return { id: row.id, updatedAt: isoStringValue(row.updated_at) || null };
+}
+
+/**
+ * A politica da disputa quando uma das duas linhas e do cliente GEMEO — a que chega traduzida
+ * ou a que ja esta aqui por traducao (`services/cadastro-aliases.ts`).
+ *
+ * Na secundaria (`cloud`) a linha local sempre cede, e isso supoe que so UMA linha da nuvem
+ * disputa cada par. Com gemeos sao duas, as duas vivas na nuvem com clientes diferentes — e as
+ * duas "da nuvem": cada uma derrubaria a outra, e ficaria a ultima que o pull processasse (o
+ * preco trocaria a cada passada, conforme a ordem). Ali a disputa passa a ser pela mais recente,
+ * a mesma regra das principais: as pontas decidem igual em qualquer ordem. Sem principal
+ * (`local`) nada muda — a daqui fica.
+ */
+function twinConflictPolicy(policy: PriceConflictPolicy, crossTwin: boolean): PriceConflictPolicy {
+  return crossTwin && policy === "cloud" ? "newest" : policy;
 }
 
 function upsertCloudCustomerFreightRules(
@@ -1239,7 +1291,13 @@ function upsertCloudCustomerFreightRules(
   let count = 0;
   for (const row of rows) {
     const id = stringValue(row.id);
-    const customerId = existingId(database, "customers", row.customer_id);
+    // Frete do cliente gemeo: mesma regra do preco especial (`services/cadastro-aliases.ts`).
+    const customer = resolveCloudCadastroLink(
+      database,
+      "customers",
+      nullableStringValue(row.customer_id)
+    );
+    const customerId = customer.id;
     if (!id || !customerId) continue;
     const productId = row.product_id ? existingId(database, "products", row.product_id) : null;
     if (row.product_id && !productId) continue;
@@ -1255,7 +1313,13 @@ function upsertCloudCustomerFreightRules(
           : findConflictForDefault.get(customerId)
       ) as PriceConflictRow | undefined;
       if (conflict && conflict.id !== id) {
-        if (!cloudRowWins(policy, { id, updatedAt }, toPriceConflictRow(conflict))) continue;
+        const crossTwin =
+          Boolean(customer.remoteId) ||
+          hasRemoteLink(database, "customer_freight_rules", conflict.id, "customer_id");
+        const conflictPolicy = twinConflictPolicy(policy, crossTwin);
+        if (!cloudRowWins(conflictPolicy, { id, updatedAt }, toPriceConflictRow(conflict))) {
+          continue;
+        }
         localRuleJson = readLocalFreightRuleJson(readRuleJson, conflict.id);
         yieldToMaster.run(updatedAt, updatedAt, conflict.id);
       }
@@ -1281,6 +1345,7 @@ function upsertCloudCustomerFreightRules(
       updatedAt,
       deletedAt
     );
+    rememberRemoteLink(database, "customer_freight_rules", id, "customer_id", customer.remoteId);
     count++;
   }
   return count;
@@ -1328,7 +1393,14 @@ function upsertCloudCustomerFutureBillingInvoices(
   let count = 0;
   for (const row of rows) {
     const id = stringValue(row.id);
-    const customerId = existingId(database, "customers", row.customer_id);
+    // Nota do cliente gemeo: entra no cadastro daqui, e a mesma nota que esta maquina ja
+    // tenha para ele continua vencendo (o conflito abaixo).
+    const customer = resolveCloudCadastroLink(
+      database,
+      "customers",
+      nullableStringValue(row.customer_id)
+    );
+    const customerId = customer.id;
     if (!id || !customerId) continue;
     const nfeNumber = stringValue(row.nfe_number);
     if (!nfeNumber) continue;
@@ -1354,6 +1426,13 @@ function upsertCloudCustomerFutureBillingInvoices(
       isoStringValue(row.created_at) || updatedAt,
       updatedAt,
       deletedAt
+    );
+    rememberRemoteLink(
+      database,
+      "customer_future_billing_invoices",
+      id,
+      "customer_id",
+      customer.remoteId
     );
     count++;
   }
@@ -1574,13 +1653,29 @@ export function upsertCloudCreditMovements(
     ON CONFLICT(id) DO NOTHING
   `);
 
+  // O titulo do OMIE so entra uma vez por tipo (indice unico local e na nuvem). Um movimento
+  // com o mesmo titulo e outro id derrubaria o lote inteiro no INSERT — ele fica de fora.
+  const titleTaken = database.prepare(
+    `SELECT 1 AS found FROM customer_credit_movements
+     WHERE company_id = ? AND omie_title_id = ? AND movement_type = ? AND id <> ? LIMIT 1`
+  );
+
   const touchedCustomers = new Set<string>();
   let count = 0;
   for (const row of rows) {
     const id = stringValue(row.id);
-    const customerId = existingId(database, "customers", row.customer_id);
+    // Movimento do cliente GEMEO: entra no cadastro daqui, e o saldo passa a somar o que as
+    // duas balancas lancaram para o mesmo cliente (antes so o que tinha o id daqui contava).
+    const customer = resolveCloudCadastroLink(
+      database,
+      "customers",
+      nullableStringValue(row.customer_id)
+    );
+    const customerId = customer.id;
     const movementType = stringValue(row.movement_type);
     if (!id || !customerId || !CREDIT_MOVEMENT_TYPES.has(movementType)) continue;
+    const omieTitleId = integerValue(row.omie_title_id);
+    if (omieTitleId !== null && titleTaken.get(companyId, omieTitleId, movementType, id)) continue;
     // A operacao de origem pode nao estar nesta maquina (historico limitado):
     // o vinculo vira nulo, mas o valor do movimento continua valendo.
     const operationId = existingId(database, "weighing_operations", row.operation_id);
@@ -1596,10 +1691,17 @@ export function upsertCloudCreditMovements(
       // Adiantamento espelhado do OMIE chega marcado: o extrato distingue o que
       // veio do financeiro do que foi lancado na balanca.
       nullableStringValue(row.source) ?? "local",
-      integerValue(row.omie_title_id),
+      omieTitleId,
       isoStringValue(row.created_at) || new Date().toISOString()
     );
     if (result.changes > 0) {
+      rememberRemoteLink(
+        database,
+        "customer_credit_movements",
+        id,
+        "customer_id",
+        customer.remoteId
+      );
       touchedCustomers.add(customerId);
       count++;
     }
@@ -1849,12 +1951,12 @@ function upsertCloudVehicles(
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
     // Veiculo com transportadora que ainda nao chegou: grava sem o vinculo em vez
     // de estourar a FK e derrubar o pull inteiro. A gemea desta maquina conta como chegada.
-    const carrierId = resolveCloudCadastroReference(
+    const carrier = resolveCloudCadastroLink(
       database,
       "carriers",
-      nullableStringValue(row.carrier_id),
-      null
+      nullableStringValue(row.carrier_id)
     );
+    const carrierId = carrier.id;
     upsert.run(
       id,
       companyId,
@@ -1867,6 +1969,7 @@ function upsertCloudVehicles(
       updatedAt,
       isoStringValue(row.deleted_at)
     );
+    rememberRemoteLink(database, "vehicles", id, "carrier_id", carrier.remoteId);
     count++;
   }
   return count;
@@ -1895,15 +1998,43 @@ function upsertCloudJunction(
       deleted_at = NULL
   `);
 
+  // O par traduzido pode repetir um vinculo que esta maquina ja tem com o gemeo dela (as duas
+  // balancas ligaram o mesmo cliente a mesma transportadora, cada uma com o seu cadastro). Ai
+  // a copia nao entra: aqui o vinculo ja existe, e duas linhas do mesmo par so duplicariam a
+  // transportadora na lista do cliente.
+  const findActivePair = database.prepare(
+    `SELECT 1 AS found FROM ${table}
+     WHERE ${parentColumn} = ? AND carrier_id = ? AND id <> ?
+       AND deleted_at IS NULL AND is_active = 1
+     LIMIT 1`
+  );
+
   let count = 0;
   for (const row of rows) {
     const id = stringValue(row.id);
     if (!id) continue;
     // Vinculo cuja ponta ainda nao existe localmente e ignorado nesta passada;
-    // o proximo pull (ja com o cadastro pai) grava o vinculo.
-    const parentId = existingId(database, JUNCTION_PARENT_TABLE[parentColumn], row[parentColumn]);
-    const carrierId = existingId(database, "carriers", row.carrier_id);
+    // o proximo pull (ja com o cadastro pai) grava o vinculo. Cliente e transportadora que
+    // sao o gemeo descartado aqui contam como existentes (`services/cadastro-aliases.ts`).
+    const parent: CloudCadastroLink =
+      parentColumn === "customer_id"
+        ? resolveCloudCadastroLink(database, "customers", nullableStringValue(row[parentColumn]))
+        : {
+            id: existingId(database, JUNCTION_PARENT_TABLE[parentColumn], row[parentColumn]),
+            remoteId: null,
+            resolved: true
+          };
+    const carrier = resolveCloudCadastroLink(
+      database,
+      "carriers",
+      nullableStringValue(row.carrier_id)
+    );
+    const parentId = parent.id;
+    const carrierId = carrier.id;
     if (!parentId || !carrierId) continue;
+    if ((parent.remoteId || carrier.remoteId) && findActivePair.get(parentId, carrierId, id)) {
+      continue;
+    }
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
     upsert.run(
       id,
@@ -1913,6 +2044,8 @@ function upsertCloudJunction(
       isoStringValue(row.created_at) || updatedAt,
       updatedAt
     );
+    rememberRemoteLink(database, table, id, parentColumn, parent.remoteId);
+    rememberRemoteLink(database, table, id, "carrier_id", carrier.remoteId);
     count++;
   }
   return count;
@@ -1951,7 +2084,13 @@ function upsertCloudCustomerVehicles(
   for (const row of rows) {
     const id = stringValue(row.id);
     // Ponta que ainda nao existe localmente: o proximo pull, ja com o cadastro pai, grava.
-    const customerId = existingId(database, "customers", row.customer_id);
+    // O cliente gemeo descartado aqui conta como existente (`services/cadastro-aliases.ts`).
+    const customer = resolveCloudCadastroLink(
+      database,
+      "customers",
+      nullableStringValue(row.customer_id)
+    );
+    const customerId = customer.id;
     const vehicleId = existingId(database, "vehicles", row.vehicle_id);
     if (!id || !customerId || !vehicleId) continue;
     const deletedAt = isoStringValue(row.deleted_at);
@@ -1969,6 +2108,7 @@ function upsertCloudCustomerVehicles(
       updatedAt,
       deletedAt
     );
+    rememberRemoteLink(database, "customer_vehicles", id, "customer_id", customer.remoteId);
     count++;
   }
   return count;
@@ -2079,7 +2219,15 @@ function upsertCloudCustomerSpecialPrices(
   let count = 0;
   for (const row of rows) {
     const id = stringValue(row.id);
-    const customerId = existingId(database, "customers", row.customer_id);
+    // Preco do cliente gemeo: entra no cadastro daqui. Se esta maquina ja tem preco para o
+    // mesmo par, e a disputa de sempre entre as duas linhas, decidida pela politica abaixo —
+    // o gemeo e o MESMO cliente, entao dois precos para ele sao a mesma divergencia.
+    const customer = resolveCloudCadastroLink(
+      database,
+      "customers",
+      nullableStringValue(row.customer_id)
+    );
+    const customerId = customer.id;
     const productId = existingId(database, "products", row.product_id);
     const price = integerValue(row.unit_price_cents);
     if (!id || !customerId || !productId || price === null) continue;
@@ -2088,7 +2236,13 @@ function upsertCloudCustomerSpecialPrices(
     if (!deletedAt) {
       const conflict = findConflict.get(customerId, productId) as PriceConflictRow | undefined;
       if (conflict && conflict.id !== id) {
-        if (!cloudRowWins(policy, { id, updatedAt }, toPriceConflictRow(conflict))) continue;
+        const crossTwin =
+          Boolean(customer.remoteId) ||
+          hasRemoteLink(database, "customer_special_prices", conflict.id, "customer_id");
+        const conflictPolicy = twinConflictPolicy(policy, crossTwin);
+        if (!cloudRowWins(conflictPolicy, { id, updatedAt }, toPriceConflictRow(conflict))) {
+          continue;
+        }
         yieldToMaster.run(updatedAt, updatedAt, conflict.id);
       }
     }
@@ -2104,6 +2258,7 @@ function upsertCloudCustomerSpecialPrices(
       updatedAt,
       deletedAt
     );
+    rememberRemoteLink(database, "customer_special_prices", id, "customer_id", customer.remoteId);
     count++;
   }
   return count;
@@ -2441,6 +2596,15 @@ export function upsertCloudCustomers(
       updatedAt,
       tombstone
     );
+    if (commercial.defaultCarrierRemoteId !== undefined) {
+      rememberRemoteLink(
+        database,
+        "customers",
+        id,
+        "default_carrier_id",
+        commercial.defaultCarrierRemoteId
+      );
+    }
     count++;
   }
   return count;
@@ -2502,7 +2666,7 @@ function resolveCustomerTombstone(
  * sistema nasce com id SORTEADO em cada balanca (ver a migracao `local_payment_methods...`),
  * entao o id que a principal publicou nao existe aqui — `resolvePaymentMethodId` acha a
  * gemea pelo `code`. A transportadora pode ser a gemea (mesmo CNPJ/CPF) que esta maquina
- * descartou — `resolveCloudCadastroReference` acha a daqui pela equivalencia — ou pode nao ter
+ * descartou — `resolveCloudCadastroLink` acha a daqui pela equivalencia — ou pode nao ter
  * sido espelhada ainda neste mesmo pull, e ai o vinculo anterior e mantido em vez de apagado
  * por causa de um cadastro atrasado. Nos dois casos, id vazio continua sendo id vazio: e assim
  * que a principal limpa o padrao nas demais maquinas.
@@ -2517,6 +2681,12 @@ function resolveCommercialBlock(
 ): {
   defaultPaymentMethodId: string | null;
   defaultCarrierId: string | null;
+  /**
+   * O id que a nuvem tem para a transportadora padrao, quando ela chegou traduzida da gemea
+   * (`rememberRemoteLink`). `undefined` = o bloco da nuvem nao foi aplicado, e o que esta
+   * maquina ja lembrava continua valendo.
+   */
+  defaultCarrierRemoteId?: string | null;
   nfRequired: number;
   creditMode: string;
   creditAccountEnabled: number;
@@ -2558,18 +2728,21 @@ function resolveCommercialBlock(
     };
   }
 
+  const defaultCarrier = resolveCloudCadastroLink(
+    database,
+    "carriers",
+    nullableStringValue(row.default_carrier_id)
+  );
   return {
     defaultPaymentMethodId: resolvePaymentMethodId(
       database,
       row.default_payment_method_id,
       local?.default_payment_method_id
     ),
-    defaultCarrierId: resolveCloudCadastroReference(
-      database,
-      "carriers",
-      nullableStringValue(row.default_carrier_id),
-      local?.default_carrier_id ?? null
-    ),
+    defaultCarrierId: defaultCarrier.resolved
+      ? defaultCarrier.id
+      : (local?.default_carrier_id ?? null),
+    defaultCarrierRemoteId: defaultCarrier.resolved ? defaultCarrier.remoteId : undefined,
     nfRequired: booleanToSql(row.nf_required, localNfRequired === 1),
     creditMode: normalizeCreditMode(row.credit_mode, localCreditMode),
     creditAccountEnabled: booleanToSql(row.credit_account_enabled, localCreditAccountEnabled === 1),
@@ -8298,6 +8471,37 @@ function resetCadastroPushCursors(database: DesktopDatabase, keys: readonly stri
   writeLocalSetting(database, CADASTRO_PUSH_STATE_KEY, next);
 }
 
+const CUSTOMER_LINK: RemoteLinkColumn = { column: "customer_id", aliasTable: "customers" };
+const CARRIER_LINK: RemoteLinkColumn = { column: "carrier_id", aliasTable: "carriers" };
+
+/**
+ * As colunas que o pull traduz pela equivalencia de cliente ou transportadora (ver
+ * `services/cadastro-aliases.ts`), por entidade do envio. Antes de subir, cada uma volta ao id
+ * que a nuvem tem (`restoreRemoteLinks`) — senao o eco da linha que veio da outra balanca
+ * levaria o gemeo daqui.
+ */
+const REMOTE_LINK_COLUMNS: Readonly<
+  Record<string, { table: string; columns: readonly RemoteLinkColumn[] }>
+> = {
+  customers: {
+    table: "customers",
+    columns: [{ column: "default_carrier_id", aliasTable: "carriers" }]
+  },
+  vehicles: { table: "vehicles", columns: [CARRIER_LINK] },
+  customerCarriers: { table: "customer_carriers", columns: [CUSTOMER_LINK, CARRIER_LINK] },
+  customerVehicles: { table: "customer_vehicles", columns: [CUSTOMER_LINK] },
+  driverCarriers: { table: "driver_carriers", columns: [CARRIER_LINK] },
+  vehicleCarriers: { table: "vehicle_carriers", columns: [CARRIER_LINK] },
+  customerSpecialPrices: { table: "customer_special_prices", columns: [CUSTOMER_LINK] },
+  customerPriceTables: { table: "customer_price_tables", columns: [CUSTOMER_LINK] },
+  customerFreightRules: { table: "customer_freight_rules", columns: [CUSTOMER_LINK] },
+  customerFutureBillingInvoices: {
+    table: "customer_future_billing_invoices",
+    columns: [CUSTOMER_LINK]
+  },
+  customerCreditMovements: { table: "customer_credit_movements", columns: [CUSTOMER_LINK] }
+};
+
 /** As entidades que carregam colunas com dono — hoje so `customers`. */
 const MASTERED_COLUMN_ENTITY_KEYS: readonly string[] = CADASTRO_PUSH_ENTITIES.filter(
   (entity) => entity.masteredColumns && entity.masteredColumns.length > 0
@@ -8444,6 +8648,8 @@ export async function pushSharedCadastroToCloud(
       const mapped = rows
         .map((row) => entity.map(row, settings.companyId))
         .filter((row) => Boolean(row.id));
+      const links = REMOTE_LINK_COLUMNS[entity.key];
+      if (links) restoreRemoteLinks(database, links.table, mapped, links.columns);
       const payload = stripColumns ? stripMasteredColumns(mapped, stripColumns) : mapped;
 
       const sent = await sendCadastroBatch(settings, entity, payload, errors);

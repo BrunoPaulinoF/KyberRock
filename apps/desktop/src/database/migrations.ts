@@ -2232,5 +2232,36 @@ ON CONFLICT(key) DO UPDATE SET
   value_json = excluded.value_json,
   updated_at = excluded.updated_at;
 `
+  },
+  {
+    version: 63,
+    name: "cadastro_remote_links",
+    sql: `
+-- O resto do cadastro que pendura no cliente ou na transportadora gemea
+-- (\`services/cadastro-aliases.ts\`): vinculos com transportadora, placas do cliente, preco
+-- especial, frete, tabela de preco, nota de entrega futura, extrato de credito, transportadora
+-- do veiculo e transportadora padrao do cliente. Ate aqui o pull descartava a linha cujo
+-- cliente (ou transportadora) era o gemeo que esta maquina nao tem.
+--
+-- Agora a linha entra com o cadastro equivalente daqui, e esta tabela lembra o id que a nuvem
+-- tem naquela coluna: o envio do cadastro devolve ESSE id quando a linha volta para a nuvem
+-- (o eco), em vez do gemeo daqui — que repetiria um par unico la e derrubaria o lote.
+CREATE TABLE IF NOT EXISTS cadastro_remote_links (
+  table_name TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  column_name TEXT NOT NULL,
+  remote_id TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (table_name, row_id, column_name)
+);
+
+-- Uma passada inteira, como na 61 e na 62: as linhas ja descartadas so voltam nela.
+INSERT INTO local_settings (key, value_json, updated_at)
+SELECT 'cadastro_alias_resync_pending', 'true', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+WHERE EXISTS (SELECT 1 FROM local_settings WHERE key = 'cloud_cadastro_last_pull_at')
+ON CONFLICT(key) DO UPDATE SET
+  value_json = excluded.value_json,
+  updated_at = excluded.updated_at;
+`
   }
 ];

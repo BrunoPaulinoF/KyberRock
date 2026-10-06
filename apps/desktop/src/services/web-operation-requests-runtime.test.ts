@@ -113,6 +113,57 @@ describe("pedidos de pesagem do site executados pela balanca", () => {
     }
   });
 
+  it("pedido do site com o cliente e a transportadora gemeos usa os cadastros desta balanca", async () => {
+    const { runtime, database } = createRuntime(tempDirectories);
+    try {
+      seedCatalog(database);
+      // A balanca guarda um cadastro so de cada; o site citou os gemeos da nuvem.
+      const at = "2026-09-25T09:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO carriers (id, company_id, name, document, source, is_active, created_at, updated_at)
+           VALUES ('carrier-1', 'company-1', 'Transportes', '11222333000181', 'local', 1, ?, ?)`
+        )
+        .run(at, at);
+      database
+        .prepare(
+          `INSERT INTO customer_aliases (remote_id, company_id, local_id, created_at, updated_at)
+           VALUES ('omie_4242', 'company-1', 'customer-1', ?, ?)`
+        )
+        .run(at, at);
+      database
+        .prepare(
+          `INSERT INTO carrier_aliases (remote_id, company_id, local_id, created_at, updated_at)
+           VALUES ('omie_supplier_42', 'company-1', 'carrier-1', ?, ?)`
+        )
+        .run(at, at);
+      queue.push({
+        id: "req-entry-gemeo",
+        kind: "entry",
+        operationId: "33333333-3333-4333-8333-333333333333",
+        payload: {
+          customerId: "omie_4242",
+          vehicleId: "vehicle-1",
+          driverId: "driver-1",
+          productId: "product-1",
+          carrierId: "omie_supplier_42",
+          operationType: "invoice",
+          entryWeightKg: 15_000
+        }
+      });
+      await run(runtime);
+
+      expect(reports[0]).toMatchObject({ id: "req-entry-gemeo", status: "done" });
+      expect(
+        database
+          .prepare("SELECT customer_id, carrier_id FROM weighing_operations WHERE id = ?")
+          .get("33333333-3333-4333-8333-333333333333")
+      ).toEqual({ customer_id: "customer-1", carrier_id: "carrier-1" });
+    } finally {
+      runtime.close();
+    }
+  });
+
   it("executar o mesmo pedido de novo nao cria um segundo caminhao nem imprime de novo", async () => {
     const { runtime, database, printed } = createRuntime(tempDirectories);
     try {
