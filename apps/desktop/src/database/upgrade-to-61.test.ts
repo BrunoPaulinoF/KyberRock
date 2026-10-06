@@ -4,7 +4,7 @@ import { runDesktopMigrations } from "./migrate";
 import { DESKTOP_MIGRATIONS } from "./migrations";
 import { openDesktopDatabase, type DesktopDatabase } from "./sqlite";
 import { ensureInitialDesktopIdentity } from "../services/bootstrap";
-import { isCustomerAliasResyncPending } from "../services/customer-aliases";
+import { isCadastroAliasResyncPending } from "../services/cadastro-aliases";
 
 /**
  * A 61 cria a equivalencia de clientes gemeos (`customer_aliases`) e a coluna com o id que a
@@ -53,7 +53,7 @@ describe("atualizacao de um banco em uso (60 -> 61)", () => {
           .run(AT, AT)
       ).toThrow(/FOREIGN KEY/);
 
-      expect(isCustomerAliasResyncPending(database)).toBe(true);
+      expect(isCadastroAliasResyncPending(database)).toBe(true);
     } finally {
       database.close();
     }
@@ -64,7 +64,7 @@ describe("atualizacao de um banco em uso (60 -> 61)", () => {
 
     try {
       runDesktopMigrations(database);
-      expect(isCustomerAliasResyncPending(database)).toBe(false);
+      expect(isCadastroAliasResyncPending(database)).toBe(false);
     } finally {
       database.close();
     }

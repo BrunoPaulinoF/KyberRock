@@ -1,5 +1,6 @@
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { documentKey } from "./customer-identity.js";
+import { repointCadastroAliases } from "./cadastro-aliases.js";
 import { mergeCustomerInto } from "./customer-merge.js";
 
 /**
@@ -291,6 +292,11 @@ function mergeOfflineInto(
         `UPDATE ${ref.table} SET ${ref.own} = @keeper, updated_at = @now WHERE ${ref.own} = @loser`
       )
       .run({ keeper: keeperId, loser: loserId, now: nowIso });
+  }
+  // A equivalencia com a transportadora gemea da nuvem passa para a que fica — senao a chave
+  // estrangeira de `carrier_aliases` recusaria o DELETE logo abaixo e a juncao inteira cairia.
+  if (table === "carriers") {
+    repointCadastroAliases(database, "carriers", loserId, keeperId, new Date(nowIso));
   }
   // Ninguem aponta mais para ele e ele nunca saiu daqui: some sem deixar tombstone.
   database.prepare(`DELETE FROM ${table} WHERE id = ?`).run(loserId);

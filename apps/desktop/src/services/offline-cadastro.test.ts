@@ -151,6 +151,39 @@ describe("cadastro feito sem internet", () => {
     }
   });
 
+  it("transportadora repetida com equivalencia da nuvem: a equivalencia passa para a que ficou", () => {
+    const database = createDatabase();
+    try {
+      insertCarrier(database, { id: "site", document: "11222333000181", createdAt: OLD });
+      insertCarrier(database, {
+        id: "offline",
+        document: "11.222.333/0001-81",
+        createdAt: OUTAGE,
+        pending: true
+      });
+      // A marcada ja representava uma gemea da nuvem. A juncao APAGA a marcada: sem levar a
+      // equivalencia junto, a chave estrangeira recusaria o DELETE e a juncao inteira cairia.
+      database
+        .prepare(
+          `INSERT INTO carrier_aliases (remote_id, company_id, local_id, created_at, updated_at)
+           VALUES ('gemea-da-nuvem', 'company-1', 'offline', ?, ?)`
+        )
+        .run(OUTAGE, OUTAGE);
+
+      reconcileOfflineCadastros(database, BACK);
+
+      expect(count(database, "carriers", "offline")).toBe(0);
+      expect(
+        database
+          .prepare("SELECT local_id FROM carrier_aliases WHERE remote_id = 'gemea-da-nuvem'")
+          .pluck()
+          .get()
+      ).toBe("site");
+    } finally {
+      database.close();
+    }
+  });
+
   it("cadastro novo de verdade e liberado com updated_at andando para o push enxergar", () => {
     const database = createDatabase();
     try {

@@ -1,5 +1,5 @@
 import type { DesktopDatabase } from "../database/sqlite.js";
-import { repointCustomerAliases } from "./customer-aliases.js";
+import { repointCadastroAliases } from "./cadastro-aliases.js";
 import { DOCUMENT_KEY_SQL, documentKey } from "./customer-identity.js";
 
 /**
@@ -183,7 +183,7 @@ export function mergeCustomerInto(
 
     // O gemeo da nuvem que a perdedora representava passa a ser representado pela
     // sobrevivente: sem isto, a pesagem da outra balanca voltaria a chegar sem cliente.
-    repointCustomerAliases(database, loserId, keeperId, now);
+    repointCadastroAliases(database, "customers", loserId, keeperId, now);
 
     counts.creditMovements = database
       .prepare("UPDATE customer_credit_movements SET customer_id = ? WHERE customer_id = ?")

@@ -66,12 +66,14 @@ import {
 } from "./weighing-operations.js";
 import { DOCUMENT_KEY_SQL, documentKey } from "./customer-identity.js";
 import {
-  clearCustomerAliasResyncPending,
-  cloudCustomerIdForPush,
-  isCustomerAliasResyncPending,
-  rememberCustomerAlias,
+  clearCadastroAliasResyncPending,
+  cloudCadastroIdForPush,
+  isCadastroAliasResyncPending,
+  rememberCadastroAlias,
+  resolveCloudCadastroReference,
+  resolveCloudOperationCarrier,
   resolveCloudOperationCustomer
-} from "./customer-aliases.js";
+} from "./cadastro-aliases.js";
 import {
   isCadastroIncompleteFault,
   isOmieCustomerRegistrationFault,
@@ -768,11 +770,12 @@ export async function pullDesktopDataFromCloud(
   // diz o que a principal mudou, nunca o que ela nao tem — e e justamente o cadastro de
   // preco que so existe aqui que precisa sair de cena.
   const priceResyncPending = authority.mode === "follower" && isPriceMasterResyncPending(database);
-  // Equivalencia de clientes recem-criada (migracao local `customer_aliases`): os gemeos ja
-  // descartados e as pesagens ja gravadas sem cliente so voltam numa passada inteira.
-  const customerAliasResyncPending = isCustomerAliasResyncPending(database);
+  // Equivalencia de cadastro recem-criada (migracoes locais `customer_aliases` e
+  // `carrier_aliases`): os gemeos ja descartados e as pesagens ja gravadas sem o cadastro so
+  // voltam numa passada inteira.
+  const cadastroAliasResyncPending = isCadastroAliasResyncPending(database);
   const since =
-    options.incremental && lastPullAt && !priceResyncPending && !customerAliasResyncPending
+    options.incremental && lastPullAt && !priceResyncPending && !cadastroAliasResyncPending
       ? new Date(new Date(lastPullAt).getTime() - CADASTRO_INCREMENTAL_OVERLAP_MS).toISOString()
       : undefined;
   const { data, error } = await supabase.functions.invoke<DesktopPullResponse>("desktop-pull", {
@@ -859,13 +862,13 @@ export async function pullDesktopDataFromCloud(
     const printReceipts = applySection(warnings, "print_receipts", () =>
       upsertCloudPrintReceipts(database, payload.printReceipts ?? [])
     );
-    // A passada inteira que a equivalencia de clientes pediu aconteceu. Sai mesmo se alguma
+    // A passada inteira que a equivalencia de cadastro pediu aconteceu. Sai mesmo se alguma
     // tabela veio com aviso, como a da principal de preco: segurar a marca faria TODO pull
     // frequente virar passada inteira enquanto o aviso durasse (uma migracao pendente na nuvem
     // e um aviso que dura dias). O que ficar de fora volta na varredura completa, que registra
     // a equivalencia e cura a pesagem do mesmo jeito.
-    if (customerAliasResyncPending && !since) {
-      clearCustomerAliasResyncPending(database);
+    if (cadastroAliasResyncPending && !since) {
+      clearCadastroAliasResyncPending(database);
     }
     writeLocalSetting(database, "cloud_bootstrap_last_pull_at", new Date().toISOString());
     // Marca do relogio do servidor para o proximo pull incremental. Se alguma
@@ -1745,6 +1748,9 @@ function upsertCloudCarriers(
         localTwin,
         integerValue(row.omie_customer_id)
       );
+      // Mesmo caso do cliente: a pesagem (e o veiculo, e o padrao do cliente) da balanca que
+      // usa a gemea continua chegando com o id dela (ver `services/cadastro-aliases.ts`).
+      rememberCadastroAlias(database, "carriers", companyId, id, localTwin.id);
       continue;
     }
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
@@ -1842,8 +1848,13 @@ function upsertCloudVehicles(
     if (!id || !plate) continue;
     const updatedAt = isoStringValue(row.updated_at) || new Date().toISOString();
     // Veiculo com transportadora que ainda nao chegou: grava sem o vinculo em vez
-    // de estourar a FK e derrubar o pull inteiro.
-    const carrierId = existingId(database, "carriers", row.carrier_id);
+    // de estourar a FK e derrubar o pull inteiro. A gemea desta maquina conta como chegada.
+    const carrierId = resolveCloudCadastroReference(
+      database,
+      "carriers",
+      nullableStringValue(row.carrier_id),
+      null
+    );
     upsert.run(
       id,
       companyId,
@@ -2382,8 +2393,8 @@ export function upsertCloudCustomers(
       );
       // O gemeo nao entra aqui, mas a pesagem fechada na balanca que usa ELE continua
       // chegando com o id dele: a equivalencia e o que a deixa encontrar o cliente
-      // (ver `services/customer-aliases.ts`).
-      rememberCustomerAlias(database, companyId, id, localTwin.id);
+      // (ver `services/cadastro-aliases.ts`).
+      rememberCadastroAlias(database, "customers", companyId, id, localTwin.id);
       continue;
     }
     const legalName = stringValue(row.legal_name) || stringValue(row.trade_name) || "Cliente";
@@ -2490,9 +2501,10 @@ function resolveCustomerTombstone(
  * Os dois ids passam por tradutor em vez de irem direto. A forma de pagamento padrao do
  * sistema nasce com id SORTEADO em cada balanca (ver a migracao `local_payment_methods...`),
  * entao o id que a principal publicou nao existe aqui — `resolvePaymentMethodId` acha a
- * gemea pelo `code`. A transportadora tem id unico, mas pode nao ter sido espelhada ainda
- * neste mesmo pull; `resolveMirroredId` mantem o vinculo anterior em vez de apaga-lo por
- * causa de um cadastro atrasado. Nos dois casos, id vazio continua sendo id vazio: e assim
+ * gemea pelo `code`. A transportadora pode ser a gemea (mesmo CNPJ/CPF) que esta maquina
+ * descartou — `resolveCloudCadastroReference` acha a daqui pela equivalencia — ou pode nao ter
+ * sido espelhada ainda neste mesmo pull, e ai o vinculo anterior e mantido em vez de apagado
+ * por causa de um cadastro atrasado. Nos dois casos, id vazio continua sendo id vazio: e assim
  * que a principal limpa o padrao nas demais maquinas.
  */
 function resolveCommercialBlock(
@@ -2552,11 +2564,11 @@ function resolveCommercialBlock(
       row.default_payment_method_id,
       local?.default_payment_method_id
     ),
-    defaultCarrierId: resolveMirroredId(
+    defaultCarrierId: resolveCloudCadastroReference(
       database,
       "carriers",
-      row.default_carrier_id,
-      local?.default_carrier_id
+      nullableStringValue(row.default_carrier_id),
+      local?.default_carrier_id ?? null
     ),
     nfRequired: booleanToSql(row.nf_required, localNfRequired === 1),
     creditMode: normalizeCreditMode(row.credit_mode, localCreditMode),
@@ -2623,6 +2635,7 @@ type LocalOperationSnapshot = {
   remote_customer_id: string | null;
   product_id: string | null;
   carrier_id: string | null;
+  remote_carrier_id: string | null;
   freight_json: string | null;
   payment_method_id: string | null;
   wallet_settlement_method_id: string | null;
@@ -2790,8 +2803,8 @@ function upsertCloudOperations(
       remote_plate, remote_driver_name, remote_customer_name, remote_product_description,
       payment_method_id, wallet_settlement_method_id, wallet_settlement_due_date,
       wallet_settled_at, wallet_settlement_note, settle_from_advance, omie_advance_settle_cents,
-      future_billing_nfe_number, future_billing_invoice_id, remote_customer_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      future_billing_nfe_number, future_billing_invoice_id, remote_customer_id, remote_carrier_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       unit_id = excluded.unit_id,
@@ -2806,11 +2819,14 @@ function upsertCloudOperations(
       -- placa/motorista, mas nunca apaga o vinculo que esta maquina ja tinha.
       vehicle_id = COALESCE(excluded.vehicle_id, weighing_operations.vehicle_id),
       driver_id = COALESCE(excluded.driver_id, weighing_operations.driver_id),
-      -- carrier_id chega resolvido de resolveMirroredId: quando a nuvem manda um
+      -- carrier_id chega resolvido de resolveCloudOperationCarrier: quando a nuvem manda um
       -- id que esta maquina ainda nao espelhou, o valor local e mantido; quando a
       -- nuvem manda vazio (transporte proprio do cliente), o vinculo e limpo — ali o
       -- vazio E informacao.
       carrier_id = excluded.carrier_id,
+      -- O id que a nuvem tem para a transportadora, quando aqui ficou a gemea dela. Chega
+      -- decidido de resolveCloudOperationCarrier, junto com o carrier_id (o vazio limpa os dois).
+      remote_carrier_id = excluded.remote_carrier_id,
       -- Cliente e produto NAO seguem essa regra: nao existe pesagem sem cliente nem sem
       -- produto, entao um vazio vindo da projecao nunca e "o operador tirou" — e a nuvem
       -- que ainda nao sabe. Sem o COALESCE, um eco vazio APAGAVA o cliente de uma carga ja
@@ -2879,7 +2895,8 @@ function upsertCloudOperations(
   `);
 
   const readLocal = database.prepare(
-    `SELECT status, updated_at, customer_id, remote_customer_id, product_id, carrier_id, freight_json,
+    `SELECT status, updated_at, customer_id, remote_customer_id, product_id, carrier_id,
+       remote_carrier_id, freight_json,
        payment_method_id,
        wallet_settlement_method_id, wallet_settlement_due_date, wallet_settled_at,
        wallet_settlement_note, settle_from_advance, omie_advance_settle_cents
@@ -2927,7 +2944,12 @@ function upsertCloudOperations(
       local
     );
     const productId = resolveMirroredId(database, "products", row.product_id, local?.product_id);
-    const carrierId = resolveMirroredId(database, "carriers", row.carrier_id, local?.carrier_id);
+    // Transportadora gemea: a mesma traducao do cliente (ver `services/cadastro-aliases.ts`).
+    const carrier = resolveCloudOperationCarrier(
+      database,
+      nullableStringValue(row.carrier_id),
+      local
+    );
     // A nuvem guarda placa/motorista so como texto. Casa com o cadastro local
     // (que ja veio no mesmo pull) para a operacao da outra balanca aparecer
     // completa; o texto fica gravado como fallback de exibicao.
@@ -3026,7 +3048,7 @@ function upsertCloudOperations(
         customer.customerId,
         vehicleId,
         driverId,
-        carrierId,
+        carrier.carrierId,
         productId,
         // FK payment_terms: uma condicao ainda nao espelhada nesta maquina
         // derrubaria a gravacao inteira da operacao.
@@ -3077,7 +3099,8 @@ function upsertCloudOperations(
         // numero e o COALESCE acima guarda o vinculo para o pull seguinte — enquanto isso o
         // saldo sai pelo numero congelado, como nas pesagens anteriores a esta versao.
         existingId(database, "customer_future_billing_invoices", row.future_billing_invoice_id),
-        customer.remoteCustomerId
+        customer.remoteCustomerId,
+        carrier.remoteCarrierId
       );
       count++;
     } catch (error) {
@@ -4035,12 +4058,23 @@ function getOperationPayload(
     // O id que a NUVEM conhece quando esta pesagem chegou de outra balanca apontando para o
     // gemeo do cliente daqui: sem isto o reenvio trocaria o cliente da nuvem para o gemeo, e
     // ele alternaria entre os dois a cada balanca que tocasse a carga.
-    customer_id: cloudCustomerIdForPush(database, operation),
+    customer_id: cloudCadastroIdForPush(
+      database,
+      "customers",
+      operation.customer_id,
+      operation.remote_customer_id
+    ),
     product_id: operation.product_id,
     // Transportadora: as tres trocas permitidas numa operacao aberta sao
     // produto, cliente e transportadora — sem estas duas colunas a terceira
-    // nunca chegava na outra balanca da pedreira.
-    carrier_id: operation.carrier_id,
+    // nunca chegava na outra balanca da pedreira. Com a transportadora gemea, vale a mesma
+    // regra do cliente: volta o id que a nuvem conhece.
+    carrier_id: cloudCadastroIdForPush(
+      database,
+      "carriers",
+      operation.carrier_id,
+      operation.remote_carrier_id
+    ),
     carrier_name: operation.carrier_name,
     payment_term_id: operation.payment_term_id,
     // Forma de pagamento e o fechamento da carteira: a tela Carteira e da pedreira
