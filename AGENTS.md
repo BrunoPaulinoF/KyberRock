@@ -1527,23 +1527,64 @@ por cima do cliente certo. A expedicao nao percebia: o pull dela ja tinha
    - a pesagem sem transportadora aqui sobe vazia, mesmo com um id lembrado: o operador tirou a
      transportadora, e devolver a antiga desfaria isso. No cliente o mesmo caso sobe o id da nuvem.
 
-   A transportadora tambem e traduzida onde ela e um vinculo SIMPLES de outro cadastro: a
-   transportadora padrao do cliente (no bloco comercial) e a do veiculo, pelo
-   `resolveCloudCadastroReference`. Esses reenviam o id daqui, sem coluna de id lembrado — cada
-   balanca traduz o que recebe, entao a troca de gemeo na nuvem nao muda nada em nenhuma ponta.
    A juncao do cadastro feito sem internet (`mergeOfflineInto`) APAGA a transportadora marcada, e
    por isso repontar a equivalencia ali nao e detalhe: a chave estrangeira de `carrier_aliases`
    recusaria o `DELETE` e a juncao inteira cairia.
 
+6. **Todo o cadastro pendurado no gemeo** (migracao local 63 `cadastro_remote_links`). Ate aqui
+   so a pesagem era traduzida: o resto que a outra balanca cadastrava no cliente ou na
+   transportadora gemea era descartado por `existingId`. Agora entra com o cadastro equivalente
+   daqui, pelo `resolveCloudCadastroLink`:
+   - vinculos com transportadora (`customer_carriers`, `driver_carriers`, `vehicle_carriers`) e
+     placas do cliente (`customer_vehicles`);
+   - preco especial, frete do cliente, tabela de preco do cliente e nota de entrega futura;
+   - extrato de credito (`customer_credit_movements`): o saldo passa a somar o que as duas
+     balancas lancaram para o mesmo cliente;
+   - transportadora do veiculo e transportadora padrao do cliente (estas ja eram traduzidas desde
+     a 62, mas subiam com o id daqui).
+
+   **A volta e o que exige cuidado.** O envio do cadastro e por cursor de `updated_at`
+   (`pushSharedCadastroToCloud`), entao a linha que veio da outra balanca VOLTA para a nuvem (o
+   eco) sempre que for mais nova que o cursor daqui. Voltando com o gemeo daqui, ela trocaria o
+   vinculo na nuvem — e nas tabelas que a nuvem guarda como par unico (`customer_carriers`,
+   `driver_carriers`, `vehicle_carriers` sao `unique` mesmo para linha inativa; preco especial e
+   nota por cliente e produto) o par traduzido pode repetir um que ja existe la: o 23505 derrubaria
+   o lote inteiro a cada ciclo. Por isso cada coluna traduzida guarda o id da nuvem em
+   `cadastro_remote_links` (`rememberRemoteLink`), e antes de subir o lote volta a ele
+   (`restoreRemoteLinks`, pelas colunas de `REMOTE_LINK_COLUMNS`) com a mesma regra do envio da
+   pesagem: so enquanto o cadastro local ainda for o equivalente — a troca feita aqui sobe como
+   troca, e o vazio (transportadora tirada do veiculo) sobe vazio.
+
+   **Quando o par traduzido ja existe aqui**, vale a regra que cada tabela ja tinha:
+   - vinculo com transportadora: a copia nao entra se esta balanca ja tem o mesmo par ativo (so
+     duplicaria a transportadora na lista);
+   - placa do cliente e nota de entrega futura: fica a daqui, como sempre;
+   - preco especial e frete: a disputa da balanca principal (`cloudRowWins`) — sem principal fica
+     o daqui; com principal, a linha que perde cede. O gemeo e o MESMO cliente, entao dois precos
+     para ele sao a mesma divergencia que a eleicao da principal existe para resolver. Uma
+     diferenca (`twinConflictPolicy`): na secundaria a regra "a da nuvem sempre vence" supoe UMA
+     linha da nuvem por par, e com gemeos sao duas, vivas na nuvem com clientes diferentes — cada
+     uma derrubaria a outra e o preco trocaria a cada passada, conforme a ordem do pull. Quando
+     uma das duas linhas e do gemeo, a secundaria decide pela mais recente, como as principais;
+   - tabela de preco do cliente: quando uma das linhas e do gemeo, a mesma disputa — duas tabelas
+     vivas para o mesmo cliente nao tem desempate (`singlePerCustomer` na unificacao);
+   - extrato: o titulo do OMIE so entra uma vez por tipo (indice unico local e na nuvem); outro id
+     com o mesmo titulo fica de fora em vez de derrubar o lote.
+
+   **Pedido de pesagem do site.** O site lista os cadastros da nuvem, entao o pedido pode citar o
+   gemeo que a balanca executora descartou — e ate aqui ela respondia "o cliente ainda nao chegou
+   na balanca executora" para sempre. `ensureLocalRows` aceita o gemeo e `webCadastroId` troca o
+   id pelo daqui (`findLiveLocalCadastro`), na entrada e na alteracao.
+
+   A migracao 63 pede de novo a passada inteira (`cadastro_alias_resync_pending`): so nela voltam
+   as linhas que o pull ja tinha descartado.
+
 O que ainda nao muda: a passada inteira traz as **2.000 pesagens mais recentes** da unidade
 (`HISTORY_MAX_ROWS` do `desktop-pull`); carga mais antiga que isso, ja gravada sem o cadastro,
-continua assim nesta balanca. O que se pendura no cliente gemeo (extrato de credito, preco especial,
-frete, nota de entrega futura, placas) continua descartado por `existingId` na balanca que nao tem
-aquele id; o preco tem dono e politica de conflito proprios (ver "Balanca principal de precos") e
-nao deve ganhar traducao sem rever essa regra. Os vinculos N:N da transportadora
-(`customer_carriers`, `driver_carriers`, `vehicle_carriers`) tambem nao sao traduzidos de
-proposito: o par traduzido pode repetir um vinculo que esta balanca ja tem com a gemea dela, e a
-nuvem tem o par como unico — o reenvio derrubaria o lote com 23505.
+continua assim nesta balanca. As outras tabelas de cadastro com chave natural nao precisam de
+equivalencia: produto, condicao de pagamento, motorista e veiculo nao descartam gemeo (o pull grava
+por id); conta (`accounts`) descarta pelo codigo, mas nada que vem da nuvem aponta para ela; a forma
+de pagamento ja tinha a dela (`payment_method_aliases`).
 
 ## O que a nuvem NAO precisa guardar nem receber
 

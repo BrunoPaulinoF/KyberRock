@@ -66,6 +66,7 @@ import {
   mergeDuplicateCustomersByDocument,
   type CustomerMergeResult
 } from "./customer-merge.js";
+import { findLiveLocalCadastro } from "./cadastro-aliases.js";
 import { readLocalSetting } from "./local-settings.js";
 import {
   CLOUD_CLOCK_OFFSET_SETTING,
@@ -1566,6 +1567,8 @@ export class DesktopRuntime {
       ["payment_terms", input.paymentTermId, "A condicao de pagamento"],
       ["payment_methods", input.paymentMethodId, "A forma de pagamento"]
     ]);
+    input.customerId = this.webCadastroId("customers", input.customerId) ?? input.customerId;
+    input.carrierId = this.webCadastroId("carriers", input.carrierId);
     this.assertCustomerReadyForOmie(input.customerId, input.operationType);
     // Condicao digitada no site ("30", "7 14 21"): vira (ou reusa) uma condicao local, como o
     // `resolveConditionTermId` da Nova entrada faz com o campo livre.
@@ -1669,14 +1672,20 @@ export class DesktopRuntime {
     ]);
     const current = getWeighingOperation(this.database, claim.operationId);
     if (current.status === "cancelled") throw new Error("Esta pesagem foi cancelada.");
+    // Cliente e transportadora no cadastro desta balanca (o site pode citar o gemeo).
+    const customerId =
+      typeof payload.customerId === "string"
+        ? (this.webCadastroId("customers", payload.customerId) ?? payload.customerId)
+        : undefined;
+    const carrierId = this.webCadastroId("carriers", optionalText(payload.carrierId)) ?? null;
 
     if (!isClosedOperationStatus(current.status)) {
       const input: UpdateWeighingOperationDetailsInput = { operationId: claim.operationId };
-      if (typeof payload.customerId === "string") input.customerId = payload.customerId;
+      if (customerId !== undefined) input.customerId = customerId;
       if (typeof payload.productId === "string") input.productId = payload.productId;
       if (typeof payload.vehicleId === "string") input.vehicleId = payload.vehicleId;
       if (typeof payload.driverId === "string") input.driverId = payload.driverId;
-      if ("carrierId" in payload) input.carrierId = optionalText(payload.carrierId) ?? null;
+      if ("carrierId" in payload) input.carrierId = carrierId;
       if ("paymentMethodId" in payload) {
         input.paymentMethodId = optionalText(payload.paymentMethodId) ?? null;
       }
@@ -1713,16 +1722,16 @@ export class DesktopRuntime {
         newProductId: payload.productId
       });
     }
-    if (typeof payload.customerId === "string") {
+    if (customerId !== undefined) {
       this.updateWeighingCustomer({
         operationId: claim.operationId,
-        newCustomerId: payload.customerId
+        newCustomerId: customerId
       });
     }
     if ("carrierId" in payload) {
       this.updateWeighingCarrier({
         operationId: claim.operationId,
-        newCarrierId: optionalText(payload.carrierId) ?? null
+        newCarrierId: carrierId
       });
     }
     const operation = getWeighingOperation(this.database, claim.operationId);
@@ -1810,17 +1819,22 @@ export class DesktopRuntime {
     refs: Array<[table: string, id: string | undefined, label: string]>
   ): Promise<void> {
     // Tombstone nao vale: cliente unificado (ou transportadora excluida) continua na tabela com
-    // `deleted_at`, e a unificacao existe justamente para nada novo nascer nele.
+    // `deleted_at`, e a unificacao existe justamente para nada novo nascer nele. O gemeo que esta
+    // balanca descartou vale: quem chama troca o id pelo daqui (`webCadastroId`).
     const missing = () =>
-      refs.filter(
-        ([table, id]) =>
-          id !== undefined &&
+      refs.filter(([table, id]) => {
+        if (id === undefined) return false;
+        if (table === "customers" || table === "carriers") {
+          return findLiveLocalCadastro(this.database, table, id) === null;
+        }
+        return (
           this.database
             .prepare(
               `SELECT 1 FROM ${table} WHERE id = ?${this.tableHasDeletedAt(table) ? " AND deleted_at IS NULL" : ""}`
             )
             .get(id) === undefined
-      );
+        );
+      });
     if (missing().length === 0) return;
     await this.pullForWebOperation();
     const still = missing();
@@ -1829,6 +1843,18 @@ export class DesktopRuntime {
         `${still[0][2]} ainda nao chegou na balanca executora. Tente de novo em alguns segundos.`
       );
     }
+  }
+
+  /**
+   * Cliente ou transportadora citado num pedido do site, no cadastro desta balanca: o proprio id,
+   * ou o equivalente do gemeo que ela descartou (`services/cadastro-aliases.ts`). Sem id, sem id.
+   */
+  private webCadastroId(
+    table: "customers" | "carriers",
+    id: string | undefined
+  ): string | undefined {
+    if (!id) return undefined;
+    return findLiveLocalCadastro(this.database, table, id) ?? id;
   }
 
   private readonly deletedAtColumnCache = new Map<string, boolean>();

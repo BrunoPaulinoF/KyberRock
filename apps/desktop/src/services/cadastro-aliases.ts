@@ -22,6 +22,11 @@ import { readLocalSetting } from "./local-settings.js";
  * que a nuvem tinha (`weighing_operations.remote_customer_id` / `remote_carrier_id`) e o envio
  * devolve ESSE id enquanto o cadastro local continuar sendo o equivalente dele
  * (`cloudCadastroIdForPush`).
+ *
+ * O mesmo vale para o resto do cadastro que pendura no cliente ou na transportadora: vinculos
+ * com transportadora, placas do cliente, preco especial, frete, tabela de preco, nota de entrega
+ * futura, extrato de credito, transportadora do veiculo e transportadora padrao do cliente. Ali o
+ * id da nuvem fica em `cadastro_remote_links` (`rememberRemoteLink` / `restoreRemoteLinks`).
  */
 export type AliasedCadastroTable = "customers" | "carriers";
 
@@ -119,23 +124,150 @@ function findCadastroAlias(
 }
 
 /**
- * Id que veio da nuvem num cadastro que APONTA para outro (transportadora padrao do cliente,
- * transportadora do veiculo), traduzido para o espelho local: o proprio id quando existe aqui,
- * senao o equivalente, senao `fallback`. Vazio continua vazio — e assim que a nuvem limpa o
- * vinculo.
+ * O cadastro VIVO daqui que responde por `id`: ele mesmo, ou o equivalente do gemeo. Nulo quando
+ * nenhum dos dois existe.
  *
- * Aqui nao ha id da nuvem para lembrar: o cadastro que aponta e reenviado com o id DAQUI, e
- * tudo bem — cada balanca traduz o que recebe, entao o vinculo chega certo nas duas pontas.
+ * E o que o pedido de pesagem do site usa. O site lista o cliente (e a transportadora) pelos
+ * cadastros da nuvem, e o pedido pode citar justamente o gemeo que esta balanca descartou — que
+ * ate aqui ficava "ainda nao chegou na balanca executora" para sempre.
  */
-export function resolveCloudCadastroReference(
+export function findLiveLocalCadastro(
   database: DesktopDatabase,
   table: AliasedCadastroTable,
-  value: string | null,
-  fallback: string | null
+  id: string
 ): string | null {
-  if (!value) return null;
-  if (existsLocally(database, table, value)) return value;
-  return findCadastroAlias(database, table, value) ?? fallback;
+  const direct = database
+    .prepare(`SELECT id FROM ${table} WHERE id = ? AND deleted_at IS NULL`)
+    .get(id) as { id: string } | undefined;
+  return direct?.id ?? findCadastroAlias(database, table, id);
+}
+
+/**
+ * Id de cliente ou transportadora que veio da nuvem DENTRO de outro cadastro (preco especial,
+ * vinculo com transportadora, extrato de credito, transportadora do veiculo...), traduzido
+ * para o espelho local.
+ *
+ * - `resolved = false`: o id nao existe aqui e nao tem equivalente (cadastro atrasado). Quem
+ *   chama decide: a linha de vinculo e ignorada nesta passada, como sempre foi; o campo
+ *   simples mantem o que tinha.
+ * - `remoteId`: preenchido so quando a traducao passou pela equivalencia. E o id que a linha
+ *   tem que levar de volta quando esta maquina a reenviar (ver `rememberRemoteLink`).
+ * - vazio continua vazio: e assim que a nuvem limpa um vinculo opcional.
+ */
+export interface CloudCadastroLink {
+  id: string | null;
+  remoteId: string | null;
+  resolved: boolean;
+}
+
+export function resolveCloudCadastroLink(
+  database: DesktopDatabase,
+  table: AliasedCadastroTable,
+  value: string | null
+): CloudCadastroLink {
+  if (!value) return { id: null, remoteId: null, resolved: true };
+  if (existsLocally(database, table, value)) return { id: value, remoteId: null, resolved: true };
+  const twin = findCadastroAlias(database, table, value);
+  if (twin) return { id: twin, remoteId: value, resolved: true };
+  return { id: null, remoteId: null, resolved: false };
+}
+
+/**
+ * Lembra (ou esquece, com `remoteId` nulo) que a coluna `column` da linha `rowId` de `table`
+ * chegou da nuvem com o id de um gemeo, e foi gravada aqui com o cadastro equivalente.
+ *
+ * E a versao generica de `weighing_operations.remote_customer_id`, para as tabelas de cadastro
+ * que penduram no cliente ou na transportadora. Sem isto o eco quebraria a nuvem: o envio do
+ * cadastro e por cursor de `updated_at`, entao a linha que veio da outra balanca VOLTA para a
+ * nuvem sempre que for mais nova que o cursor daqui — e voltaria com o id do gemeo daqui. Na
+ * maioria das tabelas isso so troca o vinculo de gemeo; nas que a nuvem guarda como par unico
+ * (`customer_carriers`, `driver_carriers`, `vehicle_carriers`, preco especial por cliente e
+ * produto...) o par traduzido pode repetir um que ja existe la, e o 23505 derrubaria o lote
+ * inteiro a cada ciclo.
+ */
+export function rememberRemoteLink(
+  database: DesktopDatabase,
+  table: string,
+  rowId: string,
+  column: string,
+  remoteId: string | null,
+  now: Date = new Date()
+): void {
+  if (!remoteId) {
+    database
+      .prepare(
+        "DELETE FROM cadastro_remote_links WHERE table_name = ? AND row_id = ? AND column_name = ?"
+      )
+      .run(table, rowId, column);
+    return;
+  }
+  database
+    .prepare(
+      `INSERT INTO cadastro_remote_links (table_name, row_id, column_name, remote_id, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(table_name, row_id, column_name) DO UPDATE SET
+         remote_id = excluded.remote_id,
+         updated_at = excluded.updated_at
+       WHERE cadastro_remote_links.remote_id <> excluded.remote_id`
+    )
+    .run(table, rowId, column, remoteId, now.toISOString());
+}
+
+/** A coluna desta linha chegou traduzida do gemeo (`rememberRemoteLink`)? */
+export function hasRemoteLink(
+  database: DesktopDatabase,
+  table: string,
+  rowId: string,
+  column: string
+): boolean {
+  return Boolean(
+    database
+      .prepare(
+        `SELECT 1 AS found FROM cadastro_remote_links
+         WHERE table_name = ? AND row_id = ? AND column_name = ?`
+      )
+      .get(table, rowId, column)
+  );
+}
+
+/** Uma coluna de cadastro que aponta para um cadastro com equivalencia. */
+export interface RemoteLinkColumn {
+  column: string;
+  aliasTable: AliasedCadastroTable;
+}
+
+/**
+ * Antes de o cadastro subir: troca, em cada linha do lote, o id local pelo id que a nuvem tem,
+ * nas colunas que chegaram traduzidas (`rememberRemoteLink`).
+ *
+ * Mesma regra do envio da pesagem (`cloudCadastroIdForPush`): so volta o id da nuvem enquanto o
+ * cadastro local continuar sendo o equivalente dele. Se o operador trocou o vinculo aqui (outro
+ * cliente na placa, outra transportadora no veiculo), quem sobe e a troca. Vazio sobe vazio —
+ * nestas colunas o vazio, quando existe, e sempre escolha (transportadora tirada do veiculo).
+ */
+export function restoreRemoteLinks(
+  database: DesktopDatabase,
+  table: string,
+  rows: Array<Record<string, unknown>>,
+  columns: readonly RemoteLinkColumn[]
+): void {
+  if (rows.length === 0 || columns.length === 0) return;
+  const readLink = database.prepare(
+    `SELECT remote_id FROM cadastro_remote_links
+     WHERE table_name = ? AND row_id = ? AND column_name = ?`
+  );
+  for (const row of rows) {
+    const rowId = textOrNull(row.id);
+    if (!rowId) continue;
+    for (const { column, aliasTable } of columns) {
+      if (!(column in row)) continue;
+      const link = readLink.get(table, rowId, column) as { remote_id: string } | undefined;
+      if (!link) continue;
+      const localId = textOrNull(row[column]);
+      if (!localId) continue;
+      row[column] = cloudCadastroIdForPush(database, aliasTable, localId, link.remote_id);
+    }
+  }
 }
 
 /**

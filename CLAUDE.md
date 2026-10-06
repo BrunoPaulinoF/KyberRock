@@ -229,7 +229,12 @@ These recur across the codebase and are easy to violate accidentally:
   `services/cadastro-aliases.ts`): a pesagem chega com o cadastro daqui, guarda o id da nuvem em
   `remote_customer_id` / `remote_carrier_id` e o reenvio devolve ESSE id enquanto o cadastro local
   for o equivalente — senao o id da nuvem alternaria entre os gemeos. Na transportadora o vazio e
-  escolha (transporte proprio): ele limpa o id lembrado e sobe vazio.
+  escolha (transporte proprio): ele limpa o id lembrado e sobe vazio. O resto do cadastro pendurado
+  no gemeo (vinculos com transportadora, placas, preco especial, frete, tabela de preco, nota de
+  entrega futura, extrato de credito) entra traduzido do mesmo jeito, e o id da nuvem de cada coluna
+  fica em `cadastro_remote_links`: o eco do envio por cursor tem de voltar com ELE, senao repetiria
+  um par unico na nuvem e o 23505 derrubaria o lote. O pedido de pesagem do site tambem aceita o
+  gemeo (`findLiveLocalCadastro`).
 - **Relogio da nuvem** (AGENTS.md "Relogio da nuvem: todas as balancas na mesma hora"): o
   processo principal e o `'now'` do SQLite usam a hora do SERVIDOR (`services/cloud-clock.ts`),
   medida no `desktop-status` contra o relogio real (`realNowMs`, nunca o `Date` ja corrigido).
