@@ -29,8 +29,16 @@ describe("encodeEscPos", () => {
   it("keeps every emitted byte within printable ASCII / control range", () => {
     const buffer = encodeEscPos(["SÃO PAULO", "CONSTRUÇÃO", "Endereço nº 1"], 80);
     // Nenhum byte de dado deve cair na faixa alta (>= 0x80), que apareceria como "?" / lixo
-    // na impressora de rede. Bytes de controle ESC/POS (< 0x20) sao esperados e permitidos.
-    const highBytes = [...buffer].filter((byte) => byte >= 0x80);
+    // na impressora de rede. Bytes de controle ESC/POS (< 0x20) sao esperados e permitidos, e
+    // o parametro do GS P (203 = 1/203") e numero de comando, nao texto: sai da conta.
+    const motionUnit = Buffer.from([0x1d, 0x50, 203, 203]);
+    const at = buffer.indexOf(motionUnit);
+    expect(at).toBeGreaterThanOrEqual(0);
+    const textAndCommands = Buffer.concat([
+      buffer.subarray(0, at),
+      buffer.subarray(at + motionUnit.length)
+    ]);
+    const highBytes = [...textAndCommands].filter((byte) => byte >= 0x80);
     expect(highBytes).toHaveLength(0);
   });
 
@@ -51,6 +59,24 @@ describe("encodeEscPos", () => {
     // Fonte B (corpo pequeno): mais colunas, a mesma faixa de papel.
     const smallFont = receiptEscPosLayout({ ...DEFAULT_RECEIPT_STYLE, fontSizePx: 8 }, 80);
     expect(smallFont.columns * smallFont.charWidthDots).toBe(576);
+  });
+
+  it("fixa a unidade de movimento em pontos de 203 dpi antes da entrelinha", () => {
+    // Sem o GS P a entrelinha (ESC 3) era lida na unidade padrao da impressora e as linhas
+    // saiam grudadas na Bematech MP-4200 HS.
+    const bytes = encodeEscPos(["TESTE"], 80);
+    const motionUnit = bytes.indexOf(Buffer.from([0x1d, 0x50, 203, 203]));
+    expect(motionUnit).toBeGreaterThan(0);
+    expect(motionUnit).toBeLessThan(bytes.indexOf(Buffer.from([0x1b, 0x33])));
+    expect(motionUnit).toBeLessThan(bytes.indexOf(Buffer.from([0x1d, 0x57])));
+  });
+
+  it("avanca o papel ate a guilhotina antes de cortar", () => {
+    // O corte direto (GS V 0) deixava o fim do cupom no rolo, e ele saia no topo do proximo.
+    const bytes = encodeEscPos(["TESTE"], 80);
+    const cut = Buffer.from([0x1d, 0x56, 0x41, 0x00]);
+    expect(bytes.subarray(bytes.length - cut.length).equals(cut)).toBe(true);
+    expect(bytes.includes(Buffer.from([0x1d, 0x56, 0x00]))).toBe(false);
   });
 
   it("prints the logo as an ESC/POS bit image before the first text line", () => {
