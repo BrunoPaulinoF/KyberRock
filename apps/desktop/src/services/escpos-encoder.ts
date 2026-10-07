@@ -26,6 +26,9 @@ export type PackRasterOptions = ThermalDotMapOptions;
 const ESC = 0x1b;
 const GS = 0x1d;
 
+/** Resolucao da cabeca termica: todas as medidas do cupom ESC/POS sao pontos de 1/203". */
+const ESCPOS_DOTS_PER_INCH = 203;
+
 /** Linhas por comando GS v 0: impressoras baratas travam com imagens grandes de uma vez so. */
 const RASTER_BAND_HEIGHT = 128;
 
@@ -77,6 +80,12 @@ export function encodeEscPos(
   const buffers: Buffer[] = [];
 
   buffers.push(Buffer.from([ESC, 0x40]));
+  // Unidade de movimento = 1 ponto da cabeca (1/203"), nas duas direcoes (GS P). A entrelinha
+  // (ESC 3) e a area de impressao (GS W) sao contadas NESSA unidade, e o padrao muda de
+  // impressora para impressora (1/180", 1/360"...). O cupom calcula tudo em pontos de 203 dpi:
+  // sem fixar a unidade, a Bematech MP-4200 HS lia os 31 pontos de entrelinha como uma medida
+  // menor que a propria letra e imprimia as linhas grudadas (07/10/2026).
+  buffers.push(Buffer.from([GS, 0x50, ESCPOS_DOTS_PER_INCH, ESCPOS_DOTS_PER_INCH]));
   // Fonte embutida (ESC M) e entrelinha (ESC 3): a personalizacao da tela vira ISTO na
   // termica, que nao tem fonte em px nem entrelinha fracionaria.
   buffers.push(Buffer.from([ESC, 0x4d, layout.font === "B" ? 0x01 : 0x00]));
@@ -103,8 +112,13 @@ export function encodeEscPos(
     );
   });
 
+  // Tres linhas em branco de rodape e o corte. O corte e o "funcao B" (GS V 65): a impressora
+  // AVANCA o papel ate a guilhotina antes de cortar. O corte direto (GS V 0) cortava onde o
+  // papel estava, e a distancia entre a cabeca e a guilhotina e maior que as tres linhas: o
+  // fim do cupom (o "AGRADECEMOS..." da Bematech MP-4200 HS, 07/10/2026) ficava no rolo e
+  // saia no topo do cupom seguinte.
   buffers.push(Buffer.from([ESC, 0x64, 0x03]));
-  buffers.push(Buffer.from([GS, 0x56, 0x00]));
+  buffers.push(Buffer.from([GS, 0x56, 0x41, 0x00]));
 
   return Buffer.concat(buffers);
 }
