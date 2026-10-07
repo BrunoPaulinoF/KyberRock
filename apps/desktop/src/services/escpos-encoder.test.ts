@@ -34,6 +34,25 @@ describe("encodeEscPos", () => {
     expect(highBytes).toHaveLength(0);
   });
 
+  it("fixa margem esquerda zero e a area de impressao na largura das colunas", () => {
+    // A margem guardada na impressora deslocava o cupom para a direita e cortava o fim das
+    // linhas: o cupom declara a propria margem logo depois do ESC @.
+    const marginZero = Buffer.from([0x1d, 0x4c, 0x00, 0x00]);
+    const area80mm = Buffer.from([0x1d, 0x57, 576 & 0xff, 576 >> 8]); // 48 colunas x 12 pontos
+    const area58mm = Buffer.from([0x1d, 0x57, 384 & 0xff, 384 >> 8]); // 32 colunas x 12 pontos
+
+    const receipt80 = encodeEscPos(["TESTE"], 80);
+    expect(receipt80.includes(marginZero)).toBe(true);
+    expect(receipt80.includes(area80mm)).toBe(true);
+    expect(receipt80.indexOf(area80mm)).toBeLessThan(receipt80.indexOf(Buffer.from("TESTE")));
+
+    expect(encodeEscPos(["TESTE"], 58).includes(area58mm)).toBe(true);
+
+    // Fonte B (corpo pequeno): mais colunas, a mesma faixa de papel.
+    const smallFont = receiptEscPosLayout({ ...DEFAULT_RECEIPT_STYLE, fontSizePx: 8 }, 80);
+    expect(smallFont.columns * smallFont.charWidthDots).toBe(576);
+  });
+
   it("prints the logo as an ESC/POS bit image before the first text line", () => {
     const logo = packRasterImage(bgraPixels(16, 8, [0, 0, 0, 255]), 16, 8);
     expect(logo).not.toBeNull();

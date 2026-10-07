@@ -81,6 +81,14 @@ export function encodeEscPos(
   // termica, que nao tem fonte em px nem entrelinha fracionaria.
   buffers.push(Buffer.from([ESC, 0x4d, layout.font === "B" ? 0x01 : 0x00]));
   buffers.push(Buffer.from([ESC, 0x33, layout.lineSpacingDots]));
+  // Margem esquerda zero (GS L) e area de impressao na largura exata das colunas (GS W). O
+  // ESC @ volta para a margem GUARDADA na impressora, e ela pode vir de fabrica ou de um
+  // utilitario de configuracao: com ela, as 48 colunas comecam deslocadas e o fim de cada
+  // linha passa da borda direita do papel (07/10/2026, Bematech MP-4200 HS nova). Fixar as
+  // duas aqui faz o cupom ocupar a faixa util do papel seja qual for o que ficou guardado.
+  const printAreaDots = layout.columns * layout.charWidthDots;
+  buffers.push(Buffer.from([GS, 0x4c, 0x00, 0x00]));
+  buffers.push(Buffer.from([GS, 0x57, printAreaDots & 0xff, (printAreaDots >> 8) & 0xff]));
 
   // A logo entra antes de qualquer texto, como bit image, no alinhamento configurado — o
   // cupom da impressora de rede sai igual ao da impressora do Windows em modo texto direto.
