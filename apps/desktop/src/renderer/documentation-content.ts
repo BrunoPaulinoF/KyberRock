@@ -1095,6 +1095,32 @@ export const documentationFaqs: DocumentationFaq[] = [
     ]
   },
   {
+    question: "O cupom sai com as letras cortadas ao meio em algumas linhas.",
+    answer:
+      'E a impressora termica de cupom configurada no modo grafico. Nesse modo o cupom vai como uma pagina e quem desenha e o driver do Windows, em faixas; algumas termicas avancam o papel um pouco a mais entre uma faixa e outra, e a linha de texto que cai nessa emenda sai partida, com uma faixa branca no meio das letras. Por isso o defeito aparece em linhas soltas, sempre na mesma distancia uma da outra. Nao e o papel nem a cabeca de impressao, e mudar a fonte ou o tamanho nao resolve. Na tela de impressao (F7), em "Tipo de impressora", escolha "Windows instalada - termica (texto direto ESC/POS)", confira a impressora, clique em "Salvar perfil 80 mm" e depois em "Testar impressora". No texto direto a impressora escreve o cupom com as letras dela e a emenda nao corta mais o texto. Se o teste sair com simbolos estranhos no lugar do texto, a impressora esta no modo de comandos do fabricante (na Bematech, ESC/Bema): passe para ESC/POS no utilitario de configuracao da impressora ou chame o suporte.',
+    category: "impressao",
+    sectionId: "printing",
+    keywords: [
+      "cupom cortado",
+      "cupom cortando",
+      "cortando",
+      "letra cortada",
+      "letras cortadas",
+      "letra pela metade",
+      "faixa branca",
+      "linha branca",
+      "linha falhando",
+      "impressao falhando",
+      "cupom falhado",
+      "impressora nova",
+      "troquei a impressora",
+      "modo grafico",
+      "texto direto",
+      "bematech",
+      "mp-4200 hs"
+    ]
+  },
+  {
     question: "Como coloco o telefone da pedreira no cupom?",
     answer:
       'Em Configuracoes > Impressao (F7) existe o campo "Telefone da pedreira no cupom". O numero digitado sai no rodape como "CONTATO: ...", para o cliente falar com a pedreira depois de sair da balanca. Digitar nao basta: clique em "Salvar perfil" — a previa desenha o formulario, mas quem imprime e o perfil salvo, e enquanto os dois estiverem diferentes a tela avisa em cima da previa. O campo vale nos dois modelos (padrao e personalizado) e, se ficar em branco, o cupom nao mostra nenhuma linha de contato.',
