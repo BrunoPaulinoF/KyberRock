@@ -107,6 +107,15 @@ describe("searchDocumentation", () => {
     expect(results.some((result) => result.id === "printing" || result.kind === "faq")).toBe(true);
   });
 
+  it("acha o cupom com letras cortadas pela frase da reclamacao", () => {
+    // A reclamacao chega assim do balcao: "o cupom esta cortando". Ela precisa cair na duvida
+    // do modo grafico em termica, e nao so na da logo que some.
+    const isCutLettersFaq = (result: { kind: string; id: string }) =>
+      result.kind === "faq" && result.id.includes("letras cortadas");
+    expect(ranksWithin("o cupom esta cortando", isCutLettersFaq, 3)).toBe(true);
+    expect(ranksWithin("letras cortadas no cupom", isCutLettersFaq, 3)).toBe(true);
+  });
+
   it("resolve sinonimo: 'fiado' acha o guia de credito", () => {
     expect(ranksWithin("fiado", (result) => result.id === "credit", 5)).toBe(true);
   });

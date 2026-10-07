@@ -46,6 +46,7 @@ import type {
   WindowsPrinterSummary
 } from "../services/printing";
 import {
+  looksLikeReceiptThermalPrinter,
   printerTypeUsesEscPos,
   printerTypeUsesWindowsQueue,
   type PrinterType
@@ -4314,7 +4315,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                   </label>
                   <p style={{ ...styles.muted, marginTop: 0 }}>
                     {printerType === "windows"
-                      ? "Modo grafico: o cupom vai como pagina e quem desenha e o driver da impressora. Use so em impressora comum (laser/jato). Em impressora termica de cupom o driver costuma perder a logo e o numero do cupom — nesse caso troque para texto direto."
+                      ? "Modo grafico: o cupom vai como pagina e quem desenha e o driver da impressora. Use so em impressora comum (laser/jato). Em impressora termica de cupom o driver costuma perder a logo e o numero do cupom, ou imprimir linhas com as letras cortadas ao meio — nesse caso troque para texto direto."
                       : printerType === "windows_escpos"
                         ? "Modo texto direto: a impressora recebe o cupom pronto (ESC/POS), sem o driver redesenhar nada. E o modo certo para termica de cupom (Bematech MP-4200, Elgin, Epson TM...) e o unico que garante logo, numero do cupom e telefone no papel."
                         : "A impressora de rede recebe o mesmo cupom pronto (ESC/POS) do modo texto direto, so que por TCP/IP."}
@@ -4325,7 +4326,17 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         Impressora Windows
                         <select
                           value={selectedPrinterName}
-                          onChange={(event) => setSelectedPrinterName(event.target.value)}
+                          onChange={(event) => {
+                            const name = event.target.value;
+                            setSelectedPrinterName(name);
+                            // Termica de cupom escolhida no modo grafico ja vira texto direto:
+                            // foi trocando de impressora que uma balanca ficou com a termica nova
+                            // no grafico e o cupom saiu com linhas cortadas ao meio. So na troca
+                            // de impressora — quem volta ao grafico de proposito nao e desfeito.
+                            if (printerType === "windows" && looksLikeReceiptThermalPrinter(name)) {
+                              setPrinterType("windows_escpos");
+                            }
+                          }}
                           style={styles.input}
                         >
                           <option value="">Selecione...</option>
@@ -4341,6 +4352,33 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                         <p style={styles.errorMessage}>
                           Nenhuma impressora instalada foi encontrada.
                         </p>
+                      ) : null}
+                      {printerType === "windows" &&
+                      looksLikeReceiptThermalPrinter(selectedPrinterName) ? (
+                        <div
+                          style={{
+                            ...styles.omieFeedback,
+                            ...styles.omieFeedbackWarning,
+                            marginTop: 0,
+                            marginBottom: "10px",
+                            display: "grid",
+                            gap: "8px"
+                          }}
+                        >
+                          <span>
+                            <strong>{selectedPrinterName}</strong> e uma impressora termica de cupom
+                            e esta no modo grafico. Nesse modo o driver desenha o cupom em faixas, e
+                            algumas termicas imprimem linhas com as letras cortadas ao meio. No
+                            texto direto isso nao acontece.
+                          </span>
+                          <button
+                            type="button"
+                            style={{ ...styles.secondaryButton, justifySelf: "start" }}
+                            onClick={() => setPrinterType("windows_escpos")}
+                          >
+                            Usar texto direto (recomendado)
+                          </button>
+                        </div>
                       ) : null}
                     </>
                   ) : (
