@@ -7127,18 +7127,24 @@ function upsertOmieCustomers(
   companyId: string,
   customers: OmieReferenceCustomer[]
 ): number {
+  // Linha viva primeiro: a unificacao deixa a perdedora (tombstone) com o mesmo codigo OMIE
+  // da sobrevivente, e o `LIMIT 1` sem ordem podia gravar o OMIE na linha excluida.
   const findLocalId = database.prepare(
-    "SELECT id FROM customers WHERE company_id = ? AND omie_customer_id = ? LIMIT 1"
+    `SELECT id, omie_customer_id, deleted_at FROM customers
+     WHERE company_id = ? AND omie_customer_id = ?
+     ORDER BY deleted_at IS NOT NULL LIMIT 1`
   );
   const findByIntegrationCode = database.prepare(
-    "SELECT id FROM customers WHERE company_id = ? AND omie_integration_code = ? LIMIT 1"
+    `SELECT id, omie_customer_id, deleted_at FROM customers
+     WHERE company_id = ? AND omie_integration_code = ?
+     ORDER BY deleted_at IS NOT NULL LIMIT 1`
   );
   // Sem mascara dos dois lados: o OMIE devolve "06.020.284/0001-64" e o cadastro nascido na
   // balanca guarda "06020284000164". Comparando literal, o pull nunca reconhecia o cliente
   // que ja existia aqui e criava um `omie_<id>` do lado — e o mesmo cliente passava a ter
   // dois cadastros, com as pesagens divididas entre eles.
   const findByDocument = database.prepare(
-    `SELECT id FROM customers
+    `SELECT id, omie_customer_id, deleted_at FROM customers
      WHERE company_id = ? AND ${DOCUMENT_KEY_SQL} = ? AND deleted_at IS NULL
      LIMIT 1`
   );
@@ -7186,32 +7192,50 @@ ${OMIE_CUSTOMER_SET_SQL},
     WHERE id = ? AND deleted_at IS NULL
   `);
 
+  type LocalMatch = { id: string; omie_customer_id: number | null; deleted_at: string | null };
+  const alive = (match: LocalMatch | undefined): LocalMatch | undefined =>
+    match && match.deleted_at === null ? match : undefined;
+
   let persisted = 0;
   for (const customer of customers) {
-    const existing = findLocalId.get(companyId, customer.id) as { id: string } | undefined;
+    const existing = findLocalId.get(companyId, customer.id) as LocalMatch | undefined;
     const byIntegrationCode = customer.integrationCode
-      ? (findByIntegrationCode.get(companyId, customer.integrationCode) as
-          | { id: string }
-          | undefined)
+      ? (findByIntegrationCode.get(companyId, customer.integrationCode) as LocalMatch | undefined)
       : undefined;
     const customerDocumentKey = documentKey(customer.document);
     const byDocument = customerDocumentKey
-      ? (findByDocument.get(companyId, customerDocumentKey) as { id: string } | undefined)
+      ? (findByDocument.get(companyId, customerDocumentKey) as LocalMatch | undefined)
       : undefined;
+    // O cliente VIVO vem antes do tombstone. Quando o mesmo CNPJ tem dois cadastros no OMIE e
+    // a unificacao juntou os dois daqui, a perdedora fica com o codigo de um deles: casando
+    // pelo codigo primeiro, esse cadastro do OMIE ia inteiro para a linha excluida e a
+    // sobrevivente so via o outro — que podia ser justamente o bloqueado.
+    const match =
+      alive(existing) ?? alive(byIntegrationCode) ?? byDocument ?? existing ?? byIntegrationCode;
     const localId =
-      existing?.id ??
-      byIntegrationCode?.id ??
-      byDocument?.id ??
-      resolveOmieLocalId(database, "customers", companyId, `omie_${customer.id}`);
+      match?.id ?? resolveOmieLocalId(database, "customers", companyId, `omie_${customer.id}`);
+    const isCustomerCadastro = isOmieCustomerCadastro({
+      tags: customer.tagsJson ?? undefined,
+      customerType: customer.customerType ?? undefined
+    });
+    // Mesmo CNPJ, OUTRO cadastro do OMIE: o cliente daqui ja esta preso a outro codigo. Um
+    // duplicado do OMIE bloqueado, inativo ou que nem e cliente nao toma o lugar dele — era
+    // assim que o cadastro antigo, bloqueado la para ninguem mais usar, travava a pesagem
+    // ("Cliente bloqueado no OMIE") de quem o OMIE fatura normalmente pelo cadastro novo.
+    // O duplicado que PODE faturar continua assumindo, como sempre: e o caso do cliente
+    // recadastrado no OMIE, cujo codigo antigo deixou de existir.
+    if (
+      match &&
+      match.omie_customer_id !== null &&
+      match.omie_customer_id !== customer.id &&
+      (!isCustomerCadastro || customer.isActive === false || customer.billingBlocked === true)
+    ) {
+      continue;
+    }
     // Fornecedor/transportadora que nao e cliente nao entra (nem volta) no cadastro de
     // clientes: a projecao da nuvem tambem e uma porta de entrada e, sem isso, o cadastro
     // limpo pela sincronizacao com o OMIE voltava sujo no proximo pull.
-    if (
-      !isOmieCustomerCadastro({
-        tags: customer.tagsJson ?? undefined,
-        customerType: customer.customerType ?? undefined
-      })
-    ) {
+    if (!isCustomerCadastro) {
       softDeleteNonCustomer.run(localId);
       continue;
     }
