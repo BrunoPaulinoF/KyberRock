@@ -1443,6 +1443,13 @@ Cuidados que nao podem se perder:
   vindo da nuvem para um cadastro que AQUI ainda tem pesagem viva e recusado. A unificacao tira a
   pesagem antes do tombstone, entao esse caso nunca e unificacao legitima — e um duplicado a mais
   na lista custa um clique; um cliente sem historico custa a conferencia do mes.
+- **Duplicado no OMIE tambem** (PACTOCRET, 13/10/2026): o mesmo CNPJ com dois cadastros LA — o
+  antigo com "bloquear faturamento" marcado e o novo faturando normal. Unificados aqui, a passada
+  do OMIE (`upsertOmieCustomers`) gravava na sobrevivente o que viesse por ultimo, e o cadastro
+  antigo chegava a ela pelo codigo enquanto o novo caia no tombstone da perdedora: a balanca
+  recusava a pesagem com "Cliente bloqueado no OMIE". Agora o casamento procura a linha VIVA
+  antes do tombstone, e um cadastro do OMIE com OUTRO codigo que nao o da linha daqui so assume se
+  puder faturar (cliente, ativo e sem bloqueio) — o recadastrado no OMIE continua migrando.
 - **A recusa por documento diferente** (`mergeCustomerInto`) e antes de qualquer escrita: juntar
   dois CNPJs mistura pesagem, fatura e saldo de duas empresas, e a tela nao tem desfazer.
 - **Vinculo com chave natural** (preco especial, frete, placa, transportadora, nota futura) nao e
