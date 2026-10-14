@@ -611,7 +611,7 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   verdade no lugar de "pedido(s)" (`plural` em `lib/dashboard.ts`). Continua SEM acento o que e
   codigo: comentario, identificador, rota e valor de URL (`/relatorios`, `?aba=concluidas`),
   chave de localStorage, valor comparado na logica ou gravado na nuvem. Tambem ficam como estao
-  as copias guardadas por teste (`lib/desktop/*`, `lib/portal/*`, `lib/documentation-*`) e os
+  as copias guardadas por teste (`lib/desktop/*`, `lib/portal/*`) e os
   textos dos ARQUIVOS exportados que o desktop gera igual (PDF/planilha do Insights, relatorios):
   o desktop ainda escreve sem acento e os dois lados tem de bater. As abas (`IconTabs`,
   `PillTabs` em `components/desk.tsx`) mostram o NOME ao lado do icone; a aba do navegador diz o

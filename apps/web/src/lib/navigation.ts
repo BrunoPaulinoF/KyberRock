@@ -1,6 +1,5 @@
 import {
   BarChart3,
-  BookOpen,
   ClipboardCheck,
   Database,
   FileText,
@@ -148,13 +147,6 @@ export const NAV_SECTIONS: Array<{ title: string; items: NavItem[] }> = [
         label: "Monitoramento",
         icon: MonitorPlay,
         keywords: ["TV", "ao vivo"]
-      },
-      {
-        screen: "documentacao",
-        to: "/documentacao",
-        label: "Documentação",
-        icon: BookOpen,
-        keywords: ["ajuda", "manual", "dúvidas"]
       }
     ]
   },

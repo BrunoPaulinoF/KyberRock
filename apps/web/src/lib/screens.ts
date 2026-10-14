@@ -21,7 +21,6 @@ export const SCREEN_MODULES = {
   fechamento: () => import("../pages/InvoiceClosing"),
   relatorios: () => import("../pages/SalesReport"),
   monitoramento: () => import("../pages/Monitor"),
-  documentacao: () => import("../pages/Documentation"),
   suporte: () => import("../pages/SupportLogs"),
   configuracoes: () => import("../pages/Settings"),
   carregamento: () => import("../pages/Loading")
