@@ -90,7 +90,6 @@ classe usada em mais de uma tela mora no `styles.css`.
 | `/conferencia-faturamento` | + comercial                             | Conferencia de faturamento pesagem a pesagem                                                         |
 | `/fechamento`              | gestor, operacao, administrador         | Fechamento de faturas (pedido de faturamento; a balanca executa)                                     |
 | `/relatorios`              | + comercial (destinatarios: nao)        | Fechamento diario, periodo, tabela dinamica, mensal e destinatarios                                  |
-| `/documentacao`            | gestor, operacao, administrador         | Central de ajuda (copia da do desktop, guardada por teste)                                           |
 | `/suporte`                 | administrador                           | Logs: saude das balancas, pedidos que falharam, envios OMIE, relatorios, navegador                   |
 | `/configuracoes/<aba>`     | gestor, operacao, administrador         | Balanca, Impressao e Cloud: estado das balancas da unidade, cupons do site, fila OMIE                |
 

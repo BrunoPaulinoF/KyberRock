@@ -14,7 +14,7 @@ import { Login } from "./pages/Login";
 /*
  * Cada tela vira um arquivo separado, baixado so quando e aberta. No celular (4G no patio) isso
  * e a diferenca entre abrir a fila do carregador na hora e esperar o site inteiro — relatorio,
- * monitoramento, documentacao — descer antes da primeira tela.
+ * monitoramento — descer antes da primeira tela.
  */
 function page<K extends string>(
   load: () => Promise<Record<K, ComponentType>>,
@@ -28,7 +28,6 @@ const Comercial = page(SCREEN_MODULES.comercial, "Comercial");
 const CustomerRanking = page(SCREEN_MODULES["ranking-clientes"], "CustomerRanking");
 const CustomerReport = page(SCREEN_MODULES["relatorio-cliente"], "CustomerReport");
 const Dashboard = page(SCREEN_MODULES.painel, "Dashboard");
-const Documentation = page(SCREEN_MODULES.documentacao, "Documentation");
 const Insights = page(SCREEN_MODULES.insights, "Insights");
 const InvoiceClosing = page(SCREEN_MODULES.fechamento, "InvoiceClosing");
 const Loading = page(SCREEN_MODULES.carregamento, "Loading");
@@ -202,7 +201,6 @@ export function App() {
                     />
                     <Route path="/fechamento" element={only("fechamento", <InvoiceClosing />)} />
                     <Route path="/relatorios" element={only("relatorios", <SalesReport />)} />
-                    <Route path="/documentacao" element={only("documentacao", <Documentation />)} />
                     <Route path="/suporte" element={only("suporte", <SupportLogs />)} />
                     <Route
                       path="/configuracoes"

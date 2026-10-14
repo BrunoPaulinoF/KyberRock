@@ -67,7 +67,6 @@ export const SCREENS = [
   "fechamento",
   "relatorios",
   "monitoramento",
-  "documentacao",
   "suporte",
   "configuracoes",
   "carregamento"
@@ -91,7 +90,6 @@ const DESK_SCREENS: readonly Screen[] = [
   "conferencia-faturamento",
   "fechamento",
   "relatorios",
-  "documentacao",
   "configuracoes"
 ];
 
