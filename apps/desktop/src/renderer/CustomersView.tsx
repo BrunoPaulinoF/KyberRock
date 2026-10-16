@@ -1677,8 +1677,14 @@ export function CustomersView({
   async function handleCnpjLookup(): Promise<void> {
     if (!desktopApi) return;
     const document = normalizeDocument(form.document);
-    if (documentKind(document) !== "cnpj") {
-      setFormError("Informe um CNPJ com 14 posicoes para buscar.");
+    // CPF e aceito no cadastro; so a busca e que nao existe para ele (a Receita nao abre CPF).
+    const kind = documentKind(document);
+    if (kind !== "cnpj") {
+      setFormError(
+        kind === "cpf"
+          ? "A busca automatica e so para CNPJ. Para CPF, preencha os dados a mao e salve."
+          : "Para buscar, digite o CNPJ completo. Para CPF, preencha os dados a mao e salve."
+      );
       return;
     }
     setCnpjBusy(true);
