@@ -10986,8 +10986,13 @@ function CarrierCnpjAutoFillButton({
 
   async function handleLookup(): Promise<void> {
     const document = normalizeDocument(ctx.formData.document ?? "");
-    if (documentKind(document) !== "cnpj") {
-      ctx.setFormError("Informe um CNPJ com 14 posicoes para buscar.");
+    const kind = documentKind(document);
+    if (kind !== "cnpj") {
+      ctx.setFormError(
+        kind === "cpf"
+          ? "A busca automatica e so para CNPJ. Para CPF, preencha os dados a mao e salve."
+          : "Para buscar, digite o CNPJ completo. Para CPF, preencha os dados a mao e salve."
+      );
       return;
     }
     setBusy(true);

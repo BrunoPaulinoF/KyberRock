@@ -534,8 +534,15 @@ function CustomerForm({
   // Busca os dados pelo CNPJ (Receita) e preenche o formulario, como o botao do desktop. Nao
   // apaga o que ja esta preenchido quando a Receita nao tem o campo.
   async function lookupCnpj() {
-    if (documentKind(normalizeDocument(form.document)) !== "cnpj") {
-      setFieldError("document", "Informe um CNPJ com 14 posições para buscar.");
+    // CPF e aceito no cadastro; so a busca e que nao existe para ele (a Receita nao abre CPF).
+    const kind = documentKind(normalizeDocument(form.document));
+    if (kind !== "cnpj") {
+      setFieldError(
+        "document",
+        kind === "cpf"
+          ? "A busca automática é só para CNPJ. Para CPF, preencha os dados à mão e salve."
+          : "Para buscar, digite o CNPJ completo. Para CPF, preencha os dados à mão e salve."
+      );
       return;
     }
     setCnpjBusy(true);
@@ -638,7 +645,7 @@ function CustomerForm({
           </Field>
           <Field
             label="CNPJ/CPF"
-            hint="CNPJ novo pode ter letras; digite como está no documento."
+            hint="Aceita CPF ou CNPJ. CNPJ novo pode ter letras; digite como está no documento."
             error={fieldErrors.document}
           >
             <div className="input-with-action">
