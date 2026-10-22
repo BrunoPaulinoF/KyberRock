@@ -37,6 +37,7 @@ import {
   buildPriceVolumeReport,
   filterPriceVolumeReport,
   loadPriceVolumeCadastro,
+  monthLabel,
   paymentTermLabel,
   periodTitle,
   priceLabel,
@@ -44,7 +45,7 @@ import {
   priceVolumeReportHtml,
   priceVolumeSpreadsheetHtml,
   PRICE_SOURCE_LABEL,
-  volumeLabel,
+  productSpan,
   type PriceVolumeExportInput,
   type PriceVolumeReport as PriceVolumeData
 } from "../lib/customer-price-volume";
@@ -116,7 +117,7 @@ const TAB_DESCRIPTION: Record<ReportTab, string> = {
     "Vendas agrupadas por cliente, produto ou dia. Clique no cliente para ver as pesagens; o olho (Info) mostra o cadastro e o preço médio.",
   monthly: "Total do mês e a evolução dia a dia.",
   prices:
-    "Cada cliente com o prazo de pagamento, o preço por tonelada de cada produto do cadastro e o volume de cada material carregado no período escolhido — num arquivo só, mesmo com vários meses.",
+    "Cada cliente com o prazo de pagamento, o preço por tonelada de cada produto do cadastro e o volume de cada material dia a dia, com a data de carregamento — num arquivo só, mesmo com vários meses.",
   recipients: "Quem recebe o fechamento diário por e-mail ou WhatsApp."
 };
 
@@ -661,9 +662,9 @@ export function SalesReport() {
               <p className="reports-note reports-no-print">
                 <Info size={14} />
                 Preço por tonelada do cadastro: o especial do cliente ou, sem ele, o padrão do
-                produto. Volume pelas pesagens concluídas no período, pela data de FECHAMENTO. Prazo
-                &quot;pelas cargas&quot;: o cliente não tem condição padrão no cadastro, então vale
-                a mais usada nas cargas do período.
+                produto. Volume dia a dia pelas pesagens concluídas; a data de carregamento é a do
+                FECHAMENTO da pesagem (a mesma da nota). Prazo &quot;pelas cargas&quot;: o cliente
+                não tem condição padrão no cadastro, então vale a mais usada nas cargas do período.
               </p>
             ) : (
               <p className="reports-note reports-no-print">
@@ -1070,8 +1071,9 @@ function MonthlyReport({
 }
 
 /**
- * Precos e volume por cliente: o cliente e o prazo uma vez so (celula que ocupa as linhas dos
- * produtos dele), o preco por tonelada do cadastro e o volume carregado no periodo de cada produto.
+ * Precos e volume por cliente: o cliente e o prazo uma vez so (celula que ocupa as linhas dele),
+ * cada produto uma vez so com o preco por tonelada do cadastro, e ao lado cada dia de
+ * carregamento com o volume daquele dia. Embaixo, o volume por mes e por material e mes.
  */
 function PriceVolumeTable({
   report,
@@ -1087,7 +1089,7 @@ function PriceVolumeTable({
           { label: "Clientes", value: report.totals.customers.toLocaleString("pt-BR") },
           { label: "Cargas", value: report.totals.loads.toLocaleString("pt-BR") },
           { label: "Volume carregado", value: formatTons(report.totals.weightKg) },
-          { label: "Materiais", value: report.materials.length.toLocaleString("pt-BR") }
+          { label: "Materiais", value: report.totals.materials.toLocaleString("pt-BR") }
         ]}
       />
       {report.customers.length === 0 ? (
@@ -1102,88 +1104,67 @@ function PriceVolumeTable({
                 <th>Produto</th>
                 <th className="num">Preço por t</th>
                 <th>Origem</th>
-                <th className="num">Volume no período</th>
+                <th>Data de carregamento</th>
+                <th className="num">Volume</th>
                 <th className="num">Cargas</th>
               </tr>
             }
           >
-            {report.customers.map((customer) =>
-              customer.products.map((product, index) => (
-                <tr
-                  key={`${customer.key}|${product.key}`}
-                  className={index === 0 ? "price-group" : undefined}
-                >
-                  {index === 0 && (
-                    <>
-                      <td rowSpan={customer.products.length} className="price-customer">
-                        <CustomerName
-                          id={customer.customerId}
-                          name={customer.name}
-                          onOpen={onCustomer}
-                        />
-                        {customer.document && (
-                          <small className="reports-muted">
-                            {formatDocument(customer.document)}
-                          </small>
-                        )}
-                        {customer.loads > 0 && (
-                          <small className="reports-muted">
-                            Total: {formatTons(customer.weightKg)}
-                          </small>
-                        )}
-                      </td>
-                      <td rowSpan={customer.products.length}>
-                        {customer.paymentTerm ? (
-                          <>
-                            {customer.paymentTerm}
-                            {customer.paymentTermSource === "loads" && (
-                              <small className="reports-muted">pelas cargas</small>
-                            )}
-                          </>
-                        ) : (
-                          <span className="reports-muted">{paymentTermLabel(customer)}</span>
-                        )}
-                      </td>
-                    </>
-                  )}
-                  <td>{product.productName}</td>
-                  <td className="num">{priceLabel(product)}</td>
-                  <td className={product.priceSource === "special" ? undefined : "reports-muted"}>
-                    {PRICE_SOURCE_LABEL[product.priceSource]}
-                  </td>
-                  <td className="num">
-                    {product.loads > 0 ? <strong>{volumeLabel(product)}</strong> : "-"}
-                  </td>
-                  <td className="num">{product.loads.toLocaleString("pt-BR")}</td>
-                </tr>
-              ))
-            )}
+            {report.customers.map((customer) => (
+              <PriceVolumeCustomerRows
+                key={customer.key}
+                customer={customer}
+                onCustomer={onCustomer}
+              />
+            ))}
           </ReportTable>
 
           <SectionHead
-            title="Volume por material no período"
-            description="Quanto saiu de cada material, somando todos os clientes acima."
+            title="Volume por mês"
+            description="Quanto saiu em cada mês do período, somando todos os clientes acima."
           />
           <ReportTable
             head={
               <tr>
+                <th>Mês</th>
+                <th className="num">Clientes</th>
+                <th className="num">Cargas</th>
+                <th className="num">Volume</th>
+              </tr>
+            }
+            foot={<PriceVolumeTotal report={report} span={1} />}
+          >
+            {report.months.map((month) => (
+              <tr key={month.month}>
+                <td>{monthLabel(month.month)}</td>
+                <td className="num">{month.customers.toLocaleString("pt-BR")}</td>
+                <td className="num">{month.loads.toLocaleString("pt-BR")}</td>
+                <td className="num">
+                  <strong>{formatTons(month.weightKg)}</strong>
+                </td>
+              </tr>
+            ))}
+          </ReportTable>
+
+          <SectionHead
+            title="Volume por material e mês"
+            description="Quanto saiu de cada material em cada mês, somando todos os clientes."
+          />
+          <ReportTable
+            head={
+              <tr>
+                <th>Mês</th>
                 <th>Material</th>
                 <th className="num">Clientes</th>
                 <th className="num">Cargas</th>
                 <th className="num">Volume</th>
               </tr>
             }
-            foot={
-              <tr>
-                <td>TOTAL</td>
-                <td className="num">{report.totals.customers.toLocaleString("pt-BR")}</td>
-                <td className="num">{report.totals.loads.toLocaleString("pt-BR")}</td>
-                <td className="num">{formatTons(report.totals.weightKg)}</td>
-              </tr>
-            }
+            foot={<PriceVolumeTotal report={report} span={2} />}
           >
             {report.materials.map((material) => (
               <tr key={material.key}>
+                <td>{monthLabel(material.month)}</td>
                 <td>{material.productName}</td>
                 <td className="num">{material.customers.toLocaleString("pt-BR")}</td>
                 <td className="num">{material.loads.toLocaleString("pt-BR")}</td>
@@ -1196,5 +1177,111 @@ function PriceVolumeTable({
         </>
       )}
     </>
+  );
+}
+
+/** As linhas de um cliente: uma por dia de carregamento de cada produto (uma so, sem carga). */
+function PriceVolumeCustomerRows({
+  customer,
+  onCustomer
+}: {
+  customer: PriceVolumeData["customers"][number];
+  onCustomer: (customer: CustomerRef) => void;
+}) {
+  const span = customer.products.reduce((sum, product) => sum + productSpan(product), 0);
+  let first = true;
+  return (
+    <>
+      {customer.products.map((product) =>
+        (product.days.length ? product.days : [null]).map((day, index) => {
+          const isFirst = first;
+          first = false;
+          return (
+            <tr
+              key={`${product.key}|${day?.date ?? "-"}`}
+              className={isFirst ? "price-group" : undefined}
+            >
+              {isFirst && (
+                <>
+                  <td rowSpan={span} className="price-customer">
+                    <CustomerName
+                      id={customer.customerId}
+                      name={customer.name}
+                      onOpen={onCustomer}
+                    />
+                    {customer.document && (
+                      <small className="reports-muted">{formatDocument(customer.document)}</small>
+                    )}
+                    {customer.loads > 0 && (
+                      <small className="reports-muted">
+                        Total: {formatTons(customer.weightKg)}
+                      </small>
+                    )}
+                  </td>
+                  <td rowSpan={span}>
+                    {customer.paymentTerm ? (
+                      <>
+                        {customer.paymentTerm}
+                        {customer.paymentTermSource === "loads" && (
+                          <small className="reports-muted">pelas cargas</small>
+                        )}
+                      </>
+                    ) : (
+                      <span className="reports-muted">{paymentTermLabel(customer)}</span>
+                    )}
+                  </td>
+                </>
+              )}
+              {index === 0 && (
+                <>
+                  <td rowSpan={productSpan(product)}>
+                    {product.productName}
+                    {product.days.length > 1 && (
+                      <small className="reports-muted">Total: {formatTons(product.weightKg)}</small>
+                    )}
+                  </td>
+                  <td rowSpan={productSpan(product)} className="num">
+                    {priceLabel(product)}
+                  </td>
+                  <td
+                    rowSpan={productSpan(product)}
+                    className={product.priceSource === "special" ? undefined : "reports-muted"}
+                  >
+                    {PRICE_SOURCE_LABEL[product.priceSource]}
+                  </td>
+                </>
+              )}
+              {day ? (
+                <>
+                  <td>{formatDayLabel(day.date)}</td>
+                  <td className="num">
+                    <strong>{formatTons(day.weightKg)}</strong>
+                  </td>
+                  <td className="num">{day.loads.toLocaleString("pt-BR")}</td>
+                </>
+              ) : (
+                <>
+                  <td className="reports-muted">Sem carga no período</td>
+                  <td className="num">-</td>
+                  <td className="num">0</td>
+                </>
+              )}
+            </tr>
+          );
+        })
+      )}
+    </>
+  );
+}
+
+/** Linha de total das tabelas de resumo (por mes e por material e mes). */
+function PriceVolumeTotal({ report, span }: { report: PriceVolumeData; span: number }) {
+  return (
+    <tr>
+      <td colSpan={span}>TOTAL</td>
+      <td className="num">{report.totals.customers.toLocaleString("pt-BR")}</td>
+      <td className="num">{report.totals.loads.toLocaleString("pt-BR")}</td>
+      <td className="num">{formatTons(report.totals.weightKg)}</td>
+    </tr>
   );
 }

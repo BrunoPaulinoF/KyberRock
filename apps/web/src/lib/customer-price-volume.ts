@@ -14,7 +14,9 @@
  *   que mais apareceu nas cargas do periodo, marcada como "pelas cargas" — vazio nao ajuda quem
  *   recebe o relatorio, e a carga diz o prazo que de fato foi para o OMIE.
  * - **Volume** = peso liquido das pesagens CONCLUIDAS do periodo, pela data de FECHAMENTO (CLAUDE.md,
- *   "Data da pesagem nos relatorios"), a mesma leitura dos outros relatorios da tela.
+ *   "Data da pesagem nos relatorios"), a mesma leitura dos outros relatorios da tela. Sai DIA A
+ *   DIA (a data de carregamento de cada produto) e resumido por mes: com dois meses no periodo,
+ *   so o total nao diz quando o cliente carregou.
  * - **Cliente** = o cliente REAL: os cadastros gemeos (mesmo documento ou mesmo codigo OMIE, um
  *   do OMIE e outro de uma balanca) viram uma linha so (`dedupeCustomers`), com os precos
  *   especiais e as cargas de todos eles.
@@ -28,6 +30,7 @@ import {
   documentStyle,
   escapeHtml,
   formatDayLabel,
+  formatMonthLabel,
   kpiCards,
   section,
   sheetTable,
@@ -41,6 +44,7 @@ import type {
   Product,
   ProductDefaultPrice
 } from "./queries";
+import { saleDay } from "./reports";
 import { supabase } from "./supabase";
 
 export type PriceVolumeOperation = Pick<
@@ -51,6 +55,8 @@ export type PriceVolumeOperation = Pick<
   | "product_description"
   | "net_weight_kg"
   | "payment_term_id"
+  | "closed_at"
+  | "created_at"
 >;
 
 export type PriceVolumeCustomerRow = CustomerOptionSource & {
@@ -77,6 +83,14 @@ export const PRICE_SOURCE_LABEL: Record<PriceVolumeSource, string> = {
   none: "Sem preço"
 };
 
+/** O que o cliente carregou de um produto num dia (data de FECHAMENTO da pesagem). */
+export interface PriceVolumeDay {
+  /** AAAA-MM-DD. */
+  date: string;
+  weightKg: number;
+  loads: number;
+}
+
 export interface PriceVolumeProduct {
   key: string;
   productId: string | null;
@@ -87,6 +101,8 @@ export interface PriceVolumeProduct {
   /** Peso liquido carregado no periodo (kg); 0 = tem preco no cadastro, mas nao carregou. */
   weightKg: number;
   loads: number;
+  /** Cada dia em que carregou, do mais antigo ao mais novo; vazio = nao carregou no periodo. */
+  days: PriceVolumeDay[];
 }
 
 export interface PriceVolumeCustomer {
@@ -103,19 +119,28 @@ export interface PriceVolumeCustomer {
   loads: number;
 }
 
-export interface PriceVolumeMaterial {
-  key: string;
-  productName: string;
+/** Volume de um mes (AAAA-MM), somando todos os clientes. */
+export interface PriceVolumeMonth {
+  month: string;
   weightKg: number;
   loads: number;
   customers: number;
 }
 
+/** Volume de um material num mes, somando todos os clientes. */
+export interface PriceVolumeMaterial extends PriceVolumeMonth {
+  key: string;
+  productName: string;
+}
+
 export interface PriceVolumeReport {
   customers: PriceVolumeCustomer[];
-  /** Volume de cada material no periodo, somando todos os clientes. */
+  /** Cada mes do periodo, em ordem. */
+  months: PriceVolumeMonth[];
+  /** Cada material em cada mes: mes em ordem e, dentro dele, o maior volume primeiro. */
   materials: PriceVolumeMaterial[];
-  totals: { customers: number; loads: number; weightKg: number };
+  /** `materials` = quantos materiais diferentes sairam no periodo. */
+  totals: { customers: number; loads: number; weightKg: number; materials: number };
 }
 
 export interface PriceVolumeOptions {
@@ -209,13 +234,15 @@ export function buildPriceVolumeReport(
   interface Acc {
     group: Group;
     products: Map<string, PriceVolumeProduct>;
+    /** Produto -> dia -> o que carregou naquele dia. */
+    days: Map<string, Map<string, PriceVolumeDay>>;
     termCounts: Map<string, number>;
   }
   const accs = new Map<string, Acc>();
   const accFor = (group: Group): Acc => {
     let acc = accs.get(group.key);
     if (!acc) {
-      acc = { group, products: new Map(), termCounts: new Map() };
+      acc = { group, products: new Map(), days: new Map(), termCounts: new Map() };
       accs.set(group.key, acc);
     }
     return acc;
@@ -241,7 +268,8 @@ export function buildPriceVolumeReport(
         priceCents: special ? special.cents : fallback,
         priceSource: special ? "special" : fallback !== null ? "default" : "none",
         weightKg: 0,
-        loads: 0
+        loads: 0,
+        days: []
       };
       acc.products.set(key, entry);
     }
@@ -251,8 +279,16 @@ export function buildPriceVolumeReport(
   for (const op of operations) {
     const acc = accFor(groupFor(op));
     const entry = productEntry(acc, op.product_id, op.product_description);
-    entry.weightKg += op.net_weight_kg ?? 0;
+    const weightKg = op.net_weight_kg ?? 0;
+    entry.weightKg += weightKg;
     entry.loads += 1;
+    const date = saleDay(op);
+    const byDay = acc.days.get(entry.key) ?? new Map<string, PriceVolumeDay>();
+    const day = byDay.get(date) ?? { date, weightKg: 0, loads: 0 };
+    day.weightKg += weightKg;
+    day.loads += 1;
+    byDay.set(date, day);
+    acc.days.set(entry.key, byDay);
     if (op.payment_term_id) {
       acc.termCounts.set(op.payment_term_id, (acc.termCounts.get(op.payment_term_id) ?? 0) + 1);
     }
@@ -270,6 +306,11 @@ export function buildPriceVolumeReport(
       productEntry(acc, productId, null);
     }
     const term = paymentTermOf(acc.group, rowById, termName, acc.termCounts);
+    for (const product of acc.products.values()) {
+      product.days = [...(acc.days.get(product.key)?.values() ?? [])].sort((a, b) =>
+        a.date.localeCompare(b.date)
+      );
+    }
     const products = [...acc.products.values()].sort((a, b) =>
       a.productName.localeCompare(b.productName, "pt-BR")
     );
@@ -320,37 +361,68 @@ function paymentTermOf(
 }
 
 function summarize(customers: PriceVolumeCustomer[]): PriceVolumeReport {
-  const materials = new Map<string, PriceVolumeMaterial>();
+  const months = new Map<string, PriceVolumeMonth & { seen: Set<string> }>();
+  const materials = new Map<string, PriceVolumeMaterial & { seen: Set<string> }>();
+  const productKeys = new Set<string>();
   for (const customer of customers) {
     for (const product of customer.products) {
-      if (product.loads === 0) continue;
-      const material = materials.get(product.key) ?? {
-        key: product.key,
-        productName: product.productName,
-        weightKg: 0,
-        loads: 0,
-        customers: 0
-      };
-      material.weightKg += product.weightKg;
-      material.loads += product.loads;
-      material.customers += 1;
-      materials.set(product.key, material);
+      if (product.loads > 0) productKeys.add(product.key);
+      for (const day of product.days) {
+        const month = day.date.slice(0, 7);
+        const monthTotal = months.get(month) ?? {
+          month,
+          weightKg: 0,
+          loads: 0,
+          customers: 0,
+          seen: new Set<string>()
+        };
+        monthTotal.weightKg += day.weightKg;
+        monthTotal.loads += day.loads;
+        monthTotal.seen.add(customer.key);
+        months.set(month, monthTotal);
+
+        const key = `${month}|${product.key}`;
+        const material = materials.get(key) ?? {
+          key,
+          month,
+          productName: product.productName,
+          weightKg: 0,
+          loads: 0,
+          customers: 0,
+          seen: new Set<string>()
+        };
+        material.weightKg += day.weightKg;
+        material.loads += day.loads;
+        material.seen.add(customer.key);
+        materials.set(key, material);
+      }
     }
   }
+  const counted = <T extends { seen: Set<string> }>({ seen, ...rest }: T) => ({
+    ...rest,
+    customers: seen.size
+  });
   return {
     customers,
-    materials: [...materials.values()].sort((a, b) => b.weightKg - a.weightKg),
+    months: [...months.values()].map(counted).sort((a, b) => a.month.localeCompare(b.month)),
+    materials: [...materials.values()]
+      .map(counted)
+      .sort((a, b) => a.month.localeCompare(b.month) || b.weightKg - a.weightKg),
     totals: {
       customers: customers.length,
       loads: customers.reduce((sum, customer) => sum + customer.loads, 0),
-      weightKg: customers.reduce((sum, customer) => sum + customer.weightKg, 0)
+      weightKg: customers.reduce((sum, customer) => sum + customer.weightKg, 0),
+      materials: productKeys.size
     }
   };
 }
 
 /** Sem acento e em minusculas, para a busca achar "Joao" em "João". */
 function searchable(value: string): string {
-  return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
 }
 
 /**
@@ -389,8 +461,30 @@ export function priceLabel(product: Pick<PriceVolumeProduct, "priceCents">): str
 }
 
 /** "12,345 t" ou "-" para o produto do cadastro que nao carregou no periodo. */
-export function volumeLabel(product: Pick<PriceVolumeProduct, "weightKg" | "loads">): string {
-  return product.loads === 0 ? "-" : formatTons(product.weightKg);
+export function volumeLabel(volume: Pick<PriceVolumeProduct, "weightKg" | "loads">): string {
+  return volume.loads === 0 ? "-" : formatTons(volume.weightKg);
+}
+
+const MONTH_NAMES = [
+  "Janeiro",
+  "Fevereiro",
+  "Março",
+  "Abril",
+  "Maio",
+  "Junho",
+  "Julho",
+  "Agosto",
+  "Setembro",
+  "Outubro",
+  "Novembro",
+  "Dezembro"
+];
+
+/** "2026-08" -> "Agosto/2026". */
+export function monthLabel(month: string): string {
+  const [year, number] = month.split("-");
+  const name = MONTH_NAMES[Number(number) - 1];
+  return name ? `${name}/${year}` : month;
 }
 
 // ---------------------------------------------------------------------------
@@ -500,7 +594,7 @@ export function priceVolumeFileBase(range: { start: string; end: string }): stri
 
 const NOTE =
   "Preço por tonelada do cadastro: o especial do cliente ou, sem ele, o padrão do produto. " +
-  "Volume = peso líquido das pesagens concluídas no período, pela data de fechamento. " +
+  "Volume = peso líquido das pesagens concluídas, dia a dia pela data de carregamento (fechamento da pesagem). " +
   'Prazo "pelas cargas": o cliente não tem condição padrão no cadastro; vale a mais usada nas cargas do período.';
 
 function kpis(report: PriceVolumeReport): string {
@@ -508,57 +602,95 @@ function kpis(report: PriceVolumeReport): string {
     ["Clientes", report.totals.customers.toLocaleString("pt-BR")],
     ["Cargas", report.totals.loads.toLocaleString("pt-BR")],
     ["Volume carregado", formatTons(report.totals.weightKg)],
-    ["Materiais", report.materials.length.toLocaleString("pt-BR")]
+    ["Materiais", report.totals.materials.toLocaleString("pt-BR")]
   ]);
 }
 
-/** A tabela do PDF: o cliente e o prazo uma vez so, com os produtos dele ao lado. */
+/** Quantas linhas o produto ocupa: uma por dia de carregamento (uma so, sem carga). */
+export function productSpan(product: Pick<PriceVolumeProduct, "days">): number {
+  return Math.max(product.days.length, 1);
+}
+
+function plural(count: number, one: string, many: string): string {
+  return `${count.toLocaleString("pt-BR")} ${count === 1 ? one : many}`;
+}
+
+/**
+ * A tabela do PDF: o cliente e o prazo uma vez so; cada produto uma vez so, com o preco; e ao
+ * lado dele cada dia de carregamento com o volume daquele dia.
+ */
 function customerTable(report: PriceVolumeReport): string {
-  const head = [
-    "Cliente",
-    "Prazo de pagamento",
-    "Produto",
-    "Preço por t",
-    "Origem",
-    "Volume no período"
-  ]
-    .map((header, index) => `<th${index >= 3 && index !== 4 ? ' class="num"' : ""}>${header}</th>`)
+  const headers: Array<[string, boolean]> = [
+    ["Cliente", false],
+    ["Prazo de pagamento", false],
+    ["Produto", false],
+    ["Preço por t", true],
+    ["Origem", false],
+    ["Data de carregamento", false],
+    ["Volume", true],
+    ["Cargas", true]
+  ];
+  const head = headers
+    .map(([header, num]) => `<th${num ? ' class="num"' : ""}>${header}</th>`)
     .join("");
   if (report.customers.length === 0) {
-    return `<table class="detail"><thead><tr>${head}</tr></thead><tbody><tr><td class="empty" colspan="6">Nenhum cliente no período.</td></tr></tbody></table>`;
+    return `<table class="detail"><thead><tr>${head}</tr></thead><tbody><tr><td class="empty" colspan="${headers.length}">Nenhum cliente no período.</td></tr></tbody></table>`;
   }
   const body = report.customers
     .map((customer) => {
       // Sempre ha produto: o cliente entra pela carga ou pelo preco especial.
-      const products = customer.products;
-      const span = Math.max(products.length, 1);
+      const span = customer.products.reduce((sum, product) => sum + productSpan(product), 0);
       const document = customer.document ? formatDocument(customer.document) : "";
-      const customerCell = `<td rowspan="${span}"><strong>${escapeHtml(customer.name)}</strong>${
+      const customerCells = `<td rowspan="${span}"><strong>${escapeHtml(customer.name)}</strong>${
         document ? `<br /><span class="muted">${escapeHtml(document)}</span>` : ""
       }${
         customer.loads
-          ? `<br /><span class="muted">Total: ${escapeHtml(formatTons(customer.weightKg))} em ${customer.loads.toLocaleString("pt-BR")} ${customer.loads === 1 ? "carga" : "cargas"}</span>`
+          ? `<br /><span class="muted">Total: ${escapeHtml(formatTons(customer.weightKg))} em ${plural(customer.loads, "carga", "cargas")}</span>`
           : ""
       }</td><td rowspan="${span}">${escapeHtml(paymentTermLabel(customer))}</td>`;
-      return products
-        .map((product, index) => {
-          const cells = `<td>${escapeHtml(product.productName)}</td><td class="num">${escapeHtml(
-            priceLabel(product)
-          )}</td><td>${escapeHtml(PRICE_SOURCE_LABEL[product.priceSource])}</td><td class="num">${escapeHtml(
-            volumeLabel(product)
-          )}</td>`;
-          return index === 0
-            ? `<tr class="group-start">${customerCell}${cells}</tr>`
-            : `<tr>${cells}</tr>`;
-        })
-        .join("");
+      const rows: string[] = [];
+      for (const product of customer.products) {
+        const productSpanRows = productSpan(product);
+        const productCells = `<td rowspan="${productSpanRows}">${escapeHtml(product.productName)}${
+          product.days.length > 1
+            ? `<br /><span class="muted">Total: ${escapeHtml(formatTons(product.weightKg))}</span>`
+            : ""
+        }</td><td class="num" rowspan="${productSpanRows}">${escapeHtml(
+          priceLabel(product)
+        )}</td><td rowspan="${productSpanRows}">${escapeHtml(PRICE_SOURCE_LABEL[product.priceSource])}</td>`;
+        const days = product.days.length ? product.days : [null];
+        days.forEach((day, index) => {
+          const dayCells = day
+            ? `<td>${escapeHtml(formatDayLabel(day.date))}</td><td class="num">${escapeHtml(
+                formatTons(day.weightKg)
+              )}</td><td class="num">${day.loads.toLocaleString("pt-BR")}</td>`
+            : `<td class="muted">Sem carga no período</td><td class="num">-</td><td class="num">0</td>`;
+          const first = rows.length === 0;
+          rows.push(
+            `<tr${first ? ' class="group-start"' : index === 0 ? ' class="product-start"' : ""}>${
+              first ? customerCells : ""
+            }${index === 0 ? productCells : ""}${dayCells}</tr>`
+          );
+        });
+      }
+      return rows.join("");
     })
     .join("");
   return `<table class="detail grouped"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
+function monthRows(report: PriceVolumeReport): string[][] {
+  return report.months.map((month) => [
+    monthLabel(month.month),
+    month.customers.toLocaleString("pt-BR"),
+    month.loads.toLocaleString("pt-BR"),
+    formatTons(month.weightKg)
+  ]);
+}
+
 function materialRows(report: PriceVolumeReport): string[][] {
   return report.materials.map((material) => [
+    monthLabel(material.month),
     material.productName,
     material.customers.toLocaleString("pt-BR"),
     material.loads.toLocaleString("pt-BR"),
@@ -566,14 +698,25 @@ function materialRows(report: PriceVolumeReport): string[][] {
   ]);
 }
 
+function totalRow(report: PriceVolumeReport, blanks: number): string[] {
+  return [
+    "Total",
+    ...Array<string>(blanks).fill(""),
+    report.totals.customers.toLocaleString("pt-BR"),
+    report.totals.loads.toLocaleString("pt-BR"),
+    formatTons(report.totals.weightKg)
+  ];
+}
+
 /** O PDF A4 do botao Exportar PDF. */
 export function priceVolumeReportHtml(input: PriceVolumeExportInput): string {
   const { report } = input;
   const generatedAt = input.generatedAt ?? new Date();
-  const style = `${documentStyle("portrait")}
+  const style = `${documentStyle("landscape")}
 section{break-inside:auto}
 table.grouped tbody tr:nth-child(even){background:transparent}
-table.grouped tr.group-start td{border-top:2px solid #cbd5e1}
+table.grouped tr.group-start td{border-top:2px solid #94a3b8}
+table.grouped tr.product-start td{border-top:1.5px solid #cbd5e1}
 table.grouped td{vertical-align:top}
 .muted{color:var(--muted)}`;
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><title>Preços e volume por cliente</title><style>${style}</style></head><body>
@@ -583,18 +726,22 @@ table.grouped td{vertical-align:top}
     generatedAt.toLocaleString("pt-BR")
   )}</div></div>
 ${kpis(report)}
+${section(
+  "Volume por mês",
+  table(
+    ["Mês", "Clientes", "Cargas", "Volume"],
+    monthRows(report),
+    totalRow(report, 0),
+    "Nenhuma carga no período."
+  )
+)}
 ${section("Clientes", customerTable(report))}
 ${section(
-  "Volume por material no período",
+  "Volume por material e mês",
   table(
-    ["Material", "Clientes", "Cargas", "Volume"],
+    ["Mês", "Material", "Clientes", "Cargas", "Volume"],
     materialRows(report),
-    [
-      "Total",
-      report.totals.customers.toLocaleString("pt-BR"),
-      report.totals.loads.toLocaleString("pt-BR"),
-      formatTons(report.totals.weightKg)
-    ],
+    totalRow(report, 1),
     "Nenhuma carga no período."
   )
 )}
@@ -603,30 +750,45 @@ ${section(
 }
 
 /**
- * A planilha do botao Exportar Excel: uma linha por cliente e produto, com o cliente e o prazo
- * repetidos em toda linha — e o que deixa filtrar e somar por cliente no Excel.
+ * A planilha do botao Exportar Excel: uma linha por cliente, produto e DIA de carregamento, com
+ * o cliente, o prazo e o preco repetidos em toda linha — e o que deixa filtrar por data, mes ou
+ * cliente e somar no Excel. Produto do cadastro sem carga sai numa linha so, sem data.
  */
 export function priceVolumeSpreadsheetHtml(input: PriceVolumeExportInput): string {
   const { report } = input;
   const generatedAt = input.generatedAt ?? new Date();
   const rows: string[][] = [];
   for (const customer of report.customers) {
+    const fixed = [
+      customer.name,
+      customer.document ? formatDocument(customer.document) : "",
+      customer.paymentTerm ?? "Não informado",
+      customer.paymentTermSource === "loads"
+        ? "Cargas do período"
+        : customer.paymentTermSource === "cadastro"
+          ? "Cadastro"
+          : ""
+    ];
     for (const product of customer.products) {
-      rows.push([
-        customer.name,
-        customer.document ? formatDocument(customer.document) : "",
-        customer.paymentTerm ?? "Não informado",
-        customer.paymentTermSource === "loads"
-          ? "Cargas do período"
-          : customer.paymentTermSource === "cadastro"
-            ? "Cadastro"
-            : "",
+      const productCells = [
         product.productName,
         priceLabel(product),
-        PRICE_SOURCE_LABEL[product.priceSource],
-        volumeLabel(product),
-        product.loads.toLocaleString("pt-BR")
-      ]);
+        PRICE_SOURCE_LABEL[product.priceSource]
+      ];
+      if (product.days.length === 0) {
+        rows.push([...fixed, ...productCells, "-", "-", "-", "0"]);
+        continue;
+      }
+      for (const day of product.days) {
+        rows.push([
+          ...fixed,
+          ...productCells,
+          formatDayLabel(day.date),
+          formatMonthLabel(day.date.slice(0, 7)),
+          formatTons(day.weightKg),
+          day.loads.toLocaleString("pt-BR")
+        ]);
+      }
     }
   }
   const blocks = [
@@ -640,7 +802,9 @@ export function priceVolumeSpreadsheetHtml(input: PriceVolumeExportInput): strin
         "Produto",
         "Preço por t",
         "Origem do preço",
-        "Volume no período",
+        "Data de carregamento",
+        "Mês",
+        "Volume",
         "Cargas"
       ],
       rows,
@@ -653,23 +817,24 @@ export function priceVolumeSpreadsheetHtml(input: PriceVolumeExportInput): strin
             "",
             "",
             "",
+            "",
+            "",
             formatTons(report.totals.weightKg),
             report.totals.loads.toLocaleString("pt-BR")
           ]
         : null
     ),
     sheetTable(
-      "Volume por material no período",
-      ["Material", "Clientes", "Cargas", "Volume"],
+      "Volume por mês",
+      ["Mês", "Clientes", "Cargas", "Volume"],
+      monthRows(report),
+      report.months.length ? totalRow(report, 0) : null
+    ),
+    sheetTable(
+      "Volume por material e mês",
+      ["Mês", "Material", "Clientes", "Cargas", "Volume"],
       materialRows(report),
-      report.materials.length
-        ? [
-            "TOTAL",
-            report.totals.customers.toLocaleString("pt-BR"),
-            report.totals.loads.toLocaleString("pt-BR"),
-            formatTons(report.totals.weightKg)
-          ]
-        : null
+      report.materials.length ? totalRow(report, 1) : null
     )
   ];
   return `<!doctype html><html ${SPREADSHEET_HTML_ATTRS}><head><meta charset="utf-8" /><title>Preços e volume por cliente</title><style>${SPREADSHEET_STYLE}</style></head><body>

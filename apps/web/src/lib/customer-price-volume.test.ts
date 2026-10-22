@@ -5,6 +5,7 @@ vi.mock("./supabase", () => ({ supabase: {} }));
 import {
   buildPriceVolumeReport,
   filterPriceVolumeReport,
+  monthLabel,
   periodTitle,
   priceVolumeFileBase,
   paymentTermLabel,
@@ -38,6 +39,8 @@ function op(partial: Partial<PriceVolumeOperation>): PriceVolumeOperation {
     product_description: "Brita 1",
     net_weight_kg: 10000,
     payment_term_id: null,
+    closed_at: "2026-09-11T15:00:00Z",
+    created_at: "2026-09-11T12:00:00Z",
     ...partial
   };
 }
@@ -86,7 +89,7 @@ describe("buildPriceVolumeReport", () => {
     ]);
     expect(row.loads).toBe(3);
     expect(row.weightKg).toBe(30500);
-    expect(report.totals).toEqual({ customers: 1, loads: 3, weightKg: 30500 });
+    expect(report.totals).toEqual({ customers: 1, loads: 3, weightKg: 30500, materials: 2 });
     expect(report.materials.map((m) => [m.productName, m.weightKg])).toEqual([
       ["Brita 1", 22500],
       ["Rachão", 8000]
@@ -110,8 +113,42 @@ describe("buildPriceVolumeReport", () => {
     const po = report.customers[0].products.find((p) => p.productId === "po");
     expect(po).toMatchObject({ priceCents: 8000, priceSource: "special", weightKg: 0, loads: 0 });
     expect(volumeLabel(po!)).toBe("-");
+    expect(po!.days).toEqual([]);
     // O material sem carga nao entra no volume por material.
     expect(report.materials.map((m) => m.productName)).toEqual(["Brita 1"]);
+  });
+
+  it("separa o volume dia a dia, pela data de carregamento, e resume por mes", () => {
+    const report = buildPriceVolumeReport(
+      [
+        op({ closed_at: "2026-09-02T14:00:00Z", net_weight_kg: 3000 }),
+        op({ closed_at: "2026-08-20T14:00:00Z", net_weight_kg: 1000 }),
+        op({ closed_at: "2026-08-20T18:00:00Z", net_weight_kg: 2000 }),
+        // 23h30 de 31/08 em Sao Paulo: ainda e agosto, mesmo ja sendo 01/09 em UTC.
+        op({ closed_at: "2026-09-01T02:30:00Z", net_weight_kg: 500 }),
+        // Pesagem antiga sem horario de saida: vale a criacao.
+        op({ closed_at: null, created_at: "2026-09-05T13:00:00Z", product_id: "rachao" })
+      ],
+      cadastro()
+    );
+    const [brita, rachao] = report.customers[0].products;
+    expect(brita.days).toEqual([
+      { date: "2026-08-20", weightKg: 3000, loads: 2 },
+      { date: "2026-08-31", weightKg: 500, loads: 1 },
+      { date: "2026-09-02", weightKg: 3000, loads: 1 }
+    ]);
+    expect(rachao.days).toEqual([{ date: "2026-09-05", weightKg: 10000, loads: 1 }]);
+    expect(report.months).toEqual([
+      { month: "2026-08", weightKg: 3500, loads: 3, customers: 1 },
+      { month: "2026-09", weightKg: 13000, loads: 2, customers: 1 }
+    ]);
+    expect(report.materials.map((m) => [m.month, m.productName, m.weightKg])).toEqual([
+      ["2026-08", "Brita 1", 3500],
+      ["2026-09", "Rachão", 10000],
+      ["2026-09", "Brita 1", 3000]
+    ]);
+    expect(report.totals.materials).toBe(2);
+    expect(monthLabel("2026-08")).toBe("Agosto/2026");
   });
 
   it("dois precos especiais do mesmo produto: vale o atualizado por ultimo", () => {
@@ -254,7 +291,7 @@ describe("filterPriceVolumeReport", () => {
   it("acha pelo nome sem acento e refaz os totais", () => {
     const found = filterPriceVolumeReport(report, "joao");
     expect(found.customers.map((c) => c.name)).toEqual(["João Pedras"]);
-    expect(found.totals).toEqual({ customers: 1, loads: 1, weightKg: 4000 });
+    expect(found.totals).toEqual({ customers: 1, loads: 1, weightKg: 4000, materials: 1 });
   });
 
   it("acha pelo documento com ou sem pontuacao, sem perder a letra", () => {
@@ -296,21 +333,28 @@ describe("documentos", () => {
     );
   });
 
-  it("o PDF traz cliente, prazo, preco e volume", () => {
+  it("o PDF traz cliente, prazo, preco, data de carregamento e volume", () => {
     const html = priceVolumeReportHtml(input);
     expect(html).toContain("01/08/2026 a 30/09/2026");
     expect(html).toContain("AREIAO CONSTRUCOES");
     expect(html).toContain("1 parcela em 30 dias (pelas cargas)");
     expect(html).toContain("R$\u00a045,00");
+    expect(html).toContain("11/09/2026");
     expect(html).toContain("10,000 t");
+    expect(html).toContain("Sem carga no período");
+    expect(html).toContain("Setembro/2026");
     expect(html).toContain('rowspan="2"');
   });
 
-  it("a planilha repete o cliente em toda linha e tipa preco e volume", () => {
+  it("a planilha tem uma linha por dia, com data e mes tipados", () => {
     const html = priceVolumeSpreadsheetHtml(input);
+    // Brita 1 (carregou em 11/09) e Po de Pedra (so no cadastro): o cliente em toda linha.
     expect(html.match(/<td[^>]*>AREIAO CONSTRUCOES<\/td>/g)).toHaveLength(2);
     expect(html).toContain('x:num="45"');
     expect(html).toContain('x:num="10"');
+    // 11/09/2026 vira data de verdade no Excel, e 09/2026 o mes.
+    expect(html).toMatch(/x:num="46276"[^>]*>11\/09\/2026</);
+    expect(html).toMatch(/x:num="46266"[^>]*>09\/2026</);
     // Documento continua texto (o CNPJ nao vira numero).
     expect(html).toMatch(/<td style='mso-number-format:"\\@"'>12\.345\.678\/0001-90<\/td>/);
     expect(html).toContain("Cargas do período");
