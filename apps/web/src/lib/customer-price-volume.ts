@@ -1,7 +1,7 @@
 /**
  * "Preços e volume por cliente" (aba da tela Relatorios): para cada cliente, o prazo de
  * pagamento, o preco por tonelada de cada produto que esta no cadastro dele e quanto de cada
- * material ele carregou no mes. E o que o escritorio pede para conferir preco contra volume
+ * material ele carregou no periodo. E o que o escritorio pede para conferir preco contra volume
  * sem abrir cliente por cliente.
  *
  * As regras sao as que a balanca ja usa, para o numero daqui bater com o da pesagem:
@@ -9,11 +9,11 @@
  * - **Preco** = o do `PricingService` do desktop: o preco especial do cliente; sem ele, a tabela
  *   padrao do produto ou, sem ela, o valor do OMIE gravado no produto (`defaultPriceByProduct`).
  *   Entram todos os produtos com preco especial no cadastro, carregados ou nao, e os produtos
- *   carregados no mes que so tem o preco padrao.
+ *   carregados no periodo que so tem o preco padrao.
  * - **Prazo** = a condicao de pagamento padrao do cadastro. Cliente sem ela mostra a condicao
- *   que mais apareceu nas cargas do mes, marcada como "pelas cargas" — vazio nao ajuda quem
+ *   que mais apareceu nas cargas do periodo, marcada como "pelas cargas" — vazio nao ajuda quem
  *   recebe o relatorio, e a carga diz o prazo que de fato foi para o OMIE.
- * - **Volume** = peso liquido das pesagens CONCLUIDAS do mes, pela data de FECHAMENTO (CLAUDE.md,
+ * - **Volume** = peso liquido das pesagens CONCLUIDAS do periodo, pela data de FECHAMENTO (CLAUDE.md,
  *   "Data da pesagem nos relatorios"), a mesma leitura dos outros relatorios da tela.
  * - **Cliente** = o cliente REAL: os cadastros gemeos (mesmo documento ou mesmo codigo OMIE, um
  *   do OMIE e outro de uma balanca) viram uma linha so (`dedupeCustomers`), com os precos
@@ -27,6 +27,7 @@ import {
   SPREADSHEET_STYLE,
   documentStyle,
   escapeHtml,
+  formatDayLabel,
   kpiCards,
   section,
   sheetTable,
@@ -56,7 +57,7 @@ export type PriceVolumeCustomerRow = CustomerOptionSource & {
   default_payment_term_id: string | null;
 };
 
-/** O cadastro que o relatorio cruza com as cargas do mes. */
+/** O cadastro que o relatorio cruza com as cargas do periodo. */
 export interface PriceVolumeCadastro {
   customers: PriceVolumeCustomerRow[];
   paymentTerms: Array<Pick<PaymentTerm, "id" | "name">>;
@@ -83,7 +84,7 @@ export interface PriceVolumeProduct {
   /** Preco por tonelada do cadastro; `null` quando o produto nao tem preco nenhum. */
   priceCents: number | null;
   priceSource: PriceVolumeSource;
-  /** Peso liquido carregado no mes (kg); 0 = tem preco no cadastro, mas nao carregou. */
+  /** Peso liquido carregado no periodo (kg); 0 = tem preco no cadastro, mas nao carregou. */
   weightKg: number;
   loads: number;
 }
@@ -95,7 +96,7 @@ export interface PriceVolumeCustomer {
   name: string;
   document: string | null;
   paymentTerm: string | null;
-  /** `cadastro` = condicao padrao do cliente; `loads` = a mais usada nas cargas do mes. */
+  /** `cadastro` = condicao padrao do cliente; `loads` = a mais usada nas cargas do periodo. */
   paymentTermSource: "cadastro" | "loads" | null;
   products: PriceVolumeProduct[];
   weightKg: number;
@@ -112,13 +113,13 @@ export interface PriceVolumeMaterial {
 
 export interface PriceVolumeReport {
   customers: PriceVolumeCustomer[];
-  /** Volume de cada material no mes, somando todos os clientes. */
+  /** Volume de cada material no periodo, somando todos os clientes. */
   materials: PriceVolumeMaterial[];
   totals: { customers: number; loads: number; weightKg: number };
 }
 
 export interface PriceVolumeOptions {
-  /** Inclui quem tem preco especial no cadastro mas nao carregou no mes. */
+  /** Inclui quem tem preco especial no cadastro mas nao carregou no periodo. */
   includeIdle?: boolean;
 }
 
@@ -264,7 +265,7 @@ export function buildPriceVolumeReport(
 
   const customers: PriceVolumeCustomer[] = [];
   for (const acc of accs.values()) {
-    // Todo produto com preco especial no cadastro aparece, mesmo sem carga no mes.
+    // Todo produto com preco especial no cadastro aparece, mesmo sem carga no periodo.
     for (const productId of specialsByGroup.get(acc.group.key)?.keys() ?? []) {
       productEntry(acc, productId, null);
     }
@@ -290,7 +291,7 @@ export function buildPriceVolumeReport(
 
 /**
  * O prazo do cliente: a condicao padrao do cadastro (o cadastro principal primeiro, depois os
- * gemeos) ou, sem ela, a mais usada nas cargas do mes (empate pelo nome).
+ * gemeos) ou, sem ela, a mais usada nas cargas do periodo (empate pelo nome).
  */
 function paymentTermOf(
   group: Group,
@@ -387,7 +388,7 @@ export function priceLabel(product: Pick<PriceVolumeProduct, "priceCents">): str
   return product.priceCents === null ? "-" : formatMoney(product.priceCents);
 }
 
-/** "12,345 t" ou "-" para o produto do cadastro que nao carregou no mes. */
+/** "12,345 t" ou "-" para o produto do cadastro que nao carregou no periodo. */
 export function volumeLabel(product: Pick<PriceVolumeProduct, "weightKg" | "loads">): string {
   return product.loads === 0 ? "-" : formatTons(product.weightKg);
 }
@@ -479,44 +480,28 @@ export async function loadPriceVolumeCadastro(companyId: string): Promise<PriceV
 
 export interface PriceVolumeExportInput {
   report: PriceVolumeReport;
-  /** "Setembro de 2026". */
-  monthLabel: string;
+  /** "01/08/2026 a 30/09/2026". */
+  periodLabel: string;
   /** "Todas as unidades" ou o nome da unidade. */
   unitName: string;
   generatedAt?: Date;
 }
 
-const MONTH_NAMES = [
-  "Janeiro",
-  "Fevereiro",
-  "Março",
-  "Abril",
-  "Maio",
-  "Junho",
-  "Julho",
-  "Agosto",
-  "Setembro",
-  "Outubro",
-  "Novembro",
-  "Dezembro"
-];
-
-/** "2026-09" -> "Setembro de 2026". */
-export function monthTitle(month: string): string {
-  const [year, monthNumber] = month.split("-");
-  const name = MONTH_NAMES[Number(monthNumber) - 1];
-  return name ? `${name} de ${year}` : month;
+/** "01/08/2026 a 30/09/2026" (um dia so: "15/09/2026"). */
+export function periodTitle(range: { start: string; end: string }): string {
+  const start = formatDayLabel(range.start);
+  return range.start === range.end ? start : `${start} a ${formatDayLabel(range.end)}`;
 }
 
-/** Nome do arquivo: `precos-e-volume-por-cliente-2026-09`. */
-export function priceVolumeFileBase(month: string): string {
-  return `precos-e-volume-por-cliente-${month}`;
+/** Nome do arquivo: `precos-e-volume-por-cliente-2026-08-01-a-2026-09-30`. */
+export function priceVolumeFileBase(range: { start: string; end: string }): string {
+  return `precos-e-volume-por-cliente-${range.start}-a-${range.end}`;
 }
 
 const NOTE =
   "Preço por tonelada do cadastro: o especial do cliente ou, sem ele, o padrão do produto. " +
-  "Volume = peso líquido das pesagens concluídas no mês, pela data de fechamento. " +
-  'Prazo "pelas cargas": o cliente não tem condição padrão no cadastro; vale a mais usada nas cargas do mês.';
+  "Volume = peso líquido das pesagens concluídas no período, pela data de fechamento. " +
+  'Prazo "pelas cargas": o cliente não tem condição padrão no cadastro; vale a mais usada nas cargas do período.';
 
 function kpis(report: PriceVolumeReport): string {
   return kpiCards([
@@ -535,12 +520,12 @@ function customerTable(report: PriceVolumeReport): string {
     "Produto",
     "Preço por t",
     "Origem",
-    "Volume no mês"
+    "Volume no período"
   ]
     .map((header, index) => `<th${index >= 3 && index !== 4 ? ' class="num"' : ""}>${header}</th>`)
     .join("");
   if (report.customers.length === 0) {
-    return `<table class="detail"><thead><tr>${head}</tr></thead><tbody><tr><td class="empty" colspan="6">Nenhum cliente no mês.</td></tr></tbody></table>`;
+    return `<table class="detail"><thead><tr>${head}</tr></thead><tbody><tr><td class="empty" colspan="6">Nenhum cliente no período.</td></tr></tbody></table>`;
   }
   const body = report.customers
     .map((customer) => {
@@ -593,14 +578,14 @@ table.grouped td{vertical-align:top}
 .muted{color:var(--muted)}`;
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" /><title>Preços e volume por cliente</title><style>${style}</style></head><body>
 <div class="header"><div><h1>Preços e volume por cliente</h1><p class="period">${escapeHtml(
-    `${input.monthLabel} · ${input.unitName}`
+    `${input.periodLabel} · ${input.unitName}`
   )}</p></div><div class="generated">Gerado em<br />${escapeHtml(
     generatedAt.toLocaleString("pt-BR")
   )}</div></div>
 ${kpis(report)}
 ${section("Clientes", customerTable(report))}
 ${section(
-  "Volume por material no mês",
+  "Volume por material no período",
   table(
     ["Material", "Clientes", "Cargas", "Volume"],
     materialRows(report),
@@ -610,7 +595,7 @@ ${section(
       report.totals.loads.toLocaleString("pt-BR"),
       formatTons(report.totals.weightKg)
     ],
-    "Nenhuma carga no mês."
+    "Nenhuma carga no período."
   )
 )}
 <p class="note">${escapeHtml(NOTE)}</p>
@@ -632,7 +617,7 @@ export function priceVolumeSpreadsheetHtml(input: PriceVolumeExportInput): strin
         customer.document ? formatDocument(customer.document) : "",
         customer.paymentTerm ?? "Não informado",
         customer.paymentTermSource === "loads"
-          ? "Cargas do mês"
+          ? "Cargas do período"
           : customer.paymentTermSource === "cadastro"
             ? "Cadastro"
             : "",
@@ -655,7 +640,7 @@ export function priceVolumeSpreadsheetHtml(input: PriceVolumeExportInput): strin
         "Produto",
         "Preço por t",
         "Origem do preço",
-        "Volume no mês",
+        "Volume no período",
         "Cargas"
       ],
       rows,
@@ -674,7 +659,7 @@ export function priceVolumeSpreadsheetHtml(input: PriceVolumeExportInput): strin
         : null
     ),
     sheetTable(
-      "Volume por material no mês",
+      "Volume por material no período",
       ["Material", "Clientes", "Cargas", "Volume"],
       materialRows(report),
       report.materials.length
@@ -689,7 +674,7 @@ export function priceVolumeSpreadsheetHtml(input: PriceVolumeExportInput): strin
   ];
   return `<!doctype html><html ${SPREADSHEET_HTML_ATTRS}><head><meta charset="utf-8" /><title>Preços e volume por cliente</title><style>${SPREADSHEET_STYLE}</style></head><body>
 <h1>Preços e volume por cliente</h1><p class="sub">${escapeHtml(
-    `${input.monthLabel} · ${input.unitName} · gerado em ${generatedAt.toLocaleString("pt-BR")}`
+    `${input.periodLabel} · ${input.unitName} · gerado em ${generatedAt.toLocaleString("pt-BR")}`
   )}</p>
 ${blocks.join("\n")}
 <p class="note">${escapeHtml(NOTE)}</p>

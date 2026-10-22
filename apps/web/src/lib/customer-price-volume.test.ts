@@ -5,7 +5,8 @@ vi.mock("./supabase", () => ({ supabase: {} }));
 import {
   buildPriceVolumeReport,
   filterPriceVolumeReport,
-  monthTitle,
+  periodTitle,
+  priceVolumeFileBase,
   paymentTermLabel,
   priceVolumeReportHtml,
   priceVolumeSpreadsheetHtml,
@@ -92,7 +93,7 @@ describe("buildPriceVolumeReport", () => {
     ]);
   });
 
-  it("lista o produto do cadastro que nao carregou no mes, sem volume", () => {
+  it("lista o produto do cadastro que nao carregou no periodo, sem volume", () => {
     const report = buildPriceVolumeReport(
       [op({})],
       cadastro({
@@ -165,7 +166,7 @@ describe("buildPriceVolumeReport", () => {
     expect(report.customers[0].products[0]).toMatchObject({ priceCents: 4100 });
   });
 
-  it("sem prazo no cadastro, usa o mais frequente das cargas do mes e marca", () => {
+  it("sem prazo no cadastro, usa o mais frequente das cargas do periodo e marca", () => {
     const report = buildPriceVolumeReport(
       [
         op({ payment_term_id: "tvista" }),
@@ -282,18 +283,22 @@ describe("documentos", () => {
   );
   const input = {
     report,
-    monthLabel: monthTitle("2026-09"),
+    periodLabel: periodTitle({ start: "2026-08-01", end: "2026-09-30" }),
     unitName: "Todas as unidades",
     generatedAt: new Date("2026-10-01T12:00:00Z")
   };
 
-  it("nomeia o mes", () => {
-    expect(monthTitle("2026-08")).toBe("Agosto de 2026");
+  it("nomeia o periodo e o arquivo pelas datas escolhidas", () => {
+    expect(periodTitle({ start: "2026-08-01", end: "2026-09-30" })).toBe("01/08/2026 a 30/09/2026");
+    expect(periodTitle({ start: "2026-09-15", end: "2026-09-15" })).toBe("15/09/2026");
+    expect(priceVolumeFileBase({ start: "2026-08-01", end: "2026-09-30" })).toBe(
+      "precos-e-volume-por-cliente-2026-08-01-a-2026-09-30"
+    );
   });
 
   it("o PDF traz cliente, prazo, preco e volume", () => {
     const html = priceVolumeReportHtml(input);
-    expect(html).toContain("Setembro de 2026");
+    expect(html).toContain("01/08/2026 a 30/09/2026");
     expect(html).toContain("AREIAO CONSTRUCOES");
     expect(html).toContain("1 parcela em 30 dias (pelas cargas)");
     expect(html).toContain("R$\u00a045,00");
@@ -308,6 +313,6 @@ describe("documentos", () => {
     expect(html).toContain('x:num="10"');
     // Documento continua texto (o CNPJ nao vira numero).
     expect(html).toMatch(/<td style='mso-number-format:"\\@"'>12\.345\.678\/0001-90<\/td>/);
-    expect(html).toContain("Cargas do mês");
+    expect(html).toContain("Cargas do período");
   });
 });

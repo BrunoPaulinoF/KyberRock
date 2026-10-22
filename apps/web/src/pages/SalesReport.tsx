@@ -37,8 +37,8 @@ import {
   buildPriceVolumeReport,
   filterPriceVolumeReport,
   loadPriceVolumeCadastro,
-  monthTitle,
   paymentTermLabel,
+  periodTitle,
   priceLabel,
   priceVolumeFileBase,
   priceVolumeReportHtml,
@@ -116,7 +116,7 @@ const TAB_DESCRIPTION: Record<ReportTab, string> = {
     "Vendas agrupadas por cliente, produto ou dia. Clique no cliente para ver as pesagens; o olho (Info) mostra o cadastro e o preço médio.",
   monthly: "Total do mês e a evolução dia a dia.",
   prices:
-    "Cada cliente com o prazo de pagamento, o preço por tonelada de cada produto do cadastro e o volume de cada material carregado no mês.",
+    "Cada cliente com o prazo de pagamento, o preço por tonelada de cada produto do cadastro e o volume de cada material carregado no período escolhido — num arquivo só, mesmo com vários meses.",
   recipients: "Quem recebe o fechamento diário por e-mail ou WhatsApp."
 };
 
@@ -260,7 +260,7 @@ export function SalesReport() {
 
   const range = useMemo(() => {
     if (tab === "daily") return { start: day, end: day };
-    if (tab === "monthly" || tab === "prices") return monthRange(month);
+    if (tab === "monthly") return monthRange(month);
     return { start, end };
   }, [tab, day, month, start, end]);
   const period = useMemo(() => periodToIso(range.start, range.end), [range.start, range.end]);
@@ -363,15 +363,15 @@ export function SalesReport() {
     setExporting(kind);
     const input: PriceVolumeExportInput = {
       report: priceReport,
-      monthLabel: monthTitle(month),
+      periodLabel: periodTitle(range),
       unitName
     };
     try {
       if (kind === "pdf") {
-        await printReportHtml(priceVolumeReportHtml(input), `${priceVolumeFileBase(month)}.pdf`);
+        await printReportHtml(priceVolumeReportHtml(input), `${priceVolumeFileBase(range)}.pdf`);
       } else {
         downloadSpreadsheet({
-          filename: `${priceVolumeFileBase(month)}.xls`,
+          filename: `${priceVolumeFileBase(range)}.xls`,
           html: priceVolumeSpreadsheetHtml(input)
         });
       }
@@ -470,7 +470,7 @@ export function SalesReport() {
                   />
                 </label>
               )}
-              {(tab === "period" || tab === "pivot") && (
+              {(tab === "period" || tab === "pivot" || tab === "prices") && (
                 <>
                   <div className="reports-presets" role="group" aria-label="Atalhos de período">
                     {PERIOD_PRESETS.map((option) => {
@@ -510,7 +510,7 @@ export function SalesReport() {
                   </label>
                 </>
               )}
-              {(tab === "monthly" || tab === "prices") && (
+              {tab === "monthly" && (
                 <label className="op-filter">
                   Mês
                   <FilterInput
@@ -557,7 +557,7 @@ export function SalesReport() {
                       checked={includeIdle}
                       onChange={(event) => setIncludeIdle(event.target.checked)}
                     />
-                    Incluir clientes com preço especial que não carregaram no mês
+                    Incluir clientes com preço especial que não carregaram no período
                   </label>
                 </>
               )}
@@ -661,9 +661,9 @@ export function SalesReport() {
               <p className="reports-note reports-no-print">
                 <Info size={14} />
                 Preço por tonelada do cadastro: o especial do cliente ou, sem ele, o padrão do
-                produto. Volume pelas pesagens concluídas no mês, pela data de FECHAMENTO. Prazo
+                produto. Volume pelas pesagens concluídas no período, pela data de FECHAMENTO. Prazo
                 &quot;pelas cargas&quot;: o cliente não tem condição padrão no cadastro, então vale
-                a mais usada nas cargas do mês.
+                a mais usada nas cargas do período.
               </p>
             ) : (
               <p className="reports-note reports-no-print">
@@ -1071,7 +1071,7 @@ function MonthlyReport({
 
 /**
  * Precos e volume por cliente: o cliente e o prazo uma vez so (celula que ocupa as linhas dos
- * produtos dele), o preco por tonelada do cadastro e o volume carregado no mes de cada produto.
+ * produtos dele), o preco por tonelada do cadastro e o volume carregado no periodo de cada produto.
  */
 function PriceVolumeTable({
   report,
@@ -1091,7 +1091,7 @@ function PriceVolumeTable({
         ]}
       />
       {report.customers.length === 0 ? (
-        <EmptyState title="Nenhum cliente carregou no mês com os filtros selecionados." />
+        <EmptyState title="Nenhum cliente carregou no período com os filtros selecionados." />
       ) : (
         <>
           <ReportTable
@@ -1102,7 +1102,7 @@ function PriceVolumeTable({
                 <th>Produto</th>
                 <th className="num">Preço por t</th>
                 <th>Origem</th>
-                <th className="num">Volume no mês</th>
+                <th className="num">Volume no período</th>
                 <th className="num">Cargas</th>
               </tr>
             }
@@ -1161,7 +1161,7 @@ function PriceVolumeTable({
           </ReportTable>
 
           <SectionHead
-            title="Volume por material no mês"
+            title="Volume por material no período"
             description="Quanto saiu de cada material, somando todos os clientes acima."
           />
           <ReportTable

@@ -540,11 +540,12 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
   (como o relatorio de vendas da aba Comercial) e recorta pelo dia do FECHAMENTO, como todo
   relatorio de dinheiro. Curva ABC pelo acumulado ANTES do cliente (o 1o e sempre A).
 - **Precos e volume por cliente** (aba de `/relatorios`, `?aba=precos`; contas em
-  `lib/customer-price-volume.ts`): para o mes escolhido, cada cliente com o prazo de pagamento,
-  o preco por tonelada de cada produto do cadastro e o volume carregado de cada material, com
-  Exportar PDF e Exportar Excel. Preco pela regra do `PricingService` da balanca (especial do
+  `lib/customer-price-volume.ts`): para o periodo escolhido (atalhos ou De/Ate, quantos meses
+  forem), cada cliente com o prazo de pagamento, o preco por tonelada de cada produto do cadastro
+  e o volume carregado de cada material, com Exportar PDF e Exportar Excel — UM arquivo com o
+  periodo inteiro, nunca um por mes. Preco pela regra do `PricingService` da balanca (especial do
   cliente; sem ele, tabela padrao ou valor do OMIE); entram todos os produtos com preco especial,
-  carregados ou nao. Prazo = condicao padrao do cadastro; sem ela, a mais usada nas cargas do mes,
+  carregados ou nao. Prazo = condicao padrao do cadastro; sem ela, a mais usada nas cargas do periodo,
   marcada "pelas cargas". Volume pela data de FECHAMENTO, como todo relatorio de dinheiro. Os
   cadastros gemeos viram um cliente so (`dedupeCustomers`, mesmo documento ou codigo OMIE).
 - O que cada perfil **grava** mora na `web-api` (`_shared/web-session.ts`, `actionDenial` no
