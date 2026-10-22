@@ -148,3 +148,30 @@
   color: var(--kr-muted);
   font-weight: 400;
 }
+
+/* Aba Precos e volume por cliente: o cliente e o prazo ocupam as linhas dos produtos dele. */
+.reports-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-end;
+  min-height: 34px;
+  font-size: 13px;
+  color: var(--kr-text);
+}
+.reports-table tr.price-group td {
+  border-top: 2px solid var(--kr-border);
+}
+.reports-table td[rowspan] {
+  vertical-align: top;
+  white-space: normal;
+}
+.reports-table .price-customer {
+  min-width: 220px;
+  max-width: 340px;
+}
+.reports-table td[rowspan] small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+}

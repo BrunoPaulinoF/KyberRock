@@ -6,9 +6,11 @@ import {
   CalendarRange,
   Download,
   Eye,
+  FileText,
   Info,
   Printer,
   Table2,
+  Tags,
   Users
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -24,15 +26,40 @@ import {
   PageHeader,
   SkeletonRows,
   Tabs,
+  useToast,
   type TabItem
 } from "../components/ui";
+import { errorMessage } from "../lib/api";
 import { useUser } from "../lib/auth";
 import { CADASTRO_TABLES } from "../lib/cadastro-live";
 import { useOnCadastroChange } from "../lib/cadastro-live-provider";
+import {
+  buildPriceVolumeReport,
+  filterPriceVolumeReport,
+  loadPriceVolumeCadastro,
+  monthTitle,
+  paymentTermLabel,
+  priceLabel,
+  priceVolumeFileBase,
+  priceVolumeReportHtml,
+  priceVolumeSpreadsheetHtml,
+  PRICE_SOURCE_LABEL,
+  volumeLabel,
+  type PriceVolumeExportInput,
+  type PriceVolumeReport as PriceVolumeData
+} from "../lib/customer-price-volume";
 import { sumWeighings, type CustomerRef } from "../lib/customer-weighings";
 import { invoiceNumberLabel } from "../lib/desktop/invoice-number-label";
-import { firstDayOfMonth, formatMoney, formatTons, periodToIso, todayIso } from "../lib/format";
+import {
+  firstDayOfMonth,
+  formatDocument,
+  formatMoney,
+  formatTons,
+  periodToIso,
+  todayIso
+} from "../lib/format";
 import { q } from "../lib/queries";
+import { downloadSpreadsheet, printReportHtml } from "../lib/report-output";
 import {
   centsPerTon,
   dailyCsv,
@@ -65,13 +92,14 @@ import { useUrlState } from "../lib/url-state";
 import { ReportRecipients } from "./ReportRecipients";
 import { FilterInput, isoDayOr, isoMonthOr, usePeriodParams } from "./url-filters";
 
-type ReportTab = "daily" | "period" | "pivot" | "monthly" | "recipients";
+type ReportTab = "daily" | "period" | "pivot" | "monthly" | "prices" | "recipients";
 
 const TABS: Array<TabItem<ReportTab>> = [
   { id: "daily", label: "Fechamento diário", icon: CalendarDays },
   { id: "period", label: "Carregamentos do período", icon: CalendarRange },
   { id: "pivot", label: "Tabela dinâmica de vendas", icon: Table2 },
-  { id: "monthly", label: "Relatório mensal", icon: CalendarClock }
+  { id: "monthly", label: "Relatório mensal", icon: CalendarClock },
+  { id: "prices", label: "Preços e volume por cliente", icon: Tags }
 ];
 
 /** Quem recebe o fechamento diario: so quem grava (gestor, operacao, administrador) ve e edita. */
@@ -87,6 +115,8 @@ const TAB_DESCRIPTION: Record<ReportTab, string> = {
   pivot:
     "Vendas agrupadas por cliente, produto ou dia. Clique no cliente para ver as pesagens; o olho (Info) mostra o cadastro e o preço médio.",
   monthly: "Total do mês e a evolução dia a dia.",
+  prices:
+    "Cada cliente com o prazo de pagamento, o preço por tonelada de cada produto do cadastro e o volume de cada material carregado no mês.",
   recipients: "Quem recebe o fechamento diário por e-mail ou WhatsApp."
 };
 
@@ -161,6 +191,7 @@ const TAB_PARAM: Record<ReportTab, string> = {
   period: "periodo",
   pivot: "vendas",
   monthly: "mensal",
+  prices: "precos",
   recipients: "destinatarios"
 };
 
@@ -168,6 +199,7 @@ function tabFromParam(param: string, canSeeRecipients: boolean): ReportTab {
   if (param === "vendas" || param === "pivot") return "pivot";
   if (param === "periodo") return "period";
   if (param === "mensal") return "monthly";
+  if (param === "precos") return "prices";
   if (param === "destinatarios" && canSeeRecipients) return "recipients";
   return "daily";
 }
@@ -186,6 +218,7 @@ const SALES_PERIODS: readonly SalesPeriod[] = [
  */
 export function SalesReport() {
   const user = useUser();
+  const toast = useToast();
   const today = todayIso();
   // Aba, dia, mes, periodo, cliente e produto ficam no endereco e voltam quando a pessoa sai e
   // volta pelo menu (`useUrlState`).
@@ -207,6 +240,9 @@ export function SalesReport() {
   const [customerId, setCustomerId] = useUrlState("cliente");
   const [productId, setProductId] = useUrlState("produto");
   const [panel, setPanel] = useState<CustomerPanel | null>(null);
+  const [priceSearch, setPriceSearch] = useUrlState("busca");
+  const [includeIdle, setIncludeIdle] = useState(false);
+  const [exporting, setExporting] = useState<"pdf" | "excel" | null>(null);
 
   /** Digitar uma data sai do atalho: vira "personalizado", a partir das datas que estavam na tela. */
   function changeStart(next: string): void {
@@ -224,7 +260,7 @@ export function SalesReport() {
 
   const range = useMemo(() => {
     if (tab === "daily") return { start: day, end: day };
-    if (tab === "monthly") return monthRange(month);
+    if (tab === "monthly" || tab === "prices") return monthRange(month);
     return { start, end };
   }, [tab, day, month, start, end]);
   const period = useMemo(() => periodToIso(range.start, range.end), [range.start, range.end]);
@@ -249,6 +285,26 @@ export function SalesReport() {
   // Pesagem fechada, editada ou cancelada na balanca entra na tela na hora.
   useOnCadastroChange(ops.refresh, CADASTRO_TABLES.operations);
   const operations = useMemo(() => filterByUnit(ops.data ?? [], unitId), [ops.data, unitId]);
+
+  // Precos e volume por cliente: o cadastro (clientes, prazos e precos) so desce nesta aba.
+  const priceCadastro = useAsync(
+    () => (tab === "prices" ? loadPriceVolumeCadastro(user.companyId) : Promise.resolve(null)),
+    [tab, user.companyId],
+    { key: tab === "prices" ? `relatorios:precos:${user.companyId}` : null }
+  );
+  useOnCadastroChange(priceCadastro.refresh, [
+    ...CADASTRO_TABLES.customers,
+    ...CADASTRO_TABLES.products,
+    ...CADASTRO_TABLES.specialPrices,
+    ...CADASTRO_TABLES.payment
+  ]);
+  const priceReport = useMemo(() => {
+    if (tab !== "prices" || !priceCadastro.data) return null;
+    return filterPriceVolumeReport(
+      buildPriceVolumeReport(operations, priceCadastro.data, { includeIdle }),
+      priceSearch
+    );
+  }, [tab, operations, priceCadastro.data, includeIdle, priceSearch]);
 
   // Trocar de periodo pode invalidar os filtros escolhidos (como no desktop). Na abertura da tela
   // nao: o cliente e o produto que vieram no endereco (ou lembrados) continuam valendo.
@@ -283,7 +339,13 @@ export function SalesReport() {
   const unitName =
     (units.data ?? []).find((unit) => unit.id === unitId)?.name ?? "Todas as unidades";
   const hasData =
-    tab === "pivot" ? pivot.rows.length > 0 : tab === "monthly" ? true : lines.length > 0;
+    tab === "pivot"
+      ? pivot.rows.length > 0
+      : tab === "monthly"
+        ? true
+        : tab === "prices"
+          ? (priceReport?.customers.length ?? 0) > 0
+          : lines.length > 0;
 
   function exportCsv(): void {
     const suffix = tab === "daily" ? day : `${range.start}-a-${range.end}`;
@@ -294,6 +356,30 @@ export function SalesReport() {
       downloadCsv(pivotCsv(pivot, groupBy), `vendas-${groupBy}${freightSuffix}-${suffix}.csv`);
     }
     if (tab === "monthly") downloadCsv(monthlyCsv(series), `relatorio-mensal-${month}.csv`);
+  }
+
+  async function exportPrices(kind: "pdf" | "excel"): Promise<void> {
+    if (!priceReport) return;
+    setExporting(kind);
+    const input: PriceVolumeExportInput = {
+      report: priceReport,
+      monthLabel: monthTitle(month),
+      unitName
+    };
+    try {
+      if (kind === "pdf") {
+        await printReportHtml(priceVolumeReportHtml(input), `${priceVolumeFileBase(month)}.pdf`);
+      } else {
+        downloadSpreadsheet({
+          filename: `${priceVolumeFileBase(month)}.xls`,
+          html: priceVolumeSpreadsheetHtml(input)
+        });
+      }
+    } catch (caught) {
+      toast.push(errorMessage(caught, "Falha ao exportar o relatório."), "error");
+    } finally {
+      setExporting(null);
+    }
   }
 
   const activeTab = TABS.find((item) => item.id === tab) ?? TABS[0];
@@ -310,9 +396,30 @@ export function SalesReport() {
         <PageHeader
           kicker="Análise"
           title="Relatórios"
-          description="Fechamento diário, carregamentos do período, vendas por cliente e produto e o relatório mensal."
+          description="Fechamento diário, carregamentos do período, vendas por cliente e produto, o relatório mensal e os preços e volume por cliente."
           actions={
-            tab === "recipients" ? undefined : (
+            tab === "recipients" ? undefined : tab === "prices" ? (
+              <>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => void exportPrices("pdf")}
+                  disabled={exporting !== null || !hasData}
+                >
+                  <FileText size={16} aria-hidden="true" />
+                  {exporting === "pdf" ? "Gerando PDF..." : "Exportar PDF"}
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => void exportPrices("excel")}
+                  disabled={exporting !== null || !hasData}
+                >
+                  <Table2 size={16} aria-hidden="true" />
+                  {exporting === "excel" ? "Gerando Excel..." : "Exportar Excel"}
+                </button>
+              </>
+            ) : (
               <>
                 <button type="button" className="btn" onClick={() => window.print()}>
                   <Printer size={16} aria-hidden="true" />
@@ -403,7 +510,7 @@ export function SalesReport() {
                   </label>
                 </>
               )}
-              {tab === "monthly" && (
+              {(tab === "monthly" || tab === "prices") && (
                 <label className="op-filter">
                   Mês
                   <FilterInput
@@ -431,6 +538,28 @@ export function SalesReport() {
                     ))}
                   </select>
                 </label>
+              )}
+              {tab === "prices" && (
+                <>
+                  <label className="op-filter reports-picker">
+                    Cliente
+                    <FilterInput
+                      className="input"
+                      type="search"
+                      value={priceSearch}
+                      onValue={setPriceSearch}
+                      placeholder="Nome ou CNPJ/CPF..."
+                    />
+                  </label>
+                  <label className="reports-check">
+                    <input
+                      type="checkbox"
+                      checked={includeIdle}
+                      onChange={(event) => setIncludeIdle(event.target.checked)}
+                    />
+                    Incluir clientes com preço especial que não carregaram no mês
+                  </label>
+                </>
               )}
               {tab === "pivot" && (
                 <>
@@ -495,9 +624,15 @@ export function SalesReport() {
               <Alert kind="error">A data inicial precisa ser anterior à final.</Alert>
             )}
 
-            {ops.error ? (
-              <ErrorState message={ops.error} onRetry={() => void ops.reload()} />
-            ) : ops.loading ? (
+            {ops.error || (tab === "prices" && priceCadastro.error) ? (
+              <ErrorState
+                message={ops.error ?? priceCadastro.error ?? ""}
+                onRetry={() => {
+                  if (ops.error) void ops.reload();
+                  if (priceCadastro.error) void priceCadastro.reload();
+                }}
+              />
+            ) : ops.loading || (tab === "prices" && !priceReport) ? (
               <SkeletonRows rows={6} columns={6} />
             ) : (
               <>
@@ -516,15 +651,28 @@ export function SalesReport() {
                   />
                 )}
                 {tab === "monthly" && <MonthlyReport series={series} totals={monthTotals} />}
+                {tab === "prices" && priceReport && (
+                  <PriceVolumeTable report={priceReport} onCustomer={openWeighings} />
+                )}
               </>
             )}
 
-            <p className="reports-note reports-no-print">
-              <Info size={14} />
-              Período pela data de FECHAMENTO da pesagem (a mesma que o OMIE usa na nota). Os
-              destinatários ficam na aba Destinatários (gestor); o horário dos envios automáticos e
-              os canais (e-mail e WhatsApp) são configurados na tela Relatórios da balança.
-            </p>
+            {tab === "prices" ? (
+              <p className="reports-note reports-no-print">
+                <Info size={14} />
+                Preço por tonelada do cadastro: o especial do cliente ou, sem ele, o padrão do
+                produto. Volume pelas pesagens concluídas no mês, pela data de FECHAMENTO. Prazo
+                &quot;pelas cargas&quot;: o cliente não tem condição padrão no cadastro, então vale
+                a mais usada nas cargas do mês.
+              </p>
+            ) : (
+              <p className="reports-note reports-no-print">
+                <Info size={14} />
+                Período pela data de FECHAMENTO da pesagem (a mesma que o OMIE usa na nota). Os
+                destinatários ficam na aba Destinatários (gestor); o horário dos envios automáticos
+                e os canais (e-mail e WhatsApp) são configurados na tela Relatórios da balança.
+              </p>
+            )}
           </>
         )}
 
@@ -917,6 +1065,136 @@ function MonthlyReport({
           </tr>
         ))}
       </ReportTable>
+    </>
+  );
+}
+
+/**
+ * Precos e volume por cliente: o cliente e o prazo uma vez so (celula que ocupa as linhas dos
+ * produtos dele), o preco por tonelada do cadastro e o volume carregado no mes de cada produto.
+ */
+function PriceVolumeTable({
+  report,
+  onCustomer
+}: {
+  report: PriceVolumeData;
+  onCustomer: (customer: CustomerRef) => void;
+}) {
+  return (
+    <>
+      <Kpis
+        items={[
+          { label: "Clientes", value: report.totals.customers.toLocaleString("pt-BR") },
+          { label: "Cargas", value: report.totals.loads.toLocaleString("pt-BR") },
+          { label: "Volume carregado", value: formatTons(report.totals.weightKg) },
+          { label: "Materiais", value: report.materials.length.toLocaleString("pt-BR") }
+        ]}
+      />
+      {report.customers.length === 0 ? (
+        <EmptyState title="Nenhum cliente carregou no mês com os filtros selecionados." />
+      ) : (
+        <>
+          <ReportTable
+            head={
+              <tr>
+                <th>Cliente</th>
+                <th>Prazo de pagamento</th>
+                <th>Produto</th>
+                <th className="num">Preço por t</th>
+                <th>Origem</th>
+                <th className="num">Volume no mês</th>
+                <th className="num">Cargas</th>
+              </tr>
+            }
+          >
+            {report.customers.map((customer) =>
+              customer.products.map((product, index) => (
+                <tr
+                  key={`${customer.key}|${product.key}`}
+                  className={index === 0 ? "price-group" : undefined}
+                >
+                  {index === 0 && (
+                    <>
+                      <td rowSpan={customer.products.length} className="price-customer">
+                        <CustomerName
+                          id={customer.customerId}
+                          name={customer.name}
+                          onOpen={onCustomer}
+                        />
+                        {customer.document && (
+                          <small className="reports-muted">
+                            {formatDocument(customer.document)}
+                          </small>
+                        )}
+                        {customer.loads > 0 && (
+                          <small className="reports-muted">
+                            Total: {formatTons(customer.weightKg)}
+                          </small>
+                        )}
+                      </td>
+                      <td rowSpan={customer.products.length}>
+                        {customer.paymentTerm ? (
+                          <>
+                            {customer.paymentTerm}
+                            {customer.paymentTermSource === "loads" && (
+                              <small className="reports-muted">pelas cargas</small>
+                            )}
+                          </>
+                        ) : (
+                          <span className="reports-muted">{paymentTermLabel(customer)}</span>
+                        )}
+                      </td>
+                    </>
+                  )}
+                  <td>{product.productName}</td>
+                  <td className="num">{priceLabel(product)}</td>
+                  <td className={product.priceSource === "special" ? undefined : "reports-muted"}>
+                    {PRICE_SOURCE_LABEL[product.priceSource]}
+                  </td>
+                  <td className="num">
+                    {product.loads > 0 ? <strong>{volumeLabel(product)}</strong> : "-"}
+                  </td>
+                  <td className="num">{product.loads.toLocaleString("pt-BR")}</td>
+                </tr>
+              ))
+            )}
+          </ReportTable>
+
+          <SectionHead
+            title="Volume por material no mês"
+            description="Quanto saiu de cada material, somando todos os clientes acima."
+          />
+          <ReportTable
+            head={
+              <tr>
+                <th>Material</th>
+                <th className="num">Clientes</th>
+                <th className="num">Cargas</th>
+                <th className="num">Volume</th>
+              </tr>
+            }
+            foot={
+              <tr>
+                <td>TOTAL</td>
+                <td className="num">{report.totals.customers.toLocaleString("pt-BR")}</td>
+                <td className="num">{report.totals.loads.toLocaleString("pt-BR")}</td>
+                <td className="num">{formatTons(report.totals.weightKg)}</td>
+              </tr>
+            }
+          >
+            {report.materials.map((material) => (
+              <tr key={material.key}>
+                <td>{material.productName}</td>
+                <td className="num">{material.customers.toLocaleString("pt-BR")}</td>
+                <td className="num">{material.loads.toLocaleString("pt-BR")}</td>
+                <td className="num">
+                  <strong>{formatTons(material.weightKg)}</strong>
+                </td>
+              </tr>
+            ))}
+          </ReportTable>
+        </>
+      )}
     </>
   );
 }
