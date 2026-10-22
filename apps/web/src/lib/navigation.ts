@@ -195,6 +195,12 @@ export const NAV_SHORTCUTS: Array<{
     label: "Placas",
     keywords: ["veículo"]
   },
+  {
+    screen: "relatorios",
+    to: "/relatorios?aba=precos",
+    label: "Preços e volume por cliente",
+    keywords: ["prazo de pagamento", "preço por tonelada", "volume por cliente"]
+  },
   { screen: "configuracoes", to: "/configuracoes/balanca", label: "Configurações da balança" },
   { screen: "configuracoes", to: "/configuracoes/impressao", label: "Configurações de impressão" },
   { screen: "configuracoes", to: "/configuracoes/cloud", label: "Configurações da nuvem" }
