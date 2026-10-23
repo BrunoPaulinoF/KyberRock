@@ -1,7 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 // Mesma lib de SMTP usada no daily-report-email/desktop (sendTestEmail); o
 // bundler das Edge Functions so resolve especificadores jsr:/npm:.
-import nodemailer from "npm:nodemailer@9.0.1";
+import nodemailer from "npm:nodemailer@10.1.7";
 // `Buffer` e global no Node, mas no runtime Deno das Edge Functions precisa ser
 // importado. Sem isto o envio morria em "Buffer is not defined" na hora de
 // anexar os PDFs — o daily-report-email nao passa por isso porque nao tem anexo.
