@@ -160,7 +160,7 @@
   color: var(--kr-text);
 }
 .reports-table tr.price-group td {
-  border-top: 2px solid var(--kr-border);
+  border-top: 2px solid var(--kr-muted);
 }
 .reports-table td[rowspan] {
   vertical-align: top;

@@ -542,12 +542,16 @@ O que se repete em toda entrada daquele cliente fica no cadastro dele:
 - **Precos e volume por cliente** (aba de `/relatorios`, `?aba=precos`; contas em
   `lib/customer-price-volume.ts`): para o periodo escolhido (atalhos ou De/Ate, quantos meses
   forem), cada cliente com o prazo de pagamento, o preco por tonelada de cada produto do cadastro
-  e o volume carregado de cada material, com Exportar PDF e Exportar Excel — UM arquivo com o
-  periodo inteiro, nunca um por mes. Preco pela regra do `PricingService` da balanca (especial do
+  e o volume de cada material DIA A DIA (a data de carregamento), mais o volume por mes e por
+  material e mes, com Exportar PDF e Exportar Excel — UM arquivo com o periodo inteiro, nunca um
+  por mes. So o total do periodo nao servia: com dois meses ninguem sabia quando o cliente
+  carregou. A planilha tem uma linha por cliente, produto e dia, com Data e Mes como data de
+  verdade (filtra e soma no Excel). Preco pela regra do `PricingService` da balanca (especial do
   cliente; sem ele, tabela padrao ou valor do OMIE); entram todos os produtos com preco especial,
-  carregados ou nao. Prazo = condicao padrao do cadastro; sem ela, a mais usada nas cargas do periodo,
-  marcada "pelas cargas". Volume pela data de FECHAMENTO, como todo relatorio de dinheiro. Os
-  cadastros gemeos viram um cliente so (`dedupeCustomers`, mesmo documento ou codigo OMIE).
+  carregados ou nao. Prazo = condicao padrao do cadastro; sem ela, a mais usada nas cargas do
+  periodo, marcada "pelas cargas". Data e volume pela data de FECHAMENTO, como todo relatorio de
+  dinheiro. Os cadastros gemeos viram um cliente so (`dedupeCustomers`, mesmo documento ou codigo
+  OMIE).
 - O que cada perfil **grava** mora na `web-api` (`_shared/web-session.ts`, `actionDenial` no
   `handler.ts`) — esconder a tela nao protege nada. O monitoramento so consulta; o comercial
   grava todo o cadastro (cliente, bloco comercial, frota e preco), mas nao pesa nem mexe em
