@@ -64,6 +64,7 @@ type BillingAction =
   | "generate_invoice"
   | "issue_boleto"
   | "send_invoice"
+  | "schedule_send"
   | "refresh_invoice"
   | "update_invoice"
   | "mark_invoice_paid"
@@ -137,6 +138,8 @@ Deno.serve(async (req) => {
         return await handleIssueBoleto(supabase, payload);
       case "send_invoice":
         return await handleSendInvoice(supabase, payload);
+      case "schedule_send":
+        return await handleScheduleSend(supabase, payload);
       case "refresh_invoice":
         return await handleRefreshInvoice(supabase, payload);
       case "update_invoice":
@@ -627,6 +630,48 @@ async function handleSendInvoice(
   return jsonResponse({ ok: true, invoice: result.invoice, warning: result.error ?? null });
 }
 
+/**
+ * Agenda (ou desmarca, com `date` vazio) o envio da fatura por WhatsApp. Quem envia e a
+ * passada automatica do dia (`sendScheduledInvoices`, 9h e 15h de Brasilia), com o boleto que
+ * estiver na fatura naquela hora — por isso o agendamento so aceita hoje ou depois, e o envio
+ * espera a reemissao quando o boleto nao vale mais.
+ */
+async function handleScheduleSend(
+  supabase: SupabaseAdminClient,
+  payload: Record<string, unknown>
+): Promise<Response> {
+  const invoice = await getInvoice(supabase, text(payload.invoiceId));
+  if (invoice.status === "paid" || invoice.status === "canceled") {
+    return jsonResponse({ error: "Fatura paga ou cancelada nao tem envio a agendar." }, 400);
+  }
+  const date = optionalDate(payload.date);
+  if (text(payload.date) && !date) {
+    return jsonResponse({ error: "Data do envio invalida." }, 400);
+  }
+  if (date && date < billingToday()) {
+    return jsonResponse({ error: "O envio so pode ser agendado para hoje ou depois." }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from("billing_invoices")
+    .update({ whatsapp_scheduled_for: date, updated_at: new Date().toISOString() })
+    .eq("id", invoice.id)
+    .select("*")
+    .single();
+  if (error) throw error;
+
+  await recordBillingEvent(supabase, {
+    companyId: invoice.company_id,
+    invoiceId: invoice.id,
+    eventType: date ? "send_scheduled" : "send_schedule_canceled",
+    message: date
+      ? `Envio por WhatsApp agendado para ${date.split("-").reverse().join("/")}.`
+      : "Agendamento do envio desfeito.",
+    payload: { date }
+  });
+  return jsonResponse({ ok: true, invoice: data });
+}
+
 async function handleRefreshInvoice(
   supabase: SupabaseAdminClient,
   payload: Record<string, unknown>
@@ -677,6 +722,10 @@ async function handleUpdateInvoice(
     updated_at: new Date().toISOString()
   };
   if (payload.notes !== undefined) update.notes = optionalText(payload.notes);
+  // Vencimento empurrado para hoje ou depois: a fatura deixa de estar vencida. Sem isso ela
+  // seguia "Vencida" no painel com o vencimento novo no futuro — `markOverdueInvoices` so
+  // marca, nunca desmarca.
+  if (invoice.status === "overdue" && dueDate >= billingToday()) update.status = "open";
 
   // Boleto ja emitido carrega o valor e o vencimento ANTIGOS. Alterar a fatura
   // nao muda o papel que o cliente recebeu, entao a tela precisa dizer que a

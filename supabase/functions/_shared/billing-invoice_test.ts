@@ -13,7 +13,8 @@ import {
   missingBillingFields,
   normalizeWhatsappNumber,
   onlyDigits,
-  resolveBillingCustomer
+  resolveBillingCustomer,
+  scheduledSendBlocker
 } from "./billing-invoice.ts";
 
 const COMPLETE_COMPANY = {
@@ -263,5 +264,56 @@ describe("block notices", () => {
 describe("invoicePdfFileName", () => {
   it("builds a file name without a slash — it would break the download", () => {
     expect(invoicePdfFileName("FAT-2026-00007", "08/2026")).toBe("FAT-2026-00007-08-2026.pdf");
+  });
+});
+
+describe("scheduledSendBlocker", () => {
+  const VALID_BOLETO = {
+    status: "open",
+    boletoPaymentId: "123",
+    boletoError: null,
+    boletoExpiresAt: "2026-11-03"
+  };
+
+  it("libera o envio com o boleto valido, mesmo de fatura vencida", () => {
+    expect(scheduledSendBlocker(VALID_BOLETO, "2026-10-28")).toBeNull();
+    expect(scheduledSendBlocker({ ...VALID_BOLETO, status: "overdue" }, "2026-10-28")).toBeNull();
+  });
+
+  it("libera o envio da fatura sem boleto (mesmo texto do envio manual)", () => {
+    expect(
+      scheduledSendBlocker(
+        { status: "open", boletoPaymentId: null, boletoError: null, boletoExpiresAt: null },
+        "2026-10-28"
+      )
+    ).toBeNull();
+  });
+
+  it("segura a fatura ajustada depois da emissao ate o boleto ser reemitido", () => {
+    expect(
+      scheduledSendBlocker(
+        { ...VALID_BOLETO, boletoError: "Fatura alterada depois da emissao: reemita o boleto." },
+        "2026-10-28"
+      )
+    ).toBe("Envio agendado nao saiu: Fatura alterada depois da emissao: reemita o boleto.");
+  });
+
+  it("segura o boleto vencido no Mercado Pago", () => {
+    // O boleto da FAT-2026-00010 expirou em 26/10: manda-lo em 28/10 seria cobrar com papel morto.
+    expect(
+      scheduledSendBlocker({ ...VALID_BOLETO, boletoExpiresAt: "2026-10-26" }, "2026-10-28")
+    ).toBe("Envio agendado nao saiu: o boleto venceu. Reemita o boleto.");
+    expect(
+      scheduledSendBlocker({ ...VALID_BOLETO, boletoExpiresAt: "2026-10-28" }, "2026-10-28")
+    ).toBeNull();
+  });
+
+  it("nunca envia fatura paga ou cancelada", () => {
+    expect(scheduledSendBlocker({ ...VALID_BOLETO, status: "paid" }, "2026-10-28")).toMatch(
+      /paga ou cancelada/
+    );
+    expect(scheduledSendBlocker({ ...VALID_BOLETO, status: "canceled" }, "2026-10-28")).toMatch(
+      /paga ou cancelada/
+    );
   });
 });
