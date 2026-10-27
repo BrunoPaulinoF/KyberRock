@@ -256,13 +256,16 @@ async function handleList(supabase: SupabaseAdminClient): Promise<Response> {
       autoBoletoEnabled: settings.autoBoletoEnabled,
       autoWhatsappEnabled: settings.autoWhatsappEnabled,
       autoBlockEnabled: settings.autoBlockEnabled,
+      autoReminderEnabled: settings.autoReminderEnabled,
+      reminderDaysBefore: settings.reminderDaysBefore,
       issuerName: settings.issuerName,
       issuerDocument: settings.issuerDocument,
       issuerEmail: settings.issuerEmail,
       issuerPhone: settings.issuerPhone,
       issuerPixKey: settings.issuerPixKey,
       invoiceDescriptionTemplate: settings.invoiceDescriptionTemplate,
-      whatsappMessageTemplate: settings.whatsappMessageTemplate
+      whatsappMessageTemplate: settings.whatsappMessageTemplate,
+      whatsappReminderTemplate: settings.whatsappReminderTemplate
     },
     companies: companyViews,
     invoices,
@@ -324,11 +327,19 @@ async function handleUpdateSettings(
     }
     update.default_grace_days = graceDays;
   }
+  if (payload.reminderDaysBefore !== undefined) {
+    const reminderDays = optionalInt(payload.reminderDaysBefore);
+    if (reminderDays === null || reminderDays < 1 || reminderDays > 30) {
+      return jsonResponse({ error: "Dias do lembrete deve ficar entre 1 e 30." }, 400);
+    }
+    update.reminder_days_before = reminderDays;
+  }
   for (const [field, column] of [
     ["autoCloseEnabled", "auto_close_enabled"],
     ["autoBoletoEnabled", "auto_boleto_enabled"],
     ["autoWhatsappEnabled", "auto_whatsapp_enabled"],
-    ["autoBlockEnabled", "auto_block_enabled"]
+    ["autoBlockEnabled", "auto_block_enabled"],
+    ["autoReminderEnabled", "auto_reminder_enabled"]
   ] as const) {
     if (payload[field] !== undefined) update[column] = payload[field] === true;
   }
@@ -339,7 +350,8 @@ async function handleUpdateSettings(
     ["issuerPhone", "issuer_phone"],
     ["issuerPixKey", "issuer_pix_key"],
     ["invoiceDescriptionTemplate", "invoice_description_template"],
-    ["whatsappMessageTemplate", "whatsapp_message_template"]
+    ["whatsappMessageTemplate", "whatsapp_message_template"],
+    ["whatsappReminderTemplate", "whatsapp_reminder_template"]
   ] as const) {
     if (payload[field] !== undefined) update[column] = optionalText(payload[field]);
   }

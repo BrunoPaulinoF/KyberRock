@@ -14,21 +14,27 @@
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
 import {
+  addDays,
   billingToday,
   daysOverdue,
+  diffDays,
   invoiceTotalCents,
+  isReminderDue,
   pendingBillingPeriods,
   proratedAmountCents,
   resolveBillingConfig,
   resolveGraceDays,
+  resolveReminderDaysBefore,
   shouldBlockForOverdue,
   upcomingBillingPeriod
 } from "./billing-cycle.ts";
 import type { BillingPeriod } from "./billing-cycle.ts";
 import {
+  boletoDeliveryProblem,
   buildBlockNoticeMessage,
   buildBlockReason,
   buildInvoiceDescription,
+  buildInvoiceReminderMessage,
   buildInvoiceWhatsappMessage,
   formatCents,
   invoicePdfFileName,
@@ -57,6 +63,9 @@ const MAX_PAYMENT_POLLS_PER_RUN = 40;
 /** Quantos envios agendados uma passada processa (o resto fica para a seguinte). */
 const MAX_SCHEDULED_SENDS_PER_RUN = 40;
 
+/** Quantos lembretes de vencimento uma passada avalia (o resto fica para a seguinte). */
+const MAX_REMINDERS_PER_RUN = 40;
+
 export const BILLING_SETTINGS_TABLE = "billing_settings";
 export const BILLING_SETTINGS_ID = true;
 
@@ -83,6 +92,10 @@ export interface BillingSettings {
   autoBoletoEnabled: boolean;
   autoWhatsappEnabled: boolean;
   autoBlockEnabled: boolean;
+  /** Lembrete por WhatsApp antes do vencimento. */
+  autoReminderEnabled: boolean;
+  /** Quantos dias antes do vencimento o lembrete sai (1 a 30). */
+  reminderDaysBefore: number;
   issuerName: string;
   issuerDocument: string;
   issuerEmail: string;
@@ -90,6 +103,7 @@ export interface BillingSettings {
   issuerPixKey: string;
   invoiceDescriptionTemplate: string;
   whatsappMessageTemplate: string;
+  whatsappReminderTemplate: string;
 }
 
 export interface BillingCompanyRow {
@@ -159,6 +173,12 @@ export interface BillingInvoiceRow {
    * volta a null quando o envio sai. Ausente antes da migracao 202610270001.
    */
   whatsapp_scheduled_for?: string | null;
+  /**
+   * Vencimento para o qual o lembrete ja saiu, e quando. O lembrete e um por VENCIMENTO: o
+   * boleto reemitido com data nova ganha outro. Ausentes antes da migracao 202610270002.
+   */
+  reminder_sent_for_due_date?: string | null;
+  reminder_sent_at?: string | null;
   paid_at: string | null;
   paid_amount_cents: number | null;
   payment_method: string | null;
@@ -229,13 +249,18 @@ export async function loadBillingSettings(supabase: SupabaseClient): Promise<Bil
     autoBoletoEnabled: row.auto_boleto_enabled !== false,
     autoWhatsappEnabled: row.auto_whatsapp_enabled !== false,
     autoBlockEnabled: row.auto_block_enabled !== false,
+    // Coluna ausente (migracao 202610270002 pendente) le como desligado: o lembrete nao pode
+    // sair antes de a fatura ter onde marcar que ja saiu, senao repetiria a cada passada.
+    autoReminderEnabled: row.auto_reminder_enabled === true,
+    reminderDaysBefore: resolveReminderDaysBefore(row.reminder_days_before),
     issuerName: text(row.issuer_name) || "KyberRock",
     issuerDocument: text(row.issuer_document),
     issuerEmail: text(row.issuer_email),
     issuerPhone: text(row.issuer_phone),
     issuerPixKey: text(row.issuer_pix_key),
     invoiceDescriptionTemplate: text(row.invoice_description_template),
-    whatsappMessageTemplate: text(row.whatsapp_message_template)
+    whatsappMessageTemplate: text(row.whatsapp_message_template),
+    whatsappReminderTemplate: text(row.whatsapp_reminder_template)
   };
 }
 
@@ -1165,6 +1190,8 @@ export interface BillingRunSummary {
   invoicesSent: number;
   /** Envios agendados no painel que sairam nesta passada. */
   scheduledSent: number;
+  /** Lembretes de vencimento que sairam nesta passada. */
+  remindersSent: number;
   invoicesMarkedOverdue: number;
   paymentsSynced: number;
   companiesBlocked: number;
@@ -1198,6 +1225,7 @@ export async function runBillingCycle(
     boletosIssued: 0,
     invoicesSent: 0,
     scheduledSent: 0,
+    remindersSent: 0,
     invoicesMarkedOverdue: 0,
     paymentsSynced: 0,
     companiesBlocked: 0,
@@ -1250,6 +1278,21 @@ export async function runBillingCycle(
     });
   } catch (error) {
     summary.errors.push(`Envios agendados: ${error instanceof Error ? error.message : "falharam"}`);
+  }
+
+  // Depois dos agendados: a fatura que acabou de sair por agendamento conta como recebida e
+  // nao ganha lembrete repetido na mesma passada.
+  if (settings.autoReminderEnabled) {
+    try {
+      summary.remindersSent = await sendDueReminders(supabase, {
+        settings,
+        today,
+        companyId: options.companyId ?? null,
+        errors: summary.errors
+      });
+    } catch (error) {
+      summary.errors.push(`Lembretes: ${error instanceof Error ? error.message : "falharam"}`);
+    }
   }
 
   // O bloqueio avalia TODAS as pedreiras com fatura viva, nao so as de
@@ -1417,6 +1460,152 @@ export async function sendScheduledInvoices(
     } catch (error) {
       input.errors.push(
         `Envio agendado ${invoice.number}: ${error instanceof Error ? error.message : "falhou"}`
+      );
+    }
+  }
+  return sent;
+}
+
+/**
+ * Lembrete de vencimento por WhatsApp: `reminderDaysBefore` dias antes, uma vez por
+ * vencimento (`isReminderDue`). A fatura completa ja chegou no fechamento; este e o aviso
+ * curto de que ela esta para vencer, com o mesmo boleto.
+ *
+ * Nao sai com boleto que nao vale mais (`boletoDeliveryProblem`) nem com envio agendado
+ * pendente, que ja vai levar a fatura. Como no envio agendado, o lembrete e RESERVADO antes do
+ * envio (grava o vencimento lembrado so se ainda nao era ele), para duas passadas juntas nao
+ * mandarem duas vezes, e a reserva e desfeita se o WhatsApp falhar.
+ */
+export async function sendDueReminders(
+  supabase: SupabaseClient,
+  input: {
+    settings: BillingSettings;
+    today: string;
+    companyId: string | null;
+    errors: string[];
+  }
+): Promise<number> {
+  const { settings, today } = input;
+  if (!settings.whatsappUrl || !settings.whatsappInstanceToken) {
+    input.errors.push("Lembretes: WhatsApp nao configurado no financeiro.");
+    return 0;
+  }
+
+  let query = supabase
+    .from("billing_invoices")
+    .select("*")
+    .in("status", ["open", "overdue"])
+    .gte("due_date", today)
+    .lte("due_date", addDays(today, settings.reminderDaysBefore))
+    .is("whatsapp_scheduled_for", null)
+    .order("due_date", { ascending: true })
+    .limit(MAX_REMINDERS_PER_RUN);
+  if (input.companyId) query = query.eq("company_id", input.companyId);
+
+  const { data, error } = await query;
+  if (error) throw error;
+  const invoices = (data ?? []) as unknown as BillingInvoiceRow[];
+
+  let sent = 0;
+  for (const invoice of invoices) {
+    const previous = invoice.reminder_sent_for_due_date ?? null;
+    const due = isReminderDue({
+      dueDate: invoice.due_date,
+      today,
+      daysBefore: settings.reminderDaysBefore,
+      remindedForDueDate: previous,
+      lastSentOn: invoice.whatsapp_sent_at ? billingToday(new Date(invoice.whatsapp_sent_at)) : null
+    });
+    if (!due) continue;
+
+    try {
+      const problem = boletoDeliveryProblem(
+        {
+          status: invoice.status,
+          boletoPaymentId: invoice.boleto_payment_id,
+          boletoError: invoice.boleto_error,
+          boletoExpiresAt: invoice.boleto_expires_at
+        },
+        today
+      );
+      if (problem) {
+        await recordBillingEvent(supabase, {
+          companyId: invoice.company_id,
+          invoiceId: invoice.id,
+          eventType: "reminder_failed",
+          message: `Lembrete de vencimento nao saiu: ${problem}`
+        });
+        input.errors.push(`${invoice.number}: lembrete nao saiu: ${problem}`);
+        continue;
+      }
+
+      const company = await getCompany(supabase, invoice.company_id);
+      const target = normalizeWhatsappNumber(resolveBillingCustomer(company).phone);
+      if (!target) {
+        input.errors.push(`${invoice.number}: lembrete sem WhatsApp de cobranca cadastrado.`);
+        continue;
+      }
+
+      let claim = supabase
+        .from("billing_invoices")
+        .update({ reminder_sent_for_due_date: invoice.due_date, reminder_sent_at: nowIso() })
+        .eq("id", invoice.id);
+      claim = previous
+        ? claim.eq("reminder_sent_for_due_date", previous)
+        : claim.is("reminder_sent_for_due_date", null);
+      const { data: claimed, error: claimError } = await claim.select("id");
+      if (claimError) throw claimError;
+      if (!claimed || claimed.length === 0) continue;
+
+      try {
+        await sendWhatsappText({
+          baseUrl: settings.whatsappUrl,
+          instanceToken: settings.whatsappInstanceToken,
+          to: target,
+          text: buildInvoiceReminderMessage({
+            issuerName: settings.issuerName,
+            companyName: company.name,
+            invoiceNumber: invoice.number,
+            referenceLabel: invoice.reference_label,
+            amountCents: invoice.amount_cents,
+            dueDate: invoice.due_date,
+            daysUntilDue: diffDays(today, invoice.due_date),
+            boletoUrl: invoice.boleto_url,
+            boletoBarcode: invoice.boleto_barcode,
+            pixKey: settings.issuerPixKey,
+            supportPhone: settings.issuerPhone,
+            template: settings.whatsappReminderTemplate
+          }),
+          trackId: `billing-reminder:${invoice.id}:${invoice.due_date}`
+        });
+      } catch (sendError) {
+        // Desfaz a reserva para a proxima passada tentar de novo.
+        await supabase
+          .from("billing_invoices")
+          .update({ reminder_sent_for_due_date: previous, reminder_sent_at: null })
+          .eq("id", invoice.id)
+          .eq("reminder_sent_for_due_date", invoice.due_date);
+        const message = sendError instanceof Error ? sendError.message : "Falha no WhatsApp.";
+        await recordBillingEvent(supabase, {
+          companyId: invoice.company_id,
+          invoiceId: invoice.id,
+          eventType: "reminder_failed",
+          message: `Lembrete de vencimento nao saiu: ${message}`
+        });
+        input.errors.push(`${invoice.number}: lembrete nao saiu: ${message}`);
+        continue;
+      }
+
+      await recordBillingEvent(supabase, {
+        companyId: invoice.company_id,
+        invoiceId: invoice.id,
+        eventType: "reminder_sent",
+        message: `Lembrete de vencimento (${invoice.due_date.split("-").reverse().join("/")}) enviado por WhatsApp para ${target}.`
+      });
+      sent += 1;
+    } catch (error) {
+      input.errors.push(
+        `Lembrete ${invoice.number}: ${error instanceof Error ? error.message : "falhou"}`
       );
     }
   }

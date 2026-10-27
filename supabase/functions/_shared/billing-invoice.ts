@@ -302,15 +302,14 @@ export function normalizeWhatsappNumber(phone: string | null | undefined): strin
 }
 
 /**
- * Por que um envio AGENDADO ("Agendar envio" no painel) nao pode sair agora; null quando pode.
+ * Por que o boleto da fatura nao pode ir ao cliente agora; null quando pode.
  *
- * O agendamento manda o boleto que esta na fatura no dia escolhido, entao ele nao sai com um
- * boleto que ja nao vale: fatura ajustada depois da emissao (o `boleto_error` pede a
- * reemissao), emissao que falhou ou boleto vencido no Mercado Pago. Mandar esse papel
- * cobraria o valor ou a data errada. O agendamento continua de pe e sai na primeira passada
- * depois de o boleto ser reemitido.
+ * Os envios que a passada faz sozinha (o agendado e o lembrete de vencimento) mandam o boleto
+ * que esta na fatura, entao nao saem com um boleto que ja nao vale: fatura ajustada depois da
+ * emissao (o `boleto_error` pede a reemissao), emissao que falhou ou boleto vencido no Mercado
+ * Pago. Mandar esse papel cobraria o valor ou a data errada.
  */
-export function scheduledSendBlocker(
+export function boletoDeliveryProblem(
   invoice: {
     status: string;
     boletoPaymentId: string | null;
@@ -320,17 +319,100 @@ export function scheduledSendBlocker(
   today: string
 ): string | null {
   if (invoice.status === "paid" || invoice.status === "canceled") {
-    return "Envio agendado nao saiu: a fatura esta paga ou cancelada.";
+    return "a fatura esta paga ou cancelada.";
   }
-  if (invoice.boletoError) return `Envio agendado nao saiu: ${invoice.boletoError}`;
+  if (invoice.boletoError) return invoice.boletoError;
   if (
     invoice.boletoPaymentId &&
     invoice.boletoExpiresAt &&
     invoice.boletoExpiresAt.slice(0, 10) < today
   ) {
-    return "Envio agendado nao saiu: o boleto venceu. Reemita o boleto.";
+    return "o boleto venceu. Reemita o boleto.";
   }
   return null;
+}
+
+/**
+ * Por que um envio AGENDADO ("Agendar envio" no painel) nao pode sair agora; null quando pode.
+ * O agendamento continua de pe e sai na primeira passada depois de o boleto ser reemitido.
+ */
+export function scheduledSendBlocker(
+  invoice: Parameters<typeof boletoDeliveryProblem>[0],
+  today: string
+): string | null {
+  const problem = boletoDeliveryProblem(invoice, today);
+  return problem ? `Envio agendado nao saiu: ${problem}` : null;
+}
+
+export interface InvoiceReminderInput {
+  issuerName: string;
+  companyName: string;
+  invoiceNumber: string;
+  referenceLabel: string;
+  amountCents: number;
+  dueDate: string;
+  /** Dias ate o vencimento: 0 vence hoje, 1 amanha. */
+  daysUntilDue: number;
+  boletoUrl?: string | null;
+  boletoBarcode?: string | null;
+  pixKey?: string | null;
+  supportPhone?: string | null;
+  template?: string | null;
+}
+
+/**
+ * Lembrete de vencimento. E curto de proposito: a fatura completa (com o PDF) ja chegou no
+ * fechamento, entao aqui vai so o que paga — valor, data, link e linha digitavel — e a saida
+ * para quem ja pagou.
+ */
+export function buildInvoiceReminderMessage(input: InvoiceReminderInput): string {
+  const issuer = input.issuerName || "KyberRock";
+  const when =
+    input.daysUntilDue <= 0
+      ? "vence hoje"
+      : input.daysUntilDue === 1
+        ? "vence amanha"
+        : `vence em ${input.daysUntilDue} dias`;
+  const lines: string[] = [
+    `*${issuer} — Lembrete de vencimento*`,
+    "",
+    `Ola${input.companyName ? `, ${input.companyName}` : ""}!`,
+    `A fatura ${input.invoiceNumber} (${input.referenceLabel}) ${when}, em ${formatDateBr(input.dueDate)}.`,
+    "",
+    `*Valor:* ${formatCents(input.amountCents)}`
+  ];
+
+  if (text(input.boletoUrl)) {
+    lines.push("", `*Boleto:* ${text(input.boletoUrl)}`);
+  }
+  if (text(input.boletoBarcode)) {
+    lines.push("", "*Linha digitavel:*", text(input.boletoBarcode));
+  }
+  if (text(input.pixKey)) {
+    lines.push("", `*PIX:* ${text(input.pixKey)}`);
+  }
+
+  lines.push("", "Se ja pagou, desconsidere esta mensagem.");
+  if (text(input.supportPhone)) {
+    lines.push(`Suporte: ${text(input.supportPhone)}`);
+  }
+
+  const message = lines.join("\n");
+  const template = text(input.template);
+  if (!template) return message;
+
+  return applyTemplate(template, {
+    emitente: issuer,
+    pedreira: input.companyName,
+    numero: input.invoiceNumber,
+    referencia: input.referenceLabel,
+    valor: formatCents(input.amountCents),
+    vencimento: formatDateBr(input.dueDate),
+    dias: String(Math.max(0, input.daysUntilDue)),
+    boleto: text(input.boletoUrl),
+    linha_digitavel: text(input.boletoBarcode),
+    pix: text(input.pixKey)
+  });
 }
 
 /** Nome do arquivo PDF anexado no WhatsApp e baixado no painel. */

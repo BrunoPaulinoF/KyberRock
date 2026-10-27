@@ -99,6 +99,31 @@ Ajustar o vencimento para hoje ou depois também tira a fatura de **Vencida**: o
 `markOverdueInvoices` só marca, nunca desmarca, e a fatura seguia vencida com o vencimento
 novo no futuro.
 
+## Lembrete antes do vencimento
+
+A passada automática (9h ou 15h de Brasília) manda um **lembrete curto** pelo WhatsApp
+`reminder_days_before` dias antes do vencimento (padrão **3**; migração `202610270002`):
+valor, data, link do boleto, linha digitável e "se já pagou, desconsidere". A fatura completa,
+com o PDF, já chegou no fechamento. O caso que motivou: a FAT-2026-00010 da Pedreira Ibiúna
+chegou ao WhatsApp em 15/10 e venceu em 25/10 sem nenhum aviso no meio.
+
+- **Um por vencimento** (`isReminderDue`, em `billing-cycle.ts`):
+  `billing_invoices.reminder_sent_for_due_date` guarda para qual vencimento o lembrete já saiu.
+  Boleto reemitido com data nova ganha outro lembrete.
+- **Janela**: do dia `vencimento − N` até o próprio vencimento, para a passada que não rodou no
+  primeiro dia recuperar no seguinte. Depois do vencimento quem fala é o bloqueio.
+- **Não repete a fatura**: se ela chegou ao cliente dentro da janela (fechamento perto do
+  vencimento, envio agendado), o lembrete não sai. Também não sai enquanto houver envio
+  agendado pendente.
+- **Só com boleto que vale** (`boletoDeliveryProblem`, a mesma regra do envio agendado):
+  fatura ajustada sem reemissão, emissão com erro ou boleto vencido seguram o lembrete e geram o
+  evento "Lembrete não saiu" no histórico da fatura.
+- **Sem duplicar**: a fatura é marcada antes do envio, e a marca é desfeita se o WhatsApp
+  falhar; a passada seguinte tenta de novo.
+- Liga/desliga, dias e texto ficam em **Configurações → Padrões do ciclo** e **Emitente e
+  textos** (marcadores do texto da fatura, mais `{dias}`). Coluna ausente é lida como
+  desligado: nada sai antes de a migração existir.
+
 ## Bloqueio por inadimplência
 
 "Depois de X dias de inadimplência, bloqueio automático." X é
