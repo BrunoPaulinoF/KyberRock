@@ -119,6 +119,8 @@ function insertOperations(db: ReturnType<typeof createDatabase>) {
   ];
 
   for (const op of ops) {
+    // Meio-dia de UTC (9h em Sao Paulo): `datetime('2026-06-06')` e meia-noite UTC, que no
+    // dia da venda (calendario de Sao Paulo) ainda e 21h de 05/06.
     db.prepare(
       `
       INSERT INTO weighing_operations (
@@ -127,7 +129,7 @@ function insertOperations(db: ReturnType<typeof createDatabase>) {
         freight_total_cents, total_cents, created_at, updated_at
       ) VALUES (
         ?, 'comp-1', 'unit-1', 'dev-1', 'closed_local', 'invoice', ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, datetime(?), datetime(?)
+        ?, ?, ?, ?, ?, ?, ?, datetime(?, '+12 hours'), datetime(?, '+12 hours')
       )
     `
     ).run(
@@ -829,6 +831,32 @@ describe("ReportService: o dia da pesagem e o do FECHAMENTO", () => {
       ).run();
       expect(service.getMonthlyReport(2026, 8, "unit-1").totalOperations).toBe(0);
       expect(service.getMonthlyReport(2026, 9, "unit-1").totalCents).toBe(197441);
+    } finally {
+      db.close();
+    }
+  });
+
+  // O horario e gravado em UTC. A pesagem que fecha as 22h de Sao Paulo (01h UTC do dia
+  // seguinte) e do dia dela — e o dia que vai ao OMIE como emissao. Pelo dia de UTC ela
+  // aparecia no relatorio de amanha.
+  it("a pesagem que fecha as 22h de Sao Paulo e do dia dela, nao do dia seguinte", () => {
+    const db = createDatabase();
+    try {
+      seedVirouODia(db);
+      db.prepare(
+        "UPDATE weighing_operations SET exit_weight_captured_at = '2026-09-12T01:00:00.000Z'"
+      ).run();
+      const service = new ReportService(db);
+
+      expect(service.getDailyReport("2026-09-11", "unit-1").totalOperations).toBe(1);
+      expect(service.getDailyReport("2026-09-12", "unit-1").totalOperations).toBe(0);
+
+      // Meia-noite em Sao Paulo (03h UTC) ja e o dia seguinte.
+      db.prepare(
+        "UPDATE weighing_operations SET exit_weight_captured_at = '2026-09-12T03:00:00.000Z'"
+      ).run();
+      expect(service.getDailyReport("2026-09-11", "unit-1").totalOperations).toBe(0);
+      expect(service.getDailyReport("2026-09-12", "unit-1").totalOperations).toBe(1);
     } finally {
       db.close();
     }

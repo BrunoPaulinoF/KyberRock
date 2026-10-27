@@ -73,7 +73,9 @@ export {
   OPEN_OPERATION_STATUSES,
   OPEN_OPERATION_STATUS_SQL_LIST,
   isOpenOperationStatus,
-  operationSaleDateSql
+  operationSaleDateSql,
+  operationSaleDay,
+  operationSaleDaySql
 } from "./weighing-operation-status.js";
 
 export type OperationType = "invoice" | "internal";

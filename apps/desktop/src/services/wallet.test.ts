@@ -71,6 +71,8 @@ function seedBaseData(database: DesktopDatabase): void {
 }
 
 function insertOperations(database: DesktopDatabase, seeds: OperationSeed[]): void {
+  // Meio-dia de UTC (9h em Sao Paulo): `datetime('2026-07-10')` e meia-noite UTC, que no
+  // dia da venda (calendario de Sao Paulo) ainda e 21h de 09/07.
   const insert = database.prepare(
     `INSERT INTO weighing_operations (
        id, company_id, unit_id, device_id, status, operation_type, customer_id, product_id,
@@ -79,7 +81,8 @@ function insertOperations(database: DesktopDatabase, seeds: OperationSeed[]): vo
        omie_advance_settle_cents, wallet_settled_at,
        entry_weight_captured_at, exit_weight_captured_at, created_at, updated_at
      ) VALUES (?, ?, 'unit-1', 'dev-1', ?, 'invoice', ?, 'prod-1', 'veh-1', ?,
-               10000, 40000, 30000, 5000, ?, 0, ?, ?, ?, datetime(?), datetime(?), datetime(?), datetime(?))`
+               10000, 40000, 30000, 5000, ?, 0, ?, ?, ?, datetime(?, '+12 hours'),
+               datetime(?, '+12 hours'), datetime(?, '+12 hours'), datetime(?, '+12 hours'))`
   );
   for (const seed of seeds) {
     insert.run(
@@ -594,9 +597,10 @@ describe("wallet service", () => {
     // Caminhao que entra dia 20 e so FECHA dia 1 do mes seguinte: a venda e do dia 1 — e a
     // data que vai ao OMIE como emissao do pedido —, entao ela sai da quinzena de julho.
     // A carteira precisa concordar com o Fechamento de faturas, que usa a mesma base.
+    // 13h UTC = 10h em Sao Paulo: o dia da venda e o do calendario de la.
     database
       .prepare(
-        "UPDATE weighing_operations SET exit_weight_captured_at = '2026-08-01T02:00:00.000Z' WHERE id = 'op-dentro'"
+        "UPDATE weighing_operations SET exit_weight_captured_at = '2026-08-01T13:00:00.000Z' WHERE id = 'op-dentro'"
       )
       .run();
 

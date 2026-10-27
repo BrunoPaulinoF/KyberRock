@@ -7,7 +7,12 @@ import {
   resolveSituationDetail
 } from "./weighing-billing-situation.js";
 import type { WeighingBillingSituation } from "./weighing-billing-situation.js";
-import { CLOSED_OPERATION_STATUS_SQL_LIST, operationSaleDateSql } from "./weighing-operations.js";
+import {
+  CLOSED_OPERATION_STATUS_SQL_LIST,
+  operationSaleDateSql,
+  operationSaleDay,
+  operationSaleDaySql
+} from "./weighing-operations.js";
 
 /**
  * Conferencia de faturamento: a lista PESAGEM A PESAGEM do periodo, uma linha por
@@ -217,8 +222,8 @@ export class WeighingBillingReportService {
            AND (? IS NULL OR o.customer_id = ?)
            AND o.deleted_at IS NULL
            AND o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
-           AND date(${operationSaleDateSql("o")}) >= date(?)
-           AND date(${operationSaleDateSql("o")}) <= date(?)
+           AND ${operationSaleDaySql("o")} >= date(?)
+           AND ${operationSaleDaySql("o")} <= date(?)
          ORDER BY ${operationSaleDateSql("o")} ASC, o.operation_code ASC`
       )
       .all(unitId, customerId, customerId, startDate, endDate) as WeighingBillingSourceRow[];
@@ -230,7 +235,7 @@ function mapRow(row: WeighingBillingSourceRow): WeighingBillingRow {
   return {
     operationId: row.id,
     operationCode: row.operation_code,
-    date: (row.exit_at ?? row.created_at).slice(0, 10),
+    date: operationSaleDay(row.exit_at ?? row.created_at),
     closedAt: row.exit_at,
     customerId: row.customer_id,
     customerName:

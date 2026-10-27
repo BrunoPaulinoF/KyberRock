@@ -157,12 +157,36 @@ Duas coisas que não mudam de base:
   do histórico. Nunca troque a chamada de `operationSaleDateSql` por
   `exit_weight_captured_at` cru.
 
+### O dia é o do calendário de São Paulo, nunca o de UTC
+
+O horário da saída é gravado em **UTC** (`now.toISOString()`, em `scale-adapter.ts`). Cortar o
+texto — `slice(0, 10)` no JS ou `date(...)` no SQLite — dá o dia de UTC: o caminhão que fecha às
+**22h de 20/10** tem `exit_weight_captured_at = 2026-10-21T01:00:00Z` e ia ao OMIE emitido em
+**21/10**, com todo vencimento um dia depois e o cupom mostrando `Saida: 20/10` com VENCTO contado
+de 21/10. Das 21h à meia-noite, todo dia. O site e o e-mail diário já cortavam pelo dia de São
+Paulo (`REPORT_UTC_OFFSET`, `localDay`), então ali o caminhão das 22h discordava do OMIE.
+
+A regra mora em `weighing-operation-status.ts`, ao lado de `operationSaleDateSql`, e tem duas
+pontas que **precisam** dar o mesmo dia (`weighing-operation-status.test.ts` confere as duas):
+
+- `operationSaleDay(at)` (JS) — a emissão do pedido (`resolveOrderPaymentSchedule`, que alimenta o
+  `buildOmieBillingJob` e o VENCTO do cupom) e o dia exibido nos relatórios montados no JS;
+- `operationSaleDaySql(alias)` (SQL) — o recorte de período de todo relatório de dinheiro.
+  `operationSaleDateSql` continua sendo o **instante** (para ordenar e exibir hora); `date()` em
+  cima dele é o erro de volta.
+
+O deslocamento é fixo (UTC-3, sem horário de verão desde 2019), o mesmo `REPORT_UTC_OFFSET` da
+nuvem, e não `America/Sao_Paulo` pelo Intl, porque o SQLite não tem tabela de fusos. Valor só com
+a data (sem hora) já é o dia e não desloca. Pedido já enviado ao OMIE não muda: a regra vale para
+o que fechar daqui em diante (e para o reenvio de quem ainda não subiu).
+
 ## Vencimento no cupom: o mesmo do título do OMIE
 
 O bloco FINANCEIRO do cupom 80 mm imprime **uma linha `VENCTO` por parcela**, com a data e o
 valor de cada uma. A conta é a do pedido enviado ao OMIE e mora num lugar só,
 `apps/desktop/src/services/order-installments.ts`: `resolveOrderPaymentSchedule` (emissão =
-dia em que a pesagem fechou + dias da condição — a mesma usada por `buildOmieBillingJob`) e
+dia em que a pesagem fechou, no calendário de São Paulo (`operationSaleDay`), + dias da
+condição — a mesma usada por `buildOmieBillingJob`) e
 `orderInstallmentPlan` (espelho de `orderDueDays` + `buildInstallmentPlan` do `omie-sync`:
 sem dias, a quantidade de parcelas em meses de 30 dias; o total rateado em percentual igual,
 com a última parcela absorvendo o arredondamento). Mudou a regra de um lado, mude do outro.

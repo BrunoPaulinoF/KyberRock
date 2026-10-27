@@ -13,7 +13,12 @@ import {
   WEIGHING_BILLING_SITUATION_LABEL
 } from "./weighing-billing-situation.js";
 import type { WeighingBillingSituation } from "./weighing-billing-situation.js";
-import { CLOSED_OPERATION_STATUS_SQL_LIST, operationSaleDateSql } from "./weighing-operations.js";
+import {
+  CLOSED_OPERATION_STATUS_SQL_LIST,
+  operationSaleDateSql,
+  operationSaleDay,
+  operationSaleDaySql
+} from "./weighing-operations.js";
 import { INVOICE_CLOSING_CYCLE_LABEL, isInvoiceClosingCycle } from "./invoice-closing-cycle.js";
 import type { InvoiceClosingCycle } from "./invoice-closing-cycle.js";
 import { findDuplicateWeighings } from "./weighing-duplicates.js";
@@ -634,8 +639,8 @@ export class InvoiceClosingService {
            ${customerFilter}
            AND o.deleted_at IS NULL
            AND o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
-           AND date(${operationSaleDateSql("o")}) >= date(?)
-           AND date(${operationSaleDateSql("o")}) <= date(?)
+           AND ${operationSaleDaySql("o")} >= date(?)
+           AND ${operationSaleDaySql("o")} <= date(?)
          ORDER BY ${operationSaleDateSql("o")} ASC, o.operation_code ASC`
       )
       .all(unitId, ...(customerIds ?? []), startDate, endDate) as InvoiceClosingSourceRow[];
@@ -650,7 +655,7 @@ function mapLine(row: InvoiceClosingSourceRow): InvoiceClosingLine {
     customerName: customerName(row),
     customerDocument: row.customer_document,
     couponNumber: row.operation_code,
-    date: (row.exit_at ?? row.created_at).slice(0, 10),
+    date: operationSaleDay(row.exit_at ?? row.created_at),
     closedAt: row.exit_at,
     // Preenchidas quando a linha entra numa fatura: e o fechamento que decide as duas datas.
     closingDate: null,

@@ -6,7 +6,11 @@ import {
 } from "./customer-identity.js";
 import { paymentMethodDisplayName } from "./payment-methods.js";
 import { enqueueSyncJob } from "./sync-queue.js";
-import { CLOSED_OPERATION_STATUS_SQL_LIST, operationSaleDateSql } from "./weighing-operations.js";
+import {
+  CLOSED_OPERATION_STATUS_SQL_LIST,
+  operationSaleDateSql,
+  operationSaleDaySql
+} from "./weighing-operations.js";
 
 /**
  * Carteira: vendas fechadas na forma de pagamento "em carteira".
@@ -28,11 +32,12 @@ export interface WalletOperation {
   /** Data/hora do fechamento da pesagem (saida); cai no created_at quando ausente. */
   soldAt: string;
   /**
-   * Data da OPERACAO (`created_at`, YYYY-MM-DD) — a mesma base de data do Fechamento de
-   * faturas e dos demais relatorios, e a que o filtro de periodo desta tela usa.
+   * Dia da venda (YYYY-MM-DD, calendario de Sao Paulo: `operationSaleDaySql`) — a mesma
+   * base de data do Fechamento de faturas, dos demais relatorios e da emissao no OMIE, e a
+   * que o filtro de periodo desta tela usa.
    *
-   * Existe porque `soldAt` e a SAIDA da balanca: o caminhao que entra 23h50 e sai 00h30 tem
-   * as duas datas em dias diferentes. Sem esta coluna, a mesma quinzena devolvia listas
+   * Existe porque `soldAt` e o instante em UTC: cortar o texto dele dava o dia de UTC, e a
+   * venda das 22h caia no dia seguinte. Sem esta coluna, a mesma quinzena devolvia listas
    * diferentes na Carteira e no Fechamento, e nada na tela explicava a diferenca.
    */
   operationDate: string;
@@ -156,7 +161,7 @@ function mapRow(row: WalletOperationRow): WalletOperation {
   return {
     operationId: row.id,
     soldAt: row.sold_at,
-    operationDate: row.operation_date.slice(0, 10),
+    operationDate: row.operation_date,
     customerId: row.customer_id,
     customerName: row.customer_name?.trim() || "Cliente nao informado",
     plate: row.plate ?? "-",
@@ -216,12 +221,12 @@ export function getWalletReport(database: DesktopDatabase, query: WalletQuery = 
   }
   if (query.startDate) {
     assertDate(query.startDate, "Data inicial");
-    conditions.push(`date(${operationSaleDateSql("o")}) >= date(?)`);
+    conditions.push(`${operationSaleDaySql("o")} >= date(?)`);
     params.push(query.startDate);
   }
   if (query.endDate) {
     assertDate(query.endDate, "Data final");
-    conditions.push(`date(${operationSaleDateSql("o")}) <= date(?)`);
+    conditions.push(`${operationSaleDaySql("o")} <= date(?)`);
     params.push(query.endDate);
   }
   const search = query.search?.trim();
@@ -240,7 +245,7 @@ export function getWalletReport(database: DesktopDatabase, query: WalletQuery = 
       `SELECT
          o.id,
          ${operationSaleDateSql("o")} AS sold_at,
-         ${operationSaleDateSql("o")} AS operation_date,
+         ${operationSaleDaySql("o")} AS operation_date,
          o.customer_id,
          COALESCE(c.trade_name, o.remote_customer_name) AS customer_name,
          COALESCE(v.plate, o.remote_plate) AS plate,

@@ -1,5 +1,6 @@
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { conditionDueDaysForSale } from "./payment-condition-parser.js";
+import { operationSaleDay } from "./weighing-operation-status.js";
 
 /**
  * Parcelas do pedido do OMIE de uma pesagem: QUANDO cada uma vence e QUANTO vale.
@@ -19,8 +20,9 @@ export const MONTHLY_INSTALLMENT_DAYS = 30;
  */
 export interface OrderPaymentSchedule {
   /**
-   * Emissao do pedido (yyyy-mm-dd): o dia em que a pesagem FECHOU (`exit_weight_captured_at`),
-   * a mesma base de `operationSaleDateSql`. Nunca o dia da impressao.
+   * Emissao do pedido (yyyy-mm-dd): o dia em que a pesagem FECHOU (`exit_weight_captured_at`)
+   * no calendario de Sao Paulo (`operationSaleDay`), o mesmo de `operationSaleDaySql`. Nunca
+   * o dia da impressao, e nunca o dia de UTC.
    */
   issueDate: string;
   paymentTermOmieCode: string | null;
@@ -80,8 +82,9 @@ export function resolveOrderPaymentSchedule(
 
   // Prazo de cada parcela, em dias contados da emissao (o OMIE soma ao `issueDate`). A
   // condicao em periodo ("q+15") depende do dia da venda e vence no fim do periodo mais os
-  // dias — por isso ela manda sobre os dias gravados, que sao so o prazo nominal.
-  const issueDate = (exitCapturedAt ?? "").slice(0, 10);
+  // dias — por isso ela manda sobre os dias gravados, que sao so o prazo nominal. O dia e o de
+  // Sao Paulo: cortar o texto UTC mandava a pesagem das 22h como emissao do dia seguinte.
+  const issueDate = operationSaleDay(exitCapturedAt);
   const installmentDays =
     conditionDueDaysForSale(conditionRawFromRulesJson(term?.rules_json), issueDate) ??
     resolveInstallmentDays(term);
