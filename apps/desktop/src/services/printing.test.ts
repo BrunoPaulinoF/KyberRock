@@ -8,7 +8,9 @@ import {
   type LocalDesktopIdentity
 } from "./bootstrap";
 import { setCustomerFutureBillingInvoice } from "./customer-future-billing";
+import { createPaymentTerm } from "./payment-terms";
 import {
+  buildOmieBillingJob,
   closeWeighingOperation,
   createSimulatedWeighingOperation,
   createWeighingOperation
@@ -956,6 +958,203 @@ describe("printing", () => {
     }
   });
 });
+
+// O VENCTO do bloco FINANCEIRO e o do titulo que o OMIE gera: emissao (dia em que a pesagem
+// fechou) + prazo da condicao. Caso real (Pedreira Ibiuna, 27/10/2026): carga de 20/10 em
+// "1 parcela em 45 dias" reimpressa em 27/10 saia com "VENCTO: 27/10/2026", e o OMIE cobrava
+// em 04/12. 6,5 t de rachao a R$ 120,00/t = R$ 780,00 em todos os casos abaixo.
+describe("vencimento no cupom", () => {
+  const CLOSED_AT = "2026-10-20T13:00:00.000Z";
+
+  it("vence 45 dias depois do fechamento na condicao de 45 dias", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createReceiptIdentity(database);
+      const operation = createClosedOperationWithTerm(database, identity, "45", CLOSED_AT);
+
+      await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer,
+        new Date(CLOSED_AT)
+      );
+
+      expect(financialLines(printer.calls[0].lines)).toEqual([
+        "VENCTO: 04/12/2026 - VALOR R$ 780,00"
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("reimpressao em outro dia mantem o vencimento da 1a via", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createReceiptIdentity(database);
+      const operation = createClosedOperationWithTerm(database, identity, "45", CLOSED_AT);
+      const first = await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer,
+        new Date(CLOSED_AT)
+      );
+
+      await reprintWeighingReceipt(
+        database,
+        { receiptId: first.id, identity },
+        printer,
+        new Date("2026-10-27T15:00:00.000Z")
+      );
+
+      const reprinted = printer.calls.at(-1)!.lines;
+      // O cabecalho mostra o dia da reimpressao; o vencimento continua o do OMIE.
+      expect(reprinted).toContain("DATA: 27/10/2026  HORA: 12:00:00");
+      expect(financialLines(reprinted)).toEqual(["VENCTO: 04/12/2026 - VALOR R$ 780,00"]);
+      expect(financialLines(reprinted)).toEqual(financialLines(printer.calls[0].lines));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("venda a vista vence no dia do fechamento, nao no da impressao", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createReceiptIdentity(database);
+      const operation = createClosedOperationWithTerm(database, identity, null, CLOSED_AT);
+
+      await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer,
+        new Date("2026-10-27T15:00:00.000Z")
+      );
+
+      expect(financialLines(printer.calls[0].lines)).toEqual([
+        "VENCTO: 20/10/2026 - VALOR R$ 780,00"
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("imprime uma linha por parcela, com o valor rateado como no OMIE", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createReceiptIdentity(database);
+      const operation = createClosedOperationWithTerm(database, identity, "30/60/90", CLOSED_AT);
+
+      await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer,
+        new Date(CLOSED_AT)
+      );
+
+      // 33,33% em cada uma; a ultima absorve o arredondamento e a soma fecha R$ 780,00.
+      expect(financialLines(printer.calls[0].lines)).toEqual([
+        "VENCTO: 19/11/2026 - VALOR R$ 259,97",
+        "VENCTO: 19/12/2026 - VALOR R$ 259,97",
+        "VENCTO: 18/01/2027 - VALOR R$ 260,06"
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  // Condicao em periodo: o prazo depende do dia da venda. Venda de 02/10 em "q+15" vence no
+  // fim da quinzena (15/10) + 15 = 30/10 — a mesma data que vai no pedido do OMIE.
+  it("usa a mesma emissao e o mesmo prazo do pedido enviado ao OMIE", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createReceiptIdentity(database);
+      const operation = createClosedOperationWithTerm(
+        database,
+        identity,
+        "q + 15",
+        "2026-10-02T13:00:00.000Z"
+      );
+
+      await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer,
+        new Date("2026-10-27T15:00:00.000Z")
+      );
+
+      const { issueDate, paymentTermInstallmentDays } = buildOmieBillingJob(
+        database,
+        operation.id
+      )!.payload;
+      expect(issueDate).toBe("2026-10-02");
+      expect(paymentTermInstallmentDays).toEqual([28]);
+      expect(financialLines(printer.calls[0].lines)).toEqual([
+        "VENCTO: 30/10/2026 - VALOR R$ 780,00"
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+});
+
+function createReceiptIdentity(database: DesktopDatabase): LocalDesktopIdentity {
+  const identity = createIdentity(database);
+  configureReceiptPrintProfile(database, {
+    identity,
+    windowsPrinterName: "TERMICA-80",
+    paperWidthMm: 80,
+    copies: 1
+  });
+  insertFutureBillingCadastro(database);
+  database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-fb'").run();
+  return identity;
+}
+
+/**
+ * Pesagem de rachao fechada em `closedAt` na condicao `condition` (texto da tela de
+ * condicoes; null = sem condicao, a vista).
+ */
+function createClosedOperationWithTerm(
+  database: DesktopDatabase,
+  identity: LocalDesktopIdentity,
+  condition: string | null,
+  closedAt: string
+): { id: string } {
+  const term = condition
+    ? createPaymentTerm(database, { companyId: identity.companyId, name: condition, condition })
+    : null;
+  const operation = createWeighingOperation(database, {
+    identity,
+    customerId: "customer-fb",
+    vehicleId: "vehicle-fb",
+    driverId: "driver-fb",
+    productId: "product-rachao",
+    paymentTermId: term?.id,
+    entryWeightKg: 12_000
+  });
+  closeWeighingOperation(database, {
+    operationId: operation.id,
+    exitWeightKg: 18_500,
+    operationType: "invoice"
+  });
+  database
+    .prepare("UPDATE weighing_operations SET exit_weight_captured_at = ? WHERE id = ?")
+    .run(closedAt, operation.id);
+  return operation;
+}
+
+function financialLines(lines: string[]): string[] {
+  return lines.filter((line) => line.startsWith("VENCTO:"));
+}
 
 /** Cliente e produtos reais (o cupom resolve a nota pelo par cliente+produto). */
 function insertFutureBillingCadastro(database: DesktopDatabase): void {

@@ -55,6 +55,46 @@ describe("buildReceiptLines", () => {
     expect(lines).toContain("VENCTO: 07/06/2026 - VALOR R$ 1.500,00");
   });
 
+  it("prints one VENCTO line per installment", () => {
+    const lines = buildReceiptLines({
+      ...baseInput(),
+      installments: [
+        { dueDate: "2026-07-07", valueCents: 49_995 },
+        { dueDate: "2026-08-06", valueCents: 49_995 },
+        { dueDate: "2026-09-05", valueCents: 50_010 }
+      ]
+    });
+
+    expect(lines.filter((line) => line.startsWith("VENCTO:"))).toEqual([
+      "VENCTO: 07/07/2026 - VALOR R$ 499,95",
+      "VENCTO: 06/08/2026 - VALOR R$ 499,95",
+      "VENCTO: 05/09/2026 - VALOR R$ 500,10"
+    ]);
+  });
+
+  it("prints the due date as a calendar day, without shifting it by the time zone", () => {
+    // Lida como instante, "2026-12-04" vira meia-noite UTC — 03/12 21:00 em Sao Paulo.
+    const lines = buildReceiptLines({
+      ...baseInput(),
+      installments: [{ dueDate: "2026-12-04", valueCents: 150_000 }]
+    });
+
+    expect(lines).toContain("VENCTO: 04/12/2026 - VALOR R$ 1.500,00");
+  });
+
+  it("falls back to the exit date, never the print date, without installments", () => {
+    // Reimpressao uma semana depois: o papel nao pode vencer no dia em que saiu da impressora.
+    const lines = buildReceiptLines({
+      ...baseInput(),
+      printedAt: "2026-10-27T15:00:00.000Z",
+      exitCapturedAt: "2026-10-20T13:00:00.000Z"
+    });
+
+    expect(lines.filter((line) => line.startsWith("VENCTO:"))).toEqual([
+      "VENCTO: 20/10/2026 - VALOR R$ 1.500,00"
+    ]);
+  });
+
   it("prints the freight note written on the entry", () => {
     const lines = buildReceiptLines({
       ...baseInput(),

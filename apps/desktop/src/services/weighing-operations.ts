@@ -32,7 +32,7 @@ import { DEFAULT_NFE_EMAIL_KEY } from "./customers.js";
 import { readStringLocalSetting } from "./local-settings.js";
 import { DEFAULT_OMIE_CATEGORY_SETTING_KEY, resolveOrderCategoryCode } from "./omie-categories.js";
 import { consumeQuotation } from "./quotations.js";
-import { conditionDueDaysForSale } from "./payment-condition-parser.js";
+import { resolveOrderPaymentSchedule } from "./order-installments.js";
 import {
   CLOSED_OPERATION_STATUS_SQL_LIST,
   isClosedOperationStatus,
@@ -1778,37 +1778,13 @@ export function buildOmieBillingJob(
     readStringLocalSetting(database, DEFAULT_OMIE_CATEGORY_SETTING_KEY)
   );
 
-  // Espelho OMIE (quando a condicao local esta vinculada a um codigo) tem precedencia;
-  // sem vinculo, os campos da propria condicao local (parse do texto digitado) valem —
-  // e a edge cria a parcela no cadastro do OMIE a partir deles.
-  const omieParcela = row.payment_term_id
-    ? (database
-        .prepare(
-          `SELECT pt.omie_parcela_code AS code,
-                  COALESCE(opt.installment_count, pt.installment_count) AS installment_count,
-                  COALESCE(opt.installment_days_json, pt.installment_days_json) AS installment_days_json,
-                  COALESCE(opt.first_installment_days, pt.first_installment_days) AS first_installment_days,
-                  COALESCE(opt.installment_interval_days, pt.installment_interval_days) AS installment_interval_days,
-                  -- Ultimo recurso quando as colunas acima estao vazias: a condicao que
-                  -- chegou pela nuvem traz so o rules_json (ver upsertCloudPaymentTerms),
-                  -- e sem os dias o pedido saia com vencimento = emissao.
-                  pt.rules_json AS rules_json
-           FROM payment_terms pt
-           LEFT JOIN omie_payment_terms opt
-             ON opt.company_id = pt.company_id AND opt.code = pt.omie_parcela_code AND opt.is_active = 1
-           WHERE pt.id = ?`
-        )
-        .get(row.payment_term_id) as
-        | {
-            code: string | null;
-            installment_count: number | null;
-            installment_days_json: string | null;
-            first_installment_days: number | null;
-            installment_interval_days: number | null;
-            rules_json: string | null;
-          }
-        | undefined)
-    : undefined;
+  // Emissao (dia em que a pesagem fechou) e prazo de cada parcela. A mesma conta imprime o
+  // VENCTO do cupom, para o papel nunca discordar do titulo que o OMIE gera.
+  const paymentSchedule = resolveOrderPaymentSchedule(
+    database,
+    row.payment_term_id,
+    row.exit_weight_captured_at
+  );
 
   // Codigos OMIE do meio de pagamento escolhido e da conta vinculada a ele
   // (payment_methods.account_id -> accounts.omie_code). Vao no job para o pedido/OS
@@ -1827,14 +1803,6 @@ export function buildOmieBillingJob(
     : undefined;
 
   const operation = getWeighingOperation(database, operationId);
-
-  // Prazo de cada parcela, em dias contados da emissao (o OMIE soma ao `issueDate`). A
-  // condicao em periodo ("q+15") depende do dia da venda e vence no fim do periodo mais os
-  // dias — por isso ela manda sobre os dias gravados, que sao so o prazo nominal.
-  const issueDate = (row.exit_weight_captured_at ?? "").slice(0, 10);
-  const installmentDays =
-    conditionDueDaysForSale(conditionRawFromRulesJson(omieParcela?.rules_json), issueDate) ??
-    resolveInstallmentDays(omieParcela);
 
   // Transportadora do pedido OMIE: a ESCOLHIDA na operacao manda. So quando a
   // operacao nao tem transportadora caimos no vinculo do veiculo (mais recente
@@ -1896,11 +1864,10 @@ export function buildOmieBillingJob(
       unitPrice: operation.unitPriceCents ? operation.unitPriceCents / 100 : 0,
       freightTotalCents: invoiceFreightTotalCents,
       freightModalidade,
-      issueDate,
-      paymentTermOmieCode: omieParcela?.code ?? null,
-      paymentTermInstallmentCount:
-        omieParcela?.installment_count ?? installmentDays?.length ?? null,
-      paymentTermInstallmentDays: installmentDays,
+      issueDate: paymentSchedule.issueDate,
+      paymentTermOmieCode: paymentSchedule.paymentTermOmieCode,
+      paymentTermInstallmentCount: paymentSchedule.installmentCount,
+      paymentTermInstallmentDays: paymentSchedule.installmentDays,
       paymentMethodOmieCode: omiePayment?.method_code ?? null,
       accountOmieCode: omiePayment?.account_code ?? null,
       accountName: omiePayment?.account_name ?? null,
@@ -2010,79 +1977,6 @@ function buildOrderCarrierCadastro(
     city: carrier.city ?? undefined,
     state: carrier.state ?? undefined
   };
-}
-
-/**
- * Dias de vencimento das parcelas da condicao OMIE vinculada: usa o JSON explicito
- * (ex: [7,14,21]) quando presente, senao deriva de primeiro dia + intervalo + quantidade.
- * Retorna null quando a condicao nao informa dias (edge trata como a vista).
- */
-/**
- * Prazos gravados no `rules_json` da condicao ("installments[].dueDays").
- *
- * A condicao que chega pela nuvem traz SO o rules_json — as colunas
- * installment_days_json/first_installment_days/installment_count ficam vazias no desktop
- * que a recebeu (ver upsertCloudPaymentTerms). Sem esta leitura, o pedido saia sem
- * prazo nenhum e o OMIE colocava o vencimento na propria data de emissao.
- */
-function dueDaysFromRulesJson(rulesJson: string | null | undefined): number[] | null {
-  if (!rulesJson) return null;
-  try {
-    const rules = JSON.parse(rulesJson) as { installments?: Array<{ dueDays?: unknown }> };
-    if (!Array.isArray(rules.installments) || rules.installments.length === 0) return null;
-    const days = rules.installments.map((installment) => Number(installment?.dueDays));
-    return days.every((value) => Number.isInteger(value) && value >= 0) ? days : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Texto da condicao (`rules_json.raw`), ou null quando o JSON nao o traz. */
-function conditionRawFromRulesJson(rulesJson: string | null | undefined): string | null {
-  if (!rulesJson) return null;
-  try {
-    const rules = JSON.parse(rulesJson) as { raw?: unknown };
-    return typeof rules.raw === "string" ? rules.raw : null;
-  } catch {
-    return null;
-  }
-}
-
-function resolveInstallmentDays(
-  omieParcela:
-    | {
-        installment_days_json: string | null;
-        first_installment_days: number | null;
-        installment_interval_days: number | null;
-        installment_count: number | null;
-        rules_json?: string | null;
-      }
-    | undefined
-): number[] | null {
-  if (!omieParcela) return null;
-
-  if (omieParcela.installment_days_json) {
-    try {
-      const parsed = JSON.parse(omieParcela.installment_days_json) as unknown;
-      if (Array.isArray(parsed)) {
-        const days = parsed
-          .map((value) => Number(value))
-          .filter((value) => Number.isInteger(value) && value >= 0);
-        if (days.length > 0) return days;
-      }
-    } catch {
-      // JSON invalido no espelho OMIE: cai na derivacao abaixo.
-    }
-  }
-
-  const count = omieParcela.installment_count;
-  const first = omieParcela.first_installment_days;
-  if (count && count >= 1 && first !== null && first >= 0) {
-    const interval = omieParcela.installment_interval_days ?? 0;
-    return Array.from({ length: count }, (_, index) => first + index * interval);
-  }
-
-  return dueDaysFromRulesJson(omieParcela.rules_json);
 }
 
 /** Enfileira o job de faturamento/pedido OMIE reconstruido por buildOmieBillingJob. */
