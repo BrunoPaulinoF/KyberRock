@@ -157,6 +157,27 @@ Duas coisas que não mudam de base:
   do histórico. Nunca troque a chamada de `operationSaleDateSql` por
   `exit_weight_captured_at` cru.
 
+## Vencimento no cupom: o mesmo do título do OMIE
+
+O bloco FINANCEIRO do cupom 80 mm imprime **uma linha `VENCTO` por parcela**, com a data e o
+valor de cada uma. A conta é a do pedido enviado ao OMIE e mora num lugar só,
+`apps/desktop/src/services/order-installments.ts`: `resolveOrderPaymentSchedule` (emissão =
+dia em que a pesagem fechou + dias da condição — a mesma usada por `buildOmieBillingJob`) e
+`orderInstallmentPlan` (espelho de `orderDueDays` + `buildInstallmentPlan` do `omie-sync`:
+sem dias, a quantidade de parcelas em meses de 30 dias; o total rateado em percentual igual,
+com a última parcela absorvendo o arredondamento). Mudou a regra de um lado, mude do outro.
+
+Antes o VENCTO era a data da **impressão**: em 27/10/2026 a reimpressão de uma carga de 20/10
+em "1 parcela em 45 dias" (Pedreira Ibiúna) saiu com `VENCTO: 27/10/2026`, e o OMIE cobrava em
+04/12. Nada no vencimento pode depender de `printedAt` — a reimpressão remonta o cupom pela
+operação e tem de sair com as mesmas datas da 1ª via.
+
+Sem condição de pagamento (à vista, ou parcelamento manual, que não vai ao pedido) o pedido
+sai com uma parcela vencendo na própria emissão, e o cupom imprime o dia do fechamento. As
+datas são dia de calendário (`yyyy-mm-dd`): o template as formata direto
+(`formatCalendarDate`), porque `new Date("2026-12-04")` é meia-noite UTC e o fuso de São
+Paulo imprimiria 03/12.
+
 ## Planilhas dos relatórios (célula tipada)
 
 As planilhas geradas pelos relatórios (`Exportar Excel` do painel, Relatório por cliente,

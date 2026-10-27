@@ -8,6 +8,11 @@ import {
 } from "./weighing-operations.js";
 import { customerIdentityKey, resolveCustomerIdGroup } from "./customer-identity.js";
 import { conditionDueDaysForSale } from "./payment-condition-parser.js";
+import {
+  addDaysToIsoDate,
+  MONTHLY_INSTALLMENT_DAYS,
+  splitInstallmentAmounts
+} from "./order-installments.js";
 
 /**
  * Relatorio por cliente: todos os dados das operacoes de um cliente num periodo
@@ -895,39 +900,6 @@ function resolveInstallmentTermName(row: InstallmentSourceRow): string | null {
     return `${row.manual_installments} parcelas`;
   }
   return row.payment_term_name;
-}
-
-/**
- * Rateio do total pelas parcelas na mesma regra do pedido OMIE (percentual igual, com a
- * ultima parcela absorvendo o arredondamento para a soma bater exatamente o total).
- */
-export function splitInstallmentAmounts(totalCents: number, count: number): number[] {
-  if (count <= 0) return [];
-  if (count === 1) return [totalCents];
-  const basePercent = Math.floor(10000 / count) / 100;
-  const amounts: number[] = [];
-  let allocated = 0;
-  for (let index = 0; index < count; index += 1) {
-    if (index === count - 1) {
-      amounts.push(totalCents - allocated);
-      continue;
-    }
-    const value = Math.round((totalCents * basePercent) / 100);
-    amounts.push(value);
-    allocated += value;
-  }
-  return amounts;
-}
-
-/** Numero de dias tratado como "1 mes" quando so ha a quantidade de parcelas. */
-const MONTHLY_INSTALLMENT_DAYS = 30;
-
-/** "2026-07-15" + 30 -> "2026-08-14". Devolve a entrada crua se a data for invalida. */
-export function addDaysToIsoDate(isoDate: string, days: number): string {
-  const base = new Date(`${isoDate.slice(0, 10)}T00:00:00Z`);
-  if (Number.isNaN(base.getTime())) return isoDate;
-  base.setUTCDate(base.getUTCDate() + days);
-  return base.toISOString().slice(0, 10);
 }
 
 /** Dias inteiros de `from` ate `to` (negativo quando `to` ja passou). */

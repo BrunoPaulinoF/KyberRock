@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  addDaysToDate,
   billingEventLabel,
   billingEventTone,
   buildActivationChecklist,
@@ -16,6 +17,7 @@ import {
   invoiceStatusTone,
   isActivationComplete,
   parseMoneyToCents,
+  pendingScheduledSend,
   summarizeInvoiceList
 } from "./billing";
 import type { BillingCompany, BillingInvoice, BillingSettingsView } from "./billing";
@@ -169,6 +171,42 @@ describe("daysOverdue", () => {
     expect(daysOverdue("2026-09-05", "2026-09-11")).toBe(6);
     expect(daysOverdue("2026-09-05", "2026-09-01")).toBe(-4);
     expect(daysOverdue("", "2026-09-01")).toBe(0);
+  });
+});
+
+describe("addDaysToDate", () => {
+  it("adds days across month and year boundaries", () => {
+    expect(addDaysToDate("2026-10-27", 1)).toBe("2026-10-28");
+    expect(addDaysToDate("2026-10-31", 1)).toBe("2026-11-01");
+    expect(addDaysToDate("2026-12-31", 1)).toBe("2027-01-01");
+    expect(addDaysToDate("", 1)).toBe("");
+  });
+});
+
+describe("pendingScheduledSend", () => {
+  it("returns the scheduled day while the invoice can still be sent", () => {
+    expect(pendingScheduledSend(invoice({ whatsapp_scheduled_for: "2026-10-28" }))).toBe(
+      "2026-10-28"
+    );
+    expect(
+      pendingScheduledSend(invoice({ status: "overdue", whatsapp_scheduled_for: "2026-10-28" }))
+    ).toBe("2026-10-28");
+  });
+
+  it("ignores schedules left on paid or canceled invoices and missing columns", () => {
+    expect(
+      pendingScheduledSend(invoice({ status: "paid", whatsapp_scheduled_for: "2026-10-28" }))
+    ).toBeNull();
+    expect(
+      pendingScheduledSend(invoice({ status: "canceled", whatsapp_scheduled_for: "2026-10-28" }))
+    ).toBeNull();
+    // Antes da migracao a coluna nem vem na listagem.
+    expect(pendingScheduledSend(invoice())).toBeNull();
+  });
+
+  it("labels the schedule events in the invoice history", () => {
+    expect(billingEventLabel("send_scheduled")).toBe("Envio agendado");
+    expect(billingEventLabel("send_schedule_canceled")).toBe("Agendamento desfeito");
   });
 });
 

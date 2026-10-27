@@ -76,6 +76,29 @@ Um ciclo pulado (motor parado, pedreira cadastrada com atraso) é recuperado:
 `pendingBillingPeriods` devolve **todos** os fechamentos pendentes, não só o
 último.
 
+## Agendar envio
+
+No detalhe da fatura, em **Envio por WhatsApp**, o campo **Agendar envio** guarda o dia
+(`billing_invoices.whatsapp_scheduled_for`, migração `202610270001`) em que a passada
+automática (9h ou 15h de Brasília) manda a fatura, pela mesma `sendInvoiceWhatsapp` do botão
+"Enviar agora". O caso que motivou: boleto vencido reemitido com vencimento novo no fim do dia,
+para chegar ao financeiro da pedreira na manhã seguinte.
+
+- Vale com a chave **Enviar por WhatsApp automaticamente** desligada e mesmo para a fatura
+  já enviada: é um pedido explícito do administrador, não o envio do fechamento.
+- Só sai com boleto que vale (`scheduledSendBlocker`, em `billing-invoice.ts`): fatura ajustada
+  sem reemissão, emissão que falhou ou boleto vencido seguram o envio. O agendamento continua
+  de pé, o erro aparece na fatura e o envio sai na primeira passada depois da reemissão.
+- Roda **depois** da reconsulta dos pagamentos, para não cobrar o boleto que acabou de ser pago.
+- O agendamento é **reservado** antes do envio (só quem consegue limpar a coluna envia): o cron
+  e o "Rodar cobrança agora" juntos não mandam a mensagem duas vezes. Se o WhatsApp falhar, o
+  dia volta e a passada seguinte tenta de novo. Enviado, a coluna volta a `null`.
+- Só aceita hoje ou depois. **Desfazer agendamento** limpa a data.
+
+Ajustar o vencimento para hoje ou depois também tira a fatura de **Vencida**: o
+`markOverdueInvoices` só marca, nunca desmarca, e a fatura seguia vencida com o vencimento
+novo no futuro.
+
 ## Bloqueio por inadimplência
 
 "Depois de X dias de inadimplência, bloqueio automático." X é

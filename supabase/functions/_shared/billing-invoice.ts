@@ -301,6 +301,38 @@ export function normalizeWhatsappNumber(phone: string | null | undefined): strin
   return digits;
 }
 
+/**
+ * Por que um envio AGENDADO ("Agendar envio" no painel) nao pode sair agora; null quando pode.
+ *
+ * O agendamento manda o boleto que esta na fatura no dia escolhido, entao ele nao sai com um
+ * boleto que ja nao vale: fatura ajustada depois da emissao (o `boleto_error` pede a
+ * reemissao), emissao que falhou ou boleto vencido no Mercado Pago. Mandar esse papel
+ * cobraria o valor ou a data errada. O agendamento continua de pe e sai na primeira passada
+ * depois de o boleto ser reemitido.
+ */
+export function scheduledSendBlocker(
+  invoice: {
+    status: string;
+    boletoPaymentId: string | null;
+    boletoError: string | null;
+    boletoExpiresAt: string | null;
+  },
+  today: string
+): string | null {
+  if (invoice.status === "paid" || invoice.status === "canceled") {
+    return "Envio agendado nao saiu: a fatura esta paga ou cancelada.";
+  }
+  if (invoice.boletoError) return `Envio agendado nao saiu: ${invoice.boletoError}`;
+  if (
+    invoice.boletoPaymentId &&
+    invoice.boletoExpiresAt &&
+    invoice.boletoExpiresAt.slice(0, 10) < today
+  ) {
+    return "Envio agendado nao saiu: o boleto venceu. Reemita o boleto.";
+  }
+  return null;
+}
+
 /** Nome do arquivo PDF anexado no WhatsApp e baixado no painel. */
 export function invoicePdfFileName(invoiceNumber: string, referenceLabel: string): string {
   const reference = referenceLabel.replace("/", "-");

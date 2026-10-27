@@ -4,6 +4,7 @@ import {
   buildReceiptDocument,
   buildSampleReceiptInput,
   normalizeReceiptTemplateConfig,
+  receiptInvoiceTotalCents,
   DEFAULT_RECEIPT_TEMPLATE_CONFIG,
   type ReceiptHeaderBlock,
   type ReceiptStyle,
@@ -21,6 +22,11 @@ import {
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { freightValueGoesToInvoice } from "./freight.js";
 import { enqueueSyncJob } from "./sync-queue.js";
+import {
+  orderInstallmentPlan,
+  resolveOrderPaymentSchedule,
+  type OrderPaymentSchedule
+} from "./order-installments.js";
 import { isClosedOperationStatus, nextOperationCode } from "./weighing-operations.js";
 
 export type PrintReceiptStatus = "printed" | "failed";
@@ -216,6 +222,7 @@ interface OperationReceiptRow {
   driver_name: string | null;
   product_code: string | null;
   product_description: string | null;
+  payment_term_id: string | null;
   payment_term_name: string | null;
   payment_method_name: string | null;
   /**
@@ -542,6 +549,11 @@ async function writeReceiptAttempt(
   const receiptId = randomUUID();
   const snapshot = buildReceiptSnapshot(
     operation,
+    resolveOrderPaymentSchedule(
+      database,
+      operation.payment_term_id,
+      operation.exit_weight_captured_at
+    ),
     receiptNumber,
     deviceNumber,
     copyNumber,
@@ -739,6 +751,7 @@ function getOperationForReceipt(
           WHEN o.manual_installments > 1 THEN CAST(o.manual_installments AS TEXT) || ' parcelas'
           ELSE pt.name
         END AS payment_term_name,
+        o.payment_term_id,
         pm.name AS payment_method_name
        FROM weighing_operations o
         INNER JOIN companies co ON co.id = o.company_id
@@ -836,6 +849,7 @@ function getNextCopyNumber(database: DesktopDatabase, operationId: string): numb
 
 function buildReceiptSnapshot(
   operation: OperationReceiptRow,
+  paymentSchedule: OrderPaymentSchedule,
   receiptNumber: number,
   deviceNumber: number | null,
   copyNumber: number,
@@ -894,6 +908,13 @@ function buildReceiptSnapshot(
     futureBillingNfeNumber: operation.future_billing_nfe_number,
     totalCents: operation.total_cents ?? 0
   };
+  // VENCTO do bloco FINANCEIRO: emissao do pedido do OMIE (o dia em que a pesagem fechou)
+  // mais o prazo de cada parcela, na mesma conta que monta o pedido. Nada aqui depende de
+  // `printedAt` — a reimpressao de outro dia sai com o mesmo vencimento da 1a via.
+  templateInput.installments = orderInstallmentPlan(
+    paymentSchedule,
+    receiptInvoiceTotalCents(templateInput)
+  ).map(({ dueDate, valueCents }) => ({ dueDate, valueCents }));
   const document = buildReceiptDocument(templateInput, templateConfig);
 
   return {

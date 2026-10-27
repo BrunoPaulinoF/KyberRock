@@ -35,7 +35,8 @@ import {
   isReadyForBoleto,
   missingBillingFields,
   normalizeWhatsappNumber,
-  resolveBillingCustomer
+  resolveBillingCustomer,
+  scheduledSendBlocker
 } from "./billing-invoice.ts";
 import type { BillingCustomer } from "./billing-invoice.ts";
 import { buildInvoicePdf, toBase64 } from "./billing-pdf.ts";
@@ -52,6 +53,9 @@ import {
 
 /** Quantos boletos em aberto sao reconsultados no Mercado Pago por passada. */
 const MAX_PAYMENT_POLLS_PER_RUN = 40;
+
+/** Quantos envios agendados uma passada processa (o resto fica para a seguinte). */
+const MAX_SCHEDULED_SENDS_PER_RUN = 40;
 
 export const BILLING_SETTINGS_TABLE = "billing_settings";
 export const BILLING_SETTINGS_ID = true;
@@ -149,6 +153,12 @@ export interface BillingInvoiceRow {
   whatsapp_sent_at: string | null;
   whatsapp_error: string | null;
   whatsapp_attempts: number;
+  /**
+   * Dia (yyyy-mm-dd) em que a passada automatica manda a fatura por WhatsApp — o "Agendar
+   * envio" do painel. Vale mesmo que ela ja tenha sido enviada (e um reenvio pedido) e
+   * volta a null quando o envio sai. Ausente antes da migracao 202610270001.
+   */
+  whatsapp_scheduled_for?: string | null;
   paid_at: string | null;
   paid_amount_cents: number | null;
   payment_method: string | null;
@@ -1153,6 +1163,8 @@ export interface BillingRunSummary {
   invoicesCreated: number;
   boletosIssued: number;
   invoicesSent: number;
+  /** Envios agendados no painel que sairam nesta passada. */
+  scheduledSent: number;
   invoicesMarkedOverdue: number;
   paymentsSynced: number;
   companiesBlocked: number;
@@ -1185,6 +1197,7 @@ export async function runBillingCycle(
     invoicesCreated: 0,
     boletosIssued: 0,
     invoicesSent: 0,
+    scheduledSent: 0,
     invoicesMarkedOverdue: 0,
     paymentsSynced: 0,
     companiesBlocked: 0,
@@ -1224,6 +1237,20 @@ export async function runBillingCycle(
     companyId: options.companyId ?? null,
     errors: summary.errors
   });
+
+  // Depois da reconsulta dos pagamentos, para nao cobrar por WhatsApp o boleto que acabou de
+  // ser pago. Uma falha aqui (migracao do agendamento pendente, por exemplo) nao pode derrubar
+  // o bloqueio logo abaixo.
+  try {
+    summary.scheduledSent = await sendScheduledInvoices(supabase, {
+      settings,
+      today,
+      companyId: options.companyId ?? null,
+      errors: summary.errors
+    });
+  } catch (error) {
+    summary.errors.push(`Envios agendados: ${error instanceof Error ? error.message : "falharam"}`);
+  }
 
   // O bloqueio avalia TODAS as pedreiras com fatura viva, nao so as de
   // `billing_enabled`: desligar a cobranca automatica de quem ja deve nao pode
@@ -1303,6 +1330,97 @@ async function closeDueCyclesForCompany(
       if (sent.sent) summary.invoicesSent += 1;
     }
   }
+}
+
+/**
+ * Envios por WhatsApp agendados no painel ("Agendar envio"): manda as faturas em aberto cujo
+ * dia chegou. O agendamento e um pedido explicito do administrador, entao vale com a chave
+ * "Enviar por WhatsApp automaticamente" desligada e mesmo para a fatura que ja foi enviada
+ * (e o caso do boleto reemitido que precisa chegar de novo ao cliente).
+ *
+ * Boleto que nao vale mais (ver `scheduledSendBlocker`) segura o envio e deixa o agendamento
+ * de pe: o erro aparece na fatura e o envio sai na primeira passada depois da reemissao. Para
+ * duas passadas simultaneas (cron e "Rodar cobranca agora") nao mandarem a mesma mensagem
+ * duas vezes, o agendamento e RESERVADO antes do envio — so quem consegue limpa-lo envia — e
+ * volta para a fila se o WhatsApp falhar.
+ */
+export async function sendScheduledInvoices(
+  supabase: SupabaseClient,
+  input: {
+    settings: BillingSettings;
+    today: string;
+    companyId: string | null;
+    errors: string[];
+  }
+): Promise<number> {
+  let query = supabase
+    .from("billing_invoices")
+    .select("*")
+    .in("status", ["open", "overdue"])
+    .lte("whatsapp_scheduled_for", input.today)
+    .order("whatsapp_scheduled_for", { ascending: true })
+    .limit(MAX_SCHEDULED_SENDS_PER_RUN);
+  if (input.companyId) query = query.eq("company_id", input.companyId);
+
+  const { data, error } = await query;
+  if (error) throw error;
+  const invoices = (data ?? []) as unknown as BillingInvoiceRow[];
+
+  let sent = 0;
+  for (const invoice of invoices) {
+    const scheduledFor = invoice.whatsapp_scheduled_for;
+    if (!scheduledFor) continue;
+    try {
+      const blocker = scheduledSendBlocker(
+        {
+          status: invoice.status,
+          boletoPaymentId: invoice.boleto_payment_id,
+          boletoError: invoice.boleto_error,
+          boletoExpiresAt: invoice.boleto_expires_at
+        },
+        input.today
+      );
+      if (blocker) {
+        await failWhatsapp(supabase, invoice, blocker);
+        input.errors.push(`${invoice.number}: ${blocker}`);
+        continue;
+      }
+
+      const { data: claimed, error: claimError } = await supabase
+        .from("billing_invoices")
+        .update({ whatsapp_scheduled_for: null, updated_at: nowIso() })
+        .eq("id", invoice.id)
+        .eq("whatsapp_scheduled_for", scheduledFor)
+        .select("id");
+      if (claimError) throw claimError;
+      if (!claimed || claimed.length === 0) continue;
+
+      const company = await getCompany(supabase, invoice.company_id);
+      const result = await sendInvoiceWhatsapp(supabase, {
+        settings: input.settings,
+        company,
+        invoice: { ...invoice, whatsapp_scheduled_for: null }
+      });
+      if (result.sent) {
+        sent += 1;
+        continue;
+      }
+
+      // WhatsApp fora do ar, numero recusado...: o agendamento volta e a proxima passada tenta
+      // de novo — a nao ser que o administrador tenha reagendado no meio tempo.
+      await supabase
+        .from("billing_invoices")
+        .update({ whatsapp_scheduled_for: scheduledFor })
+        .eq("id", invoice.id)
+        .is("whatsapp_scheduled_for", null);
+      input.errors.push(`${invoice.number}: ${result.error ?? "envio agendado falhou"}`);
+    } catch (error) {
+      input.errors.push(
+        `Envio agendado ${invoice.number}: ${error instanceof Error ? error.message : "falhou"}`
+      );
+    }
+  }
+  return sent;
 }
 
 async function syncOpenPayments(

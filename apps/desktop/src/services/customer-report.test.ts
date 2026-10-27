@@ -2,11 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase } from "../database/sqlite";
-import {
-  CustomerReportService,
-  addDaysToIsoDate,
-  splitInstallmentAmounts
-} from "./customer-report";
+import { CustomerReportService } from "./customer-report";
+import { addDaysToIsoDate, splitInstallmentAmounts } from "./order-installments";
 import {
   customerReportFileBaseName,
   customersOverviewFileBaseName,

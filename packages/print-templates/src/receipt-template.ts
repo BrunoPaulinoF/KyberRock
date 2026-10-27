@@ -66,6 +66,24 @@ export interface ReceiptTemplateInput {
    */
   futureBillingNfeNumber?: string | null;
   totalCents: number;
+  /**
+   * Parcelas do bloco FINANCEIRO, uma linha "VENCTO" por parcela. Quem monta o cupom as
+   * calcula na MESMA conta do pedido do OMIE — emissao = dia em que a pesagem FECHOU, mais
+   * o prazo da condicao de pagamento —, para o papel trazer a data do titulo que o cliente
+   * vai pagar. Os valores somam {@link receiptInvoiceTotalCents}.
+   *
+   * Ausente ou vazia (cupom de exemplo, quem nao calculou): uma linha so, a vista, vencendo
+   * no dia da SAIDA da balanca. Nunca no dia da impressao — antes era, e a reimpressao de
+   * uma carga de 20/10 em 45 dias saia em 27/10 com "VENCTO: 27/10", contra 04/12 no OMIE.
+   */
+  installments?: ReceiptInstallment[] | null;
+}
+
+/** Uma parcela impressa no bloco FINANCEIRO. */
+export interface ReceiptInstallment {
+  /** Vencimento (yyyy-mm-dd): dia do calendario, impresso como esta, sem fuso. */
+  dueDate: string;
+  valueCents: number;
 }
 
 /**
@@ -344,7 +362,7 @@ export function buildReceiptDocument(
 }
 
 /** O valor do frete sai neste documento (cupons antigos, sem a escolha, mantem "sim"). */
-function showsFreightValue(input: ReceiptTemplateInput): boolean {
+function showsFreightValue(input: Pick<ReceiptTemplateInput, "showFreightValue">): boolean {
   return input.showFreightValue !== false;
 }
 
@@ -352,9 +370,27 @@ function showsFreightValue(input: ReceiptTemplateInput): boolean {
  * Total impresso. Com o frete fora do documento (valor so no sistema), o frete tambem sai
  * do total — senao o cupom cobraria um valor que a nota nao mostra de onde veio.
  */
-function invoiceTotalCents(input: ReceiptTemplateInput): number {
+export function receiptInvoiceTotalCents(
+  input: Pick<ReceiptTemplateInput, "totalCents" | "freightTotalCents" | "showFreightValue">
+): number {
   if (showsFreightValue(input)) return input.totalCents;
   return Math.max(0, input.totalCents - input.freightTotalCents);
+}
+
+/**
+ * Linhas "VENCTO" do bloco FINANCEIRO. Sem parcelas calculadas, a venda e tratada como a
+ * vista no fechamento: vence no dia da saida da balanca.
+ */
+function financialDueLines(input: ReceiptTemplateInput): string[] {
+  if (!input.installments || input.installments.length === 0) {
+    return [
+      `VENCTO: ${formatDate(input.exitCapturedAt)} - VALOR R$ ${formatNumber(receiptInvoiceTotalCents(input) / 100)}`
+    ];
+  }
+  return input.installments.map(
+    (installment) =>
+      `VENCTO: ${formatCalendarDate(installment.dueDate)} - VALOR R$ ${formatNumber(installment.valueCents / 100)}`
+  );
 }
 
 function buildHeaderBlock(
@@ -530,11 +566,7 @@ function buildBodyLines(input: ReceiptTemplateInput, config: ReceiptTemplateConf
   }
 
   if (config.showFinancial) {
-    lines.push(
-      divider(),
-      "FINANCEIRO",
-      `VENCTO: ${formatDate(input.printedAt)} - VALOR R$ ${formatNumber(invoiceTotalCents(input) / 100)}`
-    );
+    lines.push(divider(), "FINANCEIRO", ...financialDueLines(input));
   }
 
   if (config.showSignature) {
@@ -1117,6 +1149,16 @@ function formatDate(value: string): string {
     year: "numeric",
     timeZone: "America/Sao_Paulo"
   }).format(new Date(value));
+}
+
+/**
+ * "2026-12-04" -> "04/12/2026". A data do vencimento e um dia do calendario, nao um
+ * instante: passar por `new Date` a leria como meia-noite UTC e o fuso de Sao Paulo a
+ * imprimiria um dia antes.
+ */
+function formatCalendarDate(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
 }
 
 function formatTime(value: string): string {

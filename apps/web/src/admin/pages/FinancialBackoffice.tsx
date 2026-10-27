@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { edgeFunctionUrl } from "../../lib/supabase-env";
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
 import {
+  addDaysToDate,
   billingEventLabel,
   billingEventTone,
   buildActivationChecklist,
@@ -20,6 +21,7 @@ import {
   invoiceStatusTone,
   isActivationComplete,
   parseMoneyToCents,
+  pendingScheduledSend,
   summarizeInvoiceList
 } from "../lib/billing";
 import type {
@@ -414,6 +416,11 @@ export function FinancialBackoffice({ onSessionExpired }: { onSessionExpired: ()
           <Badge tone={invoice.whatsapp_sent_at ? "ok" : "neutral"} dot>
             {invoice.whatsapp_sent_at ? "Enviada" : "Não enviada"}
           </Badge>
+          {pendingScheduledSend(invoice) && (
+            <Badge tone="info" dot>
+              Envio em {formatDateBr(pendingScheduledSend(invoice)).slice(0, 5)}
+            </Badge>
+          )}
         </ButtonGroup>
       )
     },
@@ -1087,6 +1094,8 @@ function InvoiceDetailModal({
 }) {
   const isClosed = invoice.status === "paid" || invoice.status === "canceled";
   const isBusy = Boolean(busy?.endsWith(invoice.id));
+  const scheduledSend = pendingScheduledSend(invoice);
+  const [scheduleDate, setScheduleDate] = useState(() => addDaysToDate(today, 1));
 
   return (
     <Modal
@@ -1269,6 +1278,62 @@ function InvoiceDetailModal({
                 </Button>
               </ButtonGroup>
             )}
+            {!isClosed &&
+              (scheduledSend ? (
+                <>
+                  <Note tone="info">
+                    Envio agendado para {formatDateBr(scheduledSend)}: sai na cobrança automática do
+                    dia (9h ou 15h), com o boleto que estiver na fatura.
+                    {invoice.boleto_error &&
+                      " O boleto atual não vale mais — reemita antes, senão o envio espera."}
+                  </Note>
+                  <ButtonGroup>
+                    <Button
+                      size="sm"
+                      disabled={isBusy}
+                      onClick={() =>
+                        onAction(
+                          "schedule_send",
+                          { invoiceId: invoice.id, date: "" },
+                          "Agendamento desfeito."
+                        )
+                      }
+                    >
+                      Desfazer agendamento
+                    </Button>
+                  </ButtonGroup>
+                </>
+              ) : (
+                <>
+                  <Field
+                    label="Agendar envio"
+                    hint="A cobrança automática manda a fatura por WhatsApp nesse dia (9h ou 15h)."
+                  >
+                    <input
+                      className="adm-input"
+                      type="date"
+                      min={today}
+                      value={scheduleDate}
+                      onChange={(event) => setScheduleDate(event.target.value)}
+                    />
+                  </Field>
+                  <ButtonGroup>
+                    <Button
+                      size="sm"
+                      disabled={isBusy || !scheduleDate || scheduleDate < today}
+                      onClick={() =>
+                        onAction(
+                          "schedule_send",
+                          { invoiceId: invoice.id, date: scheduleDate },
+                          `Envio agendado para ${formatDateBr(scheduleDate)}.`
+                        )
+                      }
+                    >
+                      Agendar envio
+                    </Button>
+                  </ButtonGroup>
+                </>
+              ))}
           </div>
         </Fieldset>
 

@@ -97,6 +97,11 @@ export interface BillingInvoice {
   whatsapp_to: string | null;
   whatsapp_sent_at: string | null;
   whatsapp_error: string | null;
+  /**
+   * Dia do envio agendado ("Agendar envio"), que a cobranca automatica manda por WhatsApp.
+   * Ausente enquanto a migracao 202610270001 nao foi aplicada.
+   */
+  whatsapp_scheduled_for?: string | null;
   paid_at: string | null;
   paid_amount_cents: number | null;
   payment_method: string | null;
@@ -247,6 +252,25 @@ export function formatDateTimeBr(value: string | null | undefined): string {
   return Number.isNaN(parsed.getTime()) ? "" : parsed.toLocaleString("pt-BR");
 }
 
+/** "2026-10-27" + 1 -> "2026-10-28". Devolve a entrada se nao for uma data. */
+export function addDaysToDate(date: string, days: number): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return date;
+  const base = new Date(`${date}T00:00:00Z`);
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toISOString().slice(0, 10);
+}
+
+/**
+ * Dia do envio agendado que ainda vai sair, ou null. Fatura paga ou cancelada nao envia
+ * mais nada, entao o agendamento que sobrou nela nao aparece na tela.
+ */
+export function pendingScheduledSend(
+  invoice: Pick<BillingInvoice, "status" | "whatsapp_scheduled_for">
+): string | null {
+  if (invoice.status === "paid" || invoice.status === "canceled") return null;
+  return invoice.whatsapp_scheduled_for || null;
+}
+
 /** Dias de atraso; zero ou negativo enquanto o vencimento nao passou. */
 export function daysOverdue(dueDate: string, today: string): number {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate) || !/^\d{4}-\d{2}-\d{2}$/.test(today)) return 0;
@@ -380,6 +404,8 @@ const BILLING_EVENT_LABELS: Record<string, string> = {
   invoice_paid: "Pagamento confirmado",
   invoice_sent: "Enviada por WhatsApp",
   invoice_send_failed: "Falha no envio",
+  send_scheduled: "Envio agendado",
+  send_schedule_canceled: "Agendamento desfeito",
   boleto_issued: "Boleto emitido",
   boleto_failed: "Falha na emissão do boleto",
   boleto_status_changed: "Situação do boleto mudou",

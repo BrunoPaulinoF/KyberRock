@@ -464,6 +464,7 @@ export const documentationSections: DocumentationSection[] = [
       "Falha de impressao NAO desfaz a operacao. A pesagem fechada continua salva; corrija a impressora e reimprima.",
       "O cupom traz o codigo da operacao (COD), dados da pedreira, cliente, produto, pesos de entrada, saida e liquido, valor, frete, veiculo, motorista e assinatura.",
       'A linha "COD" e o codigo da operacao; "COPIA NRO" conta quantas vias ja sairam. Nao confunda os dois.',
+      'O "VENCTO" do bloco FINANCEIRO e o mesmo vencimento do titulo no OMIE: o dia em que a pesagem fechou mais o prazo da condicao de pagamento, uma linha por parcela com o valor de cada uma. Venda a vista vence no dia do fechamento. A reimpressao sai com as mesmas datas da 1a via, qualquer que seja o dia em que ela for feita.',
       "A logo do cupom e convertida para preto e branco na impressao. Logo muito clara pode sumir no papel — o sistema avisa quando detecta isso.",
       'O telefone da pedreira e opcional: preenchido, sai no rodape como "CONTATO: ..."; em branco, o cupom nao mostra a linha.',
       "Para relatorios em A4, confira a impressora padrao do Windows: eles usam o caminho de impressao normal, nao a termica."
@@ -482,7 +483,9 @@ export const documentationSections: DocumentationSection[] = [
       "papel",
       "driver",
       "a4",
-      "logo do cupom"
+      "logo do cupom",
+      "vencto",
+      "vencimento no cupom"
     ]
   },
   {
