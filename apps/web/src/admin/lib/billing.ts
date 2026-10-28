@@ -102,6 +102,9 @@ export interface BillingInvoice {
    * Ausente enquanto a migracao 202610270001 nao foi aplicada.
    */
   whatsapp_scheduled_for?: string | null;
+  /** Vencimento para o qual o lembrete ja saiu, e quando (migracao 202610270002). */
+  reminder_sent_for_due_date?: string | null;
+  reminder_sent_at?: string | null;
   paid_at: string | null;
   paid_amount_cents: number | null;
   payment_method: string | null;
@@ -143,6 +146,9 @@ export interface BillingSettingsView {
   autoBoletoEnabled: boolean;
   autoWhatsappEnabled: boolean;
   autoBlockEnabled: boolean;
+  /** Ausentes enquanto a Edge Function nao foi atualizada. */
+  autoReminderEnabled?: boolean;
+  reminderDaysBefore?: number;
   issuerName: string;
   issuerDocument: string;
   issuerEmail: string;
@@ -150,6 +156,7 @@ export interface BillingSettingsView {
   issuerPixKey: string;
   invoiceDescriptionTemplate: string;
   whatsappMessageTemplate: string;
+  whatsappReminderTemplate?: string;
 }
 
 export interface BillingSummary {
@@ -269,6 +276,19 @@ export function pendingScheduledSend(
 ): string | null {
   if (invoice.status === "paid" || invoice.status === "canceled") return null;
   return invoice.whatsapp_scheduled_for || null;
+}
+
+/**
+ * Quando o lembrete do vencimento ATUAL saiu, ou null. Lembrete de um vencimento antigo (antes
+ * de o boleto ser reemitido com data nova) nao conta: o cliente ainda vai receber outro.
+ */
+export function reminderSentForCurrentDue(
+  invoice: Pick<BillingInvoice, "due_date" | "reminder_sent_for_due_date" | "reminder_sent_at">
+): string | null {
+  if (!invoice.reminder_sent_at || invoice.reminder_sent_for_due_date !== invoice.due_date) {
+    return null;
+  }
+  return invoice.reminder_sent_at;
 }
 
 /** Dias de atraso; zero ou negativo enquanto o vencimento nao passou. */
@@ -406,6 +426,8 @@ const BILLING_EVENT_LABELS: Record<string, string> = {
   invoice_send_failed: "Falha no envio",
   send_scheduled: "Envio agendado",
   send_schedule_canceled: "Agendamento desfeito",
+  reminder_sent: "Lembrete de vencimento enviado",
+  reminder_failed: "Lembrete não saiu",
   boleto_issued: "Boleto emitido",
   boleto_failed: "Falha na emissão do boleto",
   boleto_status_changed: "Situação do boleto mudou",
@@ -427,6 +449,7 @@ export function billingEventLabel(eventType: string): string {
 
 const BILLING_EVENT_DANGER = new Set([
   "invoice_send_failed",
+  "reminder_failed",
   "boleto_failed",
   "company_blocked",
   "company_blocked_manually",
@@ -437,6 +460,7 @@ const BILLING_EVENT_DANGER = new Set([
 const BILLING_EVENT_OK = new Set([
   "invoice_paid",
   "invoice_sent",
+  "reminder_sent",
   "boleto_issued",
   "company_released",
   "company_released_manually"

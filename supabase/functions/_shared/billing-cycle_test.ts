@@ -13,13 +13,16 @@ import {
   inclusiveDays,
   invoiceTotalCents,
   isOverdue,
+  isReminderDue,
   nextBillingPeriod,
   pendingBillingPeriods,
   previousClosing,
   proratedAmountCents,
   referenceLabel,
+  reminderWindowStart,
   resolveBillingConfig,
   resolveGraceDays,
+  resolveReminderDaysBefore,
   shouldBlockForOverdue,
   upcomingBillingPeriod
 } from "./billing-cycle.ts";
@@ -318,5 +321,54 @@ describe("resolveGraceDays", () => {
     expect(resolveGraceDays(null, 5)).toBe(5);
     expect(resolveGraceDays(0, 5)).toBe(0);
     expect(resolveGraceDays(-3, 5)).toBe(0);
+  });
+});
+
+describe("lembrete de vencimento", () => {
+  // Caso da FAT-2026-00010: boleto reemitido para 02/11, enviado (agendado) em 28/10.
+  const base = {
+    dueDate: "2026-11-02",
+    daysBefore: 3,
+    remindedForDueDate: null,
+    lastSentOn: "2026-10-28"
+  };
+
+  it("abre a janela N dias antes do vencimento", () => {
+    expect(reminderWindowStart("2026-11-02", 3)).toBe("2026-10-30");
+    expect(reminderWindowStart("2026-03-02", 3)).toBe("2026-02-27");
+  });
+
+  it("sai no primeiro dia da janela e nao antes", () => {
+    expect(isReminderDue({ ...base, today: "2026-10-29" })).toBe(false);
+    expect(isReminderDue({ ...base, today: "2026-10-30" })).toBe(true);
+  });
+
+  it("recupera ate o dia do vencimento quando a passada perdeu o primeiro dia", () => {
+    expect(isReminderDue({ ...base, today: "2026-11-01" })).toBe(true);
+    expect(isReminderDue({ ...base, today: "2026-11-02" })).toBe(true);
+    expect(isReminderDue({ ...base, today: "2026-11-03" })).toBe(false);
+  });
+
+  it("sai uma vez por vencimento, e de novo quando o vencimento muda", () => {
+    expect(isReminderDue({ ...base, today: "2026-10-31", remindedForDueDate: "2026-11-02" })).toBe(
+      false
+    );
+    // Lembrete antigo era do vencimento de 25/10; o boleto novo vence em 02/11.
+    expect(isReminderDue({ ...base, today: "2026-10-31", remindedForDueDate: "2026-10-25" })).toBe(
+      true
+    );
+  });
+
+  it("nao repete a fatura que acabou de chegar dentro da janela", () => {
+    expect(isReminderDue({ ...base, today: "2026-10-31", lastSentOn: "2026-10-30" })).toBe(false);
+    expect(isReminderDue({ ...base, today: "2026-10-31", lastSentOn: null })).toBe(true);
+  });
+
+  it("aceita de 1 a 30 dias e cai no padrao com valor invalido", () => {
+    expect(resolveReminderDaysBefore(5)).toBe(5);
+    expect(resolveReminderDaysBefore(90)).toBe(30);
+    expect(resolveReminderDaysBefore(0)).toBe(3);
+    expect(resolveReminderDaysBefore("abc")).toBe(3);
+    expect(resolveReminderDaysBefore(null)).toBe(3);
   });
 });

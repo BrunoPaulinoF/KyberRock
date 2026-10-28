@@ -22,6 +22,7 @@ import {
   isActivationComplete,
   parseMoneyToCents,
   pendingScheduledSend,
+  reminderSentForCurrentDue,
   summarizeInvoiceList
 } from "../lib/billing";
 import type {
@@ -1095,6 +1096,7 @@ function InvoiceDetailModal({
   const isClosed = invoice.status === "paid" || invoice.status === "canceled";
   const isBusy = Boolean(busy?.endsWith(invoice.id));
   const scheduledSend = pendingScheduledSend(invoice);
+  const reminderSentAt = reminderSentForCurrentDue(invoice);
   const [scheduleDate, setScheduleDate] = useState(() => addDaysToDate(today, 1));
 
   return (
@@ -1260,6 +1262,11 @@ function InvoiceDetailModal({
                 ? `Enviada em ${formatDateTimeBr(invoice.whatsapp_sent_at)} para ${invoice.whatsapp_to ?? "—"}.`
                 : "Ainda não enviada."}
             </p>
+            {reminderSentAt && (
+              <p className="adm-field-hint">
+                Lembrete de vencimento enviado em {formatDateTimeBr(reminderSentAt)}.
+              </p>
+            )}
             {invoice.whatsapp_error && <Note tone="warn">{invoice.whatsapp_error}</Note>}
             {!isClosed && (
               <ButtonGroup>
@@ -1890,13 +1897,16 @@ function BillingSettingsForm({
       autoBoletoEnabled: form.get("autoBoletoEnabled") === "on",
       autoWhatsappEnabled: form.get("autoWhatsappEnabled") === "on",
       autoBlockEnabled: form.get("autoBlockEnabled") === "on",
+      autoReminderEnabled: form.get("autoReminderEnabled") === "on",
+      reminderDaysBefore: form.get("reminderDaysBefore"),
       issuerName: form.get("issuerName"),
       issuerDocument: form.get("issuerDocument"),
       issuerEmail: form.get("issuerEmail"),
       issuerPhone: form.get("issuerPhone"),
       issuerPixKey: form.get("issuerPixKey"),
       invoiceDescriptionTemplate: form.get("invoiceDescriptionTemplate"),
-      whatsappMessageTemplate: form.get("whatsappMessageTemplate")
+      whatsappMessageTemplate: form.get("whatsappMessageTemplate"),
+      whatsappReminderTemplate: form.get("whatsappReminderTemplate")
     });
   }
 
@@ -2036,6 +2046,26 @@ function BillingSettingsForm({
             defaultChecked={settings.autoBlockEnabled}
             label="Bloquear por inadimplência"
           />
+          <Checkbox
+            name="autoReminderEnabled"
+            defaultChecked={settings.autoReminderEnabled ?? true}
+            label="Lembrar por WhatsApp antes do vencimento"
+          />
+        </div>
+        <div className="adm-grid adm-grid-spaced">
+          <Field
+            label="Dias antes do vencimento"
+            hint="O lembrete sai na cobrança automática desse dia (9h ou 15h), uma vez por vencimento, com o mesmo boleto."
+          >
+            <input
+              className="adm-input"
+              name="reminderDaysBefore"
+              type="number"
+              min={1}
+              max={30}
+              defaultValue={settings.reminderDaysBefore ?? 3}
+            />
+          </Field>
         </div>
       </Panel>
 
@@ -2088,6 +2118,17 @@ function BillingSettingsForm({
               name="whatsappMessageTemplate"
               rows={4}
               defaultValue={settings.whatsappMessageTemplate}
+            />
+          </Field>
+          <Field
+            label="Mensagem do lembrete de vencimento"
+            hint="Marcadores: {pedreira} {numero} {referencia} {valor} {vencimento} {dias} {boleto} {linha_digitavel} {pix}. Vazio usa a mensagem padrão."
+          >
+            <textarea
+              className="adm-textarea"
+              name="whatsappReminderTemplate"
+              rows={4}
+              defaultValue={settings.whatsappReminderTemplate ?? ""}
             />
           </Field>
         </div>

@@ -263,6 +263,49 @@ export function shouldBlockForOverdue(input: {
   return daysOverdue(input.dueDate, input.today) > Math.max(0, Math.trunc(input.graceDays));
 }
 
+/** Dias antes do vencimento em que sai o lembrete, quando a configuracao nao diz. */
+export const DEFAULT_REMINDER_DAYS_BEFORE = 3;
+
+/** Dias do lembrete aceitos na configuracao: de 1 a 30, inteiro. */
+export function resolveReminderDaysBefore(value: unknown): number {
+  const days = Math.trunc(Number(value));
+  if (!Number.isFinite(days) || days < 1) return DEFAULT_REMINDER_DAYS_BEFORE;
+  return Math.min(days, 30);
+}
+
+/** Primeiro dia em que o lembrete pode sair: vencimento 02/11 com 3 dias -> 30/10. */
+export function reminderWindowStart(dueDate: string, daysBefore: number): string {
+  return addDays(dueDate, -resolveReminderDaysBefore(daysBefore));
+}
+
+/**
+ * O lembrete de vencimento desta fatura sai hoje?
+ *
+ * Sai uma vez por VENCIMENTO, entre `reminderWindowStart` e o proprio dia do vencimento — a
+ * passada que nao rodou no primeiro dia (motor parado) recupera no seguinte. Fatura que mudou
+ * de vencimento (boleto reemitido) ganha lembrete novo, porque o anterior falava da data velha.
+ *
+ * Nao sai quando a propria fatura chegou ao cliente dentro da janela (`lastSentOn`, o dia do
+ * ultimo envio por WhatsApp): o lembrete repetiria o que ele acabou de receber.
+ */
+export function isReminderDue(input: {
+  dueDate: string;
+  today: string;
+  daysBefore: number;
+  /** Vencimento para o qual o ultimo lembrete saiu (null: nenhum). */
+  remindedForDueDate: string | null;
+  /** Dia (Sao Paulo) do ultimo envio da fatura por WhatsApp (null: nunca enviada). */
+  lastSentOn: string | null;
+}): boolean {
+  if (!isValidDateString(input.dueDate) || !isValidDateString(input.today)) return false;
+  if (input.remindedForDueDate === input.dueDate) return false;
+  if (input.today > input.dueDate) return false;
+  const start = reminderWindowStart(input.dueDate, input.daysBefore);
+  if (input.today < start) return false;
+  if (input.lastSentOn && input.lastSentOn >= start) return false;
+  return true;
+}
+
 /** Configuracao efetiva da pedreira: o que ela definiu, senao o padrao global. */
 export function resolveBillingConfig(input: {
   startDate: string | null | undefined;

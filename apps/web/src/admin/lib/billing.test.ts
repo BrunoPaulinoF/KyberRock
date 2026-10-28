@@ -18,6 +18,7 @@ import {
   isActivationComplete,
   parseMoneyToCents,
   pendingScheduledSend,
+  reminderSentForCurrentDue,
   summarizeInvoiceList
 } from "./billing";
 import type { BillingCompany, BillingInvoice, BillingSettingsView } from "./billing";
@@ -207,6 +208,38 @@ describe("pendingScheduledSend", () => {
   it("labels the schedule events in the invoice history", () => {
     expect(billingEventLabel("send_scheduled")).toBe("Envio agendado");
     expect(billingEventLabel("send_schedule_canceled")).toBe("Agendamento desfeito");
+  });
+});
+
+describe("reminderSentForCurrentDue", () => {
+  it("shows the reminder only when it was sent for the current due date", () => {
+    expect(
+      reminderSentForCurrentDue(
+        invoice({
+          due_date: "2026-11-02",
+          reminder_sent_for_due_date: "2026-11-02",
+          reminder_sent_at: "2026-10-30T12:00:05Z"
+        })
+      )
+    ).toBe("2026-10-30T12:00:05Z");
+    // Lembrete do vencimento antigo: o boleto foi reemitido com data nova.
+    expect(
+      reminderSentForCurrentDue(
+        invoice({
+          due_date: "2026-11-02",
+          reminder_sent_for_due_date: "2026-10-25",
+          reminder_sent_at: "2026-10-22T12:00:05Z"
+        })
+      )
+    ).toBeNull();
+    expect(reminderSentForCurrentDue(invoice())).toBeNull();
+  });
+
+  it("labels and colors the reminder events", () => {
+    expect(billingEventLabel("reminder_sent")).toBe("Lembrete de vencimento enviado");
+    expect(billingEventTone("reminder_sent")).toBe("ok");
+    expect(billingEventLabel("reminder_failed")).toBe("Lembrete não saiu");
+    expect(billingEventTone("reminder_failed")).toBe("danger");
   });
 });
 

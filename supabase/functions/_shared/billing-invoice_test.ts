@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  boletoDeliveryProblem,
   buildBlockNoticeMessage,
   buildBlockReason,
   buildInvoiceDescription,
+  buildInvoiceReminderMessage,
   buildInvoiceWhatsappMessage,
   centsToAmount,
   formatCents,
@@ -314,6 +316,64 @@ describe("scheduledSendBlocker", () => {
     );
     expect(scheduledSendBlocker({ ...VALID_BOLETO, status: "canceled" }, "2026-10-28")).toMatch(
       /paga ou cancelada/
+    );
+  });
+});
+
+describe("boletoDeliveryProblem", () => {
+  it("explica o problema sem prefixo, para o lembrete e o envio agendado", () => {
+    const valid = {
+      status: "open",
+      boletoPaymentId: "123",
+      boletoError: null,
+      boletoExpiresAt: "2026-11-03"
+    };
+    expect(boletoDeliveryProblem(valid, "2026-10-30")).toBeNull();
+    expect(boletoDeliveryProblem({ ...valid, boletoExpiresAt: "2026-10-26" }, "2026-10-30")).toBe(
+      "o boleto venceu. Reemita o boleto."
+    );
+  });
+});
+
+describe("buildInvoiceReminderMessage", () => {
+  const input = {
+    issuerName: "Kybernan",
+    companyName: "Pedreira Ibiuna",
+    invoiceNumber: "FAT-2026-00010",
+    referenceLabel: "10/2026",
+    amountCents: 119_700,
+    dueDate: "2026-11-02",
+    daysUntilDue: 3,
+    boletoUrl: "https://mp.example/boleto",
+    boletoBarcode: "23790.00000 00000.000000 00000.000000 0 00000000000000",
+    pixKey: null,
+    supportPhone: "(11) 4000-0000"
+  };
+
+  it("leva valor, data, boleto e a saida para quem ja pagou", () => {
+    const message = buildInvoiceReminderMessage(input);
+    expect(message).toContain("*Kybernan — Lembrete de vencimento*");
+    expect(message).toContain("A fatura FAT-2026-00010 (10/2026) vence em 3 dias, em 02/11/2026.");
+    expect(message).toContain("*Valor:* R$ 1.197,00");
+    expect(message).toContain("*Boleto:* https://mp.example/boleto");
+    expect(message).toContain("23790.00000 00000.000000 00000.000000 0 00000000000000");
+    expect(message).toContain("Se ja pagou, desconsidere esta mensagem.");
+    expect(message).not.toContain("PIX");
+  });
+
+  it("diz hoje e amanha por extenso", () => {
+    expect(buildInvoiceReminderMessage({ ...input, daysUntilDue: 1 })).toContain("vence amanha");
+    expect(buildInvoiceReminderMessage({ ...input, daysUntilDue: 0 })).toContain("vence hoje");
+  });
+
+  it("usa o texto do painel com os marcadores, inclusive {dias}", () => {
+    expect(
+      buildInvoiceReminderMessage({
+        ...input,
+        template: "{pedreira}: {numero} vence em {dias} dias ({vencimento}) - {valor} - {boleto}"
+      })
+    ).toBe(
+      "Pedreira Ibiuna: FAT-2026-00010 vence em 3 dias (02/11/2026) - R$ 1.197,00 - https://mp.example/boleto"
     );
   });
 });
