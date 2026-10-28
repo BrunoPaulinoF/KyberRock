@@ -7,14 +7,33 @@ import nodemailer from "npm:nodemailer@10.1.7";
 // anexar os PDFs — o daily-report-email nao passa por isso porque nao tem anexo.
 import { Buffer } from "node:buffer";
 import { safeEqual, sha256Hex } from "../_shared/crypto.ts";
+import {
+  normalizeBankMovementAccounts,
+  parseCheckingAccounts,
+  type BankMovementAccount
+} from "../_shared/omie-checking-accounts.ts";
 import { buildTablePdf } from "../_shared/pdf.ts";
 import {
   addDays,
+  closedDaysPeriod,
   localNow,
   reportPeriod,
   shouldSendAt,
   type ReportPeriod
 } from "../_shared/report-schedule.ts";
+import {
+  bankMovementFilename,
+  bankMovementFootnote,
+  bankMovementSummaryLines,
+  bankMovementTitle,
+  buildBankMovementCaption,
+  buildBankMovementTable,
+  parseBankStatement,
+  parseStatementMovement,
+  statementRows,
+  summarizeBankMovement,
+  type BankStatement
+} from "./bank-movement.ts";
 import {
   accountsPayableTotalsCents,
   buildAccountsPayableTable,
@@ -25,9 +44,11 @@ import {
   dispatchFailureReason,
   formatCentsBRL,
   hasActiveChannel,
+  parseOmieDate,
   pickSupplierName,
   STATEMENT_LIST_KEYS,
   SUPPLIER_LOOKUP_BLOCK,
+  toCents,
   type AccountPayableItem,
   type AccountPayableStatus,
   type StatementEntryItem
@@ -117,23 +138,9 @@ async function callOmie<TParam, TResponse>(
   }
 }
 
-function parseOmieDate(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value.trim());
-  if (!match) return null;
-  const [, day, month, year] = match;
-  return `${year}-${month}-${day}`;
-}
-
 function formatOmieDate(isoDate: string): string {
   const [year, month, day] = isoDate.split("-");
   return `${day}/${month}/${year}`;
-}
-
-function toCents(value: unknown): number {
-  if (value === null || value === undefined || value === "") return 0;
-  const num = typeof value === "number" ? value : Number(String(value).replace(",", "."));
-  return Number.isFinite(num) ? Math.round(num * 100) : 0;
 }
 
 function pickFirst(...values: Array<string | number | null | undefined>): string | null {
@@ -298,83 +305,86 @@ async function listActiveCheckingAccounts(
     "ListarContasCorrentes",
     { pagina: 1, registros_por_pagina: 100 }
   );
-  const rawItems = firstArray(response, [
-    "ListarContasCorrentes",
-    "conta_corrente_lista",
-    "contaCorrenteLista"
-  ]);
-  const accounts: CheckingAccount[] = [];
-  for (const raw of rawItems) {
-    const item = raw as Record<string, unknown>;
-    const codeValue = pickFirst(
-      item.nCodCC as string | number,
-      item.codigo_conta_corrente as string | number
-    );
-    const code = codeValue === null ? null : Number(codeValue);
-    const name = pickFirst(item.descricao as string);
-    const inactive = pickFirst(item.inativa as string)?.toUpperCase() === "S";
-    if (code !== null && Number.isFinite(code) && name && !inactive) {
-      accounts.push({ code, name });
-    }
-  }
-  return accounts;
+  return parseCheckingAccounts(response)
+    .filter((account) => !account.inactive)
+    .map(({ code, name }) => ({ code, name }));
 }
 
+async function callStatement(
+  credentials: OmieCredentials,
+  accountCode: number,
+  startIsoDate: string,
+  endIsoDate: string
+): Promise<Record<string, unknown>> {
+  await sleep(OMIE_REQUEST_DELAY_MS);
+  return callOmie<Record<string, unknown>, Record<string, unknown>>(
+    credentials,
+    "/financas/extrato/",
+    "ListarExtrato",
+    buildStatementRequestParam({
+      accountCode,
+      startDateBr: formatOmieDate(startIsoDate),
+      endDateBr: formatOmieDate(endIsoDate)
+    })
+  );
+}
+
+/**
+ * Extrato geral (todas as contas): as linhas como o OMIE manda, inclusive as de
+ * saldo. Os campos sao os de `parseStatementMovement` — os antigos (`dData`,
+ * `nValorMovimento`, natureza "D"/"C") nao existem no retorno, e o PDF saia com
+ * data em branco e todo valor R$ 0,00.
+ */
 async function fetchAccountStatement(
   credentials: OmieCredentials,
   account: CheckingAccount,
   startIsoDate: string,
   endIsoDate: string
 ): Promise<StatementEntryItem[]> {
-  await sleep(OMIE_REQUEST_DELAY_MS);
-  const response = await callOmie<Record<string, unknown>, Record<string, unknown>>(
-    credentials,
-    "/financas/extrato/",
-    "ListarExtrato",
-    buildStatementRequestParam({
-      accountCode: account.code,
-      startDateBr: formatOmieDate(startIsoDate),
-      endDateBr: formatOmieDate(endIsoDate)
-    })
-  );
-
-  const rawItems = firstArray(response, STATEMENT_LIST_KEYS);
-  const entries: StatementEntryItem[] = [];
-  for (const raw of rawItems) {
-    const item = raw as Record<string, unknown>;
-    const natureRaw =
-      pickFirst(item.cNatureza as string, item.natureza as string)?.toUpperCase() ?? null;
-    const saldoValue = pickFirst(item.nSaldo as string | number, item.saldo as string | number);
-    entries.push({
+  const response = await callStatement(credentials, account.code, startIsoDate, endIsoDate);
+  return statementRows(response, STATEMENT_LIST_KEYS).map((item) => {
+    const movement = parseStatementMovement(item);
+    return {
       accountName: account.name,
-      date: parseOmieDate(
-        pickFirst(
-          item.dData as string,
-          item.data as string,
-          item.dDataMovimento as string,
-          item.dataMovimento as string
-        )
-      ),
-      description: pickFirst(
-        item.cDescricao as string,
-        item.descricao as string,
-        item.cHistorico as string,
-        item.historico as string
-      ),
-      documentNumber: pickFirst(item.cNumDocumento as string, item.numeroDocumento as string),
-      nature: natureRaw === "D" || natureRaw === "C" ? (natureRaw as "D" | "C") : null,
-      amountCents: toCents(
-        pickFirst(
-          item.nValorMovimento as string | number,
-          item.valorMovimento as string | number,
-          item.nValor as string | number,
-          item.valor as string | number
-        )
-      ),
-      runningBalanceCents: saldoValue === null ? null : toCents(saldoValue)
-    });
-  }
-  return entries;
+      date: movement.date,
+      description: movement.counterpart ?? movement.notes ?? movement.category,
+      documentNumber: movement.documentNumber,
+      nature: movement.amountCents < 0 ? "D" : movement.amountCents > 0 ? "C" : null,
+      amountCents: Math.abs(movement.amountCents),
+      runningBalanceCents: movement.runningBalanceCents
+    };
+  });
+}
+
+/** Extrato de UMA conta escolhida no painel, para o relatorio de movimentacao por banco. */
+async function fetchBankStatement(
+  credentials: OmieCredentials,
+  account: BankMovementAccount,
+  startIsoDate: string,
+  endIsoDate: string
+): Promise<BankStatement> {
+  const response = await callStatement(credentials, account.code, startIsoDate, endIsoDate);
+  return parseBankStatement(response, account, STATEMENT_LIST_KEYS);
+}
+
+/**
+ * Contas da pedreira que ganham relatorio proprio (`companies.financial_bank_accounts`).
+ * Lida a parte e sem derrubar nada: com a migracao `202610280001` pendente a coluna
+ * nao existe, e o relatorio financeiro tem de sair igual saia antes.
+ */
+async function loadBankMovementAccounts(
+  supabase: ReturnType<typeof createClient>,
+  companyId: string
+): Promise<BankMovementAccount[]> {
+  const { data, error } = await supabase
+    .from("companies")
+    .select("financial_bank_accounts")
+    .eq("id", companyId)
+    .maybeSingle();
+  if (error || !data) return [];
+  return normalizeBankMovementAccounts(
+    (data as { financial_bank_accounts?: unknown }).financial_bank_accounts
+  );
 }
 
 // --- Envio (SMTP + UAZAPI) ---------------------------------------------------
@@ -471,6 +481,22 @@ function resolveFinancialScheduleTime(
 ): string {
   const trimmed = financialScheduleTime?.trim();
   return trimmed ? trimmed : scheduleTime;
+}
+
+/** O que vai para os destinatarios de uma frequencia: texto, legenda e os PDFs. */
+interface FinancialContent {
+  period: ReportPeriod;
+  emailHtml: string;
+  whatsappCaption: string;
+  attachments: Array<{
+    filename: string;
+    content: Uint8Array;
+    contentType: string;
+    /** Legenda propria no WhatsApp; sem ela vai a do relatorio financeiro. */
+    caption?: string;
+  }>;
+  /** Conta escolhida cujo extrato nao veio: o resto do relatorio sai mesmo assim. */
+  warnings: string[];
 }
 
 interface DispatchResult {
@@ -740,17 +766,11 @@ async function dispatchForCompany(params: {
     }
   }
 
+  const bankAccounts = await loadBankMovementAccounts(supabase, company.id);
+
   // Conteudo por frequencia (o periodo semanal/mensal difere do diario), montado
   // uma vez e reaproveitado entre destinatarios da mesma frequencia.
-  const contentCache = new Map<
-    string,
-    {
-      period: ReportPeriod;
-      emailHtml: string;
-      whatsappCaption: string;
-      attachments: Array<{ filename: string; content: Uint8Array; contentType: string }>;
-    }
-  >();
+  const contentCache = new Map<string, FinancialContent>();
 
   const contentFor = async (frequency: string) => {
     const key = frequency === "weekly" || frequency === "monthly" ? frequency : "daily";
@@ -792,6 +812,56 @@ async function dispatchForCompany(params: {
       statementEntries.push(...entries);
     }
 
+    // Movimentacao por banco: um relatorio por conta escolhida no painel, sempre
+    // de dias ja encerrados — o diario das 10h mostra a vespera inteira, e nao o
+    // pedaco de hoje que o extrato geral acima mostra. Conta que falhar no OMIE
+    // vira aviso e nao derruba contas a pagar, extrato nem as outras contas.
+    const bankPeriod = closedDaysPeriod(key, targetDate);
+    const bankReports: Array<{
+      statement: BankStatement;
+      pdf: Uint8Array;
+      caption: string;
+      summaryLines: string[];
+    }> = [];
+    const warnings: string[] = [];
+    for (const bankAccount of bankAccounts) {
+      try {
+        const statement = await fetchBankStatement(
+          params.credentials,
+          bankAccount,
+          bankPeriod.start,
+          addDays(bankPeriod.endExclusive, -1)
+        );
+        const summary = summarizeBankMovement(statement);
+        const summaryLines = bankMovementSummaryLines(statement, summary);
+        const table = buildBankMovementTable(statement);
+        const pdf = await buildTablePdf({
+          title: bankMovementTitle(statement.accountName),
+          subtitle: `${company.name} - ${bankPeriod.label}`,
+          summaryLines,
+          generatedAtLabel: new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }),
+          columns: table.columns,
+          rows: table.rows,
+          emptyMessage: "Nenhuma movimentação no período.",
+          footerNote: bankMovementFootnote(summary)
+        });
+        bankReports.push({
+          statement,
+          pdf,
+          summaryLines,
+          caption: buildBankMovementCaption({
+            companyName: company.name,
+            periodLabel: bankPeriod.label,
+            statement,
+            summary
+          })
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Falha ao consultar OMIE";
+        warnings.push(`movimentacao ${bankAccount.name}: ${message}`);
+      }
+    }
+
     const payableTable = buildAccountsPayableTable(pendingPayables, supplierNames);
     const statementTable = buildStatementTable(statementEntries);
     const totals = accountsPayableTotalsCents(pendingPayables);
@@ -819,7 +889,12 @@ async function dispatchForCompany(params: {
       period,
       payableRowsCount: pendingPayables.length,
       totals,
-      statementRowsCount: statementEntries.length
+      statementRowsCount: statementEntries.length,
+      bankPeriodLabel: bankPeriod.label,
+      bankSummaries: bankReports.map((report) => ({
+        accountName: report.statement.accountName,
+        lines: report.summaryLines
+      }))
     });
     const whatsappCaption = buildFinancialWhatsappCaption({
       companyName: company.name,
@@ -830,7 +905,7 @@ async function dispatchForCompany(params: {
       statementEntriesCount: statementEntries.length
     });
 
-    const content = {
+    const content: FinancialContent = {
       period,
       emailHtml,
       whatsappCaption,
@@ -844,8 +919,15 @@ async function dispatchForCompany(params: {
           filename: `extrato-financeiro-${targetDate}.pdf`,
           content: statementPdf,
           contentType: "application/pdf"
-        }
-      ]
+        },
+        ...bankReports.map((report) => ({
+          filename: bankMovementFilename(report.statement.accountName, bankPeriod.start),
+          content: report.pdf,
+          contentType: "application/pdf",
+          caption: report.caption
+        }))
+      ],
+      warnings
     };
     contentCache.set(key, content);
     return content;
@@ -867,9 +949,12 @@ async function dispatchForCompany(params: {
   let dispatched = 0;
   let targets = 0;
   const errors: string[] = [];
+  // Por conteudo, nao por destinatario: dois destinatarios do diario dividem o
+  // mesmo extrato, e a falha de uma conta so precisa aparecer uma vez.
+  const warnings = new Set<string>();
 
   for (const recipient of reachable) {
-    let content: Awaited<ReturnType<typeof contentFor>>;
+    let content: FinancialContent;
     try {
       content = await contentFor(recipient.scheduleFrequency);
     } catch (error) {
@@ -877,6 +962,7 @@ async function dispatchForCompany(params: {
       errors.push(`omie: ${message}`);
       continue;
     }
+    for (const warning of content.warnings) warnings.add(warning);
 
     if (recipient.sendEmail && recipient.email) {
       targets += 1;
@@ -920,7 +1006,7 @@ async function dispatchForCompany(params: {
             fileBase64: `data:${attachment.contentType};base64,${toBase64(attachment.content)}`,
             docName: attachment.filename,
             mimetype: attachment.contentType,
-            caption: content.whatsappCaption,
+            caption: attachment.caption ?? content.whatsappCaption,
             trackId: `financial-report:${company.id}:${targetDate}:${nowHour}:${recipient.whatsappPhone}:${attachment.filename}`
           });
         }
@@ -932,7 +1018,8 @@ async function dispatchForCompany(params: {
     }
   }
 
-  const lastError = errors.length > 0 ? truncate(errors.join(" | "), 2000) : null;
+  const problems = [...errors, ...warnings];
+  const lastError = problems.length > 0 ? truncate(problems.join(" | "), 2000) : null;
 
   // Chegar aqui com targets 0 significa que o conteudo do OMIE falhou para
   // todos os destinatarios alcancaveis — o canal existe, o relatorio e que nao
@@ -947,8 +1034,10 @@ async function dispatchForCompany(params: {
     });
   }
 
+  // Saiu tudo menos o relatorio de alguma conta: e parcial, nao "enviado" —
+  // senao a conta que faltou some do historico de envios sem ninguem notar.
   const status: DispatchResult["status"] =
-    dispatched === targets ? "sent" : dispatched > 0 ? "partial" : "failed";
+    dispatched === targets && warnings.size === 0 ? "sent" : dispatched > 0 ? "partial" : "failed";
 
   await supabase.from("financial_report_dispatches").insert({
     company_id: company.id,
@@ -1008,6 +1097,17 @@ function renderEmailHtml(input: {
   payableRowsCount: number;
   totals: { openCents: number; overdueCents: number };
   statementRowsCount: number;
+  bankPeriodLabel: string;
+  bankSummaries: Array<{ accountName: string; lines: string[] }>;
 }): string {
-  return `<!doctype html><html><head><meta charset="utf-8" /><title>Financeiro OMIE - ${escapeHtml(input.period.label)}</title></head><body style="font-family:Arial,sans-serif;color:#0f172a;padding:24px;background:#f8fafc"><h1 style="margin:0 0 4px;font-size:22px">Financeiro OMIE - ${escapeHtml(input.period.label)}</h1><p style="margin:0 0 16px;color:#475569">${escapeHtml(input.companyName)}</p><p>Contas a pagar em aberto: <strong>${input.payableRowsCount}</strong> (${formatCentsBRL(input.totals.openCents)}), sendo <strong>${formatCentsBRL(input.totals.overdueCents)}</strong> vencido.</p><p>Extrato financeiro: <strong>${input.statementRowsCount}</strong> lancamento(s) no periodo.</p><p style="color:#64748b;font-size:13px">Detalhes completos nos PDFs em anexo.</p></body></html>`;
+  const bankHtml =
+    input.bankSummaries.length === 0
+      ? ""
+      : `<h2 style="margin:20px 0 8px;font-size:16px">Movimentação por banco - ${escapeHtml(input.bankPeriodLabel)}</h2>${input.bankSummaries
+          .map(
+            (bank) =>
+              `<p style="margin:0 0 10px"><strong>${escapeHtml(bank.accountName)}</strong><br />${bank.lines.map(escapeHtml).join("<br />")}</p>`
+          )
+          .join("")}`;
+  return `<!doctype html><html><head><meta charset="utf-8" /><title>Financeiro OMIE - ${escapeHtml(input.period.label)}</title></head><body style="font-family:Arial,sans-serif;color:#0f172a;padding:24px;background:#f8fafc"><h1 style="margin:0 0 4px;font-size:22px">Financeiro OMIE - ${escapeHtml(input.period.label)}</h1><p style="margin:0 0 16px;color:#475569">${escapeHtml(input.companyName)}</p><p>Contas a pagar em aberto: <strong>${input.payableRowsCount}</strong> (${formatCentsBRL(input.totals.openCents)}), sendo <strong>${formatCentsBRL(input.totals.overdueCents)}</strong> vencido.</p><p>Extrato financeiro: <strong>${input.statementRowsCount}</strong> lancamento(s) no periodo.</p>${bankHtml}<p style="color:#64748b;font-size:13px">Detalhes completos nos PDFs em anexo.</p></body></html>`;
 }

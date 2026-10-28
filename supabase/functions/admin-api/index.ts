@@ -24,6 +24,10 @@ import {
 } from "../_shared/credential-cipher.ts";
 import { summarizeDesktopReleases } from "../_shared/desktop-releases.ts";
 import {
+  normalizeBankMovementAccounts,
+  parseCheckingAccounts
+} from "../_shared/omie-checking-accounts.ts";
+import {
   applyPullRequests,
   bodiesUnavailable,
   entriesFromCommits,
@@ -78,6 +82,7 @@ type AdminAction =
   | "create_company"
   | "toggle_company"
   | "update_company"
+  | "list_omie_checking_accounts"
   | "delete_company"
   | "create_unit"
   | "toggle_unit"
@@ -208,6 +213,63 @@ const DEVICE_HEALTH_COLUMNS =
  * deixaria de carregar (a `list` faz um Promise.all e qualquer erro derruba tudo)
  * por causa de uma coluna cosmetica.
  */
+const COMPANY_LIST_COLUMNS =
+  "id, name, legal_name, document, is_active, omie_app_key, omie_app_secret, desktop_activation_code, desktop_activation_code_rotated_at, created_at, updated_at";
+
+/**
+ * Pedreiras da lista, com as contas da movimentacao por banco quando a coluna ja existe
+ * (migracao `202610280001`). Sem ela a lista carrega igual — nenhuma conta escolhida.
+ */
+async function selectCompaniesForList(supabase: SupabaseAdminClient) {
+  const withBankAccounts = await supabase
+    .from("companies")
+    .select(`${COMPANY_LIST_COLUMNS}, financial_bank_accounts`)
+    .order("created_at", { ascending: false });
+  if (!withBankAccounts.error) return withBankAccounts;
+  return supabase
+    .from("companies")
+    .select(COMPANY_LIST_COLUMNS)
+    .order("created_at", { ascending: false });
+}
+
+/**
+ * Contas correntes cadastradas no OMIE da pedreira, para o painel escolher quais ganham
+ * relatorio de movimentacao proprio. So leitura (ListarContasCorrentes); as chaves do OMIE
+ * ficam aqui dentro e so codigo, nome e tipo voltam para a tela.
+ */
+async function listOmieCheckingAccounts(supabase: SupabaseAdminClient, companyId: string) {
+  const { data: company, error } = await supabase
+    .from("companies")
+    .select("omie_app_key, omie_app_secret")
+    .eq("id", companyId)
+    .single();
+  if (error) throw error;
+  const appKey = String(company?.omie_app_key ?? "").trim();
+  const appSecret = String(company?.omie_app_secret ?? "").trim();
+  if (!appKey || !appSecret) {
+    throw new Error("OMIE nao configurado para esta pedreira.");
+  }
+
+  const response = await fetch("https://app.omie.com.br/api/v1/geral/contacorrente/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      call: "ListarContasCorrentes",
+      param: [{ pagina: 1, registros_por_pagina: 100 }],
+      app_key: appKey,
+      app_secret: appSecret
+    })
+  });
+  const data = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  const fault = data && typeof data.faultstring === "string" ? data.faultstring : null;
+  if (!response.ok || fault || !data) {
+    throw new Error(
+      `OMIE recusou a lista de contas (${response.status}): ${fault ?? "sem resposta"}`
+    );
+  }
+  return parseCheckingAccounts(data);
+}
+
 async function selectDevicesForList(supabase: SupabaseAdminClient) {
   // Da mais completa para a mais antiga: cada coluna acrescentada por migracao entra numa
   // tentativa propria, para a lista continuar carregando no projeto que ainda nao a tem.
@@ -428,12 +490,7 @@ Deno.serve(async (req) => {
   try {
     if (body.action === "list") {
       const [companies, units, users, devices] = await Promise.all([
-        supabase
-          .from("companies")
-          .select(
-            "id, name, legal_name, document, is_active, omie_app_key, omie_app_secret, desktop_activation_code, desktop_activation_code_rotated_at, created_at, updated_at"
-          )
-          .order("created_at", { ascending: false }),
+        selectCompaniesForList(supabase),
         supabase
           .from("units")
           .select("id, company_id, name, timezone, is_active, created_at, updated_at")
@@ -448,7 +505,10 @@ Deno.serve(async (req) => {
       const maskedCompanies = (companies.data ?? []).map((c) => ({
         ...c,
         omie_app_key: c.omie_app_key ? maskSecret(c.omie_app_key) : null,
-        omie_app_secret: c.omie_app_secret ? "********" : null
+        omie_app_secret: c.omie_app_secret ? "********" : null,
+        financial_bank_accounts: normalizeBankMovementAccounts(
+          (c as { financial_bank_accounts?: unknown }).financial_bank_accounts
+        )
       }));
       // Normaliza aqui para a tela nunca precisar decidir o que fazer com uma
       // balanca cujo canal a nuvem ainda nao conhece: ela aparece em producao,
@@ -974,12 +1034,24 @@ Deno.serve(async (req) => {
           updatePayload.omie_app_secret = null;
         }
       }
+      if (payload.bankMovementAccounts !== undefined) {
+        updatePayload.financial_bank_accounts = normalizeBankMovementAccounts(
+          payload.bankMovementAccounts
+        );
+      }
       const { error } = await supabase
         .from("companies")
         .update(updatePayload)
         .eq("id", String(payload.companyId));
       if (error) throw error;
       return jsonResponse({ ok: true });
+    }
+
+    if (body.action === "list_omie_checking_accounts") {
+      const companyId = String(payload.companyId ?? "");
+      if (!companyId) return jsonResponse({ error: "Pedreira nao informada" }, 400);
+      const accounts = await listOmieCheckingAccounts(supabase, companyId);
+      return jsonResponse({ accounts });
     }
 
     if (body.action === "update_unit") {

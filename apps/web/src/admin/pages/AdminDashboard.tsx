@@ -12,6 +12,13 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AdminSessionExpiredError, callAdminFunction } from "../lib/admin-api";
+import {
+  bankAccountOptions,
+  MAX_BANK_MOVEMENT_ACCOUNTS,
+  toggleBankAccount,
+  type BankAccountChoice,
+  type OmieCheckingAccountOption
+} from "../lib/bank-accounts";
 import { SUPABASE_URL } from "../../lib/supabase-env";
 import { useAdminLogout } from "../lib/admin-session";
 import type { DeviceHealthLevel } from "../lib/device-health";
@@ -89,6 +96,8 @@ interface Company {
   omieAppSecretConfigured?: boolean;
   desktopActivationCode?: string;
   desktopActivationCodeRotatedAt?: string;
+  /** Contas do OMIE com relatorio de movimentacao proprio no envio financeiro. */
+  bankMovementAccounts: BankAccountChoice[];
 }
 
 interface Unit {
@@ -465,6 +474,7 @@ export function AdminDashboard() {
             omie_app_secret?: string | null;
             desktop_activation_code?: string;
             desktop_activation_code_rotated_at?: string;
+            financial_bank_accounts?: BankAccountChoice[] | null;
           }>;
           units: Array<{
             id: string;
@@ -517,7 +527,8 @@ export function AdminDashboard() {
             omieAppKeyMasked: company.omie_app_key ?? null,
             omieAppSecretConfigured: Boolean(company.omie_app_secret),
             desktopActivationCode: company.desktop_activation_code,
-            desktopActivationCodeRotatedAt: company.desktop_activation_code_rotated_at
+            desktopActivationCodeRotatedAt: company.desktop_activation_code_rotated_at,
+            bankMovementAccounts: company.financial_bank_accounts ?? []
           }))
         );
         setUnits(
@@ -1857,6 +1868,9 @@ function CompanyFormModal({
   onSubmit: (payload: Record<string, unknown>) => void | Promise<void>;
 }) {
   const formId = "company-form";
+  const [bankAccounts, setBankAccounts] = useState<BankAccountChoice[]>(
+    company?.bankMovementAccounts ?? []
+  );
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -1875,6 +1889,7 @@ function CompanyFormModal({
       // apagar a integracao.
       if (omieAppKey) payload.omieAppKey = omieAppKey;
       if (omieAppSecret) payload.omieAppSecret = omieAppSecret;
+      payload.bankMovementAccounts = bankAccounts;
     } else {
       payload.omieAppKey = omieAppKey || null;
       payload.omieAppSecret = omieAppSecret || null;
@@ -1949,8 +1964,97 @@ function CompanyFormModal({
             </Field>
           </div>
         </Fieldset>
+
+        {company && (
+          <BankMovementAccountsField
+            companyId={company.id}
+            omieConfigured={Boolean(company.omieAppKeyMasked)}
+            selected={bankAccounts}
+            onChange={setBankAccounts}
+          />
+        )}
       </form>
     </Modal>
+  );
+}
+
+/**
+ * Quais contas do OMIE ganham relatorio proprio de movimentacao no envio financeiro (um PDF
+ * por conta, para quem recebe o financeiro, sempre do dia anterior). As contas vem do OMIE
+ * da pedreira na hora, pelo `admin-api`; a escolha so e gravada no Salvar da ficha.
+ */
+function BankMovementAccountsField({
+  companyId,
+  omieConfigured,
+  selected,
+  onChange
+}: {
+  companyId: string;
+  omieConfigured: boolean;
+  selected: BankAccountChoice[];
+  onChange: (accounts: BankAccountChoice[]) => void;
+}) {
+  const [loaded, setLoaded] = useState<OmieCheckingAccountOption[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const options = bankAccountOptions(selected, loaded);
+  const full = selected.length >= MAX_BANK_MOVEMENT_ACCOUNTS;
+
+  async function loadAccounts(): Promise<void> {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await callAdminFunction<{ accounts: OmieCheckingAccountOption[] }>("admin-api", {
+        action: "list_omie_checking_accounts",
+        payload: { companyId }
+      });
+      setLoaded(data.accounts);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Falha ao buscar as contas.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Fieldset legend="Movimentação por banco (relatório financeiro)">
+      <p className="adm-field-hint">
+        Cada conta marcada vira um PDF próprio (saldo anterior, entradas, saídas e saldo final),
+        enviado junto com o relatório financeiro do OMIE para quem já o recebe, sempre do dia
+        anterior. Até {MAX_BANK_MOVEMENT_ACCOUNTS} contas.
+      </p>
+      {options.length === 0 && loaded === null && (
+        <p className="adm-field-hint">Nenhuma conta escolhida.</p>
+      )}
+      {options.map((option) => {
+        const checked = selected.some((account) => account.code === option.code);
+        return (
+          <label key={option.code} className="adm-check">
+            <input
+              type="checkbox"
+              checked={checked}
+              disabled={!checked && full}
+              onChange={() => onChange(toggleBankAccount(selected, options, option))}
+            />
+            <span>
+              {option.name}
+              {option.note ? ` (${option.note})` : ""}
+            </span>
+          </label>
+        );
+      })}
+      {error && <Note tone="danger">{error}</Note>}
+      {loaded === null && (
+        <Button
+          size="sm"
+          onClick={() => void loadAccounts()}
+          disabled={loading || !omieConfigured}
+          title={omieConfigured ? undefined : "Configure o OMIE desta pedreira primeiro."}
+        >
+          {loading ? "Buscando no OMIE…" : "Buscar contas no OMIE"}
+        </Button>
+      )}
+    </Fieldset>
   );
 }
 

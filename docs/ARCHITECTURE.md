@@ -383,6 +383,9 @@ Três formas de a venda ser paga, todas decididas no fechamento local:
 - O envio agendado roda na nuvem: `daily-report-scheduler` e `financial-report-scheduler` são
   acordados pelo pg_cron de hora em hora e delegam o envio às funções `*-email`. Cada disparo fica
   registrado em `daily_report_dispatches` / `financial_report_dispatches`.
+- O financeiro (OMIE) leva também um PDF de movimentação por conta escolhida no painel
+  (`companies.financial_bank_accounts`), sempre do dia anterior — ver AGENTS.md "Movimentação por
+  banco no relatório financeiro".
 - Canais por pedreira (SMTP e WhatsApp/UAZAPI) ficam em `report_channel_settings`. O WhatsApp da
   pedreira é pareado por QR code na tela de Relatórios ou pelo **link temporário de 15 minutos**
   (`whatsapp-link`, `whatsapp_connection_links`), para o dono do número parear do próprio celular.
