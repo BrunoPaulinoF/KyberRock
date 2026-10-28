@@ -43,6 +43,22 @@ const STATUS_LABEL: Record<AccountPayableStatus, string> = {
   open: "Em aberto"
 };
 
+/** Data do OMIE (dd/mm/aaaa) em ISO; qualquer outra coisa vira nulo. */
+export function parseOmieDate(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value.trim());
+  if (!match) return null;
+  const [, day, month, year] = match;
+  return `${year}-${month}-${day}`;
+}
+
+/** Valor do OMIE (reais, numero ou texto) em centavos inteiros; vazio ou invalido vira 0. */
+export function toCents(value: unknown): number {
+  if (value === null || value === undefined || value === "") return 0;
+  const num = typeof value === "number" ? value : Number(String(value).replace(",", "."));
+  return Number.isFinite(num) ? Math.round(num * 100) : 0;
+}
+
 export function formatCentsBRL(cents: number): string {
   // Intl.NumberFormat("pt-BR") usa NBSP (U+00A0) entre "R$" e o valor; troca
   // por espaco comum para nao surpreender a codificacao WinAnsi das fontes do
@@ -120,7 +136,7 @@ export function buildStatementTable(entries: StatementEntryItem[]): PdfTableData
   ]);
   return {
     columns: [
-      { header: "Data", width: 45 },
+      { header: "Data", width: 52 },
       { header: "Conta", width: 75 },
       { header: "Historico", width: 150 },
       { header: "Documento", width: 60 },

@@ -178,6 +178,35 @@ datas são dia de calendário (`yyyy-mm-dd`): o template as formata direto
 (`formatCalendarDate`), porque `new Date("2026-12-04")` é meia-noite UTC e o fuso de São
 Paulo imprimiria 03/12.
 
+## Movimentação por banco no relatório financeiro
+
+O relatório financeiro do OMIE (`financial-report-email`, pg_cron de hora em hora) manda, a quem
+tem `report_recipients.send_financial`, contas a pagar e o extrato geral de todas as contas. Desde
+28/10/2026 manda também **um PDF por conta escolhida** em `companies.financial_bank_accounts`
+(migração `202610280001`, `[{code: nCodCC, name}]`): saldo anterior, entradas, saídas, saldo
+final e a lista dos lançamentos. Pedido da Pedreira Ibiúna: Itaú Unibanco, Santander e Caixinha.
+
+- **Quem escolhe**: o painel `/admin`, editar pedreira → "Movimentação por banco". As contas vêm
+  do OMIE na hora (`admin-api`, ação `list_omie_checking_accounts`, só leitura); o `admin-api`
+  normaliza e corta no teto (`MAX_BANK_MOVEMENT_ACCOUNTS`, mesmo valor em
+  `_shared/omie-checking-accounts.ts` e `apps/web/src/admin/lib/bank-accounts.ts`). Cada conta é
+  uma chamada `ListarExtrato` a mais (3 s de folga) dentro do tempo da Edge Function.
+- **Período**: sempre dias encerrados (`closedDaysPeriod`, em `_shared/report-schedule.ts`): o
+  diário cobre a **véspera** do envio — o envio das 10h não manda o pedaço de hoje. Semanal e
+  mensal ficam iguais aos do resto do relatório.
+- **Formato real do `ListarExtrato`** (`financial-report-email/bank-movement.ts`): data em
+  `dDataLancamento`, valor **com sinal** em `nValorDocumento`, natureza `P`/`R`, cliente em
+  `cDesCliente`, linhas de saldo ("SALDO ANTERIOR"/"SALDO", valor 0) no meio da lista, e os
+  lançamentos `Previsto`, que **não** mexem no saldo — ficam fora de entradas/saídas e só aparecem
+  no rodapé. Os saldos vêm do próprio OMIE (`nSaldoAnterior`/`nSaldoAtual`); o relatório não
+  recalcula. O extrato geral lia `dData`/`nValorMovimento`/natureza `D`/`C`, campos que não
+  existem: até esta mudança ele saía com data em branco e todo valor R$ 0,00.
+- **Conta que falhar não derruba o envio**: vira aviso no `last_error` e o despacho fica
+  `partial`; contas a pagar, extrato e as outras contas saem normalmente.
+- **Texto livre do OMIE no PDF**: as fontes padrão do pdf-lib só desenham WinAnsi, e um emoji na
+  observação derrubaria o PDF inteiro. Tudo o que o `_shared/pdf.ts` desenha passa por
+  `toWinAnsiText` (`_shared/pdf-text.ts`).
+
 ## Planilhas dos relatórios (célula tipada)
 
 As planilhas geradas pelos relatórios (`Exportar Excel` do painel, Relatório por cliente,

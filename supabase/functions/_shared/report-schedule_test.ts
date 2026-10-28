@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  closedDaysPeriod,
   coversSameWindow,
   localNow,
   monthToDatePeriod,
@@ -128,5 +129,27 @@ describe("coversSameWindow", () => {
     expect(
       coversSameWindow(reportPeriod("monthly", "2026-08-01"), monthToDatePeriod("2026-08-01"))
     ).toBe(false);
+  });
+});
+
+describe("closedDaysPeriod", () => {
+  it("daily covers the day before the send, not the day still running", () => {
+    // Envio das 10h de 28/10 → movimentacao de 27/10 inteiro.
+    const period = closedDaysPeriod("daily", "2026-10-28");
+    expect(period.start).toBe("2026-10-27");
+    expect(period.endExclusive).toBe("2026-10-28");
+    expect(period.label).toBe("27/10/2026");
+  });
+
+  it("crosses month and year boundaries", () => {
+    expect(closedDaysPeriod("daily", "2026-11-01").start).toBe("2026-10-31");
+    expect(closedDaysPeriod("daily", "2027-01-01").label).toBe("31/12/2026");
+  });
+
+  it("weekly and monthly already end on the previous day", () => {
+    expect(closedDaysPeriod("weekly", "2026-07-17")).toEqual(reportPeriod("weekly", "2026-07-17"));
+    expect(closedDaysPeriod("monthly", "2026-07-01")).toEqual(
+      reportPeriod("monthly", "2026-07-01")
+    );
   });
 });

@@ -144,6 +144,17 @@ export function reportPeriod(frequency: string, referenceDate: string): ReportPe
   };
 }
 
+// Janela que so tem dias ja encerrados: o envio diario cobre o DIA ANTERIOR ao
+// de referencia, porque sai durante o dia (o financeiro da Pedreira Ibiuna vai as
+// 10h) e o dia de hoje ainda esta acontecendo. Semanal e mensal ja terminam na
+// vespera, entao ficam iguais a `reportPeriod`. Usada pela movimentacao por banco.
+export function closedDaysPeriod(frequency: string, referenceDate: string): ReportPeriod {
+  if (frequency === "weekly" || frequency === "monthly") {
+    return reportPeriod(frequency, referenceDate);
+  }
+  return reportPeriod("daily", addDays(referenceDate, -1));
+}
+
 // Vendas do mes corrente, do dia 1 ate o dia de referencia (inclusive). Nao e
 // uma frequencia de agendamento: e o acumulado que acompanha TODO envio, para
 // que quem recebe o diario ou o semanal veja tambem como o mes esta fechando

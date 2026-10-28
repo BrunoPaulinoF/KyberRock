@@ -4,6 +4,7 @@
 // apps/desktop/src/main/main.ts), entao aqui o PDF e desenhado diretamente
 // com pdf-lib (puro JS, sem dependencias nativas/fontes externas).
 import { type PDFFont, PDFDocument, rgb, StandardFonts } from "npm:pdf-lib@1.17.1";
+import { toWinAnsiText } from "./pdf-text.ts";
 
 export interface PdfTableColumn {
   header: string;
@@ -15,6 +16,8 @@ export interface PdfTableColumn {
 export interface PdfTableReportInput {
   title: string;
   subtitle?: string;
+  /** Linhas em destaque entre o cabecalho e a tabela (ex.: saldo anterior, entradas, saidas). */
+  summaryLines?: string[];
   generatedAtLabel: string;
   columns: PdfTableColumn[];
   rows: string[][];
@@ -58,7 +61,7 @@ export async function buildTablePdf(input: PdfTableReportInput): Promise<Uint8Ar
     });
     let x = MARGIN;
     for (const column of input.columns) {
-      page.drawText(column.header, {
+      page.drawText(toWinAnsiText(column.header), {
         x: x + 4,
         y: y - HEADER_ROW_HEIGHT + 8,
         size: BODY_SIZE,
@@ -70,13 +73,25 @@ export async function buildTablePdf(input: PdfTableReportInput): Promise<Uint8Ar
     y -= HEADER_ROW_HEIGHT;
   };
 
-  page.drawText(input.title, { x: MARGIN, y, size: TITLE_SIZE, font: boldFont, color: INK });
+  page.drawText(toWinAnsiText(input.title), {
+    x: MARGIN,
+    y,
+    size: TITLE_SIZE,
+    font: boldFont,
+    color: INK
+  });
   y -= TITLE_SIZE + 6;
   if (input.subtitle) {
-    page.drawText(input.subtitle, { x: MARGIN, y, size: SUBTITLE_SIZE, font, color: MUTED });
+    page.drawText(toWinAnsiText(input.subtitle), {
+      x: MARGIN,
+      y,
+      size: SUBTITLE_SIZE,
+      font,
+      color: MUTED
+    });
     y -= SUBTITLE_SIZE + 6;
   }
-  page.drawText(`Gerado em ${input.generatedAtLabel}`, {
+  page.drawText(toWinAnsiText(`Gerado em ${input.generatedAtLabel}`), {
     x: MARGIN,
     y,
     size: META_SIZE,
@@ -84,6 +99,19 @@ export async function buildTablePdf(input: PdfTableReportInput): Promise<Uint8Ar
     color: MUTED
   });
   y -= META_SIZE + 10;
+  if (input.summaryLines && input.summaryLines.length > 0) {
+    for (const line of input.summaryLines) {
+      page.drawText(toWinAnsiText(line), {
+        x: MARGIN,
+        y,
+        size: SUBTITLE_SIZE,
+        font: boldFont,
+        color: INK
+      });
+      y -= SUBTITLE_SIZE + 4;
+    }
+    y -= 6;
+  }
 
   drawTableHeader();
 
@@ -108,7 +136,7 @@ export async function buildTablePdf(input: PdfTableReportInput): Promise<Uint8Ar
     let x = MARGIN;
     for (let c = 0; c < input.columns.length; c++) {
       const column = input.columns[c];
-      const text = truncateToWidth(row[c] ?? "", font, BODY_SIZE, column.width - 8);
+      const text = truncateToWidth(toWinAnsiText(row[c] ?? ""), font, BODY_SIZE, column.width - 8);
       const textWidth = font.widthOfTextAtSize(text, BODY_SIZE);
       const textX = column.align === "right" ? x + column.width - textWidth - 6 : x + 4;
       page.drawText(text, { x: textX, y: y - ROW_HEIGHT + 8, size: BODY_SIZE, font, color: INK });
@@ -118,7 +146,7 @@ export async function buildTablePdf(input: PdfTableReportInput): Promise<Uint8Ar
   }
 
   if (input.rows.length === 0) {
-    page.drawText(input.emptyMessage ?? "Nenhum registro no periodo.", {
+    page.drawText(toWinAnsiText(input.emptyMessage ?? "Nenhum registro no periodo."), {
       x: MARGIN,
       y: y - 8,
       size: BODY_SIZE,
@@ -129,7 +157,13 @@ export async function buildTablePdf(input: PdfTableReportInput): Promise<Uint8Ar
 
   if (input.footerNote) {
     const lastPage = doc.getPage(doc.getPageCount() - 1);
-    lastPage.drawText(input.footerNote, { x: MARGIN, y: 18, size: META_SIZE, font, color: MUTED });
+    lastPage.drawText(toWinAnsiText(input.footerNote), {
+      x: MARGIN,
+      y: 18,
+      size: META_SIZE,
+      font,
+      color: MUTED
+    });
   }
 
   return doc.save();
