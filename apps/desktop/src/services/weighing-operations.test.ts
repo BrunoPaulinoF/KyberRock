@@ -1590,6 +1590,41 @@ describe("weighing operations", () => {
     }
   });
 
+  // O horario da saida e gravado em UTC (`toISOString`): o caminhao que fecha as 22h de
+  // 20/10 em Sao Paulo tem `exit_weight_captured_at = 2026-10-21T01:00:00.000Z`. Cortando o
+  // texto, o pedido ia ao OMIE emitido em 21/10, e o OMIE soma os dias da condicao a
+  // emissao — todo vencimento caia um dia depois do que o operador esperava.
+  it("buildOmieBillingJob emite o pedido no dia de Sao Paulo em que a pesagem fechou", () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      insertCatalog(database);
+      database.prepare("UPDATE customers SET omie_customer_id = 456 WHERE id = 'customer-1'").run();
+
+      const operation = createWeighingOperation(database, {
+        identity,
+        customerId: "customer-1",
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: "product-1",
+        entryWeightKg: 12_000
+      });
+      closeWeighingOperation(database, {
+        operationId: operation.id,
+        exitWeightKg: 18_500,
+        operationType: "invoice"
+      });
+      database
+        .prepare("UPDATE weighing_operations SET exit_weight_captured_at = ? WHERE id = ?")
+        .run("2026-10-21T01:00:00.000Z", operation.id);
+
+      expect(buildOmieBillingJob(database, operation.id)!.payload.issueDate).toBe("2026-10-20");
+    } finally {
+      database.close();
+    }
+  });
+
   // A aba Fiscal do cadastro do cliente alimenta os "Enderecos de e-mail que recebem a NF"
   // da propria operacao no OMIE: o espelho no cadastro (email_fatura) nao preenchia esse
   // campo do pedido, entao a tela de e-mails da operacao nascia vazia.

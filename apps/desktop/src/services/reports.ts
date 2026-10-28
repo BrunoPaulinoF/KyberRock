@@ -5,7 +5,8 @@ import { perTonLabel } from "./report-unit-price.js";
 import {
   CLOSED_OPERATION_STATUS_SQL_LIST,
   isClosedOperationStatus,
-  operationSaleDateSql
+  operationSaleDateSql,
+  operationSaleDaySql
 } from "./weighing-operations.js";
 
 export interface DailyReport {
@@ -190,7 +191,7 @@ export class ReportService {
       WHERE wo.unit_id = ?
         AND wo.deleted_at IS NULL
         AND wo.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
-        AND date(${operationSaleDateSql("wo")}) = date(?)
+        AND ${operationSaleDaySql("wo")} = date(?)
       ORDER BY ${operationSaleDateSql("wo")} ASC
     `);
 
@@ -241,8 +242,8 @@ export class ReportService {
       WHERE unit_id = ?
         AND deleted_at IS NULL
         AND status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
-        AND date(${operationSaleDateSql()}) >= date(?)
-        AND date(${operationSaleDateSql()}) < date(?)
+        AND ${operationSaleDaySql()} >= date(?)
+        AND ${operationSaleDaySql()} < date(?)
     `);
 
     const row = stmt.get(unitId, startDate, endDate) as {
@@ -277,8 +278,8 @@ export class ReportService {
       WHERE wo.unit_id = ?
         AND wo.deleted_at IS NULL
         AND wo.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
-        AND date(${operationSaleDateSql("wo")}) >= date(?)
-        AND date(${operationSaleDateSql("wo")}) <= date(?)
+        AND ${operationSaleDaySql("wo")} >= date(?)
+        AND ${operationSaleDaySql("wo")} <= date(?)
       GROUP BY p.id
       ORDER BY total_weight DESC
     `);
@@ -312,8 +313,8 @@ export class ReportService {
       WHERE wo.unit_id = ?
         AND wo.deleted_at IS NULL
         AND wo.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
-        AND date(${operationSaleDateSql("wo")}) >= date(?)
-        AND date(${operationSaleDateSql("wo")}) <= date(?)
+        AND ${operationSaleDaySql("wo")} >= date(?)
+        AND ${operationSaleDaySql("wo")} <= date(?)
       GROUP BY c.id
       ORDER BY total_value DESC
     `);
@@ -357,8 +358,8 @@ export class ReportService {
         group: "c.id, p.id"
       },
       day: {
-        select: `NULL as customer_name, NULL as product_description, date(${operationSaleDateSql("wo")}) as day`,
-        group: `date(${operationSaleDateSql("wo")})`
+        select: `NULL as customer_name, NULL as product_description, ${operationSaleDaySql("wo")} as day`,
+        group: `${operationSaleDaySql("wo")}`
       }
     };
     const clause = groupClauses[groupBy] ?? groupClauses.customer;
@@ -369,8 +370,8 @@ export class ReportService {
       "wo.unit_id = ?",
       "wo.deleted_at IS NULL",
       `wo.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})`,
-      `date(${operationSaleDateSql("wo")}) >= date(?)`,
-      `date(${operationSaleDateSql("wo")}) <= date(?)`
+      `${operationSaleDaySql("wo")} >= date(?)`,
+      `${operationSaleDaySql("wo")} <= date(?)`
     ];
     const baseConditionCount = conditions.length;
     const params: unknown[] = [unitId, startDate, endDate];
@@ -462,7 +463,7 @@ export class ReportService {
 
     const stmt = this.db.prepare(`
       SELECT
-        date(${operationSaleDateSql()}) as day,
+        ${operationSaleDaySql()} as day,
         COUNT(*) as total_operations,
         COALESCE(SUM(net_weight_kg), 0) as total_weight,
         COALESCE(SUM(total_cents), 0) as total
@@ -470,8 +471,8 @@ export class ReportService {
       WHERE unit_id = ?
         AND deleted_at IS NULL
         AND status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
-        AND date(${operationSaleDateSql()}) >= date(?)
-        AND date(${operationSaleDateSql()}) <= date(?)
+        AND ${operationSaleDaySql()} >= date(?)
+        AND ${operationSaleDaySql()} <= date(?)
       GROUP BY day
       ORDER BY day ASC
     `);
@@ -521,8 +522,8 @@ export class ReportService {
       FROM weighing_operations
       WHERE unit_id = ?
         AND deleted_at IS NULL
-        AND date(${operationSaleDateSql()}) >= date(?)
-        AND date(${operationSaleDateSql()}) <= date(?)
+        AND ${operationSaleDaySql()} >= date(?)
+        AND ${operationSaleDaySql()} <= date(?)
       GROUP BY operation_type, status
     `);
 
@@ -1079,7 +1080,7 @@ ${renderTotalBar([
       .prepare(
         `
       SELECT
-        date(${operationSaleDateSql("wo")}) as operation_date,
+        ${operationSaleDaySql("wo")} as operation_date,
         c.legal_name as customer_name,
         p.description as product_description,
         wo.net_weight_kg,
@@ -1092,8 +1093,8 @@ ${renderTotalBar([
       WHERE wo.unit_id = ?
         AND wo.deleted_at IS NULL
         AND wo.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
-        AND date(${operationSaleDateSql("wo")}) >= date(?)
-        AND date(${operationSaleDateSql("wo")}) <= date(?)
+        AND ${operationSaleDaySql("wo")} >= date(?)
+        AND ${operationSaleDaySql("wo")} <= date(?)
       ORDER BY ${operationSaleDateSql("wo")} ASC
     `
       )

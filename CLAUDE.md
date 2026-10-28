@@ -109,6 +109,11 @@ These recur across the codebase and are easy to violate accidentally:
   enviada errada. O `COALESCE` com `created_at` fica: operacao antiga nao tem horario de
   saida gravado. O **patio** continua pela ENTRADA (`getTruckControlReport`,
   `getAverageQuarryMinutes`), que ali o assunto e o tempo do caminhao na pedreira.
+  O **dia** e o do calendario de Sao Paulo, nunca o de UTC: o horario e gravado em UTC, e
+  cortar o texto mandava a pesagem das 22h ao OMIE como emissao do dia seguinte. Dia da venda
+  so por `operationSaleDay` (JS: emissao e VENCTO) e `operationSaleDaySql` (SQL: recorte dos
+  relatorios) — nunca `slice(0, 10)` nem `date()` em cima de `operationSaleDateSql`. A nuvem
+  (`REPORT_UTC_OFFSET`, `localDay` do site) ja cortava assim.
 - **Pesagem pelo site e PEDIDO, nao pesagem** (`docs/web-api.md` 4.9, migracao `202609250001`):
   o site (perfis `operacao` e `gestor`) grava em `operation_requests` pela `web-api`, e a balanca
   marcada como executora da unidade (`device_registrations.executes_web_operations`, uma por

@@ -68,6 +68,34 @@ describe("resolveOrderPaymentSchedule", () => {
     }
   });
 
+  // O horario da saida e gravado em UTC: 22h de 20/10 em Sao Paulo e 01h de 21/10 em UTC.
+  // Cortando o texto, o pedido ia ao OMIE emitido em 21/10 e todo vencimento caia um dia
+  // depois do que o operador via no cupom ("Saida: 20/10").
+  it("a saida as 22h de Sao Paulo emite no proprio dia, nao no dia seguinte de UTC", () => {
+    const database = createDatabase();
+
+    try {
+      const term = createPaymentTerm(database, {
+        companyId: "company-1",
+        name: "1 parcela em 45 dias",
+        condition: "45"
+      });
+
+      const schedule = resolveOrderPaymentSchedule(database, term.id, "2026-10-21T01:00:00.000Z");
+      expect(schedule.issueDate).toBe("2026-10-20");
+      expect(orderInstallmentPlan(schedule, 78_000)).toEqual([
+        { number: 1, dueDate: "2026-12-04", valueCents: 78_000 }
+      ]);
+
+      // Meia-noite em Sao Paulo (03h UTC) ja e o dia seguinte.
+      expect(
+        resolveOrderPaymentSchedule(database, term.id, "2026-10-21T03:00:00.000Z").issueDate
+      ).toBe("2026-10-21");
+    } finally {
+      database.close();
+    }
+  });
+
   it("le os dias do rules_json quando a condicao chegou pela nuvem sem as colunas", () => {
     const database = createDatabase();
 

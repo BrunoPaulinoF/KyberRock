@@ -87,9 +87,54 @@ export function isOpenOperationStatus(status: string): boolean {
  * O patio continua sendo contado pela ENTRADA — `getTruckControlReport` e
  * `getAverageQuarryMinutes` medem tempo dentro da pedreira e nao mudam de base.
  *
+ * Isto e o INSTANTE (UTC), bom para ordenar e exibir hora. Para recortar o periodo ou
+ * mostrar o dia use `operationSaleDaySql`: `date()` em cima disto daria o dia de UTC.
+ *
  * @param alias prefixo da tabela na consulta (`"o"`, `"wo"`); vazio quando nao ha alias.
  */
 export function operationSaleDateSql(alias = ""): string {
   const prefix = alias ? `${alias}.` : "";
   return `COALESCE(${prefix}exit_weight_captured_at, ${prefix}created_at)`;
+}
+
+/**
+ * Fuso do DIA da venda: o de Sao Paulo (UTC-3; o Brasil nao tem horario de verao desde
+ * 2019), o mesmo `REPORT_UTC_OFFSET` dos relatorios da nuvem e o `localDay` do site.
+ *
+ * O horario e gravado em UTC (`toISOString`), e cortar o texto (`slice(0, 10)`, ou `date()`
+ * no SQLite) dava o dia de UTC: o caminhao que fecha as 22h de 20/10 virava pedido do OMIE
+ * de 21/10, todo vencimento caia um dia depois, e o cupom mostrava "Saida: 20/10" com
+ * VENCTO contado de 21/10. Das 21h a meia-noite, todo dia.
+ *
+ * Deslocamento fixo, e nao `America/Sao_Paulo` pelo Intl, porque o SQLite nao tem tabela de
+ * fusos: a conta do JS (emissao do OMIE, VENCTO do cupom) e a do SQL (recorte dos
+ * relatorios) tem de dar o MESMO dia, senao o relatorio volta a discordar do OMIE
+ * justamente na pesagem da noite.
+ */
+const SALE_DAY_UTC_OFFSET_HOURS = -3;
+
+/**
+ * Dia da venda (yyyy-mm-dd) em SQL: `operationSaleDateSql` no calendario de Sao Paulo. E
+ * o recorte de periodo de todo relatorio de dinheiro da balanca — o mesmo dia que
+ * `operationSaleDay` manda ao OMIE como emissao. Valor so com a data (sem hora) ja e o dia
+ * do calendario e nao desloca: para o SQLite ele seria meia-noite UTC, e voltaria um dia.
+ */
+export function operationSaleDaySql(alias = ""): string {
+  const at = operationSaleDateSql(alias);
+  return `CASE WHEN length(${at}) <= 10 THEN date(${at}) ELSE date(${at}, '${SALE_DAY_UTC_OFFSET_HOURS} hours') END`;
+}
+
+/**
+ * Dia da venda (yyyy-mm-dd) de um horario gravado (`exit_weight_captured_at`, com
+ * `created_at` de reserva), no calendario de Sao Paulo. Espelho de `operationSaleDaySql`:
+ * horario sem fuso vale como UTC, como no SQLite, e so a data volta como veio. Vazio quando
+ * nao ha horario.
+ */
+export function operationSaleDay(capturedAt: string | null | undefined): string {
+  if (!capturedAt) return "";
+  if (capturedAt.length <= 10) return capturedAt;
+  const hasZone = /(?:z|[+-]\d{2}:\d{2})$/i.test(capturedAt);
+  const instant = Date.parse(hasZone ? capturedAt : `${capturedAt.replace(" ", "T")}Z`);
+  if (!Number.isFinite(instant)) return capturedAt.slice(0, 10);
+  return new Date(instant + SALE_DAY_UTC_OFFSET_HOURS * 3_600_000).toISOString().slice(0, 10);
 }

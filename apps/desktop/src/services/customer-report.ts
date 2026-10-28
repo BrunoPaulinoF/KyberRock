@@ -4,6 +4,8 @@ import type { FreightModality, FreightRule } from "./freight.js";
 import {
   CLOSED_OPERATION_STATUS_SQL_LIST,
   operationSaleDateSql,
+  operationSaleDay,
+  operationSaleDaySql,
   isClosedOperationStatus
 } from "./weighing-operations.js";
 import { customerIdentityKey, resolveCustomerIdGroup } from "./customer-identity.js";
@@ -726,8 +728,8 @@ export class CustomerReportService {
            ${customerFilterSql(customerIds)}
            AND o.deleted_at IS NULL
            AND o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST}, 'cancelled')
-           AND date(${operationSaleDateSql("o")}) >= date(?)
-           AND date(${operationSaleDateSql("o")}) <= date(?)
+           AND ${operationSaleDaySql("o")} >= date(?)
+           AND ${operationSaleDaySql("o")} <= date(?)
          ORDER BY ${operationSaleDateSql("o")} ASC`
       )
       .all(unitId, ...(customerIds ?? []), startDate, endDate) as OperationRow[];
@@ -776,7 +778,7 @@ export class CustomerReportService {
            ${customerFilterSql(customerIds)}
            AND o.deleted_at IS NULL
            AND o.status IN (${CLOSED_OPERATION_STATUS_SQL_LIST})
-           AND date(${operationSaleDateSql("o")}) <= date(?)
+           AND ${operationSaleDaySql("o")} <= date(?)
          ORDER BY ${operationSaleDateSql("o")} ASC`
       )
       .all(unitId, ...(customerIds ?? []), endDate) as InstallmentSourceRow[];
@@ -784,7 +786,7 @@ export class CustomerReportService {
     const installments: ScopedInstallment[] = [];
     for (const row of rows) {
       const customer = readCustomerKey(row);
-      const baseDate = (row.exit_at ?? row.created_at).slice(0, 10);
+      const baseDate = operationSaleDay(row.exit_at ?? row.created_at);
       const dueDays = resolveInstallmentDueDays(row, baseDate);
       const amounts = splitInstallmentAmounts(row.total_cents ?? 0, dueDays.length);
 
@@ -965,7 +967,7 @@ function mapOperation(row: OperationRow): CustomerReportOperation {
   return {
     id: row.id,
     couponNumber: row.operation_code,
-    date: (row.exit_at ?? row.created_at).slice(0, 10),
+    date: operationSaleDay(row.exit_at ?? row.created_at),
     createdAt: row.created_at,
     status: row.status,
     statusLabel: STATUS_LABELS[row.status] ?? row.status,
