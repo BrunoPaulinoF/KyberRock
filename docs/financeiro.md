@@ -19,7 +19,7 @@ WhatsApp e bloqueio automático por inadimplência.
 | Fatura em PDF                 | `supabase/functions/_shared/billing-pdf.ts`                 | Demonstrativo A4 via `pdf.ts` (pdf-lib).                                            |
 | Motor                         | `supabase/functions/_shared/billing-engine.ts`              | Orquestra tudo. Compartilhado entre painel e cron.                                  |
 | API do painel                 | `supabase/functions/admin-billing/`                         | Ações do backoffice (mesma sessão do `admin-api`).                                  |
-| Passada automática            | `supabase/functions/billing-run/`                           | Chamada pelo pg_cron 2×/dia.                                                        |
+| Passada automática            | `supabase/functions/billing-run/`                           | Chamada pelo pg_cron 2×/dia (7h e 15h de Brasília).                                 |
 | Notificação de pagamento      | `supabase/functions/billing-webhook/`                       | IPN/webhook do Mercado Pago.                                                        |
 | Tela                          | `apps/web/src/admin/pages/FinancialBackoffice.tsx`          | Aba **Financeiro** do painel admin (`/admin` do KyberRock Web).                     |
 | Schema                        | `supabase/migrations/202608120001_financial_backoffice.sql` | Colunas de cobrança + `billing_settings` / `billing_invoices` / `billing_events`.   |
@@ -80,7 +80,7 @@ Um ciclo pulado (motor parado, pedreira cadastrada com atraso) é recuperado:
 
 No detalhe da fatura, em **Envio por WhatsApp**, o campo **Agendar envio** guarda o dia
 (`billing_invoices.whatsapp_scheduled_for`, migração `202610270001`) em que a passada
-automática (9h ou 15h de Brasília) manda a fatura, pela mesma `sendInvoiceWhatsapp` do botão
+automática (7h ou 15h de Brasília) manda a fatura, pela mesma `sendInvoiceWhatsapp` do botão
 "Enviar agora". O caso que motivou: boleto vencido reemitido com vencimento novo no fim do dia,
 para chegar ao financeiro da pedreira na manhã seguinte.
 
@@ -99,30 +99,53 @@ Ajustar o vencimento para hoje ou depois também tira a fatura de **Vencida**: o
 `markOverdueInvoices` só marca, nunca desmarca, e a fatura seguia vencida com o vencimento
 novo no futuro.
 
-## Lembrete antes do vencimento
+## Régua de cobrança
 
-A passada automática (9h ou 15h de Brasília) manda um **lembrete curto** pelo WhatsApp
-`reminder_days_before` dias antes do vencimento (padrão **3**; migração `202610270002`):
-valor, data, link do boleto, linha digitável e "se já pagou, desconsidere". A fatura completa,
-com o PDF, já chegou no fechamento. O caso que motivou: a FAT-2026-00010 da Pedreira Ibiúna
-chegou ao WhatsApp em 15/10 e venceu em 25/10 sem nenhum aviso no meio.
+A passada automática (7h ou 15h de Brasília; a das 7h existe para o boleto que vence no dia
+chegar cedo) segue uma régua contada do **vencimento original** (V) e da carência (G) —
+`collectionNoticeFor`, em `billing-cycle.ts`. Exemplo com vencimento 25/10 e carência 5:
 
-- **Um por vencimento** (`isReminderDue`, em `billing-cycle.ts`):
-  `billing_invoices.reminder_sent_for_due_date` guarda para qual vencimento o lembrete já saiu.
-  Boleto reemitido com data nova ganha outro lembrete.
-- **Janela**: do dia `vencimento − N` até o próprio vencimento, para a passada que não rodou no
-  primeiro dia recuperar no seguinte. Depois do vencimento quem fala é o bloqueio.
-- **Não repete a fatura**: se ela chegou ao cliente dentro da janela (fechamento perto do
-  vencimento, envio agendado), o lembrete não sai. Também não sai enquanto houver envio
-  agendado pendente.
-- **Só com boleto que vale** (`boletoDeliveryProblem`, a mesma regra do envio agendado):
-  fatura ajustada sem reemissão, emissão com erro ou boleto vencido seguram o lembrete e geram o
-  evento "Lembrete não saiu" no histórico da fatura.
-- **Sem duplicar**: a fatura é marcada antes do envio, e a marca é desfeita se o WhatsApp
-  falhar; a passada seguinte tenta de novo.
-- Liga/desliga, dias e texto ficam em **Configurações → Padrões do ciclo** e **Emitente e
-  textos** (marcadores do texto da fatura, mais `{dias}`). Coluna ausente é lida como
-  desligado: nada sai antes de a migração existir.
+| Quando             | Dia   | Mensagem                                     | Boleto                                          |
+| ------------------ | ----- | -------------------------------------------- | ----------------------------------------------- |
+| Fechamento         | 15/10 | Fatura completa, com o PDF                   | Emitido para vencer em V                        |
+| V − 3              | 22/10 | Lembrete                                     | O mesmo                                         |
+| V                  | 25/10 | "Vence hoje"                                 | O mesmo                                         |
+| V + 3              | 28/10 | "Fatura vencida" + data do bloqueio          | **Novo**, vencendo no dia                       |
+| V + G (último dia) | 30/10 | "Hoje é o último dia, o sistema para amanhã" | Reemitido se o anterior venceu ou foi cancelado |
+| V + G + 1          | 31/10 | Bloqueio (aviso de bloqueio)                 | —                                               |
+
+O caso que motivou: a FAT-2026-00010 da Pedreira Ibiúna chegou ao WhatsApp em 15/10, venceu em
+25/10, o Mercado Pago cancelou o boleto em 27/10 e o bloqueio de 31/10 chegaria sem nenhum papel
+válido nas mãos do cliente.
+
+- **O boleto novo não muda o vencimento da fatura** (`issueBoletoForInvoice` com `dueDate`): o
+  bloqueio continua contando de V. Senão cada boleto reemitido empurraria o bloqueio para frente.
+  O vencimento do boleto fica em `boleto_expires_at`, e é ele que a mensagem mostra.
+- O Mercado Pago pede vencimento "entre 1 e 30 dias" da emissão; se recusar o mesmo dia
+  (`providerRejected`), a reemissão tenta o dia seguinte.
+- **Um aviso por vencimento**: cada etapa marca para qual vencimento já saiu
+  (`reminder_sent_for_due_date`, `due_notice_sent_for`, `overdue_notice_sent_for`,
+  `final_notice_sent_for`, migrações `202610270002` e `202610290001`). Vencimento ajustado no
+  painel arma a régua de novo.
+- **Janelas sem sobreposição**: no máximo um aviso por fatura por dia. O lembrete recupera até a
+  véspera e o de vencida até a véspera do último dia, para a passada que não rodou num dia
+  recuperar no seguinte. Carência curta (aviso de vencida no último dia ou depois) deixa só o do
+  último dia; pedreira isenta ou bloqueio desligado não tem "último dia".
+- **Não repete a fatura**: nada sai no dia em que a fatura foi enviada pelo painel, nem com envio
+  agendado pendente; o lembrete também não sai se a fatura chegou dentro da janela dele.
+- Lembrete e "vence hoje" vão com o boleto da fatura e **só com boleto que vale**
+  (`boletoDeliveryProblem`): fatura ajustada sem reemissão, emissão com erro ou boleto vencido
+  geram o evento "Aviso de cobrança não saiu". Vencida e último dia **reemitem** em vez de parar
+  (`boletoNeedsReissue`), desde que a emissão automática de boleto esteja ligada.
+- **Boleto velho não derruba o novo**: a reemissão cancela o boleto anterior, e o cancelamento
+  dele chega depois pelo webhook. `applyPaymentStatus` só aplica status do boleto que está na
+  fatura (`paymentId`); pagamento confirmado de qualquer boleto dela continua quitando.
+- **Sem duplicar**: o aviso é reservado antes do boleto e do envio, e a reserva é desfeita se
+  qualquer um falhar; a passada seguinte tenta de novo (com o boleto que já saiu, sem outro).
+- Liga/desliga e dias ficam em **Configurações → Padrões do ciclo** (`auto_reminder_enabled`
+  liga a régua inteira; `reminder_days_before` e `overdue_notice_days_after`). O texto do
+  lembrete e do "vence hoje" segue o modelo de **Emitente e textos**; os de vencida e último dia
+  são fixos. Coluna ausente é lida como desligado: nada sai antes de a migração existir.
 
 ## Bloqueio por inadimplência
 
@@ -265,5 +288,5 @@ desta instalação, pronta para colar no painel do Mercado Pago.
    `supabase/config.toml` com `verify_jwt = false` — função sem bloco lá é
    implantada com verificação ligada e responde 401 ao painel.
 3. O job `kyberrock_billing_run` é criado pela migração
-   `202608120002_billing_run_cron.sql` e reaproveita o segredo
+   `202608120002_billing_run_cron.sql` (horário atual na `202610290001`: 7h e 15h) e reaproveita o segredo
    `cron_shared_secret` do Vault, o mesmo do agendador de relatórios.

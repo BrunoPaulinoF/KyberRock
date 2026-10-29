@@ -258,6 +258,7 @@ async function handleList(supabase: SupabaseAdminClient): Promise<Response> {
       autoBlockEnabled: settings.autoBlockEnabled,
       autoReminderEnabled: settings.autoReminderEnabled,
       reminderDaysBefore: settings.reminderDaysBefore,
+      overdueNoticeDaysAfter: settings.overdueNoticeDaysAfter,
       issuerName: settings.issuerName,
       issuerDocument: settings.issuerDocument,
       issuerEmail: settings.issuerEmail,
@@ -333,6 +334,13 @@ async function handleUpdateSettings(
       return jsonResponse({ error: "Dias do lembrete deve ficar entre 1 e 30." }, 400);
     }
     update.reminder_days_before = reminderDays;
+  }
+  if (payload.overdueNoticeDaysAfter !== undefined) {
+    const overdueDays = optionalInt(payload.overdueNoticeDaysAfter);
+    if (overdueDays === null || overdueDays < 1 || overdueDays > 30) {
+      return jsonResponse({ error: "Dias do aviso de vencida deve ficar entre 1 e 30." }, 400);
+    }
+    update.overdue_notice_days_after = overdueDays;
   }
   for (const [field, column] of [
     ["autoCloseEnabled", "auto_close_enabled"],

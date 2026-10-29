@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   boletoDeliveryProblem,
+  boletoNeedsReissue,
   buildBlockNoticeMessage,
+  buildFinalNoticeMessage,
   buildBlockReason,
   buildInvoiceDescription,
   buildInvoiceReminderMessage,
   buildInvoiceWhatsappMessage,
+  buildOverdueNoticeMessage,
   centsToAmount,
   formatCents,
   formatDateBr,
@@ -375,5 +378,58 @@ describe("buildInvoiceReminderMessage", () => {
     ).toBe(
       "Pedreira Ibiuna: FAT-2026-00010 vence em 3 dias (02/11/2026) - R$ 1.197,00 - https://mp.example/boleto"
     );
+  });
+});
+
+describe("regua de cobranca: boleto e mensagens", () => {
+  const live = {
+    status: "overdue",
+    boletoPaymentId: "184269449700",
+    boletoError: null,
+    boletoExpiresAt: "2026-10-29"
+  };
+
+  it("reemite o boleto que nao vale hoje e mantem o que vale", () => {
+    expect(boletoNeedsReissue(live, "2026-10-29")).toBe(false);
+    expect(boletoNeedsReissue(live, "2026-10-30")).toBe(true);
+    expect(boletoNeedsReissue({ ...live, boletoPaymentId: null }, "2026-10-29")).toBe(true);
+    expect(
+      boletoNeedsReissue(
+        { ...live, boletoError: "Boleto cancelled no Mercado Pago." },
+        "2026-10-29"
+      )
+    ).toBe(true);
+    expect(boletoNeedsReissue({ ...live, status: "paid" }, "2026-10-30")).toBe(false);
+  });
+
+  const notice = {
+    issuerName: "KyberRock",
+    companyName: "Pedreira Ibiuna",
+    invoiceNumber: "FAT-2026-00010",
+    referenceLabel: "10/2026",
+    amountCents: 119700,
+    dueDate: "2026-10-25",
+    boletoDueDate: "2026-10-28",
+    blockDate: "2026-10-31",
+    boletoUrl: "https://mp/boleto",
+    boletoBarcode: "2379..."
+  };
+
+  it("aviso de vencida leva o vencimento original, o boleto novo e a data do bloqueio", () => {
+    const message = buildOverdueNoticeMessage(notice);
+    expect(message).toContain("Fatura vencida");
+    expect(message).toContain("venceu em 25/10/2026");
+    expect(message).toContain("Novo boleto, com vencimento em:* 28/10/2026");
+    expect(message).toContain("https://mp/boleto");
+    expect(message).toContain("bloqueado automaticamente em 31/10/2026");
+    expect(buildOverdueNoticeMessage({ ...notice, blockDate: null })).not.toContain("bloqueado");
+  });
+
+  it("aviso do ultimo dia diz que o sistema para amanha", () => {
+    const message = buildFinalNoticeMessage({ ...notice, boletoDueDate: "2026-10-30" });
+    expect(message).toContain("Ultimo dia");
+    expect(message).toContain("para amanha, 31/10/2026");
+    expect(message).toContain("Boleto com vencimento em:* 30/10/2026");
+    expect(message).toContain("2379...");
   });
 });

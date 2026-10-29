@@ -415,6 +415,107 @@ export function buildInvoiceReminderMessage(input: InvoiceReminderInput): string
   });
 }
 
+/**
+ * O boleto da fatura precisa ser emitido de novo para valer hoje? Sim quando nao ha boleto,
+ * quando ele nao vale mais (`boletoDeliveryProblem`: vencido, cancelado, fatura ajustada) — e e
+ * isso que a regua de cobranca faz antes de mandar o aviso de vencida e o do ultimo dia.
+ */
+export function boletoNeedsReissue(
+  invoice: Parameters<typeof boletoDeliveryProblem>[0],
+  today: string
+): boolean {
+  if (invoice.status === "paid" || invoice.status === "canceled") return false;
+  if (!invoice.boletoPaymentId) return true;
+  return boletoDeliveryProblem(invoice, today) !== null;
+}
+
+export interface CollectionNoticeInput {
+  issuerName: string;
+  companyName: string;
+  invoiceNumber: string;
+  referenceLabel: string;
+  amountCents: number;
+  /** Vencimento ORIGINAL da fatura — o que conta para o bloqueio. */
+  dueDate: string;
+  /** Vencimento do boleto que vai na mensagem (o reemitido vence no dia). */
+  boletoDueDate?: string | null;
+  /** Dia em que o sistema e bloqueado; null quando esta pedreira nao bloqueia. */
+  blockDate?: string | null;
+  boletoUrl?: string | null;
+  boletoBarcode?: string | null;
+  pixKey?: string | null;
+  supportPhone?: string | null;
+}
+
+function paymentLines(input: CollectionNoticeInput): string[] {
+  const lines: string[] = [];
+  if (text(input.boletoUrl)) lines.push("", `*Boleto:* ${text(input.boletoUrl)}`);
+  if (text(input.boletoBarcode)) lines.push("", "*Linha digitavel:*", text(input.boletoBarcode));
+  if (text(input.pixKey)) lines.push("", `*PIX:* ${text(input.pixKey)}`);
+  return lines;
+}
+
+function closingLines(input: CollectionNoticeInput): string[] {
+  const lines = ["", "Se ja pagou, desconsidere esta mensagem ou responda com o comprovante."];
+  if (text(input.supportPhone)) lines.push(`Suporte: ${text(input.supportPhone)}`);
+  return lines;
+}
+
+/**
+ * Aviso de fatura vencida (`overdue` da regua), com o boleto NOVO — o do fechamento ja venceu e
+ * o Mercado Pago o cancela. Diz ate quando pagar para o sistema nao parar.
+ */
+export function buildOverdueNoticeMessage(input: CollectionNoticeInput): string {
+  const issuer = input.issuerName || "KyberRock";
+  const lines: string[] = [
+    `*${issuer} — Fatura vencida*`,
+    "",
+    `Ola${input.companyName ? `, ${input.companyName}` : ""}.`,
+    `A fatura ${input.invoiceNumber} (${input.referenceLabel}) venceu em ${formatDateBr(input.dueDate)} e ainda nao identificamos o pagamento.`,
+    "",
+    `*Valor:* ${formatCents(input.amountCents)}`
+  ];
+  if (text(input.boletoDueDate)) {
+    lines.push(`*Novo boleto, com vencimento em:* ${formatDateBr(input.boletoDueDate)}`);
+  }
+  lines.push(...paymentLines(input));
+  if (text(input.blockDate)) {
+    lines.push(
+      "",
+      `Sem o pagamento, o sistema da balanca sera bloqueado automaticamente em ${formatDateBr(input.blockDate)}.`
+    );
+  }
+  lines.push(...closingLines(input));
+  return lines.join("\n");
+}
+
+/**
+ * Ultimo dia de funcionamento (`final_day` da regua): o sistema para amanha. Vai com o boleto
+ * que vale hoje (reemitido quando o anterior ja venceu).
+ */
+export function buildFinalNoticeMessage(input: CollectionNoticeInput): string {
+  const issuer = input.issuerName || "KyberRock";
+  const blockDate = text(input.blockDate);
+  const lines: string[] = [
+    `*${issuer} — Ultimo dia: o sistema sera bloqueado*`,
+    "",
+    `Ola${input.companyName ? `, ${input.companyName}` : ""}.`,
+    `A fatura ${input.invoiceNumber} (${input.referenceLabel}), vencida em ${formatDateBr(input.dueDate)}, continua em aberto.`,
+    blockDate
+      ? `*Hoje e o ultimo dia de funcionamento.* Sem o pagamento, o sistema da balanca para amanha, ${formatDateBr(blockDate)}.`
+      : "*Hoje e o ultimo dia de funcionamento.* Sem o pagamento, o sistema da balanca para amanha.",
+    "",
+    `*Valor:* ${formatCents(input.amountCents)}`
+  ];
+  if (text(input.boletoDueDate)) {
+    lines.push(`*Boleto com vencimento em:* ${formatDateBr(input.boletoDueDate)}`);
+  }
+  lines.push(...paymentLines(input));
+  lines.push("", "Assim que o pagamento for confirmado, o acesso volta sozinho.");
+  lines.push(...closingLines(input));
+  return lines.join("\n");
+}
+
 /** Nome do arquivo PDF anexado no WhatsApp e baixado no painel. */
 export function invoicePdfFileName(invoiceNumber: string, referenceLabel: string): string {
   const reference = referenceLabel.replace("/", "-");
