@@ -1290,7 +1290,7 @@ function InvoiceDetailModal({
                 <>
                   <Note tone="info">
                     Envio agendado para {formatDateBr(scheduledSend)}: sai na cobrança automática do
-                    dia (9h ou 15h), com o boleto que estiver na fatura.
+                    dia (7h ou 15h), com o boleto que estiver na fatura.
                     {invoice.boleto_error &&
                       " O boleto atual não vale mais — reemita antes, senão o envio espera."}
                   </Note>
@@ -1314,7 +1314,7 @@ function InvoiceDetailModal({
                 <>
                   <Field
                     label="Agendar envio"
-                    hint="A cobrança automática manda a fatura por WhatsApp nesse dia (9h ou 15h)."
+                    hint="A cobrança automática manda a fatura por WhatsApp nesse dia (7h ou 15h)."
                   >
                     <input
                       className="adm-input"
@@ -1899,6 +1899,7 @@ function BillingSettingsForm({
       autoBlockEnabled: form.get("autoBlockEnabled") === "on",
       autoReminderEnabled: form.get("autoReminderEnabled") === "on",
       reminderDaysBefore: form.get("reminderDaysBefore"),
+      overdueNoticeDaysAfter: form.get("overdueNoticeDaysAfter"),
       issuerName: form.get("issuerName"),
       issuerDocument: form.get("issuerDocument"),
       issuerEmail: form.get("issuerEmail"),
@@ -2049,13 +2050,13 @@ function BillingSettingsForm({
           <Checkbox
             name="autoReminderEnabled"
             defaultChecked={settings.autoReminderEnabled ?? true}
-            label="Lembrar por WhatsApp antes do vencimento"
+            label="Régua de cobrança por WhatsApp (lembrete, vence hoje, vencida, último dia)"
           />
         </div>
         <div className="adm-grid adm-grid-spaced">
           <Field
-            label="Dias antes do vencimento"
-            hint="O lembrete sai na cobrança automática desse dia (9h ou 15h), uma vez por vencimento, com o mesmo boleto."
+            label="Lembrete: dias antes do vencimento"
+            hint="Sai na cobrança automática das 7h desse dia, com o mesmo boleto. No dia do vencimento sai outro aviso, 'vence hoje'."
           >
             <input
               className="adm-input"
@@ -2064,6 +2065,19 @@ function BillingSettingsForm({
               min={1}
               max={30}
               defaultValue={settings.reminderDaysBefore ?? 3}
+            />
+          </Field>
+          <Field
+            label="Fatura vencida: dias depois do vencimento"
+            hint="Emite um boleto novo vencendo no dia e avisa que está vencida. No último dia antes do bloqueio sai o alerta de que o sistema para amanhã. O bloqueio continua contando do vencimento original."
+          >
+            <input
+              className="adm-input"
+              name="overdueNoticeDaysAfter"
+              type="number"
+              min={1}
+              max={30}
+              defaultValue={settings.overdueNoticeDaysAfter ?? 3}
             />
           </Field>
         </div>

@@ -16,6 +16,8 @@ import type { SupabaseClient } from "jsr:@supabase/supabase-js@2";
 import {
   addDays,
   billingToday,
+  blockDateFor,
+  collectionNoticeFor,
   daysOverdue,
   diffDays,
   invoiceTotalCents,
@@ -24,18 +26,22 @@ import {
   proratedAmountCents,
   resolveBillingConfig,
   resolveGraceDays,
+  resolveOverdueNoticeDaysAfter,
   resolveReminderDaysBefore,
   shouldBlockForOverdue,
   upcomingBillingPeriod
 } from "./billing-cycle.ts";
-import type { BillingPeriod } from "./billing-cycle.ts";
+import type { BillingPeriod, CollectionNotice } from "./billing-cycle.ts";
 import {
   boletoDeliveryProblem,
+  boletoNeedsReissue,
   buildBlockNoticeMessage,
   buildBlockReason,
+  buildFinalNoticeMessage,
   buildInvoiceDescription,
   buildInvoiceReminderMessage,
   buildInvoiceWhatsappMessage,
+  buildOverdueNoticeMessage,
   formatCents,
   invoicePdfFileName,
   isReadyForBoleto,
@@ -63,8 +69,14 @@ const MAX_PAYMENT_POLLS_PER_RUN = 40;
 /** Quantos envios agendados uma passada processa (o resto fica para a seguinte). */
 const MAX_SCHEDULED_SENDS_PER_RUN = 40;
 
-/** Quantos lembretes de vencimento uma passada avalia (o resto fica para a seguinte). */
+/** Quantas faturas a regua de cobranca avalia por passada (o resto fica para a seguinte). */
 const MAX_REMINDERS_PER_RUN = 40;
+
+/**
+ * Ate quantos dias depois do vencimento a regua ainda procura fatura. Folga larga sobre
+ * carencias reais (5 dias), so para a consulta nao varrer o historico inteiro.
+ */
+const MAX_COLLECTION_LOOKBACK_DAYS = 60;
 
 export const BILLING_SETTINGS_TABLE = "billing_settings";
 export const BILLING_SETTINGS_ID = true;
@@ -96,6 +108,8 @@ export interface BillingSettings {
   autoReminderEnabled: boolean;
   /** Quantos dias antes do vencimento o lembrete sai (1 a 30). */
   reminderDaysBefore: number;
+  /** Quantos dias depois do vencimento sai o aviso de vencida com boleto novo (1 a 30). */
+  overdueNoticeDaysAfter: number;
   issuerName: string;
   issuerDocument: string;
   issuerEmail: string;
@@ -179,6 +193,17 @@ export interface BillingInvoiceRow {
    */
   reminder_sent_for_due_date?: string | null;
   reminder_sent_at?: string | null;
+  /**
+   * Os outros avisos da regua de cobranca (`collectionNoticeFor`), com a mesma ideia do
+   * lembrete: o vencimento para o qual ja sairam, e quando. Ausentes antes da migracao
+   * 202610290001.
+   */
+  due_notice_sent_for?: string | null;
+  due_notice_sent_at?: string | null;
+  overdue_notice_sent_for?: string | null;
+  overdue_notice_sent_at?: string | null;
+  final_notice_sent_for?: string | null;
+  final_notice_sent_at?: string | null;
   paid_at: string | null;
   paid_amount_cents: number | null;
   payment_method: string | null;
@@ -253,6 +278,7 @@ export async function loadBillingSettings(supabase: SupabaseClient): Promise<Bil
     // sair antes de a fatura ter onde marcar que ja saiu, senao repetiria a cada passada.
     autoReminderEnabled: row.auto_reminder_enabled === true,
     reminderDaysBefore: resolveReminderDaysBefore(row.reminder_days_before),
+    overdueNoticeDaysAfter: resolveOverdueNoticeDaysAfter(row.overdue_notice_days_after),
     issuerName: text(row.issuer_name) || "KyberRock",
     issuerDocument: text(row.issuer_document),
     issuerEmail: text(row.issuer_email),
@@ -515,6 +541,8 @@ export interface IssueBoletoResult {
   invoice: BillingInvoiceRow;
   issued: boolean;
   error?: string;
+  /** O Mercado Pago recusou o pedido (4xx) — e nao a configuracao ou o cadastro daqui. */
+  providerRejected?: boolean;
 }
 
 /**
@@ -534,6 +562,11 @@ export async function issueBoletoForInvoice(
     invoice: BillingInvoiceRow;
     /** Cancela o boleto anterior antes de emitir outro. */
     reissue?: boolean;
+    /**
+     * Vencimento do boleto, quando nao e o da fatura: o aviso de vencida reemite com vencimento
+     * no dia, mas a fatura continua com o original — e dele que o bloqueio conta.
+     */
+    dueDate?: string;
   }
 ): Promise<IssueBoletoResult> {
   const { settings, company, invoice } = input;
@@ -594,7 +627,7 @@ export async function issueBoletoForInvoice(
         periodEnd: invoice.period_end,
         template: settings.invoiceDescriptionTemplate
       }),
-      dueDate: invoice.due_date,
+      dueDate: input.dueDate ?? invoice.due_date,
       externalReference: invoice.id,
       notificationUrl: webhookUrl(),
       payer: {
@@ -649,7 +682,9 @@ export async function issueBoletoForInvoice(
         : error instanceof Error
           ? error.message
           : "Falha ao emitir boleto.";
-    return await failBoleto(supabase, invoice, message, attempt);
+    const result = await failBoleto(supabase, invoice, message, attempt);
+    const status = error instanceof MercadoPagoError ? error.status : 0;
+    return { ...result, providerRejected: status >= 400 && status < 500 };
   }
 }
 
@@ -1137,15 +1172,40 @@ export async function refreshInvoicePayment(
     paymentId: invoice.boleto_payment_id
   });
 
-  return await applyPaymentStatus(supabase, { settings, invoice, status: payment.status });
+  return await applyPaymentStatus(supabase, {
+    settings,
+    invoice,
+    status: payment.status,
+    paymentId: invoice.boleto_payment_id
+  });
 }
 
-/** Aplica um status do Mercado Pago (webhook ou reconsulta) na fatura. */
+/**
+ * Aplica um status do Mercado Pago (webhook ou reconsulta) na fatura.
+ *
+ * `paymentId` e o pagamento de onde o status veio. Boleto reemitido deixa o anterior para tras,
+ * e o cancelamento dele chega pelo webhook depois: sem conferir o id, o "cancelled" do boleto
+ * VELHO marcava o NOVO como cancelado e pedia outra reemissao. Pagamento confirmado vale de
+ * qualquer boleto da fatura — o dinheiro entrou.
+ */
 export async function applyPaymentStatus(
   supabase: SupabaseClient,
-  input: { settings: BillingSettings; invoice: BillingInvoiceRow; status: string }
+  input: {
+    settings: BillingSettings;
+    invoice: BillingInvoiceRow;
+    status: string;
+    paymentId?: string | null;
+  }
 ): Promise<PaymentSyncResult> {
   const { invoice, status } = input;
+  const fromOtherBoleto = Boolean(
+    input.paymentId &&
+    invoice.boleto_payment_id &&
+    String(input.paymentId) !== String(invoice.boleto_payment_id)
+  );
+  if (fromOtherBoleto && !isPaidStatus(status)) {
+    return { invoice, changed: false, status: invoice.boleto_status };
+  }
 
   if (isPaidStatus(status)) {
     if (invoice.status === "paid") {
@@ -1190,7 +1250,7 @@ export interface BillingRunSummary {
   invoicesSent: number;
   /** Envios agendados no painel que sairam nesta passada. */
   scheduledSent: number;
-  /** Lembretes de vencimento que sairam nesta passada. */
+  /** Avisos da regua de cobranca (lembrete, vence hoje, vencida, ultimo dia) desta passada. */
   remindersSent: number;
   invoicesMarkedOverdue: number;
   paymentsSynced: number;
@@ -1281,10 +1341,11 @@ export async function runBillingCycle(
   }
 
   // Depois dos agendados: a fatura que acabou de sair por agendamento conta como recebida e
-  // nao ganha lembrete repetido na mesma passada.
+  // nao ganha lembrete repetido na mesma passada. Antes do bloqueio: o aviso do ultimo dia sai
+  // na vespera, e o de vencida reemite o boleto que o bloqueio de amanha vai citar.
   if (settings.autoReminderEnabled) {
     try {
-      summary.remindersSent = await sendDueReminders(supabase, {
+      summary.remindersSent = await sendCollectionNotices(supabase, {
         settings,
         today,
         companyId: options.companyId ?? null,
@@ -1466,17 +1527,90 @@ export async function sendScheduledInvoices(
   return sent;
 }
 
+/** Onde cada aviso da regua marca para qual vencimento ja saiu, e como ele aparece no historico. */
+const COLLECTION_NOTICES: Record<
+  CollectionNotice,
+  {
+    forColumn: keyof BillingInvoiceRow;
+    atColumn: keyof BillingInvoiceRow;
+    event: string;
+    label: string;
+  }
+> = {
+  before_due: {
+    forColumn: "reminder_sent_for_due_date",
+    atColumn: "reminder_sent_at",
+    event: "reminder_sent",
+    label: "Lembrete de vencimento"
+  },
+  due_today: {
+    forColumn: "due_notice_sent_for",
+    atColumn: "due_notice_sent_at",
+    event: "due_notice_sent",
+    label: "Aviso de vencimento hoje"
+  },
+  overdue: {
+    forColumn: "overdue_notice_sent_for",
+    atColumn: "overdue_notice_sent_at",
+    event: "overdue_notice_sent",
+    label: "Aviso de fatura vencida"
+  },
+  final_day: {
+    forColumn: "final_notice_sent_for",
+    atColumn: "final_notice_sent_at",
+    event: "final_notice_sent",
+    label: "Aviso de ultimo dia antes do bloqueio"
+  }
+};
+
 /**
- * Lembrete de vencimento por WhatsApp: `reminderDaysBefore` dias antes, uma vez por
- * vencimento (`isReminderDue`). A fatura completa ja chegou no fechamento; este e o aviso
- * curto de que ela esta para vencer, com o mesmo boleto.
- *
- * Nao sai com boleto que nao vale mais (`boletoDeliveryProblem`) nem com envio agendado
- * pendente, que ja vai levar a fatura. Como no envio agendado, o lembrete e RESERVADO antes do
- * envio (grava o vencimento lembrado so se ainda nao era ele), para duas passadas juntas nao
- * mandarem duas vezes, e a reserva e desfeita se o WhatsApp falhar.
+ * Boleto que vale hoje para o aviso de vencida e o do ultimo dia: reemite com vencimento NO DIA,
+ * sem mexer no vencimento da fatura (o bloqueio conta do original). O Mercado Pago pede
+ * vencimento "entre 1 e 30 dias" da emissao; se recusar o mesmo dia, tenta o dia seguinte.
  */
-export async function sendDueReminders(
+async function reissueBoletoForToday(
+  supabase: SupabaseClient,
+  input: {
+    settings: BillingSettings;
+    company: BillingCompanyRow;
+    invoice: BillingInvoiceRow;
+    today: string;
+  }
+): Promise<IssueBoletoResult> {
+  const first = await issueBoletoForInvoice(supabase, {
+    settings: input.settings,
+    company: input.company,
+    invoice: input.invoice,
+    reissue: true,
+    dueDate: input.today
+  });
+  if (first.issued || !first.providerRejected) return first;
+  return await issueBoletoForInvoice(supabase, {
+    settings: input.settings,
+    company: input.company,
+    invoice: first.invoice,
+    reissue: true,
+    dueDate: addDays(input.today, 1)
+  });
+}
+
+/**
+ * Regua de cobranca por WhatsApp (`collectionNoticeFor`), contada do vencimento ORIGINAL:
+ *
+ *   - `reminderDaysBefore` dias antes: lembrete com o mesmo boleto;
+ *   - no dia do vencimento: "vence hoje", com o mesmo boleto;
+ *   - `overdueNoticeDaysAfter` dias depois: "fatura vencida", com boleto NOVO vencendo no dia;
+ *   - no ultimo dia antes do bloqueio: "o sistema para amanha", com o boleto que vale hoje
+ *     (reemitido se o anterior ja venceu ou foi cancelado).
+ *
+ * A fatura completa, com o PDF, ja chegou no fechamento. Cada aviso sai uma vez por vencimento
+ * (a coluna `*_sent_for` de `COLLECTION_NOTICES`) e nao sai no dia em que a propria fatura foi
+ * enviada, nem com envio agendado pendente, que ja vai levar a fatura. Como no envio agendado, o
+ * aviso e RESERVADO antes de tudo (grava o vencimento so se ainda nao era ele) — duas passadas
+ * juntas nao mandam duas vezes nem emitem dois boletos — e a reserva e desfeita se o boleto ou o
+ * WhatsApp falhar, para a passada seguinte tentar de novo.
+ */
+export async function sendCollectionNotices(
   supabase: SupabaseClient,
   input: {
     settings: BillingSettings;
@@ -1495,7 +1629,7 @@ export async function sendDueReminders(
     .from("billing_invoices")
     .select("*")
     .in("status", ["open", "overdue"])
-    .gte("due_date", today)
+    .gte("due_date", addDays(today, -MAX_COLLECTION_LOOKBACK_DAYS))
     .lte("due_date", addDays(today, settings.reminderDaysBefore))
     .is("whatsapp_scheduled_for", null)
     .order("due_date", { ascending: true })
@@ -1508,38 +1642,66 @@ export async function sendDueReminders(
 
   let sent = 0;
   for (const invoice of invoices) {
-    const previous = invoice.reminder_sent_for_due_date ?? null;
-    const due = isReminderDue({
-      dueDate: invoice.due_date,
-      today,
-      daysBefore: settings.reminderDaysBefore,
-      remindedForDueDate: previous,
-      lastSentOn: invoice.whatsapp_sent_at ? billingToday(new Date(invoice.whatsapp_sent_at)) : null
-    });
-    if (!due) continue;
-
+    let stage: CollectionNotice | null = null;
     try {
-      const problem = boletoDeliveryProblem(
-        {
-          status: invoice.status,
-          boletoPaymentId: invoice.boleto_payment_id,
-          boletoError: invoice.boleto_error,
-          boletoExpiresAt: invoice.boleto_expires_at
-        },
-        today
-      );
-      if (problem) {
-        await recordBillingEvent(supabase, {
-          companyId: invoice.company_id,
-          invoiceId: invoice.id,
-          eventType: "reminder_failed",
-          message: `Lembrete de vencimento nao saiu: ${problem}`
+      const company = await getCompany(supabase, invoice.company_id);
+      const graceDays = resolveGraceDays(company.billing_grace_days, settings.defaultGraceDays);
+      const blocks = settings.autoBlockEnabled && !company.billing_block_exempt;
+      stage = collectionNoticeFor({
+        dueDate: invoice.due_date,
+        today,
+        reminderDaysBefore: settings.reminderDaysBefore,
+        overdueDaysAfter: settings.overdueNoticeDaysAfter,
+        graceDays,
+        blocks
+      });
+      if (!stage) continue;
+      const notice = COLLECTION_NOTICES[stage];
+      // Coluna ausente (migracao pendente): sem onde marcar, o aviso repetiria a cada passada.
+      if (!(notice.forColumn in invoice)) continue;
+
+      const previous = (invoice[notice.forColumn] as string | null | undefined) ?? null;
+      if (previous === invoice.due_date) continue;
+      const lastSentOn = invoice.whatsapp_sent_at
+        ? billingToday(new Date(invoice.whatsapp_sent_at))
+        : null;
+      if (stage === "before_due") {
+        const due = isReminderDue({
+          dueDate: invoice.due_date,
+          today,
+          daysBefore: settings.reminderDaysBefore,
+          remindedForDueDate: previous,
+          lastSentOn
         });
-        input.errors.push(`${invoice.number}: lembrete nao saiu: ${problem}`);
+        if (!due) continue;
+      } else if (lastSentOn === today) {
+        // A fatura chegou ao cliente hoje (envio manual do painel): o aviso repetiria.
         continue;
       }
 
-      const company = await getCompany(supabase, invoice.company_id);
+      const needsNewBoleto = stage === "overdue" || stage === "final_day";
+      const boletoState = (row: BillingInvoiceRow) => ({
+        status: row.status,
+        boletoPaymentId: row.boleto_payment_id,
+        boletoError: row.boleto_error,
+        boletoExpiresAt: row.boleto_expires_at
+      });
+      if (!needsNewBoleto) {
+        const problem = boletoDeliveryProblem(boletoState(invoice), today);
+        if (problem) {
+          await recordBillingEvent(supabase, {
+            companyId: invoice.company_id,
+            invoiceId: invoice.id,
+            eventType: "reminder_failed",
+            message: `${notice.label} nao saiu: ${problem}`
+          });
+          input.errors.push(
+            `${invoice.number}: ${notice.label.toLowerCase()} nao saiu: ${problem}`
+          );
+          continue;
+        }
+      }
+
       const target = normalizeWhatsappNumber(resolveBillingCustomer(company).phone);
       if (!target) {
         input.errors.push(`${invoice.number}: lembrete sem WhatsApp de cobranca cadastrado.`);
@@ -1548,64 +1710,104 @@ export async function sendDueReminders(
 
       let claim = supabase
         .from("billing_invoices")
-        .update({ reminder_sent_for_due_date: invoice.due_date, reminder_sent_at: nowIso() })
+        .update({ [notice.forColumn]: invoice.due_date, [notice.atColumn]: nowIso() })
         .eq("id", invoice.id);
-      claim = previous
-        ? claim.eq("reminder_sent_for_due_date", previous)
-        : claim.is("reminder_sent_for_due_date", null);
+      claim = previous ? claim.eq(notice.forColumn, previous) : claim.is(notice.forColumn, null);
       const { data: claimed, error: claimError } = await claim.select("id");
       if (claimError) throw claimError;
       if (!claimed || claimed.length === 0) continue;
+
+      const release = async (reason: string) => {
+        await supabase
+          .from("billing_invoices")
+          .update({ [notice.forColumn]: previous, [notice.atColumn]: null })
+          .eq("id", invoice.id)
+          .eq(notice.forColumn, invoice.due_date);
+        await recordBillingEvent(supabase, {
+          companyId: invoice.company_id,
+          invoiceId: invoice.id,
+          eventType: "reminder_failed",
+          message: `${notice.label} nao saiu: ${reason}`
+        });
+        input.errors.push(`${invoice.number}: ${notice.label.toLowerCase()} nao saiu: ${reason}`);
+      };
+
+      let current = invoice;
+      if (needsNewBoleto && boletoNeedsReissue(boletoState(current), today)) {
+        if (!settings.autoBoletoEnabled) {
+          await release("o boleto nao vale mais e a emissao automatica de boleto esta desligada.");
+          continue;
+        }
+        const issued = await reissueBoletoForToday(supabase, {
+          settings,
+          company,
+          invoice: current,
+          today
+        });
+        current = issued.invoice;
+        if (!issued.issued) {
+          await release(issued.error ?? "falha ao reemitir o boleto.");
+          continue;
+        }
+        // Boleto pago na emissao (credito em conta): nada mais a cobrar.
+        if (current.status === "paid") continue;
+      }
+
+      const common = {
+        issuerName: settings.issuerName,
+        companyName: company.name,
+        invoiceNumber: current.number,
+        referenceLabel: current.reference_label,
+        amountCents: current.amount_cents,
+        dueDate: current.due_date,
+        boletoUrl: current.boleto_url,
+        boletoBarcode: current.boleto_barcode,
+        pixKey: settings.issuerPixKey,
+        supportPhone: settings.issuerPhone
+      };
+      const blockDate = blocks ? blockDateFor(current.due_date, graceDays) : null;
+      const message =
+        stage === "overdue"
+          ? buildOverdueNoticeMessage({
+              ...common,
+              boletoDueDate: current.boleto_expires_at,
+              blockDate
+            })
+          : stage === "final_day"
+            ? buildFinalNoticeMessage({
+                ...common,
+                boletoDueDate: current.boleto_expires_at,
+                blockDate
+              })
+            : buildInvoiceReminderMessage({
+                ...common,
+                daysUntilDue: diffDays(today, current.due_date),
+                template: settings.whatsappReminderTemplate
+              });
 
       try {
         await sendWhatsappText({
           baseUrl: settings.whatsappUrl,
           instanceToken: settings.whatsappInstanceToken,
           to: target,
-          text: buildInvoiceReminderMessage({
-            issuerName: settings.issuerName,
-            companyName: company.name,
-            invoiceNumber: invoice.number,
-            referenceLabel: invoice.reference_label,
-            amountCents: invoice.amount_cents,
-            dueDate: invoice.due_date,
-            daysUntilDue: diffDays(today, invoice.due_date),
-            boletoUrl: invoice.boleto_url,
-            boletoBarcode: invoice.boleto_barcode,
-            pixKey: settings.issuerPixKey,
-            supportPhone: settings.issuerPhone,
-            template: settings.whatsappReminderTemplate
-          }),
-          trackId: `billing-reminder:${invoice.id}:${invoice.due_date}`
+          text: message,
+          trackId: `billing-${stage}:${invoice.id}:${invoice.due_date}`
         });
       } catch (sendError) {
-        // Desfaz a reserva para a proxima passada tentar de novo.
-        await supabase
-          .from("billing_invoices")
-          .update({ reminder_sent_for_due_date: previous, reminder_sent_at: null })
-          .eq("id", invoice.id)
-          .eq("reminder_sent_for_due_date", invoice.due_date);
-        const message = sendError instanceof Error ? sendError.message : "Falha no WhatsApp.";
-        await recordBillingEvent(supabase, {
-          companyId: invoice.company_id,
-          invoiceId: invoice.id,
-          eventType: "reminder_failed",
-          message: `Lembrete de vencimento nao saiu: ${message}`
-        });
-        input.errors.push(`${invoice.number}: lembrete nao saiu: ${message}`);
+        await release(sendError instanceof Error ? sendError.message : "Falha no WhatsApp.");
         continue;
       }
 
       await recordBillingEvent(supabase, {
         companyId: invoice.company_id,
         invoiceId: invoice.id,
-        eventType: "reminder_sent",
-        message: `Lembrete de vencimento (${invoice.due_date.split("-").reverse().join("/")}) enviado por WhatsApp para ${target}.`
+        eventType: notice.event,
+        message: `${notice.label} (vencimento ${invoice.due_date.split("-").reverse().join("/")}) enviado por WhatsApp para ${target}.`
       });
       sent += 1;
     } catch (error) {
       input.errors.push(
-        `Lembrete ${invoice.number}: ${error instanceof Error ? error.message : "falhou"}`
+        `Lembrete ${invoice.number}${stage ? ` (${stage})` : ""}: ${error instanceof Error ? error.message : "falhou"}`
       );
     }
   }

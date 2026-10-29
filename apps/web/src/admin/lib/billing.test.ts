@@ -238,7 +238,9 @@ describe("reminderSentForCurrentDue", () => {
   it("labels and colors the reminder events", () => {
     expect(billingEventLabel("reminder_sent")).toBe("Lembrete de vencimento enviado");
     expect(billingEventTone("reminder_sent")).toBe("ok");
-    expect(billingEventLabel("reminder_failed")).toBe("Lembrete não saiu");
+    expect(billingEventLabel("reminder_failed")).toBe("Aviso de cobrança não saiu");
+    expect(billingEventLabel("overdue_notice_sent")).toBe("Aviso de fatura vencida enviado");
+    expect(billingEventTone("final_notice_sent")).toBe("ok");
     expect(billingEventTone("reminder_failed")).toBe("danger");
   });
 });

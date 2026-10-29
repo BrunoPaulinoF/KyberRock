@@ -13,6 +13,7 @@ import {
   inclusiveDays,
   invoiceTotalCents,
   isOverdue,
+  collectionNoticeFor,
   isReminderDue,
   nextBillingPeriod,
   pendingBillingPeriods,
@@ -22,6 +23,7 @@ import {
   reminderWindowStart,
   resolveBillingConfig,
   resolveGraceDays,
+  resolveOverdueNoticeDaysAfter,
   resolveReminderDaysBefore,
   shouldBlockForOverdue,
   upcomingBillingPeriod
@@ -345,7 +347,8 @@ describe("lembrete de vencimento", () => {
 
   it("recupera ate o dia do vencimento quando a passada perdeu o primeiro dia", () => {
     expect(isReminderDue({ ...base, today: "2026-11-01" })).toBe(true);
-    expect(isReminderDue({ ...base, today: "2026-11-02" })).toBe(true);
+    // O dia do vencimento tem aviso proprio (`due_today`).
+    expect(isReminderDue({ ...base, today: "2026-11-02" })).toBe(false);
     expect(isReminderDue({ ...base, today: "2026-11-03" })).toBe(false);
   });
 
@@ -370,5 +373,64 @@ describe("lembrete de vencimento", () => {
     expect(resolveReminderDaysBefore(0)).toBe(3);
     expect(resolveReminderDaysBefore("abc")).toBe(3);
     expect(resolveReminderDaysBefore(null)).toBe(3);
+  });
+});
+
+describe("collectionNoticeFor", () => {
+  // Vence 25/10, carencia 5: bloqueia em 31/10, ultimo dia de funcionamento 30/10.
+  const base = {
+    dueDate: "2026-10-25",
+    reminderDaysBefore: 3,
+    overdueDaysAfter: 3,
+    graceDays: 5,
+    blocks: true
+  };
+  const at = (today: string, extra: Partial<typeof base> = {}) =>
+    collectionNoticeFor({ ...base, ...extra, today });
+
+  it("monta a regua inteira a partir do vencimento original", () => {
+    expect(at("2026-10-21")).toBeNull();
+    expect(at("2026-10-22")).toBe("before_due");
+    expect(at("2026-10-24")).toBe("before_due");
+    expect(at("2026-10-25")).toBe("due_today");
+    expect(at("2026-10-26")).toBeNull();
+    expect(at("2026-10-27")).toBeNull();
+    expect(at("2026-10-28")).toBe("overdue");
+    // Recupera o aviso de vencida ate a vespera do ultimo dia.
+    expect(at("2026-10-29")).toBe("overdue");
+    expect(at("2026-10-30")).toBe("final_day");
+    expect(blockDateFor(base.dueDate, base.graceDays)).toBe("2026-10-31");
+    expect(at("2026-10-31")).toBeNull();
+  });
+
+  it("carencia curta: o ultimo dia toma o lugar do aviso de vencida", () => {
+    expect(at("2026-10-27", { graceDays: 2 })).toBe("final_day");
+    expect(at("2026-10-28", { graceDays: 2 })).toBeNull();
+    expect(at("2026-10-28", { graceDays: 3 })).toBe("final_day");
+  });
+
+  it("carencia zero: o ultimo dia e o do vencimento, sem aviso proprio", () => {
+    expect(at("2026-10-25", { graceDays: 0 })).toBe("due_today");
+    expect(at("2026-10-26", { graceDays: 0 })).toBeNull();
+    expect(at("2026-10-28", { graceDays: 0 })).toBeNull();
+  });
+
+  it("sem bloqueio nao ha ultimo dia, so o aviso de vencida", () => {
+    expect(at("2026-10-28", { blocks: false })).toBe("overdue");
+    expect(at("2026-10-30", { blocks: false })).toBe("overdue");
+    expect(at("2026-10-31", { blocks: false })).toBeNull();
+    expect(at("2026-10-28", { blocks: false, graceDays: 0 })).toBe("overdue");
+    expect(at("2026-10-29", { blocks: false, graceDays: 0 })).toBeNull();
+  });
+
+  it("recusa data invalida", () => {
+    expect(collectionNoticeFor({ ...base, dueDate: "", today: "2026-10-25" })).toBeNull();
+  });
+
+  it("aceita de 1 a 30 dias no aviso de vencida", () => {
+    expect(resolveOverdueNoticeDaysAfter(undefined)).toBe(3);
+    expect(resolveOverdueNoticeDaysAfter(0)).toBe(3);
+    expect(resolveOverdueNoticeDaysAfter(5)).toBe(5);
+    expect(resolveOverdueNoticeDaysAfter(90)).toBe(30);
   });
 });

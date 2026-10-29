@@ -281,8 +281,9 @@ export function reminderWindowStart(dueDate: string, daysBefore: number): string
 /**
  * O lembrete de vencimento desta fatura sai hoje?
  *
- * Sai uma vez por VENCIMENTO, entre `reminderWindowStart` e o proprio dia do vencimento — a
- * passada que nao rodou no primeiro dia (motor parado) recupera no seguinte. Fatura que mudou
+ * Sai uma vez por VENCIMENTO, entre `reminderWindowStart` e a vespera do vencimento — a
+ * passada que nao rodou no primeiro dia (motor parado) recupera no seguinte. O proprio dia do
+ * vencimento tem aviso proprio ("vence hoje", ver `collectionNoticeFor`). Fatura que mudou
  * de vencimento (boleto reemitido) ganha lembrete novo, porque o anterior falava da data velha.
  *
  * Nao sai quando a propria fatura chegou ao cliente dentro da janela (`lastSentOn`, o dia do
@@ -299,11 +300,71 @@ export function isReminderDue(input: {
 }): boolean {
   if (!isValidDateString(input.dueDate) || !isValidDateString(input.today)) return false;
   if (input.remindedForDueDate === input.dueDate) return false;
-  if (input.today > input.dueDate) return false;
+  if (input.today >= input.dueDate) return false;
   const start = reminderWindowStart(input.dueDate, input.daysBefore);
   if (input.today < start) return false;
   if (input.lastSentOn && input.lastSentOn >= start) return false;
   return true;
+}
+
+/** Dias depois do vencimento em que sai o aviso de fatura vencida, quando a configuracao nao diz. */
+export const DEFAULT_OVERDUE_NOTICE_DAYS_AFTER = 3;
+
+/** Dias do aviso de vencida aceitos na configuracao: de 1 a 30, inteiro. */
+export function resolveOverdueNoticeDaysAfter(value: unknown): number {
+  const days = Math.trunc(Number(value));
+  if (!Number.isFinite(days) || days < 1) return DEFAULT_OVERDUE_NOTICE_DAYS_AFTER;
+  return Math.min(days, 30);
+}
+
+/**
+ * Regua de cobranca por WhatsApp, contada do vencimento ORIGINAL da fatura (V) e da carencia (G):
+ *
+ *   - `before_due`: lembrete `reminderDaysBefore` dias antes, ate a vespera;
+ *   - `due_today`: no proprio dia do vencimento;
+ *   - `overdue`: `overdueDaysAfter` dias depois, com boleto NOVO vencendo no dia — o antigo ja
+ *     venceu e o Mercado Pago o cancela;
+ *   - `final_day`: no ultimo dia antes do bloqueio (V + G; o bloqueio e em V + G + 1), avisando
+ *     que o sistema para amanha.
+ *
+ * As janelas nao se sobrepoem, entao a passada manda no maximo um aviso por fatura por dia. A
+ * de `overdue` vai ate a vespera do ultimo dia, para a passada que perdeu o dia recuperar no
+ * seguinte. Sem bloqueio (pedreira isenta ou bloqueio desligado) nao ha "ultimo dia": o aviso
+ * de vencida fica com a janela ate V + max(G, overdueDaysAfter). Com carencia curta, em que o
+ * aviso de vencida cairia no ultimo dia ou depois, quem fala e so o do ultimo dia (e, com
+ * carencia zero, o aviso de bloqueio do dia seguinte).
+ *
+ * O boleto reemitido NAO muda o vencimento da fatura: o bloqueio continua contando do original,
+ * senao cada boleto novo empurraria o bloqueio para frente.
+ */
+export type CollectionNotice = "before_due" | "due_today" | "overdue" | "final_day";
+
+export function collectionNoticeFor(input: {
+  dueDate: string;
+  today: string;
+  reminderDaysBefore: number;
+  overdueDaysAfter: number;
+  graceDays: number;
+  /** A inadimplencia bloqueia esta pedreira (bloqueio ligado e pedreira nao isenta). */
+  blocks: boolean;
+}): CollectionNotice | null {
+  if (!isValidDateString(input.dueDate) || !isValidDateString(input.today)) return null;
+  const offset = diffDays(input.dueDate, input.today);
+  if (offset < 0) {
+    return input.today >= reminderWindowStart(input.dueDate, input.reminderDaysBefore)
+      ? "before_due"
+      : null;
+  }
+  if (offset === 0) return "due_today";
+
+  const grace = Math.max(0, Math.trunc(input.graceDays));
+  const overdueAfter = resolveOverdueNoticeDaysAfter(input.overdueDaysAfter);
+  const hasFinalDay = input.blocks && grace >= 1;
+  if (hasFinalDay && offset === grace) return "final_day";
+  // Bloqueada, a pedreira ja recebeu o aviso de bloqueio: nada da regua sai depois do ultimo dia.
+  const overdueEnd = input.blocks ? grace - 1 : Math.max(grace, overdueAfter);
+  if (offset >= overdueAfter && offset <= overdueEnd) return "overdue";
+  return null;
 }
 
 /** Configuracao efetiva da pedreira: o que ela definiu, senao o padrao global. */

@@ -149,6 +149,7 @@ export interface BillingSettingsView {
   /** Ausentes enquanto a Edge Function nao foi atualizada. */
   autoReminderEnabled?: boolean;
   reminderDaysBefore?: number;
+  overdueNoticeDaysAfter?: number;
   issuerName: string;
   issuerDocument: string;
   issuerEmail: string;
@@ -427,7 +428,10 @@ const BILLING_EVENT_LABELS: Record<string, string> = {
   send_scheduled: "Envio agendado",
   send_schedule_canceled: "Agendamento desfeito",
   reminder_sent: "Lembrete de vencimento enviado",
-  reminder_failed: "Lembrete não saiu",
+  reminder_failed: "Aviso de cobrança não saiu",
+  due_notice_sent: "Aviso de vencimento hoje enviado",
+  overdue_notice_sent: "Aviso de fatura vencida enviado",
+  final_notice_sent: "Aviso de último dia enviado",
   boleto_issued: "Boleto emitido",
   boleto_failed: "Falha na emissão do boleto",
   boleto_status_changed: "Situação do boleto mudou",
@@ -461,6 +465,9 @@ const BILLING_EVENT_OK = new Set([
   "invoice_paid",
   "invoice_sent",
   "reminder_sent",
+  "due_notice_sent",
+  "overdue_notice_sent",
+  "final_notice_sent",
   "boleto_issued",
   "company_released",
   "company_released_manually"

@@ -138,7 +138,8 @@ Deno.serve(async (req) => {
     const result = await applyPaymentStatus(supabase, {
       settings,
       invoice,
-      status: payment.status
+      status: payment.status,
+      paymentId
     });
 
     return jsonResponse({
