@@ -18,6 +18,7 @@ import {
 } from "./freight.js";
 import { getCustomerFreightRuleForProduct } from "./customer-freight-rules.js";
 import { resolveCustomerFutureBillingInvoice } from "./customer-future-billing.js";
+import { captureOperationClosingSnapshot } from "./operation-closing-snapshot.js";
 import { calculateSavingsPercent, PricingService, type PriceDetails } from "./pricing.js";
 import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
@@ -949,6 +950,10 @@ export function closeWeighingOperation(
           input.operationId
         );
     }
+
+    // Foto do cadastro (cliente, placa, motorista, produto...) no instante da venda: e ela
+    // que a reimpressao de amanha usa, e nao o cadastro que alguem editar ate la.
+    captureOperationClosingSnapshot(database, input.operationId, timestamp);
 
     // Retrato da nota de entrega futura NO FECHAMENTO.
     //

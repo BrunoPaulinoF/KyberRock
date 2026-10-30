@@ -459,6 +459,87 @@ describe("multi-desktop na mesma pedreira", () => {
     }
   });
 
+  it("foto do fechamento: chega da outra balanca e o nulo da nuvem nao apaga a daqui", async () => {
+    // A reimpressao do cupom usa a foto do cadastro tirada no fechamento. A pesagem fechada
+    // na balanca B tem de trazer a foto de la; e a copia daqui, uma vez gravada, nao pode
+    // ser apagada por uma projecao sem a coluna (nuvem sem a migracao, balanca antiga).
+    const database = createMachine("desktop-a");
+    const fromB = JSON.stringify({ customerName: "Cliente da Balanca B", plate: "BBB2B22" });
+    const mine = JSON.stringify({ customerName: "Cliente Daqui", plate: "AAA1A11" });
+
+    try {
+      const identity = readIdentity(database);
+      insertCadastro(database);
+      upsertUnitDevices(database, identity, [
+        { id: "desktop-b", name: "Balanca 2", color: "#ea580c", is_active: true }
+      ]);
+      database
+        .prepare(
+          `INSERT INTO weighing_operations (
+             id, company_id, unit_id, device_id, status, operation_type, customer_id, product_id,
+             entry_weight_kg, exit_weight_kg, net_weight_kg, closing_snapshot_json,
+             created_at, updated_at
+           ) VALUES ('op-daqui', 'company-1', 'unit-1', ?, 'closed_local', 'invoice',
+             'cust-1', 'prod-1', 12000, 40000, 28000, ?,
+             '2026-07-22T11:00:00.000Z', '2026-07-22T12:00:00.000Z')`
+        )
+        .run(identity.deviceId, mine);
+      const closed = {
+        company_id: "company-1",
+        unit_id: "unit-1",
+        status: "closed_local",
+        operation_type: "invoice",
+        customer_id: "cust-1",
+        product_id: "prod-1",
+        entry_weight_kg: 12_000,
+        exit_weight_kg: 40_000,
+        net_weight_kg: 28_000,
+        created_at: "2026-07-22T11:00:00.000Z"
+      };
+      invokeMock.mockResolvedValueOnce({
+        data: {
+          operations: [
+            {
+              ...closed,
+              id: "op-da-b",
+              device_id: "desktop-b",
+              closing_snapshot_json: fromB,
+              updated_at: "2026-07-22T12:00:00.000Z"
+            },
+            {
+              ...closed,
+              id: "op-daqui",
+              device_id: identity.deviceId,
+              closing_snapshot_json: null,
+              updated_at: "2026-07-22T13:00:00.000Z"
+            }
+          ]
+        },
+        error: null
+      });
+
+      await pullDesktopDataFromCloud(database, identity);
+
+      const snapshotOf = (id: string) =>
+        database
+          .prepare("SELECT closing_snapshot_json FROM weighing_operations WHERE id = ?")
+          .pluck()
+          .get(id);
+      expect(snapshotOf("op-da-b")).toBe(fromB);
+      expect(snapshotOf("op-daqui")).toBe(mine);
+
+      invokeMock.mockResolvedValueOnce({ data: { ok: true }, error: null });
+      await syncOperationToSupabase(database, "op-daqui", identity);
+      expect(invokeMock).toHaveBeenLastCalledWith("desktop-sync", {
+        body: expect.objectContaining({
+          operations: [expect.objectContaining({ id: "op-daqui", closing_snapshot_json: mine })]
+        })
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   it("carteira: a venda e o fechamento de uma balanca chegam na outra", async () => {
     // A carteira e da pedreira, nao do computador: a venda em carteira feita na
     // balanca A e o fechamento lancado nela tem de aparecer na balanca B.

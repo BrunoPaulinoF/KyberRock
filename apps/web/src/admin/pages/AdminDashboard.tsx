@@ -1,4 +1,5 @@
 import {
+  BellRing,
   Bot,
   Building2,
   Download,
@@ -26,6 +27,7 @@ import { DEVICE_NAME_MAX_LENGTH, parseDeviceName } from "../lib/device-name";
 import { deviceHealth, isOnline, sinceLabel } from "../lib/overview";
 import { matchesSearch, rankBySearch } from "../lib/search-ranking";
 import { AiAssistantSettings } from "./AiAssistantSettings";
+import { DeviceAlertsSettings } from "./DeviceAlertsSettings";
 import { DesktopUpdates } from "./DesktopUpdates";
 import { FinancialBackoffice } from "./FinancialBackoffice";
 import { Overview, type OverviewTarget } from "./Overview";
@@ -369,6 +371,7 @@ type Section =
   | "devices"
   | "updates"
   | "financeiro"
+  | "alerts"
   | "ai";
 
 /** Resposta de `reveal_credentials`. Ver `_shared/admin-credentials.ts`. */
@@ -795,6 +798,12 @@ export function AdminDashboard() {
       icon: <Download size={16} />
     },
     { id: "financeiro", label: "Financeiro", group: "Plataforma", icon: <Wallet size={16} /> },
+    {
+      id: "alerts",
+      label: "Alertas de balança",
+      group: "Plataforma",
+      icon: <BellRing size={16} />
+    },
     { id: "ai", label: "Assistente de IA", group: "Plataforma", icon: <Bot size={16} /> }
   ];
 
@@ -1572,6 +1581,14 @@ export function AdminDashboard() {
 
           {section === "financeiro" && (
             <FinancialBackoffice onSessionExpired={() => void logout()} />
+          )}
+
+          {section === "alerts" && (
+            <DeviceAlertsSettings
+              companies={companies.map((company) => ({ id: company.id, name: company.name }))}
+              devices={devices.map((device) => ({ id: device.id, name: device.name }))}
+              onSessionExpired={() => void logout()}
+            />
           )}
 
           {section === "ai" && <AiAssistantSettings onSessionExpired={() => void logout()} />}

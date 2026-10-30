@@ -2263,5 +2263,35 @@ ON CONFLICT(key) DO UPDATE SET
   value_json = excluded.value_json,
   updated_at = excluded.updated_at;
 `
+  },
+  {
+    version: 64,
+    name: "operation_closing_snapshot",
+    sql: `
+-- Foto do cadastro da pesagem no FECHAMENTO (\`services/operation-closing-snapshot.ts\`):
+-- cliente, documento, placa, motorista, transportadora, produto e condicao como estavam no
+-- instante da venda. O cupom lia o cadastro de agora, e a reimpressao de uma carga antiga
+-- saia com o nome, a placa ou o produto de hoje. Gravada uma vez e nunca reescrita.
+ALTER TABLE weighing_operations ADD COLUMN closing_snapshot_json TEXT;
+`
+  },
+  {
+    version: 65,
+    name: "cash_closings",
+    sql: `
+-- Conferencia do fechamento do caixa do dia (\`services/cash-closing.ts\`): o que o operador
+-- contou em cada conta (caixinha, OMIE Cash, GetNet...) contra o que o sistema diz que entrou.
+-- Uma por dia e pedreira; salvar de novo substitui (a versao anterior fica na auditoria).
+CREATE TABLE IF NOT EXISTS cash_closings (
+  id TEXT PRIMARY KEY,
+  unit_id TEXT NOT NULL,
+  closing_date TEXT NOT NULL,
+  counted_json TEXT NOT NULL DEFAULT '{}',
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (unit_id, closing_date)
+);
+`
   }
 ];

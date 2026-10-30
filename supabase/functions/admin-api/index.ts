@@ -23,6 +23,11 @@ import {
   isCipherConfigured
 } from "../_shared/credential-cipher.ts";
 import { summarizeDesktopReleases } from "../_shared/desktop-releases.ts";
+import { normalizeAlertPhone } from "../_shared/device-alerts.ts";
+import {
+  resolveAlertWhatsappConfig,
+  sendAlertWhatsappText
+} from "../_shared/device-alert-whatsapp.ts";
 import {
   normalizeBankMovementAccounts,
   parseCheckingAccounts
@@ -110,7 +115,11 @@ type AdminAction =
   | "clear_desktop_update_notice"
   | "get_desktop_release_notes"
   | "promote_desktop_release"
-  | "reveal_credentials";
+  | "reveal_credentials"
+  | "list_device_alerts"
+  | "save_device_alert_recipient"
+  | "delete_device_alert_recipient"
+  | "test_device_alert_recipient";
 
 /**
  * Configuracao da IA do assistente da documentacao. E uma linha unica e global:
@@ -1468,6 +1477,104 @@ Deno.serve(async (req) => {
       }
 
       return jsonResponse({ error: "Tipo de cadastro invalido" }, 400);
+    }
+
+    // Alerta de balanca por WhatsApp (`device-health-alerts`): quem recebe e o historico.
+    if (body.action === "list_device_alerts") {
+      const [recipients, alerts, settings] = await Promise.all([
+        supabase
+          .from("device_alert_recipients")
+          .select("id, company_id, name, whatsapp_phone, is_active, created_at, updated_at")
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("device_alerts")
+          .select(
+            "id, device_id, company_id, kind, detail, opened_at, notified_at, resolved_at, resolved_notified_at, last_error"
+          )
+          .order("opened_at", { ascending: false })
+          .limit(100),
+        supabase.from("billing_settings").select("whatsapp_url").eq("id", true).maybeSingle()
+      ]);
+      if (recipients.error) throw recipients.error;
+      if (alerts.error) throw alerts.error;
+      return jsonResponse({
+        ok: true,
+        recipients: recipients.data ?? [],
+        alerts: alerts.data ?? [],
+        // So a situacao: o token nunca sai da Edge Function.
+        whatsappConfigured:
+          resolveAlertWhatsappConfig(
+            (settings.data as { whatsapp_url?: string | null } | null)?.whatsapp_url
+          ) !== null
+      });
+    }
+
+    if (body.action === "save_device_alert_recipient") {
+      const phone = normalizeAlertPhone(String(payload.whatsappPhone ?? ""));
+      if (!phone) {
+        return jsonResponse({ error: "Informe um WhatsApp valido, com DDD." }, 400);
+      }
+      const companyId = String(payload.companyId ?? "").trim() || null;
+      const row = {
+        company_id: companyId,
+        name: String(payload.name ?? "")
+          .trim()
+          .slice(0, 120),
+        whatsapp_phone: phone,
+        is_active: payload.isActive !== false,
+        updated_at: new Date().toISOString()
+      };
+      const id = String(payload.id ?? "").trim();
+      const { data, error } = id
+        ? await supabase
+            .from("device_alert_recipients")
+            .update(row)
+            .eq("id", id)
+            .select("id")
+            .single()
+        : await supabase.from("device_alert_recipients").insert(row).select("id").single();
+      if (error) throw error;
+      return jsonResponse({ ok: true, id: (data as { id: string }).id });
+    }
+
+    if (body.action === "delete_device_alert_recipient") {
+      const id = String(payload.id ?? "").trim();
+      if (!id) return jsonResponse({ error: "Destinatario nao informado" }, 400);
+      const { error } = await supabase.from("device_alert_recipients").delete().eq("id", id);
+      if (error) throw error;
+      return jsonResponse({ ok: true });
+    }
+
+    // Mensagem de teste: confirma que o numero esta certo e que a instancia esta conectada,
+    // sem esperar uma balanca cair.
+    if (body.action === "test_device_alert_recipient") {
+      const phone = normalizeAlertPhone(String(payload.whatsappPhone ?? ""));
+      if (!phone) {
+        return jsonResponse({ error: "Informe um WhatsApp valido, com DDD." }, 400);
+      }
+      const { data: settings } = await supabase
+        .from("billing_settings")
+        .select("whatsapp_url")
+        .eq("id", true)
+        .maybeSingle();
+      const config = resolveAlertWhatsappConfig(
+        (settings as { whatsapp_url?: string | null } | null)?.whatsapp_url
+      );
+      if (!config) {
+        return jsonResponse(
+          {
+            error:
+              "WhatsApp da plataforma nao configurado: informe o endereco da instancia na aba Financeiro e o secret UAZAPI_INSTANCE_TOKEN."
+          },
+          400
+        );
+      }
+      await sendAlertWhatsappText(config, {
+        to: phone,
+        text: "*KyberRock* — teste do alerta de balança.\nEste número vai receber um aviso quando uma balança parar de responder ou tiver envio parado, e outro quando o problema se resolver.",
+        trackId: `device-alert-test:${phone}`
+      });
+      return jsonResponse({ ok: true });
     }
 
     if (body.action === "get_ai_settings") {

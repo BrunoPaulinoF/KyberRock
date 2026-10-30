@@ -2981,8 +2981,9 @@ function upsertCloudOperations(
       remote_plate, remote_driver_name, remote_customer_name, remote_product_description,
       payment_method_id, wallet_settlement_method_id, wallet_settlement_due_date,
       wallet_settled_at, wallet_settlement_note, settle_from_advance, omie_advance_settle_cents,
-      future_billing_nfe_number, future_billing_invoice_id, remote_customer_id, remote_carrier_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      future_billing_nfe_number, future_billing_invoice_id, remote_customer_id, remote_carrier_id,
+      closing_snapshot_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       company_id = excluded.company_id,
       unit_id = excluded.unit_id,
@@ -3069,7 +3070,11 @@ function upsertCloudOperations(
       -- outra balanca da pedreira mostraria a venda inteira a receber na Carteira e
       -- reservaria de novo um adiantamento que ja foi consumido.
       settle_from_advance = excluded.settle_from_advance,
-      omie_advance_settle_cents = excluded.omie_advance_settle_cents
+      omie_advance_settle_cents = excluded.omie_advance_settle_cents,
+      -- Foto do cadastro no fechamento: nasce uma vez e nunca e reescrita. A copia daqui
+      -- vence; a da nuvem so entra quando esta maquina nao tem (a pesagem fechou na outra
+      -- balanca), e um nulo da nuvem nunca apaga a foto local.
+      closing_snapshot_json = COALESCE(weighing_operations.closing_snapshot_json, excluded.closing_snapshot_json)
   `);
 
   const readLocal = database.prepare(
@@ -3278,7 +3283,8 @@ function upsertCloudOperations(
         // saldo sai pelo numero congelado, como nas pesagens anteriores a esta versao.
         existingId(database, "customer_future_billing_invoices", row.future_billing_invoice_id),
         customer.remoteCustomerId,
-        carrier.remoteCarrierId
+        carrier.remoteCarrierId,
+        jsonStringValue(row.closing_snapshot_json)
       );
       count++;
     } catch (error) {
@@ -4279,6 +4285,10 @@ function getOperationPayload(
     customer_name: operation.customer_name,
     driver_name: operation.driver_name,
     product_description: operation.product_description,
+    // Foto do cadastro no fechamento, para a reimpressao na outra balanca da pedreira sair
+    // igual a 1a via. Sem foto (pesagem anterior a ela) o `desktop-sync` sobe a linha sem a
+    // coluna, e o vazio daqui nao apaga a foto que a nuvem ja tem.
+    closing_snapshot_json: operation.closing_snapshot_json ?? null,
     entry_weight_kg: operation.entry_weight_kg,
     exit_weight_kg: operation.exit_weight_kg,
     net_weight_kg: operation.net_weight_kg,

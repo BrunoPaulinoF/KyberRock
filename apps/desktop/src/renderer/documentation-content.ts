@@ -14,7 +14,8 @@ import {
   ShieldCheck,
   Truck,
   Users,
-  Wallet
+  Wallet,
+  Calculator
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -373,6 +374,41 @@ export const documentationSections: DocumentationSection[] = [
     ]
   },
   {
+    id: "cash-closing",
+    title: "Fechamento do caixa",
+    eyebrow: "Vendido x recebido no dia",
+    summary:
+      "Confere, conta por conta (caixinha, OMIE Cash, maquininha...), se o dinheiro que entrou no dia bate com o que o sistema vendeu a vista.",
+    icon: Calculator,
+    steps: [
+      "Abra Fechamento do caixa na barra lateral. O dia ja vem preenchido com hoje.",
+      'Em "Recebido hoje, por conta" a coluna Sistema mostra o que deveria ter entrado em cada conta: a parte a vista das vendas do dia e as vendas em carteira que o cliente pagou hoje.',
+      "Conte a gaveta, confira o extrato do PIX e o relatorio da maquininha e digite cada valor em Conferido. A Diferenca mostra na hora se falta ou sobra.",
+      "Escreva nas Observacoes o que explica uma diferenca (troco inicial, sangria, pagamento de despesa) e clique em Salvar conferencia.",
+      "Clique em Gerar PDF para imprimir a folha do fechamento com as linhas de assinatura."
+    ],
+    details: [
+      'A conta de cada forma de pagamento vem do cadastro de formas de pagamento. Forma sem conta aparece como "Sem conta vinculada" ate alguem vincular.',
+      'Boleto, parcelas a prazo, carteira e credito do cliente (fiado) ficam em "A receber": nao e dinheiro no caixa hoje.',
+      "Condicao com entrada (ex.: entrada + 30 dias) separa as duas partes: a entrada conta no caixa do dia e o resto fica a receber.",
+      'Bonificacao, pesagem SEM CLIENTE e a parte paga com o adiantamento do cliente aparecem em "Sem entrada de dinheiro".',
+      "O valor de cada venda e o cobrado do cliente: o frete que fica so no sistema nao entra no caixa.",
+      "O dia e o da saida do caminhao (quando a pesagem fechou), o mesmo dos relatorios e do pedido no OMIE.",
+      "A conferencia e uma por dia: salvar de novo substitui a anterior, e cada gravacao fica no historico de auditoria."
+    ],
+    keywords: [
+      "fechamento do caixa",
+      "fechamento do dia",
+      "conferir caixa",
+      "caixinha",
+      "gaveta",
+      "sangria",
+      "diferenca de caixa",
+      "conta",
+      "maquininha"
+    ]
+  },
+  {
     id: "freight",
     title: "Frete: quem paga e como cobrar",
     eyebrow: "Transporte",
@@ -463,9 +499,10 @@ export const documentationSections: DocumentationSection[] = [
       "Preencha a logo e o telefone da pedreira: os dois saem no cupom nos dois modelos (padrao e personalizado).",
       "Use o teste de impressao para validar papel, margem e tamanho antes da primeira carga.",
       "Ao fechar a pesagem, o cupom sai sozinho e vai para o motorista.",
-      "Precisa de outra via? Use a reimpressao: o cupom sai marcado como copia."
+      "Precisa de outra via? Use a reimpressao: o cupom sai com o MESMO numero, marcado como a proxima via (2a, 3a...)."
     ],
     details: [
+      "A reimpressao mostra cliente, documento, placa, motorista e produto como estavam no fechamento da pesagem, mesmo que o cadastro tenha mudado depois.",
       "Falha de impressao NAO desfaz a operacao. A pesagem fechada continua salva; corrija a impressora e reimprima.",
       "O cupom traz o codigo da operacao (COD), dados da pedreira, cliente, produto, pesos de entrada, saida e liquido, valor, frete, veiculo, motorista e assinatura.",
       'A linha "COD" e o codigo da operacao; "COPIA NRO" conta quantas vias ja sairam. Nao confunda os dois.',
@@ -1443,6 +1480,14 @@ export const documentationFaqs: DocumentationFaq[] = [
       "cliente pagou adiantado",
       "credito nao entrou"
     ]
+  },
+  {
+    question: "Como confiro o caixa no fim do dia?",
+    answer:
+      "Abra Fechamento do caixa, digite em Conferido o que voce contou em cada conta (gaveta, PIX, maquininha) e veja a Diferenca. Escreva a explicacao de qualquer sobra ou falta nas Observacoes, clique em Salvar conferencia e gere o PDF para assinar.",
+    category: "financeiro",
+    sectionId: "cash-closing",
+    keywords: ["fechar caixa", "conferir caixa", "caixa nao bate", "sobra", "falta", "sangria"]
   },
   {
     question: "Como fecho a carteira de um cliente?",
