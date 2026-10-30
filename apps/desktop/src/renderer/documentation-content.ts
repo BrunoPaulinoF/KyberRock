@@ -173,7 +173,7 @@ export const documentationSections: DocumentationSection[] = [
       "Alterar o preco pede a senha de preco do comercial. Depois de fechada, a ficha continua abrindo, mas so para consulta.",
       "Cancelar exige motivo. O cancelamento e auditado, estorna credito quando aplicavel e cancela o pedido no OMIE se ele ja tiver subido — desde que ainda nao esteja faturado.",
       "A busca das operacoes concluidas aceita cliente, CNPJ/CPF com ou sem pontuacao, produto, placa ou motorista.",
-      "Caminhao que so passa pela balanca, sem cliente (transporte interno, caminhao da propria pedreira): em Cadastros > Clientes, use uma vez o botao 'Criar \"SEM CLIENTE\"'. Depois e so escolher SEM CLIENTE no campo Cliente da Nova entrada: a pesagem dispensa preco, credito e cadastro do OMIE, sai a R$ 0,00 e NAO vai ao OMIE. O cadastro chega sozinho nas outras balancas da pedreira; para tira-lo da lista, inative-o.",
+      "Caminhao que so passa pela balanca, sem cliente (transporte interno, caminhao da propria pedreira): escolha o cliente SEM CLIENTE no campo Cliente da Nova entrada. Ele ja vem cadastrado. A pesagem dispensa preco, credito e cadastro do OMIE, sai a R$ 0,00 e NAO vai ao OMIE. Para tira-lo da lista, inative-o em Cadastros > Clientes.",
       "Toda lista de escolha do aplicativo — cliente, produto, placa, motorista, transportadora — funciona ESCREVENDO. Ao abrir, a lista mostra so os primeiros cadastros em ordem alfabetica; escreva o nome, o nome fantasia, o CNPJ/CPF ou a placa e a lista passa a mostrar so o que corresponde, com o mais parecido no topo. O rodape diz quantos cadastros casaram, entao quando aparecer 'mostrando 50 de 312' e so escrever mais uma letra em vez de rolar."
     ],
     keywords: [

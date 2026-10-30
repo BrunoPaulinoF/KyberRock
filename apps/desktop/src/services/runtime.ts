@@ -538,9 +538,7 @@ import {
   applyDefaultNfeEmailToAllCustomers,
   createCustomer,
   deleteCustomer,
-  ensureNoCustomer,
   getCustomersByCarrier,
-  getNoCustomerStatus,
   getDefaultNfeEmail,
   listCustomers,
   listDeletedCustomers,
@@ -549,7 +547,6 @@ import {
   updateCustomer,
   type CreateCustomerInput,
   type DeletedCustomerSummary,
-  type NoCustomerStatus,
   type UpdateCustomerInput
 } from "./customers.js";
 import {
@@ -4708,25 +4705,6 @@ export class DesktopRuntime {
     const identity = this.ensureIdentity();
     restoreCustomer(this.database, id);
     this.cadastroChanged("customer", identity.companyId);
-  }
-
-  /** O cadastro SEM CLIENTE (pesagem sem cliente) ja esta ativo nesta empresa? */
-  getNoCustomerStatus(): NoCustomerStatus {
-    this.assertDesktopAccess();
-    return getNoCustomerStatus(this.database, this.ensureIdentity().companyId);
-  }
-
-  /**
-   * Cria (ou reativa) o cadastro SEM CLIENTE. Sobe para a nuvem como qualquer cadastro e
-   * chega as outras balancas da pedreira com o mesmo id — por isso nao precisa da marca de
-   * cadastro feito sem internet: nao ha gemeo para juntar na volta.
-   */
-  enableNoCustomer(): NoCustomerStatus {
-    this.assertDesktopAccess();
-    const identity = this.ensureIdentity();
-    ensureNoCustomer(this.database, identity.companyId);
-    this.cadastroChanged("customer", identity.companyId);
-    return getNoCustomerStatus(this.database, identity.companyId);
   }
 
   // Meios de pagamento e contas nao sao criados nem excluidos no desktop: o

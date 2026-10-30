@@ -1555,18 +1555,22 @@ caminhao da propria pedreira). Nao confundir com a secao seguinte — la a pesag
 nuvem o perdia; aqui o "cliente" e um cadastro proprio que diz "nao ha cliente".
 
 - **E um cadastro, nao um campo vazio.** O invariante "nao existe pesagem sem cliente" continua
-  valendo (o sync depende dele). O cadastro "SEM CLIENTE" nasce pelo botao `Criar "SEM CLIENTE"`
-  em Cadastros > Clientes (`ensureNoCustomer`, `services/customers.ts`; IPC
-  `desktop:customers-enable-no-customer`) e e opt-in por pedreira: quem nao clica nunca o ve.
+  valendo (o sync depende dele). O cliente "SEM CLIENTE" **ja nasce cadastrado, na nuvem**
+  (migracao `202610300001_cadastro_sem_cliente`, uma linha por empresa) e chega as balancas e ao
+  site pelo pull de cadastro como qualquer cliente — ninguem precisa criar. Nao ha botao nem
+  caminho na balanca para cria-lo: um id unico vindo de um lugar so e o que evita gemeo.
+  **Pedreira nova**: rodar de novo o insert dessa migracao (idempotente, nao reativa quem foi
+  inativado).
 - **O id e quem identifica** (`@kyberrock/shared` → `no-customer.ts`): `sem-cliente-<company_id>`.
-  Igual em todas as balancas da empresa, entao criar em duas maquinas grava a MESMA linha e a nuvem
-  casa por id — sem gemeo para unificar. Nunca pelo nome: o operador pode renomear, e um cliente
-  real chamado "Sem cliente" nao pode virar pesagem sem OMIE. O pull do OMIE nao o adota por nome
-  (`buildDocumentlessLocalIndex`).
+  Nunca pelo nome: o operador pode renomear, e um cliente real chamado "Sem cliente" nao pode virar
+  pesagem sem OMIE. O pull do OMIE nao o adota por nome (`buildDocumentlessLocalIndex`).
+- **Balanca antiga** (antes desta regra) recebe o cadastro mas recusa a entrada com ele
+  ("Cadastro do cliente incompleto para o OMIE: falta CNPJ/CPF") — a trava de abertura vale no
+  botao e no pedido do site. Nada errado e gravado; so passa a funcionar quando a balanca atualiza.
 - **O que muda na pesagem**: preco R$ 0,00 (`PricingService`, `source: "no_customer"`), sem
   cobranca de cadastro do OMIE na entrada (`checkCustomerOmieReadiness`), sem credito/adiantamento
   e sem transportadora obrigatoria. Placa, motorista e produto continuam obrigatorios.
-- **Nunca vai ao OMIE**: o cadastro nasce com `needs_push = 0` e o `push_customer` o pula;
+- **Nunca vai ao OMIE**: o cadastro chega do pull com `needs_push = 0` e o `push_customer` o pula;
   `buildOmieBillingJob` devolve `null` para ele (fechamento, Refaturar/Reenviar e rearme da fila
   passam por ali) e `processFiscalBillingNow` recusa antes de gravar "cadastro incompleto".
 - **A marca da operacao e `omie_billing_status = 'no_customer'`**, gravada no fechamento. E ela —
@@ -1575,7 +1579,7 @@ nuvem o perdia; aqui o "cliente" e um cadastro proprio que diz "nao ha cliente".
   `web-api`), porque a coluna ja sobe para a nuvem. Situacao `no_customer`, etiqueta cinza "Sem
   cliente (nao vai ao OMIE)", fora da lista de "nao chegou ao OMIE" (`NOT_IN_OMIE_SQL`) e dos
   avisos de envio (`OmieDeliveryState = "not_applicable"`).
-- **Desligar** e inativar o cadastro na lista (o botao volta a aparecer para reativar).
+- **Desligar** e inativar o cadastro na lista de clientes; reativar, o mesmo caminho.
 
 ## Pesagem sem cliente na nuvem: o reenvio vazio nao apaga
 

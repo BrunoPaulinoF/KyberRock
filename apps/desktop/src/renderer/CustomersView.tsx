@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Lock, Search, Truck, Unlock } from "lucide-react";
+import { Lock, Search, Unlock } from "lucide-react";
 
 import {
   documentKind,
@@ -527,12 +527,6 @@ export function CustomersView({
   const [showDeleted, setShowDeleted] = useState(false);
   const [restoringId, setRestoringId] = useState<string | null>(null);
   /*
-   * Cadastro SEM CLIENTE (passar caminhao sem vincular cliente). null = ainda nao
-   * consultado: o botao so aparece quando a balanca CONFIRMA que ele nao esta ativo.
-   */
-  const [noCustomerActive, setNoCustomerActive] = useState<boolean | null>(null);
-  const [enablingNoCustomer, setEnablingNoCustomer] = useState(false);
-  /*
    * Cadastros que parecem o mesmo cliente. Os de documento igual ja foram unificados na
    * abertura do programa; o que sobra aqui e a SUSPEITA — mesmo nome com documento faltando —,
    * em que so quem conhece a operacao sabe dizer se "Transportes Silva" e uma empresa ou duas.
@@ -702,22 +696,6 @@ export function CustomersView({
   useEffect(() => {
     void loadDeletedCustomers();
   }, [loadDeletedCustomers]);
-
-  const loadNoCustomerStatus = useCallback(async () => {
-    if (!desktopApi || isStandalone) return;
-    try {
-      setNoCustomerActive((await desktopApi.customersNoCustomerStatus()).active);
-    } catch {
-      // Botao auxiliar: sem a resposta ele so nao aparece.
-      setNoCustomerActive(null);
-    }
-  }, [desktopApi, isStandalone]);
-
-  // Reconsulta a cada recarga da lista: inativar ou excluir o SEM CLIENTE pela propria
-  // lista devolve o botao sem precisar sair da tela.
-  useEffect(() => {
-    void loadNoCustomerStatus();
-  }, [loadNoCustomerStatus, customers]);
 
   useEffect(() => {
     void loadDuplicates();
@@ -1636,31 +1614,6 @@ export function CustomersView({
   }
 
   /**
-   * Cria (ou reativa) o cadastro SEM CLIENTE. Ele aparece na Nova entrada como qualquer
-   * cliente; para tira-lo de la, basta inativar o cadastro na lista.
-   */
-  async function handleEnableNoCustomer(): Promise<void> {
-    if (!desktopApi || enablingNoCustomer) return;
-    setEnablingNoCustomer(true);
-    try {
-      const status = await desktopApi.customersEnableNoCustomer();
-      setNoCustomerActive(status.active);
-      await Promise.all([loadCustomers(), loadDeletedCustomers()]);
-      showFlash(
-        "success",
-        'Cadastro "SEM CLIENTE" criado. Escolha-o na Nova entrada para passar o caminhao sem cliente: a pesagem sai sem valor e nao vai ao OMIE.'
-      );
-    } catch (err) {
-      showFlash(
-        "error",
-        err instanceof Error ? err.message : 'Erro ao criar o cadastro "SEM CLIENTE".'
-      );
-    } finally {
-      setEnablingNoCustomer(false);
-    }
-  }
-
-  /**
    * Desfaz a exclusao. As pesagens nunca sairam do banco — elas continuam apontando para
    * este cadastro —, entao restaurar devolve junto o caminho ate elas no Fechamento.
    */
@@ -1944,25 +1897,6 @@ export function CustomersView({
           <Search size={14} />
           {cnpjBulkBusy ? "Buscando dados..." : "Busca de dados automatica (todos)"}
         </button>
-        {noCustomerActive === false ? (
-          <button
-            type="button"
-            onClick={() => void handleEnableNoCustomer()}
-            disabled={enablingNoCustomer}
-            title='Cria o cadastro "SEM CLIENTE": escolhido na Nova entrada, o caminhao passa sem cliente vinculado, sem valor e sem pedido no OMIE'
-            style={{
-              ...styles.secondaryButton,
-              height: "38px",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-              opacity: enablingNoCustomer ? 0.6 : 1
-            }}
-          >
-            <Truck size={14} />
-            {enablingNoCustomer ? "Criando..." : 'Criar "SEM CLIENTE" (pesagem sem cliente)'}
-          </button>
-        ) : null}
       </div>
 
       <CrudSearchBar
