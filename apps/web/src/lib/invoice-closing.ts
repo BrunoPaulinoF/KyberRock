@@ -377,31 +377,35 @@ export type WeighingBillingSituation =
   | "sent"
   | "pending"
   | "cadastro_incompleto"
-  | "failed";
+  | "failed"
+  | "no_customer";
 
 export const WEIGHING_BILLING_SITUATION_LABEL: Record<WeighingBillingSituation, string> = {
   billed: "Faturada",
   sent: "No OMIE, falta faturar",
   pending: "Nao enviada ao OMIE",
   cadastro_incompleto: "Cadastro incompleto",
-  failed: "Recusada pelo OMIE"
+  failed: "Recusada pelo OMIE",
+  no_customer: "Sem cliente (nao vai ao OMIE)"
 };
 
 /** A etiqueta como a tela mostra; a de cima e a do PDF e da planilha, igual a do desktop. */
 const SITUATION_SCREEN_LABEL: Record<WeighingBillingSituation, string> = {
   ...WEIGHING_BILLING_SITUATION_LABEL,
-  pending: "Não enviada ao OMIE"
+  pending: "Não enviada ao OMIE",
+  no_customer: "Sem cliente (não vai ao OMIE)"
 };
 
 export const SITUATION_TONE: Record<
   WeighingBillingSituation,
-  "success" | "warning" | "danger" | "info"
+  "success" | "warning" | "danger" | "info" | "neutral"
 > = {
   billed: "success",
   sent: "info",
   pending: "warning",
   cadastro_incompleto: "warning",
-  failed: "danger"
+  failed: "danger",
+  no_customer: "neutral"
 };
 
 type SituationInput = Pick<
@@ -410,6 +414,8 @@ type SituationInput = Pick<
 >;
 
 export function resolveSituation(row: SituationInput): WeighingBillingSituation {
+  // Pesagem SEM CLIENTE: a balanca grava esta marca no fechamento e nao manda nada ao OMIE.
+  if (row.omie_billing_status === "no_customer") return "no_customer";
   if (row.omie_billing_status === "billed") return "billed";
   if (row.operation_type !== "invoice") {
     if (row.omie_service_order_id) return "sent";
@@ -782,7 +788,7 @@ export function isBillable(line: InvoiceClosingLine): boolean {
  */
 export function lineSituation(line: InvoiceClosingLine): {
   label: string;
-  tone: "success" | "warning" | "danger" | "info";
+  tone: "success" | "warning" | "danger" | "info" | "neutral";
   title: string | null;
 } {
   const request = line.request;

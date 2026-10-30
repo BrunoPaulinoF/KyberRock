@@ -20,20 +20,25 @@
  *
  * `billed` chega de dois jeitos: pelo botao de faturar do proprio app (raro) ou, o caso
  * normal, pela reconciliacao que confere no OMIE se alguem ja faturou o pedido/OS por la.
+ *
+ * `no_customer` e a pesagem SEM CLIENTE (caminhao que so passou pela balanca): nao e venda
+ * e nao vai ao OMIE de proposito. Fica separada para nao contar como pendencia.
  */
 export type WeighingBillingSituation =
   | "billed"
   | "sent"
   | "pending"
   | "cadastro_incompleto"
-  | "failed";
+  | "failed"
+  | "no_customer";
 
 export const WEIGHING_BILLING_SITUATIONS: readonly WeighingBillingSituation[] = [
   "billed",
   "sent",
   "pending",
   "cadastro_incompleto",
-  "failed"
+  "failed",
+  "no_customer"
 ];
 
 export const WEIGHING_BILLING_SITUATION_LABEL: Record<WeighingBillingSituation, string> = {
@@ -41,7 +46,8 @@ export const WEIGHING_BILLING_SITUATION_LABEL: Record<WeighingBillingSituation, 
   sent: "No OMIE, falta faturar",
   pending: "Nao enviada ao OMIE",
   cadastro_incompleto: "Cadastro incompleto",
-  failed: "Recusada pelo OMIE"
+  failed: "Recusada pelo OMIE",
+  no_customer: "Sem cliente (nao vai ao OMIE)"
 };
 
 export function isWeighingBillingSituation(value: unknown): value is WeighingBillingSituation {
@@ -51,14 +57,16 @@ export function isWeighingBillingSituation(value: unknown): value is WeighingBil
 /**
  * Ordem das situacoes no resumo: primeiro o que trava dinheiro (recusada, cadastro
  * incompleto, nao enviada), depois o que ja esta no OMIE e por ultimo o que ja fechou.
- * Quem abre o relatorio quer ver o problema no topo, nao o que deu certo.
+ * Quem abre o relatorio quer ver o problema no topo, nao o que deu certo. A pesagem sem
+ * cliente vai para o fim: nao e problema nem dinheiro.
  */
 export const WEIGHING_BILLING_SITUATION_ORDER: Record<WeighingBillingSituation, number> = {
   failed: 0,
   cadastro_incompleto: 1,
   pending: 2,
   sent: 3,
-  billed: 4
+  billed: 4,
+  no_customer: 5
 };
 
 /** As colunas da operacao de que a classificacao depende — e so essas. */
@@ -79,6 +87,10 @@ export interface WeighingBillingSituationInput {
  * antes dela a interna nunca saia de "No OMIE, falta faturar" — nem depois de faturada.
  */
 export function resolveSituation(row: WeighingBillingSituationInput): WeighingBillingSituation {
+  // Marca gravada no fechamento da pesagem SEM CLIENTE (`NO_CUSTOMER_BILLING_STATUS`, em
+  // `@kyberrock/shared`). Literal aqui porque este modulo e copiado para o site, que nao
+  // importa outro workspace.
+  if (row.omie_billing_status === "no_customer") return "no_customer";
   if (row.omie_billing_status === "billed") return "billed";
 
   if (row.operation_type !== "invoice") {

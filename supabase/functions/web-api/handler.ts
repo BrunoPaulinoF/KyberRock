@@ -2029,6 +2029,8 @@ async function supportOverview(ctx: ActionContext): Promise<Row> {
   // A mesma pesagem pode cair em mais de uma lista (erro de envio E faturamento falho).
   const problems = new Map<unknown, Row>();
   for (const row of [...syncErrorRows, ...billingFailureRows, ...stuckRows]) {
+    // Pesagem SEM CLIENTE: nao vai ao OMIE de proposito, entao nao e envio parado.
+    if (row.omie_billing_status === "no_customer") continue;
     problems.set(row.id, row);
   }
   const omieProblems = [...problems.values()]

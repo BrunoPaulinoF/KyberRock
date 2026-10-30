@@ -1568,6 +1568,22 @@ function registerIpcHandlers(): void {
     runtime.restoreCustomer(id);
   });
 
+  ipcMain.handle("desktop:customers-no-customer-status", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.getNoCustomerStatus();
+  });
+
+  ipcMain.handle("desktop:customers-enable-no-customer", () => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.enableNoCustomer();
+  });
+
   ipcMain.handle("desktop:customers-duplicates", () => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");

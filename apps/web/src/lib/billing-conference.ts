@@ -50,13 +50,14 @@ export type BillingSituation = WeighingBillingSituation;
 /** Cor da etiqueta (o `SituationPill` do desktop). */
 export const BILLING_SITUATION_TONE: Record<
   BillingSituation,
-  "success" | "warning" | "danger" | "info"
+  "success" | "warning" | "danger" | "info" | "neutral"
 > = {
   billed: "success",
   sent: "info",
   pending: "warning",
   cadastro_incompleto: "warning",
-  failed: "danger"
+  failed: "danger",
+  no_customer: "neutral"
 };
 
 // ---------- formatos (o `weighing-line-format.ts` do desktop) ----------

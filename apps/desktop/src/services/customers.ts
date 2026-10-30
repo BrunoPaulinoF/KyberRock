@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import { invalidEmailsInList, normalizeEmailList } from "@kyberrock/shared";
+import {
+  invalidEmailsInList,
+  NO_CUSTOMER_NAME,
+  noCustomerIdFor,
+  normalizeEmailList
+} from "@kyberrock/shared";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { readStringLocalSetting, writeLocalSetting } from "./local-settings.js";
@@ -715,6 +720,78 @@ export function restoreCustomer(
         WHERE id = ?`
     )
     .run(needsPush, needsPush === 0 ? "synced" : "pending", nowIso, nowIso, id);
+
+  return database.prepare("SELECT * FROM customers WHERE id = ?").get(id) as CustomerRow;
+}
+
+/** Situacao do cadastro SEM CLIENTE desta empresa, para a tela oferecer (ou nao) o botao. */
+export interface NoCustomerStatus {
+  id: string;
+  /** Existe e esta ativo: ja aparece na Nova entrada. */
+  active: boolean;
+}
+
+export function getNoCustomerStatus(
+  database: DesktopDatabase,
+  companyId: string
+): NoCustomerStatus {
+  const id = noCustomerIdFor(companyId);
+  const row = database
+    .prepare("SELECT is_active, deleted_at FROM customers WHERE id = ?")
+    .get(id) as { is_active: number; deleted_at: string | null } | undefined;
+  return { id, active: Boolean(row && row.is_active === 1 && row.deleted_at === null) };
+}
+
+/**
+ * Cria (ou reativa) o cadastro SEM CLIENTE: a opcao da Nova entrada para passar caminhao
+ * sem vincular cliente nenhum. Ver `@kyberrock/shared` (`no-customer.ts`) para a regra.
+ *
+ * Nasce direto aqui, e nao por `createCustomer`, porque nao e um cliente: nao ganha a
+ * transportadora "(padrao)", nao exige NF e nasce com `needs_push = 0` — nunca vai ao OMIE.
+ * A nuvem recebe a linha pelo envio normal do cadastro, e as outras balancas a recebem com o
+ * MESMO id (derivado da empresa): criar nas duas maquinas grava a mesma linha, sem gemeo.
+ *
+ * Idempotente: se ja existe, so desfaz a exclusao/inativacao. O nome que o operador tiver
+ * dado fica como esta.
+ */
+export function ensureNoCustomer(
+  database: DesktopDatabase,
+  companyId: string,
+  now: Date = new Date()
+): CustomerRow {
+  const id = noCustomerIdFor(companyId);
+  const nowIso = now.toISOString();
+  const existing = database
+    .prepare("SELECT is_active, deleted_at FROM customers WHERE id = ?")
+    .get(id) as { is_active: number; deleted_at: string | null } | undefined;
+
+  if (!existing) {
+    database
+      .prepare(
+        `INSERT INTO customers (
+          id, company_id, source, legal_name, trade_name, nf_required, observations,
+          sync_status, needs_push, is_active, local_updated_at, created_at, updated_at
+        ) VALUES (?, ?, 'local', ?, ?, 0, ?, 'synced', 0, 1, ?, ?, ?)`
+      )
+      .run(
+        id,
+        companyId,
+        NO_CUSTOMER_NAME,
+        NO_CUSTOMER_NAME,
+        "Pesagem sem cliente: sai sem valor e nao vai ao OMIE.",
+        nowIso,
+        nowIso,
+        nowIso
+      );
+  } else if (existing.is_active !== 1 || existing.deleted_at !== null) {
+    database
+      .prepare(
+        `UPDATE customers
+            SET is_active = 1, deleted_at = NULL, updated_at = ?, local_updated_at = ?
+          WHERE id = ?`
+      )
+      .run(nowIso, nowIso, id);
+  }
 
   return database.prepare("SELECT * FROM customers WHERE id = ?").get(id) as CustomerRow;
 }

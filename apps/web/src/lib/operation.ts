@@ -220,7 +220,8 @@ export function countByProduct(
 export interface FiscalStatus {
   label: string;
   detail: string;
-  tone: "success" | "warning" | "danger" | "neutral";
+  /** `info` e so a pesagem SEM CLIENTE: nao vai ao OMIE de proposito, entao nao e pendencia. */
+  tone: "success" | "warning" | "danger" | "neutral" | "info";
 }
 
 /**
@@ -238,6 +239,13 @@ export function fiscalStatus(operation: {
   const message = operation.omie_billing_message?.trim() || null;
   const pending = (fallback: string) =>
     message ? `${message} — nova tentativa automática em andamento.` : fallback;
+  if (operation.omie_billing_status === "no_customer") {
+    return {
+      label: "Sem cliente",
+      detail: message ?? "Pesagem SEM CLIENTE: não vai ao OMIE (não é venda).",
+      tone: "info"
+    };
+  }
   if (operation.omie_billing_status === "billed") {
     const document = operation.omie_invoice_number ? `NF ${operation.omie_invoice_number}` : null;
     return {

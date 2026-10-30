@@ -120,6 +120,15 @@ describe("omieBacklog", () => {
       ])
     ).toEqual({ pending: 2, failed: 3 });
   });
+
+  it("nao conta a pesagem SEM CLIENTE: ela nao vai ao OMIE de proposito", () => {
+    expect(
+      omieBacklog([
+        fiscalRow({ omie_billing_status: "no_customer" }),
+        fiscalRow({ operation_type: "internal", omie_billing_status: "no_customer" })
+      ])
+    ).toEqual({ pending: 0, failed: 0 });
+  });
 });
 
 describe("requestBacklog", () => {
