@@ -226,7 +226,8 @@ These recur across the codebase and are easy to violate accidentally:
   apagou pesagem — so escondia o caminho ate ela.
 - **Pesagem SEM CLIENTE** (AGENTS.md "Pesagem SEM CLIENTE"): caminhao que so passa pela balanca
   usa um CADASTRO proprio, `sem-cliente-<company_id>` (`@kyberrock/shared` `no-customer.ts`), nunca
-  `customer_id` vazio. Identifica-se pelo id (nao pelo nome): sai a R$ 0,00, sem credito, sem
+  `customer_id` vazio. Ja nasce cadastrado na nuvem (migracao `202610300001`), sem botao na balanca.
+  Identifica-se pelo id (nao pelo nome): sai a R$ 0,00, sem credito, sem
   cadastro nem pedido no OMIE, e o fechamento grava `omie_billing_status = 'no_customer'` — e essa
   marca que o site le para nao contar a pesagem como pendente.
 - **Reenvio vazio nao apaga o cliente** (AGENTS.md "Pesagem sem cliente na nuvem"): a balanca

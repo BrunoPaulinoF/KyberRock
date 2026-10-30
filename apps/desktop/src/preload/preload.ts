@@ -288,8 +288,6 @@ const desktopApi = {
   customersDelete: (id: string) => ipcRenderer.invoke("desktop:customers-delete", id),
   customersListDeleted: () => ipcRenderer.invoke("desktop:customers-list-deleted"),
   customersRestore: (id: string) => ipcRenderer.invoke("desktop:customers-restore", id),
-  customersNoCustomerStatus: () => ipcRenderer.invoke("desktop:customers-no-customer-status"),
-  customersEnableNoCustomer: () => ipcRenderer.invoke("desktop:customers-enable-no-customer"),
   customersFindDuplicates: () => ipcRenderer.invoke("desktop:customers-duplicates"),
   customersMerge: (keeperId: string, loserId: string) =>
     ipcRenderer.invoke("desktop:customers-merge", keeperId, loserId),

@@ -6,16 +6,15 @@
  * nao e venda: sai sem preco (R$ 0,00), nao mexe em credito e NAO vai ao OMIE (nem o
  * pedido, nem o cadastro). Quem decide e o cadastro escolhido, nunca a tela.
  *
- * O id e o mesmo em todas as balancas da empresa, derivado do `company_id`: cada maquina
- * que criar o cadastro grava a MESMA linha, e a nuvem casa por id — sem gemeo para
- * unificar depois. E e o id, e nao o nome, que o identifica: o operador pode renomear o
- * cadastro, e um cliente de verdade chamado "Sem cliente" nao pode virar pesagem sem OMIE.
+ * O cadastro ja nasce pronto em cada pedreira, na NUVEM (migracao
+ * `202610300001_cadastro_sem_cliente`), com o nome "SEM CLIENTE": as balancas o recebem pelo
+ * pull de cadastro como qualquer cliente, sem ninguem precisar criar. O id e
+ * `sem-cliente-<company_id>`, e e ele — nunca o nome — que o identifica: o operador pode
+ * renomear o cadastro, e um cliente de verdade chamado "Sem cliente" nao pode virar pesagem
+ * sem OMIE.
  */
 
 export const NO_CUSTOMER_ID_PREFIX = "sem-cliente-";
-
-/** Nome com que o cadastro nasce (razao social e nome fantasia). */
-export const NO_CUSTOMER_NAME = "SEM CLIENTE";
 
 /**
  * `omie_billing_status` da pesagem fechada com o cadastro SEM CLIENTE: nao ha pedido a

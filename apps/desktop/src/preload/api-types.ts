@@ -73,7 +73,6 @@ import type {
 import type {
   CreateCustomerInput,
   DeletedCustomerSummary,
-  NoCustomerStatus,
   UpdateCustomerInput
 } from "../services/customers";
 import type { DuplicateCadastroGroup } from "../services/customer-duplicates";
@@ -588,10 +587,6 @@ export interface KyberRockDesktopApi {
   /** Os cadastros excluidos da empresa, para a secao "Excluidos" da tela de clientes. */
   customersListDeleted: () => Promise<DeletedCustomerSummary[]>;
   customersRestore: (id: string) => Promise<void>;
-  /** O cadastro SEM CLIENTE (passar caminhao sem vincular cliente) ja esta ativo? */
-  customersNoCustomerStatus: () => Promise<NoCustomerStatus>;
-  /** Cria ou reativa o cadastro SEM CLIENTE. */
-  customersEnableNoCustomer: () => Promise<NoCustomerStatus>;
   /** Os grupos de cadastros que parecem o mesmo cliente (mesmo documento, ou mesmo nome). */
   customersFindDuplicates: () => Promise<DuplicateCadastroGroup[]>;
   /** Junta `loserId` em `keeperId`: o historico muda de dono e o perdedor vira tombstone. */

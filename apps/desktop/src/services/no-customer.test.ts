@@ -5,9 +5,10 @@ import { NO_CUSTOMER_BILLING_STATUS, noCustomerIdFor } from "@kyberrock/shared";
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity } from "./bootstrap";
-import { ensureNoCustomer, getNoCustomerStatus } from "./customers";
+import type { CustomerRow } from "./customers";
 import { checkCustomerOmieReadiness } from "./omie-customer-readiness";
 import { PricingService } from "./pricing";
+import { upsertCloudCustomers } from "./supabase-sync";
 import { resolveSituation } from "./weighing-billing-situation";
 import {
   buildOmieBillingJob,
@@ -23,46 +24,21 @@ import {
  * passar sem preco, sem cadastro do OMIE e sem virar pedido la.
  */
 describe("cadastro SEM CLIENTE", () => {
-  it("nasce com o id da empresa, sem transportadora e fora do envio ao OMIE", () => {
+  it("chega da nuvem como um cliente comum, fora do envio ao OMIE", () => {
     const database = createDatabase();
     try {
       createIdentity(database);
-      expect(getNoCustomerStatus(database, "company-1")).toEqual({
-        id: noCustomerIdFor("company-1"),
-        active: false
-      });
-
       const carriersBefore = countRows(database, "carriers");
-      const customer = ensureNoCustomer(database, "company-1");
+
+      const customer = receiveNoCustomerFromCloud(database);
 
       expect(customer.id).toBe(noCustomerIdFor("company-1"));
       expect(customer.trade_name).toBe("SEM CLIENTE");
-      expect(customer.source).toBe("local");
+      expect(customer.is_active).toBe(1);
+      // needs_push = 0: o envio de cadastro ao OMIE nunca o pega.
       expect(customer.needs_push).toBe(0);
       expect(customer.nf_required).toBe(0);
       expect(countRows(database, "carriers")).toBe(carriersBefore);
-      expect(getNoCustomerStatus(database, "company-1").active).toBe(true);
-    } finally {
-      database.close();
-    }
-  });
-
-  it("criar de novo reativa o mesmo cadastro em vez de duplicar", () => {
-    const database = createDatabase();
-    try {
-      createIdentity(database);
-      const id = ensureNoCustomer(database, "company-1").id;
-      database
-        .prepare("UPDATE customers SET is_active = 0, deleted_at = '2026-10-01T00:00:00.000Z'")
-        .run();
-      expect(getNoCustomerStatus(database, "company-1").active).toBe(false);
-
-      const again = ensureNoCustomer(database, "company-1");
-
-      expect(again.id).toBe(id);
-      expect(again.is_active).toBe(1);
-      expect(again.deleted_at).toBeNull();
-      expect(countRows(database, "customers")).toBe(1);
     } finally {
       database.close();
     }
@@ -72,7 +48,7 @@ describe("cadastro SEM CLIENTE", () => {
     const database = createDatabase();
     try {
       createIdentity(database);
-      const id = ensureNoCustomer(database, "company-1").id;
+      const id = receiveNoCustomerFromCloud(database).id;
       insertCatalog(database);
 
       expect(checkCustomerOmieReadiness(database, id, "invoice")).toMatchObject({ ready: true });
@@ -90,7 +66,7 @@ describe("cadastro SEM CLIENTE", () => {
     const database = createDatabase();
     try {
       const identity = createIdentity(database);
-      const customerId = ensureNoCustomer(database, "company-1").id;
+      const customerId = receiveNoCustomerFromCloud(database).id;
       insertCatalog(database);
 
       const opened = createWeighingOperation(database, {
@@ -162,6 +138,34 @@ function createIdentity(database: DesktopDatabase) {
     deviceName: "PC Balanca",
     installationId: "install-1"
   });
+}
+
+/**
+ * A linha que a migracao `202610300001_cadastro_sem_cliente` grava na nuvem, chegando pelo
+ * pull de cadastro — e assim que o SEM CLIENTE aparece na balanca.
+ */
+function receiveNoCustomerFromCloud(database: DesktopDatabase): CustomerRow {
+  const id = noCustomerIdFor("company-1");
+  upsertCloudCustomers(database, "company-1", [
+    {
+      id,
+      company_id: "company-1",
+      omie_customer_id: null,
+      legal_name: "SEM CLIENTE",
+      trade_name: "SEM CLIENTE",
+      document: null,
+      is_active: true,
+      nf_required: false,
+      credit_mode: "normal",
+      credit_account_enabled: false,
+      credit_periodicity: "monthly",
+      commercial_published_at: "2026-10-30T12:00:00.000Z",
+      created_at: "2026-10-30T12:00:00.000Z",
+      updated_at: "2026-10-30T12:00:00.000Z",
+      deleted_at: null
+    }
+  ]);
+  return database.prepare("SELECT * FROM customers WHERE id = ?").get(id) as CustomerRow;
 }
 
 /** Placa, motorista e um produto acabado SEM preco nenhum (nem padrao, nem especial). */
