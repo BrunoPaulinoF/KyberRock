@@ -387,7 +387,7 @@ function CloudSettings() {
         .filter(({ row, fiscal }) =>
           fiscal.tone === "neutral"
             ? !row.omie_sales_order_id && !row.omie_service_order_id
-            : fiscal.tone !== "success"
+            : fiscal.tone !== "success" && fiscal.tone !== "info"
         )
         .sort((a, b) =>
           (b.row.closed_at ?? b.row.created_at).localeCompare(a.row.closed_at ?? a.row.created_at)

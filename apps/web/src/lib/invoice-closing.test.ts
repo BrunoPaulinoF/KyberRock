@@ -206,6 +206,8 @@ describe("situacao e nota", () => {
       resolveSituation(op("o1", { operation_type: "internal", omie_service_order_id: 3 }))
     ).toBe("sent");
     expect(resolveSituation(op("o1"))).toBe("pending");
+    // Pesagem SEM CLIENTE: a balanca marca no fechamento e nada vai ao OMIE.
+    expect(resolveSituation(op("o1", { omie_billing_status: "no_customer" }))).toBe("no_customer");
   });
 
   it("venda interna nao cobra nota", () => {

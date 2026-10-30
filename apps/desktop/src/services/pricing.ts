@@ -1,7 +1,10 @@
+import { isNoCustomerId } from "@kyberrock/shared";
+
 import type { DesktopDatabase } from "../database/sqlite.js";
 import type { ProductDefaultPriceRow, CustomerSpecialPriceRow } from "./product-prices.js";
 
-export type PriceSource = "special" | "default" | null;
+/** `no_customer`: pesagem SEM CLIENTE, que nao e venda e sai sem valor. */
+export type PriceSource = "special" | "default" | "no_customer" | null;
 
 export interface PriceDetails {
   productId: string;
@@ -32,6 +35,21 @@ export class PricingService {
       .get(productId) as { id: string; unit_price_cents: number | null } | undefined;
 
     if (!product) return null;
+
+    // SEM CLIENTE nao e venda: a pesagem sai a R$ 0,00 e nao vai ao OMIE. Preco zero (e nao
+    // "sem preco") porque a entrada recusa produto sem preco, e o caminhao tem que passar.
+    if (isNoCustomerId(customerId)) {
+      return {
+        productId,
+        baseUnitPriceCents: null,
+        appliedUnitPriceCents: 0,
+        source: "no_customer",
+        specialPriceId: null,
+        defaultPriceId: null,
+        priceUnit: "ton",
+        savingsPercent: null
+      };
+    }
 
     const specialPrice = this.getCustomerSpecialPrice(customerId, productId);
     const defaultPrice = this.getProductDefaultPrice(productId);

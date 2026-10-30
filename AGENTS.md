@@ -1548,6 +1548,35 @@ Cuidados que nao podem se perder:
   faturado saia da tela com um clique. Quem quer tirar do dia a dia tem **Inativar** (botao novo na
   linha); quem tem cadastro repetido tem **Unificar**.
 
+## Pesagem SEM CLIENTE (caminhao que so passa pela balanca)
+
+Pedido da Pedreira Ibiuna: passar caminhao sem vincular cliente nenhum (transporte interno,
+caminhao da propria pedreira). Nao confundir com a secao seguinte — la a pesagem TEM cliente e a
+nuvem o perdia; aqui o "cliente" e um cadastro proprio que diz "nao ha cliente".
+
+- **E um cadastro, nao um campo vazio.** O invariante "nao existe pesagem sem cliente" continua
+  valendo (o sync depende dele). O cadastro "SEM CLIENTE" nasce pelo botao `Criar "SEM CLIENTE"`
+  em Cadastros > Clientes (`ensureNoCustomer`, `services/customers.ts`; IPC
+  `desktop:customers-enable-no-customer`) e e opt-in por pedreira: quem nao clica nunca o ve.
+- **O id e quem identifica** (`@kyberrock/shared` → `no-customer.ts`): `sem-cliente-<company_id>`.
+  Igual em todas as balancas da empresa, entao criar em duas maquinas grava a MESMA linha e a nuvem
+  casa por id — sem gemeo para unificar. Nunca pelo nome: o operador pode renomear, e um cliente
+  real chamado "Sem cliente" nao pode virar pesagem sem OMIE. O pull do OMIE nao o adota por nome
+  (`buildDocumentlessLocalIndex`).
+- **O que muda na pesagem**: preco R$ 0,00 (`PricingService`, `source: "no_customer"`), sem
+  cobranca de cadastro do OMIE na entrada (`checkCustomerOmieReadiness`), sem credito/adiantamento
+  e sem transportadora obrigatoria. Placa, motorista e produto continuam obrigatorios.
+- **Nunca vai ao OMIE**: o cadastro nasce com `needs_push = 0` e o `push_customer` o pula;
+  `buildOmieBillingJob` devolve `null` para ele (fechamento, Refaturar/Reenviar e rearme da fila
+  passam por ali) e `processFiscalBillingNow` recusa antes de gravar "cadastro incompleto".
+- **A marca da operacao e `omie_billing_status = 'no_customer'`**, gravada no fechamento. E ela —
+  e nao o id — que o site le (`resolveSituation` nas duas copias de
+  `weighing-billing-situation.ts`, `fiscalStatus`, `omieBacklog`, problemas do suporte na
+  `web-api`), porque a coluna ja sobe para a nuvem. Situacao `no_customer`, etiqueta cinza "Sem
+  cliente (nao vai ao OMIE)", fora da lista de "nao chegou ao OMIE" (`NOT_IN_OMIE_SQL`) e dos
+  avisos de envio (`OmieDeliveryState = "not_applicable"`).
+- **Desligar** e inativar o cadastro na lista (o botao volta a aparecer para reativar).
+
 ## Pesagem sem cliente na nuvem: o reenvio vazio nao apaga
 
 A Conferencia de faturamento do site mostrava **0 pesagens** da Levisa de 08 a 19/09/2026; o

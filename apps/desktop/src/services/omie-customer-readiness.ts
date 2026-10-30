@@ -1,3 +1,5 @@
+import { isNoCustomerId } from "@kyberrock/shared";
+
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { getDefaultNfeEmail } from "./customers.js";
 
@@ -194,6 +196,9 @@ export function checkCustomerOmieReadiness(
       message: "Selecione o cliente da operacao."
     };
   }
+
+  // SEM CLIENTE nao vai ao OMIE: nao ha cadastro de la a cobrar.
+  if (isNoCustomerId(customerId)) return READY;
 
   const row = database
     .prepare(

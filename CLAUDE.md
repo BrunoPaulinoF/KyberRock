@@ -224,6 +224,11 @@ These recur across the codebase and are easy to violate accidentally:
   pesagem viva. E **excluir cliente** passou a exigir cadastro sem historico nenhum
   (`historyCount`): quem tem carga ou credito usa Inativar ou Unificar, porque excluir nunca
   apagou pesagem — so escondia o caminho ate ela.
+- **Pesagem SEM CLIENTE** (AGENTS.md "Pesagem SEM CLIENTE"): caminhao que so passa pela balanca
+  usa um CADASTRO proprio, `sem-cliente-<company_id>` (`@kyberrock/shared` `no-customer.ts`), nunca
+  `customer_id` vazio. Identifica-se pelo id (nao pelo nome): sai a R$ 0,00, sem credito, sem
+  cadastro nem pedido no OMIE, e o fechamento grava `omie_billing_status = 'no_customer'` — e essa
+  marca que o site le para nao contar a pesagem como pendente.
 - **Reenvio vazio nao apaga o cliente** (AGENTS.md "Pesagem sem cliente na nuvem"): a balanca
   que nao tem o cadastro gemeo do cliente guarda a pesagem SEM cliente e, ao conferir a nota no
   OMIE, reenviava essa copia com o mesmo `updated_at` — a nuvem perdia o cliente e o site

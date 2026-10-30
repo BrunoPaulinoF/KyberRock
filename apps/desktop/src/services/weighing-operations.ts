@@ -24,6 +24,9 @@ import { CreditService } from "./credit.js";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import {
   formatEmailListForOmie,
+  isNoCustomerId,
+  NO_CUSTOMER_BILLING_MESSAGE,
+  NO_CUSTOMER_BILLING_STATUS,
   OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH,
   OMIE_ORDER_INVOICE_EMAIL_FIELD_MAX_LENGTH
 } from "@kyberrock/shared";
@@ -725,8 +728,8 @@ export function createWeighingOperation(
 
     // Primeira escolha vira padrao do cliente: a condicao e a forma usadas nesta
     // entrada preenchem os campos padrao ainda vazios do cadastro (nunca sobrescrevem
-    // um padrao ja definido).
-    if (input.paymentTermId || input.paymentMethodId) {
+    // um padrao ja definido). O SEM CLIENTE nao tem condicao combinada: fica de fora.
+    if ((input.paymentTermId || input.paymentMethodId) && !isNoCustomerId(input.customerId)) {
       database
         .prepare(
           `UPDATE customers SET
@@ -853,7 +856,8 @@ export function closeWeighingOperation(
   let advanceAppliedCents = 0;
   let walletPaidByAdvance = false;
 
-  if (opRow?.customer_id && productTotalCents !== null) {
+  // SEM CLIENTE nao e venda: nao debita credito nem adiantamento de ninguem.
+  if (opRow?.customer_id && !isNoCustomerId(opRow.customer_id) && productTotalCents !== null) {
     const creditService = new CreditService(database);
     // A venda entra no extrato de credito do cliente quando o operador escolheu a
     // forma "credito do cliente" (fiado) ou quando o cadastro debita credito
@@ -1085,7 +1089,17 @@ export function closeWeighingOperation(
     // O faturamento (emissao de NF-e) e feito INTEIRAMENTE no OMIE: o app apenas cria o
     // pedido/OS (o pedido entra na etapa "Faturar" do kanban de Vendas — ver edge function).
     const billingJob = buildOmieBillingJob(database, input.operationId);
-    if (billingJob) {
+    if (isNoCustomerId(opRow?.customer_id)) {
+      // Pesagem SEM CLIENTE: nao ha pedido nem ordem de servico a enviar. A marca tira a
+      // pesagem da lista de "nao chegou ao OMIE" aqui e no site, que le esta coluna.
+      database
+        .prepare(
+          `UPDATE weighing_operations
+           SET omie_billing_status = ?, omie_billing_message = ?, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(NO_CUSTOMER_BILLING_STATUS, NO_CUSTOMER_BILLING_MESSAGE, timestamp, input.operationId);
+    } else if (billingJob) {
       enqueueOmieBillingJob(database, input.operationId, billingJob, now);
     } else {
       // Aqui buildOmieBillingJob so retorna null quando o cliente nao tem codigo OMIE E
@@ -1366,7 +1380,9 @@ export function getOperationOmieIssue(
     operation.omie_sales_order_id != null ||
     operation.omie_service_order_id != null ||
     operation.omie_billing_status === "billed";
-  const pending = isClosedOperationStatus(operation.status) && !sentToOmie;
+  // SEM CLIENTE nao vai ao OMIE de proposito: nao ha o que enviar nem o que cobrar.
+  const noCustomer = isNoCustomerId(operation.customer_id);
+  const pending = isClosedOperationStatus(operation.status) && !sentToOmie && !noCustomer;
 
   // Sem codigo OMIE o cliente precisa ser criado na hora, e o OMIE exige o CNPJ/CPF.
   const needsDocument = !customer?.omie_customer_id;
@@ -1399,7 +1415,10 @@ export function getOperationOmieIssue(
 
   let reasonLabel: string;
   let reason: string;
-  if (!pending) {
+  if (noCustomer) {
+    reasonLabel = "Sem cliente";
+    reason = NO_CUSTOMER_BILLING_MESSAGE;
+  } else if (!pending) {
     reasonLabel = "Enviada ao OMIE";
     reason =
       operation.omie_sales_order_id != null
@@ -1733,6 +1752,9 @@ export function buildOmieBillingJob(
       }
     | undefined;
   if (!row) return null;
+  // SEM CLIENTE nunca vai ao OMIE — nem pelo fechamento, nem por Refaturar/Reenviar, nem
+  // pelo rearme da fila depois de um cadastro entrar no OMIE.
+  if (isNoCustomerId(row.customer_id)) return null;
 
   const customerRow = row.customer_id
     ? (database
@@ -2420,10 +2442,12 @@ export const NOT_IN_OMIE_LIMIT = 300;
 /**
  * A operacao concluida que ainda NAO esta no OMIE -- a mesma leitura de `resolveSituation`
  * (`weighing-billing-situation.ts`) e de `getFiscalBillingStatus`: faturada, ou com o pedido
- * (venda) / a ordem de servico (interna) criado la, ja chegou; o resto nao.
+ * (venda) / a ordem de servico (interna) criado la, ja chegou; o resto nao. A pesagem SEM
+ * CLIENTE nao vai ao OMIE de proposito, entao tambem nao conta como pendente.
  */
 const NOT_IN_OMIE_SQL = `
          AND o.omie_billing_status IS NOT 'billed'
+         AND o.omie_billing_status IS NOT '${NO_CUSTOMER_BILLING_STATUS}'
          AND CASE
                WHEN o.operation_type = 'invoice' THEN COALESCE(o.omie_sales_order_id, 0) = 0
                ELSE COALESCE(o.omie_service_order_id, 0) = 0

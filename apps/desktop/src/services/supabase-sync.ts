@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { isOmieCustomerCadastro } from "@kyberrock/omie-client";
-import { documentKind, normalizeDocument } from "@kyberrock/shared";
+import {
+  documentKind,
+  isNoCustomerId,
+  NO_CUSTOMER_BILLING_MESSAGE,
+  normalizeDocument
+} from "@kyberrock/shared";
 
 import {
   getDefaultSupabasePublishableKey,
@@ -4451,6 +4456,13 @@ export async function pushOmieCustomersToCloud(
       continue;
     }
 
+    // O cadastro SEM CLIENTE existe so no KyberRock: nao e cliente de ninguem e nunca vai
+    // ao OMIE. Sem esta volta ele cairia na trava do documento abaixo e ficaria em erro.
+    if (isNoCustomerId(customer.id)) {
+      markSynced.run(customer.id);
+      continue;
+    }
+
     // OMIE exige CPF/CNPJ no IncluirCliente. Sem documento valido, nao adianta chamar:
     // bloqueia com mensagem clara ate o operador preencher o documento.
     if (!customer.omie_customer_id && !hasValidCnpjCpf(customer.document)) {
@@ -6393,6 +6405,26 @@ export async function processFiscalBillingNow(
     error: null
   })
 ): Promise<FiscalBillingResult> {
+  // Pesagem SEM CLIENTE: nao vai ao OMIE de jeito nenhum. Volta antes de qualquer coisa —
+  // inclusive antes da conferencia de cadastro, que gravaria "cadastro incompleto" nela.
+  const customerId = database
+    .prepare("SELECT customer_id FROM weighing_operations WHERE id = ?")
+    .pluck()
+    .get(operationId) as string | null | undefined;
+  if (isNoCustomerId(customerId)) {
+    return {
+      orderId: null,
+      billed: false,
+      blocked: true,
+      blockReason: NO_CUSTOMER_BILLING_MESSAGE,
+      billingStatusCode: null,
+      billingStatusMessage: NO_CUSTOMER_BILLING_MESSAGE,
+      documentUrl: null,
+      documentPrinted: false,
+      documentPrintError: null
+    };
+  }
+
   const settings = getCloudSettings(database, identity);
   const supabase = getSupabaseClient();
 

@@ -116,7 +116,10 @@ import type { PriceDetails } from "../services/pricing";
 import type { CacheEntityType } from "../services/cache-store";
 import {
   documentKind,
+  isNoCustomerId,
   isValidDocument,
+  NO_CUSTOMER_BILLING_MESSAGE,
+  NO_CUSTOMER_BILLING_STATUS,
   isValidPlate,
   normalizeDocument,
   normalizePhone,
@@ -6145,11 +6148,13 @@ async function resolvePaymentConditionGuard(
  * So quando ela vai constar na nota. Desmarcando "transportador na nota" no tipo de
  * frete (situacao 4, sem ocorrencia de transporte), a nota sai sem transportador — nao
  * faz sentido travar a entrada exigindo um cadastro que ninguem vai usar. O transporte
- * proprio do cliente (modalidade legada) segue dispensado pelo mesmo motivo.
+ * proprio do cliente (modalidade legada) segue dispensado pelo mesmo motivo. A pesagem SEM
+ * CLIENTE nao gera nota nenhuma, entao tambem dispensa.
  */
 export function isCarrierRequiredForEntry(
-  form: Pick<WeighingFormState, "freightModality">
+  form: Pick<WeighingFormState, "freightModality" | "customerId">
 ): boolean {
+  if (isNoCustomerId(form.customerId)) return false;
   return !isCustomerOwnTransport(form) && freightCarrierGoesToInvoice(form.freightModality);
 }
 
@@ -7895,7 +7900,9 @@ function WeighingForm({
           />
           {!isCarrierRequiredForEntry(form) ? (
             <p style={{ ...styles.helperText, margin: "2px 0 0" }}>
-              Transportadora opcional: o tipo de frete escolhido nao leva transportador na nota.
+              {isNoCustomerId(form.customerId)
+                ? "Transportadora opcional: pesagem SEM CLIENTE nao gera nota."
+                : "Transportadora opcional: o tipo de frete escolhido nao leva transportador na nota."}
             </p>
           ) : null}
           {form.customerId && availableCarrierIds && availableCarrierIds.length === 0 ? (
@@ -9620,6 +9627,27 @@ function PriceDetailsPanel({ details }: { details: PriceDetails | null }) {
     );
   }
 
+  if (details.source === "no_customer") {
+    return (
+      <div
+        style={{
+          padding: "8px",
+          border: "1px solid var(--kr-border)",
+          borderRadius: "10px",
+          background: "var(--kr-surface-soft)"
+        }}
+      >
+        <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--kr-text-strong)" }}>
+          Pesagem SEM CLIENTE
+        </div>
+        <div style={{ fontSize: "12px", color: "var(--kr-muted)", marginTop: "2px" }}>
+          O caminhao passa sem cliente vinculado: a pesagem sai sem valor (R$ 0,00) e nao vai ao
+          OMIE.
+        </div>
+      </div>
+    );
+  }
+
   const sourceLabel =
     details.source === "special"
       ? "Preco especial do cliente"
@@ -9926,6 +9954,21 @@ export function getFiscalBillingStatus(operation: WeighingOperationSummary): {
       label: "Faturada",
       detail: billedDetail(operation),
       tone: "success",
+      canRetry: false
+    };
+  }
+
+  // Pesagem SEM CLIENTE: nao e venda e nao vai ao OMIE de proposito — nem pendente, nem
+  // recusada. Pela marca da operacao (`omie_billing_status`) e pelo cadastro escolhido,
+  // para valer tambem enquanto a pesagem ainda nao fechou.
+  if (
+    operation.omieBillingStatus === NO_CUSTOMER_BILLING_STATUS ||
+    isNoCustomerId(operation.customerId)
+  ) {
+    return {
+      label: "Sem cliente",
+      detail: NO_CUSTOMER_BILLING_MESSAGE,
+      tone: "neutral",
       canRetry: false
     };
   }

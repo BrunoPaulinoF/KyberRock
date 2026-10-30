@@ -1,3 +1,5 @@
+import { NO_CUSTOMER_BILLING_STATUS } from "@kyberrock/shared";
+
 import type { WeighingOperationSummary } from "../services/weighing-operations";
 
 /**
@@ -6,8 +8,11 @@ import type { WeighingOperationSummary } from "../services/weighing-operations";
  * ele precisava abrir a tela Concluidas e comparar a coluna fiscal. Aqui a transicao de
  * estado de cada operacao vira um evento — que a tela transforma em som + aviso no canto
  * superior direito, dizendo qual operacao deu certo e qual falhou.
+ *
+ * `not_applicable` e a pesagem SEM CLIENTE: ela nao vai ao OMIE de proposito, entao nao
+ * gera aviso nem fica sendo reconsultada como pendente a cada ciclo.
  */
-export type OmieDeliveryState = "pending" | "delivered" | "failed";
+export type OmieDeliveryState = "pending" | "delivered" | "failed" | "not_applicable";
 
 export type OmieDeliveryEventKind = "success" | "error";
 
@@ -48,6 +53,7 @@ export function getOmieDeliveryState(operation: DeliveryOperation): OmieDelivery
   ) {
     return "delivered";
   }
+  if (operation.omieBillingStatus === NO_CUSTOMER_BILLING_STATUS) return "not_applicable";
   if (
     operation.omieBillingStatus === "failed" ||
     operation.omieBillingStatus === "service_order_failed" ||
@@ -108,7 +114,7 @@ export function diffOmieDeliveryEvents(
     const before = previous.get(operation.id);
     if (before === undefined) continue;
     const after = getOmieDeliveryState(operation);
-    if (after === before || after === "pending") continue;
+    if (after === before || after === "pending" || after === "not_applicable") continue;
 
     events.push(
       after === "delivered"

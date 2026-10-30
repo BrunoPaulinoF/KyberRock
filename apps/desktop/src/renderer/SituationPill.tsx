@@ -9,16 +9,20 @@ import type { WeighingBillingSituation } from "../services/weighing-billing-situ
  *
  * O verde e o unico "acabou": os dois amarelos travam dinheiro por falta de cadastro ou de
  * envio, o azul diz que a pesagem ja esta no OMIE esperando a emissao la, e o vermelho e a
- * recusa — a unica que exige alguem ir mexer.
+ * recusa — a unica que exige alguem ir mexer. A pesagem sem cliente fica cinza: nao e
+ * problema nem dinheiro, so caminhao que passou pela balanca.
  */
-const SITUATION_TONE: Record<WeighingBillingSituation, "success" | "warning" | "danger" | "info"> =
-  {
-    billed: "success",
-    sent: "info",
-    pending: "warning",
-    cadastro_incompleto: "warning",
-    failed: "danger"
-  };
+const SITUATION_TONE: Record<
+  WeighingBillingSituation,
+  "success" | "warning" | "danger" | "info" | "neutral"
+> = {
+  billed: "success",
+  sent: "info",
+  pending: "warning",
+  cadastro_incompleto: "warning",
+  failed: "danger",
+  no_customer: "neutral"
+};
 
 export function SituationPill({
   situation,
@@ -37,7 +41,9 @@ export function SituationPill({
         ? { background: "var(--kr-danger-soft)", color: "var(--kr-danger)" }
         : tone === "warning"
           ? { background: "var(--kr-warning-soft)", color: "var(--kr-warning)" }
-          : { background: "var(--kr-info-bg)", color: "var(--kr-info-text)" };
+          : tone === "neutral"
+            ? { background: "var(--kr-surface-soft)", color: "var(--kr-muted)" }
+            : { background: "var(--kr-info-bg)", color: "var(--kr-info-text)" };
   return (
     <span style={{ ...pillStyle, ...palette }} title={title}>
       {label}

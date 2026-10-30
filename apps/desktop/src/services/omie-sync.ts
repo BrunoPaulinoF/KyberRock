@@ -18,6 +18,7 @@ import {
   type Product,
   type UpdateCustomerInput
 } from "@kyberrock/omie-client";
+import { NO_CUSTOMER_ID_PREFIX } from "@kyberrock/shared";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { DOCUMENT_KEY_SQL, documentKey } from "./customer-identity.js";
@@ -1116,9 +1117,12 @@ export class OmieSyncService {
          WHERE company_id = ?
            AND deleted_at IS NULL
            AND omie_customer_id IS NULL
-           AND ${DOCUMENT_KEY_SQL} = ''`
+           AND ${DOCUMENT_KEY_SQL} = ''
+           AND id NOT LIKE ?`
       )
-      .all(companyId) as Array<Record<string, string | null>>;
+      // O SEM CLIENTE tambem nao tem documento, mas nao e cadastro da correria: um cliente
+      // do OMIE com esse nome nao pode adota-lo (as pesagens dele iriam ao OMIE).
+      .all(companyId, `${NO_CUSTOMER_ID_PREFIX}%`) as Array<Record<string, string | null>>;
 
     const index = new Map<string, string[]>();
     for (const row of rows) {
