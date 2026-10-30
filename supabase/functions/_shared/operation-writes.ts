@@ -160,3 +160,35 @@ export function keepOperationLinks(
   }
   return row;
 }
+
+/**
+ * Lote de pesagens separado pela foto do cadastro no fechamento (`closing_snapshot_json`).
+ *
+ * A foto nasce uma vez, na balanca que fechou a pesagem, e e ela que a reimpressao do cupom
+ * usa em qualquer outra maquina da pedreira. A copia que chega SEM foto e de uma balanca que
+ * nao a tem (pesagem anterior a ela existir, ou que ainda nao puxou), nunca uma correcao —
+ * por isso essa parte do lote sobe sem a coluna, e coluna ausente preserva o que a nuvem tem.
+ * Um lote so nao serve: o upsert em lote preenche com nulo a chave que falta numa das linhas
+ * (mesmo motivo de `splitProductsByUnitPrice`).
+ */
+export function splitOperationsByClosingSnapshot(rows: Record<string, unknown>[]): {
+  withSnapshot: Record<string, unknown>[];
+  withoutSnapshot: Record<string, unknown>[];
+} {
+  const withSnapshot: Record<string, unknown>[] = [];
+  const withoutSnapshot: Record<string, unknown>[] = [];
+  for (const row of rows) {
+    if (filled(row.closing_snapshot_json)) {
+      withSnapshot.push(row);
+      continue;
+    }
+    if (!Object.hasOwn(row, "closing_snapshot_json")) {
+      withoutSnapshot.push(row);
+      continue;
+    }
+    const rest = { ...row };
+    delete rest.closing_snapshot_json;
+    withoutSnapshot.push(rest);
+  }
+  return { withSnapshot, withoutSnapshot };
+}

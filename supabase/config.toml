@@ -50,6 +50,11 @@ verify_jwt = false
 [functions.billing-run]
 verify_jwt = false
 
+# Alerta de balanca por WhatsApp, disparado pelo pg_cron de 10 em 10 min (header
+# x-cron-secret, migracao 202610300003).
+[functions.device-health-alerts]
+verify_jwt = false
+
 # Notificacoes de pagamento do Mercado Pago. Publica por necessidade — quem
 # chama e o Mercado Pago, que nao tem JWT do Supabase. A funcao nao confia no
 # corpo: ela reconsulta o pagamento na API antes de dar baixa.

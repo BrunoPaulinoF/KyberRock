@@ -10,6 +10,7 @@ import {
   cancellationReannouncements,
   isStaleOperationWrite,
   keepOperationLinks,
+  splitOperationsByClosingSnapshot,
   type OperationLinks,
   type OperationVersion
 } from "../_shared/operation-writes.ts";
@@ -380,9 +381,19 @@ Deno.serve(async (req) => {
         scopeRowsToDevice(body.operations, device)
       );
       if (operations.length) {
-        const { error } = await upsert("weighing_operations", operations, "id");
-        if (error) {
-          stepErrors.push(`weighing_operations: ${error.message} (code=${error.code ?? "n/a"})`);
+        // A copia sem a foto do fechamento sobe sem a coluna, para nao apagar a foto que a
+        // balanca que fechou ja mandou (ver `splitOperationsByClosingSnapshot`).
+        const { withSnapshot, withoutSnapshot } = splitOperationsByClosingSnapshot(operations);
+        let operationError: PostgrestLikeError | null = null;
+        for (const batch of [withSnapshot, withoutSnapshot]) {
+          if (batch.length === 0) continue;
+          const { error } = await upsert("weighing_operations", batch, "id");
+          operationError = operationError ?? error;
+        }
+        if (operationError) {
+          stepErrors.push(
+            `weighing_operations: ${operationError.message} (code=${operationError.code ?? "n/a"})`
+          );
         } else {
           counts.operations = operations.length;
         }

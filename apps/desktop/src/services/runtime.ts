@@ -199,6 +199,7 @@ import {
   listPrintReceipts,
   printTestReceipt,
   printWeighingReceipt,
+  reprintOperationReceipt,
   reprintWeighingReceipt,
   type ConfigureReceiptPrintProfileInput,
   type PrintProfileSummary,
@@ -322,6 +323,13 @@ import {
   renderTruckControlSpreadsheet,
   truckControlFileBaseName
 } from "./truck-control-report.js";
+import {
+  getCashClosingReport,
+  saveCashClosing,
+  type CashClosingReport,
+  type SavedCashClosing
+} from "./cash-closing.js";
+import { cashClosingFileName, renderCashClosingHtml } from "./cash-closing-render.js";
 import {
   sendEmail,
   verifySmtpConnection,
@@ -2418,6 +2426,18 @@ export class DesktopRuntime {
     return receipt;
   }
 
+  /** "Reimprimir nota" da tela Concluidas: proxima via do cupom ja emitido, mesmo numero. */
+  async reprintOperationReceipt(operationId: string): Promise<PrintReceiptSummary> {
+    this.assertDesktopAccess();
+    const receipt = await reprintOperationReceipt(
+      this.database,
+      { operationId, identity: this.ensureIdentity() },
+      this.receiptPrinter
+    );
+    this.triggerBackgroundCloudSync("reprint_receipt", { operationId });
+    return receipt;
+  }
+
   printTestReceipt(): Promise<PrintReceiptSummary> {
     this.assertDesktopAccess();
     return printTestReceipt(
@@ -3265,6 +3285,42 @@ export class DesktopRuntime {
       fileName: `${truckControlFileBaseName(report)}.${format === "pdf" ? "pdf" : "xls"}`,
       html:
         format === "pdf" ? renderTruckControlHtml(report) : renderTruckControlSpreadsheet(report)
+    };
+  }
+
+  // --- Fechamento do caixa do dia --------------------------------------------
+
+  getCashClosing(date: string): CashClosingReport {
+    this.assertDesktopAccess();
+    return getCashClosingReport(this.database, this.ensureIdentity().unitId, date);
+  }
+
+  saveCashClosing(
+    date: string,
+    countedCents: Record<string, number>,
+    notes?: string | null
+  ): SavedCashClosing {
+    this.assertDesktopAccess();
+    return saveCashClosing(this.database, {
+      identity: this.ensureIdentity(),
+      date,
+      countedCents,
+      notes
+    });
+  }
+
+  /** PDF do fechamento com a conferencia salva (o main so escolhe o destino e grava). */
+  buildCashClosingDocument(date: string): { format: "pdf"; fileName: string; html: string } {
+    const report = this.getCashClosing(date);
+    const unitName =
+      (this.database
+        .prepare("SELECT name FROM units WHERE id = ?")
+        .pluck()
+        .get(this.ensureIdentity().unitId) as string | undefined) ?? "";
+    return {
+      format: "pdf",
+      fileName: cashClosingFileName(report),
+      html: renderCashClosingHtml(report, unitName)
     };
   }
 

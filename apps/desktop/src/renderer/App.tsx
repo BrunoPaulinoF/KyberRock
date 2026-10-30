@@ -5,6 +5,7 @@ import {
   BarChart3,
   BadgeDollarSign,
   BookOpen,
+  Calculator,
   Cloud,
   Download,
   Database,
@@ -183,6 +184,7 @@ import { InvoiceClosingView } from "./InvoiceClosingView";
 import { ReportsView } from "./ReportsView";
 import { TruckControlView, formatMinutes } from "./TruckControlView";
 import { WalletView } from "./WalletView";
+import { CashClosingView } from "./CashClosingView";
 import { CustomersView } from "./CustomersView";
 import { HelpTooltip, Tooltip } from "./Tooltip";
 import { OPENING_ANIMATION_MS, OPENING_EXIT_MS, OpeningAnimation } from "./OpeningAnimation";
@@ -282,6 +284,7 @@ type ActiveView =
   | "new-weighing"
   | "open-operations"
   | "wallet"
+  | "cash-closing"
   | "scale"
   | "registrations"
   | "printing"
@@ -2535,8 +2538,9 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     }
   }
 
-  // Reimpressao de emergencia direto da tela Concluidas: emite uma nova via (2a, 3a...)
-  // da nota daquela operacao, util quando faltou papel ou o cupom saiu ilegivel.
+  // Reimpressao de emergencia direto da tela Concluidas: a proxima via (2a, 3a...) do MESMO
+  // cupom daquela operacao, util quando faltou papel ou o cupom saiu ilegivel. Nao e uma
+  // emissao: o numero do cupom continua o da 1a via.
   async function handleReprintOperationReceipt(operationId: string): Promise<void> {
     if (!desktopApi) {
       return;
@@ -2544,7 +2548,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
 
     setReprintingOperationId(operationId);
     try {
-      const receipt = await desktopApi.printReceipt(operationId);
+      const receipt = await desktopApi.reprintOperationReceipt(operationId);
       setMessage(
         receipt.status === "printed"
           ? `Nota reimpressa: cupom ${formatReceiptNumber(receipt.receiptNumber, receipt.deviceNumber)}, via ${receipt.copyNumber}.`
@@ -2900,6 +2904,14 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
                 id="wallet"
                 label="Carteira"
                 icon={Wallet}
+                activeView={activeView}
+                onSelect={setActiveView}
+                offline={!isOnline}
+              />
+              <SidebarItem
+                id="cash-closing"
+                label="Fechamento do caixa"
+                icon={Calculator}
                 activeView={activeView}
                 onSelect={setActiveView}
                 offline={!isOnline}
@@ -5150,6 +5162,7 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
               />
             ) : null}
             {activeView === "wallet" ? <WalletView desktopApi={desktopApi} /> : null}
+            {activeView === "cash-closing" ? <CashClosingView desktopApi={desktopApi} /> : null}
             {activeView === "truck-control" ? <TruckControlView desktopApi={desktopApi} /> : null}
             {activeView === "customer-report" ? (
               <CustomerReportView desktopApi={desktopApi} />

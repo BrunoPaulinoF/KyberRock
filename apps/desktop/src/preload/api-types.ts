@@ -66,6 +66,7 @@ import type {
   WeighingBillingReportOptions
 } from "../services/weighing-billing-report";
 import type { InvoiceClosingOptions, InvoiceClosingReport } from "../services/invoice-closing";
+import type { CashClosingReport, SavedCashClosing } from "../services/cash-closing-model";
 import type {
   InvoiceClosingRunProgress,
   InvoiceClosingRunResult
@@ -297,6 +298,8 @@ export interface KyberRockDesktopApi {
   listPrintReceipts: () => Promise<PrintReceiptSummary[]>;
   printReceipt: (operationId: string) => Promise<PrintReceiptSummary>;
   reprintReceipt: (receiptId: string) => Promise<PrintReceiptSummary>;
+  /** Proxima via do cupom ja emitido para a operacao (mesmo numero); emite se nao houver. */
+  reprintOperationReceipt: (operationId: string) => Promise<PrintReceiptSummary>;
   printTestReceipt: () => Promise<PrintReceiptSummary>;
   billFiscalOperation: (operationId: string) => Promise<FiscalBillingResult>;
   bootstrapCloudData: () => Promise<CloudBootstrapResult>;
@@ -392,6 +395,14 @@ export interface KyberRockDesktopApi {
     endDate: string,
     search?: string
   ) => Promise<{ path: string } | null>;
+  /** Fechamento do caixa do dia (vendido x recebido por conta) com a conferencia salva. */
+  getCashClosing: (date: string) => Promise<CashClosingReport>;
+  saveCashClosing: (
+    date: string,
+    countedCents: Record<string, number>,
+    notes?: string | null
+  ) => Promise<SavedCashClosing>;
+  exportCashClosing: (date: string) => Promise<{ path: string } | null>;
   exportReportExcel: (startDate: string, endDate: string) => Promise<{ path: string } | null>;
   listCustomerReportCustomers: () => Promise<CustomerReportOption[]>;
   /** Resumo comparativo de todos os clientes com movimento no periodo. */

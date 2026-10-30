@@ -21,6 +21,11 @@ import {
 } from "./printer-type.js";
 import type { LocalDesktopIdentity } from "./bootstrap.js";
 import { freightValueGoesToInvoice } from "./freight.js";
+import {
+  frozenCadastroFromArchivedReceipt,
+  frozenValue,
+  parseOperationClosingSnapshot
+} from "./operation-closing-snapshot.js";
 import { enqueueSyncJob } from "./sync-queue.js";
 import {
   orderInstallmentPlan,
@@ -148,9 +153,10 @@ export interface ReceiptContentSnapshot extends ReceiptTemplateInput {
 /**
  * A copia do cupom que fica GUARDADA, sem a imagem da logo.
  *
- * O snapshot existe para arquivo: ninguem o le de volta -- a reimpressao remonta o cupom a
- * partir da operacao (`reprintWeighingReceipt`) e este modulo nem declara a coluna
- * (`PRINT_RECEIPT_COLUMNS`). Quem a le e so o espelhamento para a nuvem.
+ * O snapshot existe para arquivo: a reimpressao remonta o cupom a partir da operacao
+ * (`reprintWeighingReceipt`) e este modulo nem declara a coluna (`PRINT_RECEIPT_COLUMNS`). A
+ * unica leitura e a do cadastro congelado da 1a via (`firstArchivedReceiptSnapshot`), para
+ * as pesagens fechadas antes de a operacao ter a propria foto (`closing_snapshot_json`).
  *
  * Mesmo assim ele carregava a logo da pedreira em base64 dentro de CADA via impressa. Medido
  * na producao: 11 kB dos ~11,5 kB de cada linha eram a imagem -- 6.310 cupons guardavam a
@@ -231,6 +237,8 @@ interface OperationReceiptRow {
    * texto que foi para a NF-e no OMIE.
    */
   future_billing_nfe_number: string | null;
+  /** Foto do cadastro no fechamento (`operation-closing-snapshot.ts`); null nas antigas. */
+  closing_snapshot_json: string | null;
 }
 
 interface PrintReceiptRow {
@@ -414,6 +422,58 @@ export async function reprintWeighingReceipt(
     now,
     originalReceipt
   );
+}
+
+export interface ReprintOperationReceiptInput {
+  operationId: string;
+  identity: LocalDesktopIdentity;
+}
+
+/**
+ * "Reimprimir nota" a partir da OPERACAO (tela Concluidas): a proxima via do cupom que ela
+ * ja tem, com o MESMO numero, registrada como reimpressao.
+ *
+ * O botao chamava `printWeighingReceipt`, que e a EMISSAO: tirava um numero novo da
+ * sequencia da pedreira e recomecava na "1a VIA" — o mesmo caminhao passava a ter dois
+ * cupons com numeros diferentes, a auditoria registrava `receipt_printed` e nada no papel
+ * dizia que era uma copia. So emite quando a operacao ainda nao tem cupom nenhum (fechada
+ * com a impressora desligada, ou sem perfil configurado na hora).
+ */
+export async function reprintOperationReceipt(
+  database: DesktopDatabase,
+  input: ReprintOperationReceiptInput,
+  printer: ReceiptPrinter,
+  now: Date = new Date()
+): Promise<PrintReceiptSummary> {
+  const originalReceiptId = findOriginalReceiptId(database, input.operationId);
+  if (!originalReceiptId) {
+    return printWeighingReceipt(database, input, printer, now);
+  }
+
+  return reprintWeighingReceipt(
+    database,
+    { receiptId: originalReceiptId, identity: input.identity },
+    printer,
+    now
+  );
+}
+
+/**
+ * A 1a via da operacao: e dela que a reimpressao herda o numero (e o sufixo do computador
+ * que emitiu). Uma tentativa que falhou na impressora tambem conta — o numero ja foi
+ * consumido da sequencia quando ela foi registrada.
+ */
+function findOriginalReceiptId(database: DesktopDatabase, operationId: string): string | null {
+  const value = database
+    .prepare(
+      `SELECT id FROM print_receipts
+       WHERE operation_id = ? AND receipt_number > 0
+       ORDER BY copy_number ASC, created_at ASC
+       LIMIT 1`
+    )
+    .pluck()
+    .get(operationId) as string | undefined;
+  return value ?? null;
 }
 
 export async function printTestReceipt(
@@ -752,7 +812,8 @@ function getOperationForReceipt(
           ELSE pt.name
         END AS payment_term_name,
         o.payment_term_id,
-        pm.name AS payment_method_name
+        pm.name AS payment_method_name,
+        o.closing_snapshot_json
        FROM weighing_operations o
         INNER JOIN companies co ON co.id = o.company_id
         INNER JOIN units u ON u.id = o.unit_id
@@ -770,7 +831,60 @@ function getOperationForReceipt(
     throw new Error(`Weighing operation ${operationId} was not found.`);
   }
 
-  return row;
+  return withFrozenCadastro(database, row);
+}
+
+/**
+ * Cliente, placa, motorista, produto e condicao do cupom como estavam no FECHAMENTO, e nao
+ * como estao no cadastro agora — senao a reimpressao de uma carga antiga sairia com a razao
+ * social, a placa ou a descricao de hoje, diferente da 1a via que o cliente tem em maos.
+ *
+ * A foto do fechamento vale primeiro. A pesagem fechada antes dela existir usa a copia
+ * guardada da 1a via desta maquina (`content_snapshot_json`, que a nuvem nao devolve para as
+ * outras), e o campo que nenhuma das duas tem continua vindo do cadastro atual.
+ */
+function withFrozenCadastro(
+  database: DesktopDatabase,
+  row: OperationReceiptRow
+): OperationReceiptRow {
+  const frozen = {
+    ...frozenCadastroFromArchivedReceipt(firstArchivedReceiptSnapshot(database, row.id)),
+    ...parseOperationClosingSnapshot(row.closing_snapshot_json)
+  };
+
+  return {
+    ...row,
+    customer_name: frozenValue(frozen, "customerName", row.customer_name),
+    customer_document: frozenValue(frozen, "customerDocument", row.customer_document),
+    customer_phone: frozenValue(frozen, "customerPhone", row.customer_phone),
+    customer_zipcode: frozenValue(frozen, "customerZipCode", row.customer_zipcode),
+    customer_city: frozenValue(frozen, "customerCity", row.customer_city),
+    customer_state: frozenValue(frozen, "customerState", row.customer_state),
+    plate: frozenValue(frozen, "plate", row.plate),
+    driver_name: frozenValue(frozen, "driverName", row.driver_name),
+    product_code: frozenValue(frozen, "productCode", row.product_code),
+    product_description: frozenValue(frozen, "productDescription", row.product_description),
+    payment_term_name: frozenValue(frozen, "paymentTermName", row.payment_term_name),
+    payment_method_name: frozenValue(frozen, "paymentMethodName", row.payment_method_name)
+  };
+}
+
+/** Copia guardada da via mais antiga da operacao (a 1a via), quando esta maquina a tem. */
+function firstArchivedReceiptSnapshot(
+  database: DesktopDatabase,
+  operationId: string
+): string | null {
+  const value = database
+    .prepare(
+      `SELECT content_snapshot_json FROM print_receipts
+       WHERE operation_id = ? AND content_snapshot_json IS NOT NULL
+         AND content_snapshot_json <> '{}'
+       ORDER BY copy_number ASC, created_at ASC
+       LIMIT 1`
+    )
+    .pluck()
+    .get(operationId) as string | undefined;
+  return value ?? null;
 }
 
 /**

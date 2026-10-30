@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   cancellationReannouncements,
   isStaleOperationWrite,
-  keepOperationLinks
+  keepOperationLinks,
+  splitOperationsByClosingSnapshot
 } from "./operation-writes.ts";
 
 const CANCELLED_AT = "2026-09-18T12:56:45.569Z";
@@ -180,5 +181,21 @@ describe("keepOperationLinks", () => {
       { id: "op-1", customer_id: null }
     );
     expect(row).toEqual({ id: "op-1", customer_id: null });
+  });
+});
+
+describe("splitOperationsByClosingSnapshot", () => {
+  it("a copia sem foto sobe sem a coluna, para nao apagar a foto que ja esta na nuvem", () => {
+    const { withSnapshot, withoutSnapshot } = splitOperationsByClosingSnapshot([
+      { id: "op-1", closing_snapshot_json: '{"customerName":"Levisa"}' },
+      { id: "op-2", closing_snapshot_json: null },
+      { id: "op-3", closing_snapshot_json: "" },
+      { id: "op-4" }
+    ]);
+
+    expect(withSnapshot).toEqual([
+      { id: "op-1", closing_snapshot_json: '{"customerName":"Levisa"}' }
+    ]);
+    expect(withoutSnapshot).toEqual([{ id: "op-2" }, { id: "op-3" }, { id: "op-4" }]);
   });
 });

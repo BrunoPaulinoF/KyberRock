@@ -762,6 +762,14 @@ function registerIpcHandlers(): void {
     return runtime.reprintReceipt(receiptId);
   });
 
+  ipcMain.handle("desktop:reprint-operation-receipt", (_event, operationId: string) => {
+    if (!runtime) {
+      throw new Error("Desktop runtime is not ready.");
+    }
+
+    return runtime.reprintOperationReceipt(operationId);
+  });
+
   ipcMain.handle("desktop:print-test-receipt", () => {
     if (!runtime) {
       throw new Error("Desktop runtime is not ready.");
@@ -883,6 +891,25 @@ function registerIpcHandlers(): void {
       return saved ? { path: saved.files[0] } : null;
     }
   );
+
+  ipcMain.handle("desktop:get-cash-closing", (_event, date: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    return runtime.getCashClosing(date);
+  });
+
+  ipcMain.handle(
+    "desktop:save-cash-closing",
+    (_event, date: string, countedCents: Record<string, number>, notes?: string | null) => {
+      if (!runtime) throw new Error("Desktop runtime is not ready.");
+      return runtime.saveCashClosing(date, countedCents, notes);
+    }
+  );
+
+  ipcMain.handle("desktop:export-cash-closing", async (_event, date: string) => {
+    if (!runtime) throw new Error("Desktop runtime is not ready.");
+    const saved = await saveReportDocuments([runtime.buildCashClosingDocument(date)]);
+    return saved ? { path: saved.files[0] } : null;
+  });
 
   ipcMain.handle(
     "desktop:export-report-pdf",

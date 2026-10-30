@@ -21,6 +21,7 @@ import {
   listPrintReceipts,
   printTestReceipt,
   printWeighingReceipt,
+  reprintOperationReceipt,
   reprintWeighingReceipt,
   type ReceiptPrinter,
   type ReceiptPrintPayload
@@ -963,6 +964,240 @@ describe("printing", () => {
 // fechou) + prazo da condicao. Caso real (Pedreira Ibiuna, 27/10/2026): carga de 20/10 em
 // "1 parcela em 45 dias" reimpressa em 27/10 saia com "VENCTO: 27/10/2026", e o OMIE cobrava
 // em 04/12. 6,5 t de rachao a R$ 120,00/t = R$ 780,00 em todos os casos abaixo.
+describe("reimprimir nota pela operacao (tela Concluidas)", () => {
+  it("sai a proxima via do MESMO cupom, registrada como reimpressao", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, { identity, windowsPrinterName: "TERMICA-80" });
+      const operation = createClosedOperation(database, identity);
+      const original = await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer
+      );
+      printer.calls.length = 0;
+
+      const reprint = await reprintOperationReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer
+      );
+
+      expect(reprint).toMatchObject({
+        operationId: operation.id,
+        receiptNumber: original.receiptNumber,
+        copyNumber: 3,
+        status: "printed"
+      });
+      expect(printer.calls).toHaveLength(1);
+      expect(printer.calls[0].lines).toContain("3a VIA");
+      expect(printer.calls[0].lines).toContain("COPIA NRO 000000001");
+      // A sequencia da pedreira nao andou: a reimpressao nao e uma emissao.
+      expect(
+        database
+          .prepare("SELECT receipt_sequence FROM units WHERE id = ?")
+          .pluck()
+          .get(identity.unitId)
+      ).toBe(1);
+      expect(
+        database
+          .prepare("SELECT COUNT(*) FROM audit_logs WHERE action = 'receipt_reprinted'")
+          .pluck()
+          .get()
+      ).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("emite o cupom quando a operacao ainda nao tem nenhum", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        copies: 1
+      });
+      const operation = createClosedOperation(database, identity);
+
+      const receipt = await reprintOperationReceipt(
+        database,
+        { operationId: operation.id, identity },
+        printer
+      );
+
+      expect(receipt).toMatchObject({ receiptNumber: 1, copyNumber: 1, status: "printed" });
+      expect(
+        database
+          .prepare("SELECT COUNT(*) FROM audit_logs WHERE action = 'receipt_printed'")
+          .pluck()
+          .get()
+      ).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("reimprime com o numero de uma 1a via que falhou na impressora", async () => {
+    const database = createDatabase();
+
+    try {
+      const identity = createIdentity(database);
+      configureReceiptPrintProfile(database, {
+        identity,
+        windowsPrinterName: "TERMICA-80",
+        copies: 1
+      });
+      const operation = createClosedOperation(database, identity);
+      const failed = await printWeighingReceipt(
+        database,
+        { operationId: operation.id, identity },
+        createFakePrinter(new Error("Sem papel"))
+      );
+      expect(failed.status).toBe("failed");
+
+      const reprint = await reprintOperationReceipt(
+        database,
+        { operationId: operation.id, identity },
+        createFakePrinter()
+      );
+
+      expect(reprint).toMatchObject({
+        receiptNumber: failed.receiptNumber,
+        copyNumber: 2,
+        status: "printed"
+      });
+    } finally {
+      database.close();
+    }
+  });
+});
+
+describe("cupom reimpresso com o cadastro do dia da pesagem", () => {
+  it("a reimpressao mantem cliente, placa, motorista e produto do fechamento", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createRachaoIdentity(database);
+      const operation = createClosedRachaoOperation(database, identity);
+      await printWeighingReceipt(database, { operationId: operation.id, identity }, printer);
+      const firstCopy = printer.calls[0].lines.join("\n");
+      expect(firstCopy).toContain("Concessionaria");
+      expect(firstCopy).toContain("ABC1D23");
+
+      renameRachaoCadastro(database);
+      printer.calls.length = 0;
+      await reprintOperationReceipt(database, { operationId: operation.id, identity }, printer);
+
+      const reprinted = printer.calls[0].lines.join("\n");
+      expect(reprinted).toContain("Concessionaria");
+      expect(reprinted).toContain("ABC1D23");
+      expect(reprinted).toContain("Motorista Teste");
+      expect(reprinted).toContain("RACHAO-RACHAO");
+      expect(reprinted).not.toContain("Nome Novo");
+      expect(reprinted).not.toContain("XYZ9Z99");
+      expect(reprinted).not.toContain("Outro Motorista");
+      expect(reprinted).not.toContain("PEDRA NOVA");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("a 1a via impressa depois de mudar o cadastro tambem sai com a foto do fechamento", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createRachaoIdentity(database);
+      const operation = createClosedRachaoOperation(database, identity);
+      renameRachaoCadastro(database);
+
+      await printWeighingReceipt(database, { operationId: operation.id, identity }, printer);
+
+      const lines = printer.calls[0].lines.join("\n");
+      expect(lines).toContain("Concessionaria");
+      expect(lines).not.toContain("Nome Novo");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("pesagem fechada antes da foto usa o cadastro congelado na 1a via", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createRachaoIdentity(database);
+      const operation = createClosedRachaoOperation(database, identity);
+      // Como uma pesagem fechada antes desta versao: sem a foto do fechamento.
+      database
+        .prepare("UPDATE weighing_operations SET closing_snapshot_json = NULL WHERE id = ?")
+        .run(operation.id);
+      await printWeighingReceipt(database, { operationId: operation.id, identity }, printer);
+
+      renameRachaoCadastro(database);
+      printer.calls.length = 0;
+      await reprintOperationReceipt(database, { operationId: operation.id, identity }, printer);
+
+      const reprinted = printer.calls[0].lines.join("\n");
+      expect(reprinted).toContain("Concessionaria");
+      expect(reprinted).toContain("ABC1D23");
+      expect(reprinted).not.toContain("Nome Novo");
+    } finally {
+      database.close();
+    }
+  });
+
+  it("sem foto e sem 1a via guardada, continua lendo o cadastro atual", async () => {
+    const database = createDatabase();
+    const printer = createFakePrinter();
+
+    try {
+      const identity = createRachaoIdentity(database);
+      const operation = createClosedRachaoOperation(database, identity);
+      database
+        .prepare("UPDATE weighing_operations SET closing_snapshot_json = 'nao e json' WHERE id = ?")
+        .run(operation.id);
+      renameRachaoCadastro(database);
+
+      await printWeighingReceipt(database, { operationId: operation.id, identity }, printer);
+
+      expect(printer.calls[0].lines.join("\n")).toContain("Nome Novo");
+    } finally {
+      database.close();
+    }
+  });
+});
+
+/** Perfil de 1 via e o cadastro real de rachao (cliente, placa, motorista e produto). */
+function createRachaoIdentity(database: DesktopDatabase): LocalDesktopIdentity {
+  const identity = createIdentity(database);
+  configureReceiptPrintProfile(database, {
+    identity,
+    windowsPrinterName: "TERMICA-80",
+    copies: 1
+  });
+  insertFutureBillingCadastro(database);
+  return identity;
+}
+
+/** O cadastro muda depois do fechamento: outro nome, outra placa, outro motorista. */
+function renameRachaoCadastro(database: DesktopDatabase): void {
+  database.prepare("UPDATE customers SET trade_name = 'Nome Novo' WHERE id = 'customer-fb'").run();
+  database.prepare("UPDATE vehicles SET plate = 'XYZ9Z99' WHERE id = 'vehicle-fb'").run();
+  database.prepare("UPDATE drivers SET name = 'Outro Motorista' WHERE id = 'driver-fb'").run();
+  database
+    .prepare("UPDATE products SET description = 'Pedra Nova' WHERE id = 'product-rachao'")
+    .run();
+}
+
 describe("vencimento no cupom", () => {
   const CLOSED_AT = "2026-10-20T13:00:00.000Z";
 

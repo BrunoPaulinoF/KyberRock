@@ -101,6 +101,8 @@ const desktopApi = {
   listPrintReceipts: () => ipcRenderer.invoke("desktop:list-print-receipts"),
   printReceipt: (operationId: string) => ipcRenderer.invoke("desktop:print-receipt", operationId),
   reprintReceipt: (receiptId: string) => ipcRenderer.invoke("desktop:reprint-receipt", receiptId),
+  reprintOperationReceipt: (operationId: string) =>
+    ipcRenderer.invoke("desktop:reprint-operation-receipt", operationId),
   printTestReceipt: () => ipcRenderer.invoke("desktop:print-test-receipt"),
   billFiscalOperation: (operationId: string) =>
     ipcRenderer.invoke("desktop:bill-fiscal-operation", operationId),
@@ -206,6 +208,10 @@ const desktopApi = {
     endDate: string,
     search?: string
   ) => ipcRenderer.invoke("desktop:export-truck-control", format, startDate, endDate, search),
+  getCashClosing: (date: string) => ipcRenderer.invoke("desktop:get-cash-closing", date),
+  saveCashClosing: (date: string, countedCents: Record<string, number>, notes?: string | null) =>
+    ipcRenderer.invoke("desktop:save-cash-closing", date, countedCents, notes),
+  exportCashClosing: (date: string) => ipcRenderer.invoke("desktop:export-cash-closing", date),
   listReportRecipients: () => ipcRenderer.invoke("desktop:list-report-recipients"),
   createReportRecipient: (input: unknown) =>
     ipcRenderer.invoke("desktop:create-report-recipient", input),

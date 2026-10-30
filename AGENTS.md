@@ -1799,6 +1799,59 @@ reaproveita a pagina internamente (o banco para de crescer), mas o numero do pai
 de um `VACUUM FULL` na tabela — que nao cabe numa migracao, porque vacuum nao roda dentro de
 transacao. Rodar a parte, fora do pico: ele tranca a tabela por alguns segundos.
 
+## Reimpressao do cupom: mesmo numero e cadastro do dia da pesagem
+
+- **"Reimprimir nota" (tela Concluidas) e reimpressao, nao emissao.** O botao chamava
+  `printWeighingReceipt`, que tira numero NOVO da sequencia da pedreira e recomeca na "1a VIA".
+  Agora vai por `reprintOperationReceipt` (`services/printing.ts`): acha a 1a via da operacao e
+  imprime a proxima via com o MESMO numero, auditada como `receipt_reprinted`. So emite quando a
+  operacao ainda nao tem cupom nenhum.
+- **Foto do cadastro no fechamento** (`services/operation-closing-snapshot.ts`, migracao local 64,
+  nuvem `202610300002`): cliente, documento, placa, motorista, transportadora, produto e condicao
+  sao congelados em `weighing_operations.closing_snapshot_json` dentro da transacao do fechamento.
+  O cupom (1a via e reimpressao) usa a foto antes do cadastro atual; pesagem anterior a ela usa a
+  copia guardada da 1a via (`print_receipts.content_snapshot_json`) e, na falta das duas, o
+  cadastro de agora. So texto preenchido congela.
+- **Nunca reescrita**: o pull faz `COALESCE(local, nuvem)` e o `desktop-sync` sobe sem a coluna a
+  parte do lote que chega sem foto (`splitOperationsByClosingSnapshot`) — upsert em lote preencheria
+  com nulo.
+
+## Fechamento do caixa do dia
+
+Tela "Fechamento do caixa" (desktop, `services/cash-closing.ts` + `renderer/CashClosingView.tsx`):
+vendido x recebido no dia, conta por conta (caixinha, OMIE Cash, GetNet...). Cada centavo vendido
+cai em exatamente um bloco:
+
+- **Recebido hoje, por conta**: a parte a vista das vendas do dia (parcelas que vencem no proprio
+  dia da venda, pela mesma conta das parcelas do OMIE, `orderInstallmentPlan`) e o fechamento de
+  carteira lancado no dia com recebimento na hora. E onde o operador digita o "Conferido".
+- **A receber**: boleto (forma `boleto` ou meio OMIE `15`), parcelas a prazo, carteira, fiado e
+  venda sem forma de pagamento.
+- **Sem entrada de dinheiro**: bonificacao, SEM CLIENTE / valor zero e a parte paga com o
+  adiantamento do cliente (`omie_advance_settle_cents`).
+
+O valor e o COBRADO (frete "valor so no sistema" fica de fora). O dia e o da venda em Sao Paulo
+(`operationSaleDaySql`). A conferencia fica em `cash_closings` (migracao local 65), uma por dia e
+pedreira, com auditoria `cash_closing_saved`; ainda **nao sobe para a nuvem**. PDF com linhas de
+assinatura pelo botao "Gerar PDF". Permuta ainda nao existe como forma.
+
+## Alerta de balanca por WhatsApp
+
+`device-health-alerts` (pg_cron de 10 em 10 min, migracao `202610300003`) le a saude que o
+`desktop-status` ja grava em `device_registrations` e avisa por WhatsApp quando um problema COMECA
+e quando TERMINA (tabela `device_alerts`, um alerta aberto por balanca e tipo). Regra pura em
+`_shared/device-alerts.ts`:
+
+- **Sem contato**: calada ha 30 min, mas so se ligou HOJE e so de segunda a sabado, 6h-18h de Sao
+  Paulo — fora disso o alerta nao abre (e o que ja estava aberto continua ate ela voltar).
+- **Envio parado** (`health_queue_blocked > 0`) e **fila atrasada** (pendente ha mais de 1 h): so
+  julgados com a balanca falando; calada, o resumo e velho.
+- Destinatarios em `device_alert_recipients`, editados no painel `/admin` > "Alertas de balanca"
+  (com botao de teste): sem pedreira = suporte, recebe de todas.
+- Envia pela instancia UAZAPI **global** (a do financeiro: `billing_settings.whatsapp_url` +
+  secret `UAZAPI_INSTANCE_TOKEN`). Sem ela os alertas ficam guardados e saem quando houver; o
+  alerta so ganha `notified_at` quando alguem recebeu. Resolvidos com mais de 90 dias sao apagados.
+
 ## Edge Functions deploy
 
 **Automated (default).** `.github/workflows/edge-functions-deploy.yml` deploys the Deno Edge
