@@ -230,6 +230,8 @@ import {
   type OmieDeliveryState
 } from "./omie-delivery-notifications";
 import { playOmieAlertSound } from "./omie-alert-sound";
+import { describeOmieFault, OMIE_FAULT_PLACE_LABEL } from "./omie-fault-guide";
+import type { OmieFaultGuide } from "./omie-fault-guide";
 import {
   readReceiptLogoAsPngDataUrl,
   renderThermalLogoPreview,
@@ -5384,6 +5386,20 @@ function PendingOmieAlert({
         ? "1 precisa de correcao para seguir (botao Editar itens). As demais sobem sozinhas."
         : `${needsFix} precisam de correcao para seguir (botao Editar itens). As demais sobem sozinhas.`
       : "O envio e automatico: elas saem desta lista assim que o OMIE confirmar.";
+  const hint = operations.some((operation) =>
+    describeOmieFault({ message: operation.omieBillingMessage, isOnline })
+  )
+    ? ' Clique em "Como resolver" ao lado de cada pesagem para ver o passo a passo.'
+    : "";
+  // Linhas com o "Como resolver" aberto (pode ter mais de uma ao mesmo tempo).
+  const [openGuides, setOpenGuides] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleGuide = (operationId: string): void =>
+    setOpenGuides((current) => {
+      const next = new Set(current);
+      if (next.has(operationId)) next.delete(operationId);
+      else next.add(operationId);
+      return next;
+    });
 
   return (
     <div
@@ -5404,7 +5420,10 @@ function PendingOmieAlert({
               ? "1 operacao concluida nao foi enviada ao OMIE"
               : `${total} operacoes concluidas nao foram enviadas ao OMIE`}
           </strong>
-          <span style={{ display: "block", fontSize: "12px", opacity: 0.9 }}>{summary}</span>
+          <span style={{ display: "block", fontSize: "12px", opacity: 0.9 }}>
+            {summary}
+            {hint}
+          </span>
         </span>
         <button
           type="button"
@@ -5437,6 +5456,15 @@ function PendingOmieAlert({
             const status = statuses[index];
             const closedAt = operation.closedAt ?? operation.createdAt;
             const label = fiscalStatusLabel(status, isOnline);
+            const guide = describeOmieFault({
+              message: operation.omieBillingMessage,
+              customerName: operation.customerName,
+              customerDocument: operation.customerDocument,
+              carrierName: operation.carrierName,
+              productDescription: operation.productDescription,
+              isOnline
+            });
+            const guideOpen = openGuides.has(operation.id);
             return (
               <li
                 key={operation.id}
@@ -5458,29 +5486,72 @@ function PendingOmieAlert({
                     Fechada em {formatDbDateTime(closedAt)} ({formatElapsedSince(closedAt, now)})
                   </span>
                   <span style={{ display: "block", fontWeight: 700 }}>{label}</span>
-                  <span style={{ display: "block", wordBreak: "break-word", opacity: 0.9 }}>
-                    {status.detail}
-                  </span>
-                </span>
-                {status.canRetry ? (
-                  <button
-                    type="button"
-                    onClick={() => onFix(operation.id)}
+                  {guide ? (
+                    <span style={{ display: "block", marginTop: "4px", fontSize: "13px" }}>
+                      <strong>Onde esta o problema: </strong>
+                      <strong style={{ textDecoration: "underline" }}>{guide.where}</strong>{" "}
+                      <span style={omieFaultPlaceBadgeStyle}>
+                        {OMIE_FAULT_PLACE_LABEL[guide.place]}
+                      </span>
+                    </span>
+                  ) : null}
+                  <span
                     style={{
-                      border: "1px solid currentColor",
-                      background: "transparent",
-                      color: "inherit",
-                      borderRadius: "10px",
-                      padding: "6px 10px",
-                      cursor: "pointer",
-                      fontWeight: 800,
-                      fontSize: "11px",
-                      whiteSpace: "nowrap"
+                      display: "block",
+                      wordBreak: "break-word",
+                      opacity: guide ? 0.75 : 0.9,
+                      fontSize: guide ? "11px" : undefined
                     }}
                   >
-                    Editar itens
-                  </button>
-                ) : null}
+                    {guide ? "Mensagem do OMIE: " : null}
+                    {status.detail}
+                  </span>
+                  {guide && guideOpen ? <OmieFaultGuidePanel guide={guide} /> : null}
+                </span>
+                <span
+                  style={{ display: "flex", flexDirection: "column", gap: "6px", flexShrink: 0 }}
+                >
+                  {guide ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleGuide(operation.id)}
+                      aria-expanded={guideOpen}
+                      style={{
+                        border: "1px solid currentColor",
+                        background: guideOpen ? "transparent" : "currentColor",
+                        borderRadius: "10px",
+                        padding: "6px 10px",
+                        cursor: "pointer",
+                        fontWeight: 800,
+                        fontSize: "11px",
+                        whiteSpace: "nowrap"
+                      }}
+                    >
+                      <span style={{ color: guideOpen ? "inherit" : "var(--kr-surface)" }}>
+                        {guideOpen ? "Fechar ajuda" : "Como resolver"}
+                      </span>
+                    </button>
+                  ) : null}
+                  {status.canRetry ? (
+                    <button
+                      type="button"
+                      onClick={() => onFix(operation.id)}
+                      style={{
+                        border: "1px solid currentColor",
+                        background: "transparent",
+                        color: "inherit",
+                        borderRadius: "10px",
+                        padding: "6px 10px",
+                        cursor: "pointer",
+                        fontWeight: 800,
+                        fontSize: "11px",
+                        whiteSpace: "nowrap"
+                      }}
+                    >
+                      Editar itens
+                    </button>
+                  ) : null}
+                </span>
               </li>
             );
           })}
@@ -5492,6 +5563,45 @@ function PendingOmieAlert({
         </span>
       ) : null}
     </div>
+  );
+}
+
+const omieFaultPlaceBadgeStyle: React.CSSProperties = {
+  display: "inline-block",
+  border: "1px solid currentColor",
+  borderRadius: "999px",
+  padding: "0 8px",
+  fontSize: "11px",
+  fontWeight: 800,
+  whiteSpace: "nowrap"
+};
+
+/** O "Como resolver" aberto: o que aconteceu e o passo a passo numerado. */
+function OmieFaultGuidePanel({ guide }: { guide: OmieFaultGuide }) {
+  return (
+    <span
+      style={{
+        display: "block",
+        marginTop: "8px",
+        padding: "10px 12px",
+        borderRadius: "10px",
+        background: "var(--kr-surface)",
+        color: "var(--kr-text)",
+        border: "1px solid var(--kr-border)",
+        fontSize: "13px"
+      }}
+    >
+      <strong style={{ display: "block", marginBottom: "4px" }}>O que aconteceu</strong>
+      <span style={{ display: "block", marginBottom: "8px" }}>{guide.problem}</span>
+      <strong style={{ display: "block", marginBottom: "4px" }}>Como resolver</strong>
+      <ol style={{ margin: 0, paddingLeft: "20px" }}>
+        {guide.steps.map((step) => (
+          <li key={step} style={{ marginBottom: "4px" }}>
+            {step}
+          </li>
+        ))}
+      </ol>
+    </span>
   );
 }
 
