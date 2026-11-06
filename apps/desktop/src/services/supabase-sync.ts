@@ -2761,7 +2761,7 @@ function resolveCommercialBlock(
   };
 }
 
-function upsertCloudProducts(
+export function upsertCloudProducts(
   database: DesktopDatabase,
   companyId: string,
   rows: Array<Record<string, unknown>>

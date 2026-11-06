@@ -229,7 +229,10 @@ These recur across the codebase and are easy to violate accidentally:
   `customer_id` vazio. Ja nasce cadastrado na nuvem (migracao `202610300001`), sem botao na balanca.
   Identifica-se pelo id (nao pelo nome): sai a R$ 0,00, sem credito, sem
   cadastro nem pedido no OMIE, e o fechamento grava `omie_billing_status = 'no_customer'` — e essa
-  marca que o site le para nao contar a pesagem como pendente.
+  marca que o site le para nao contar a pesagem como pendente. Com ele vem o produto **EXPLOSIVO**
+  (`explosivo-<company_id>`, migracao `202611060001`, sem OMIE), que so vale com o SEM CLIENTE
+  (`assertProductAllowedForCustomer` em toda abertura/troca/edicao); e so o SEM CLIENTE aceita
+  saida mais leve que a entrada (`weighingNetWeightKg`), porque o caminhao de explosivo descarrega.
 - **Reenvio vazio nao apaga o cliente** (AGENTS.md "Pesagem sem cliente na nuvem"): a balanca
   que nao tem o cadastro gemeo do cliente guarda a pesagem SEM cliente e, ao conferir a nota no
   OMIE, reenviava essa copia com o mesmo `updated_at` — a nuvem perdia o cliente e o site

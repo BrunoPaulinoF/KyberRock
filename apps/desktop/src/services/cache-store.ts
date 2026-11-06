@@ -1,4 +1,4 @@
-import { rankSearchMatches } from "@kyberrock/shared";
+import { isNoCustomerOnlyProductId, rankSearchMatches } from "@kyberrock/shared";
 import type { SearchFieldSpec } from "@kyberrock/shared";
 
 import type { DesktopDatabase } from "../database/sqlite.js";
@@ -195,6 +195,11 @@ export interface CacheQueryOptions {
   offset?: number;
   activeOnly?: boolean;
   productFiscalType?: "finished_goods";
+  /**
+   * Inclui o produto de registro (EXPLOSIVO), que so vale com o cliente SEM CLIENTE. Fora
+   * dele a lista de produto acabado o esconde: com cliente de verdade a balanca o recusa.
+   */
+  includeNoCustomerOnlyProducts?: boolean;
   /**
    * Restringe a lista a ESTES ids (ex.: as transportadoras vinculadas ao cliente).
    *
@@ -670,6 +675,7 @@ export class CacheStore {
       offset = 0,
       activeOnly = true,
       productFiscalType,
+      includeNoCustomerOnlyProducts = false,
       ids
     } = options;
 
@@ -686,7 +692,11 @@ export class CacheStore {
     }
 
     if (entityType === "product" && productFiscalType === "finished_goods") {
-      rows = (rows as ProductCacheEntry[]).filter((product) => isFinishedGoodsProduct(product));
+      rows = (rows as ProductCacheEntry[]).filter(
+        (product) =>
+          isFinishedGoodsProduct(product) &&
+          (includeNoCustomerOnlyProducts || !isNoCustomerOnlyProductId(product.id))
+      );
     }
 
     // Antes do corte de `limit`, sempre: o vinculo restringe QUEM pode aparecer, e cortar

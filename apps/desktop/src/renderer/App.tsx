@@ -118,9 +118,12 @@ import type { CacheEntityType } from "../services/cache-store";
 import {
   documentKind,
   isNoCustomerId,
+  isNoCustomerOnlyProductId,
   isValidDocument,
   NO_CUSTOMER_BILLING_MESSAGE,
   NO_CUSTOMER_BILLING_STATUS,
+  NO_CUSTOMER_ONLY_PRODUCT_MESSAGE,
+  weighingNetWeightKg,
   isValidPlate,
   normalizeDocument,
   normalizePhone,
@@ -2666,7 +2669,8 @@ export function App({ desktopApi = getWindowDesktopApi(), initialStatus = null }
     setChangeProductLoading(true);
     void loadEntityPickerPage(desktopApi, "product", changeProductTerm, {
       activeOnly: true,
-      productFiscalType: "finished_goods"
+      productFiscalType: "finished_goods",
+      includeNoCustomerOnlyProducts: isNoCustomerId(changeProductOperation.customerId)
     })
       .then((page) => {
         if (cancelled) return;
@@ -6286,6 +6290,10 @@ function validateWeighingForm(form: WeighingFormState): string | null {
   if (!form.customerId) return "Selecione o cliente.";
   if (!form.driverId) return "Selecione o motorista.";
   if (!form.productId) return "Selecione o produto.";
+  // EXPLOSIVO e registro, nao venda: so com o SEM CLIENTE (o processo principal recusa igual).
+  if (isNoCustomerOnlyProductId(form.productId) && !isNoCustomerId(form.customerId)) {
+    return NO_CUSTOMER_ONLY_PRODUCT_MESSAGE;
+  }
   if (isCarrierRequiredForEntry(form) && !form.carrierId) {
     return "Selecione a transportadora.";
   }
@@ -6620,6 +6628,7 @@ function CacheSelect({
   disabled = false,
   refreshKey = 0,
   productFiscalType,
+  includeNoCustomerOnlyProducts = false,
   filterIds,
   relaxFilterOnSearch = false
 }: {
@@ -6636,6 +6645,8 @@ function CacheSelect({
   disabled?: boolean;
   refreshKey?: number;
   productFiscalType?: "finished_goods";
+  /** Mostra o produto de registro (EXPLOSIVO): so com o cliente SEM CLIENTE. */
+  includeNoCustomerOnlyProducts?: boolean;
   filterIds?: string[];
   /**
    * Solta o filtro assim que o operador DIGITA.
@@ -6703,6 +6714,7 @@ function CacheSelect({
           // entraram no banco".
           limit: term ? CACHE_SELECT_RESULT_LIMIT : CACHE_SELECT_PREVIEW_LIMIT,
           productFiscalType,
+          includeNoCustomerOnlyProducts,
           // O vinculo (ex.: transportadoras do cliente) e aplicado no cache, ANTES do
           // corte: aplicado depois, um vinculado no fim da lista sumia sem aviso.
           ids: relaxFilterOnSearch && term ? undefined : filterIds
@@ -6727,6 +6739,7 @@ function CacheSelect({
     desktopApi,
     entityType,
     productFiscalType,
+    includeNoCustomerOnlyProducts,
     debouncedSearch,
     refreshKey,
     filterIds,
@@ -7811,6 +7824,7 @@ function WeighingForm({
             onChange={(id) => setForm({ ...form, productId: id })}
             desktopApi={desktopApi}
             productFiscalType="finished_goods"
+            includeNoCustomerOnlyProducts={isNoCustomerId(form.customerId)}
           />
           <CacheSelect
             label="Forma de pagamento"
@@ -8974,8 +8988,19 @@ function CloseOperationWeighingDialog({
       setCapturedExitWeight(capture.reading.weightKg);
       setCapturedExitCaptureId(capture.captureId);
       setCapturedExitAt(capture.reading.capturedAt);
-      if (operation.entryWeightKg !== null && capture.reading.weightKg <= operation.entryWeightKg) {
-        setCaptureError("Peso de saida deve ser maior que o peso de entrada.");
+      if (
+        operation.entryWeightKg !== null &&
+        weighingNetWeightKg(
+          operation.entryWeightKg,
+          capture.reading.weightKg,
+          operation.customerId
+        ) === null
+      ) {
+        setCaptureError(
+          isNoCustomerId(operation.customerId)
+            ? "Peso de saida igual ao de entrada: nao ha carga a registrar."
+            : "Peso de saida deve ser maior que o peso de entrada."
+        );
       }
     } catch (err) {
       setCapturedExitCaptureId(null);
@@ -8986,9 +9011,12 @@ function CloseOperationWeighingDialog({
     }
   }
 
+  // SEM CLIENTE aceita tambem o caminhao que chega cheio e sai vazio (explosivo): ai o
+  // liquido e a diferenca. Venda continua exigindo saida maior que a entrada.
   const netWeight =
     capturedExitWeight !== null && operation.entryWeightKg !== null
-      ? capturedExitWeight - operation.entryWeightKg
+      ? (weighingNetWeightKg(operation.entryWeightKg, capturedExitWeight, operation.customerId) ??
+        capturedExitWeight - operation.entryWeightKg)
       : null;
   const invalidNetWeight = netWeight !== null && netWeight <= 0;
   // Quanto esta carga vai custar, ja com o preco daquele cliente e o frete da operacao.

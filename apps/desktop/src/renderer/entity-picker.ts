@@ -137,7 +137,11 @@ export async function loadEntityPickerPage(
   desktopApi: Pick<KyberRockDesktopApi, "queryCache">,
   entityType: EntityPickerType,
   search: string,
-  options: { activeOnly?: boolean; productFiscalType?: "finished_goods" } = {}
+  options: {
+    activeOnly?: boolean;
+    productFiscalType?: "finished_goods";
+    includeNoCustomerOnlyProducts?: boolean;
+  } = {}
 ): Promise<EntityPickerPage> {
   const term = search.trim();
   const result = await desktopApi.queryCache({
@@ -145,6 +149,7 @@ export async function loadEntityPickerPage(
     search: term,
     activeOnly: options.activeOnly ?? false,
     productFiscalType: options.productFiscalType,
+    includeNoCustomerOnlyProducts: options.includeNoCustomerOnlyProducts,
     limit: term ? ENTITY_PICKER_RESULT_LIMIT : ENTITY_PICKER_PREVIEW_LIMIT
   });
   return {
