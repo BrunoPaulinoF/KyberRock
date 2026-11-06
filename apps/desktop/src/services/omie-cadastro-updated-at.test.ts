@@ -415,6 +415,7 @@ describe("upsert de produto do OMIE: texto embaralhado", () => {
       code: "62",
       description: "RachÃ£o",
       brand: "PÃ³ de Pedra",
+      model: "DISCO 9&quot;X1/16&quot;",
       unit: "TON",
       ncm: "25171000",
       ean: null,
@@ -428,9 +429,9 @@ describe("upsert de produto do OMIE: texto embaralhado", () => {
 
     apply();
     const row = database
-      .prepare("SELECT description, brand FROM products WHERE omie_product_id = 9001")
-      .get() as { description: string; brand: string };
-    expect(row).toEqual({ description: "Rachão", brand: "Pó de Pedra" });
+      .prepare("SELECT description, brand, model FROM products WHERE omie_product_id = 9001")
+      .get() as { description: string; brand: string; model: string };
+    expect(row).toEqual({ description: "Rachão", brand: "Pó de Pedra", model: 'DISCO 9"X1/16"' });
 
     // Produto que ja estava gravado errado e consertado na passada seguinte, e o carimbo
     // anda para o conserto chegar nas outras balancas.
