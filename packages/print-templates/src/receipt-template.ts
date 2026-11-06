@@ -547,9 +547,12 @@ function buildBodyLines(input: ReceiptTemplateInput, config: ReceiptTemplateConf
   }
 
   if (config.showWeights) {
+    // O caminhao normalmente entra vazio e sai carregado. A pesagem SEM CLIENTE aceita o
+    // contrario (o caminhao de explosivo chega cheio e descarrega), e ai o ticket diz isso.
+    const unloaded = input.exitWeightKg < input.entryWeightKg;
     lines.push(
-      `ENTRADA <TARA>: ${formatTon(input.entryWeightKg / 1000)} <TON>`,
-      `SAIDA <CARREGADO>: ${formatTon(input.exitWeightKg / 1000)} <TON>`,
+      `ENTRADA <${unloaded ? "CARREGADO" : "TARA"}>: ${formatTon(input.entryWeightKg / 1000)} <TON>`,
+      `SAIDA <${unloaded ? "TARA" : "CARREGADO"}>: ${formatTon(input.exitWeightKg / 1000)} <TON>`,
       `LIQUIDO: ${formatTon(input.netWeightKg / 1000)} <TON>`
     );
   }

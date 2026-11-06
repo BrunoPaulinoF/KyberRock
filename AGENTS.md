@@ -1580,6 +1580,20 @@ nuvem o perdia; aqui o "cliente" e um cadastro proprio que diz "nao ha cliente".
   cliente (nao vai ao OMIE)", fora da lista de "nao chegou ao OMIE" (`NOT_IN_OMIE_SQL`) e dos
   avisos de envio (`OmieDeliveryState = "not_applicable"`).
 - **Desligar** e inativar o cadastro na lista de clientes; reativar, o mesmo caminho.
+- **Produto EXPLOSIVO** (pedido de 28/10/2026: pesar o caminhao de explosivo e arquivar o ticket
+  com a documentacao da detonacao, sem valor). Produto proprio do KyberRock, sem
+  `omie_product_id`, que nasce na nuvem (migracao `202611060001_produto_explosivo`, id
+  `explosivo-<company_id>`, `isNoCustomerOnlyProductId`) e chega pelo pull como qualquer produto.
+  **So vale com o SEM CLIENTE**: o seletor da Nova entrada e o "Alterar material" so o oferecem
+  com ele (`includeNoCustomerOnlyProducts` no cache), e `assertProductAllowedForCustomer` recusa a
+  combinacao com cliente de verdade na abertura, na troca de produto, na troca de cliente e na
+  edicao da pesagem — com cliente real nao ha preco nem codigo do OMIE para o pedido. Fica fora
+  da tela de precos. Como nao e produto do OMIE, a trava "so produto acabado tipo 04" o deixa
+  passar pelo id.
+- **Caminhao que chega cheio e sai vazio** (`weighingNetWeightKg`): venda continua exigindo
+  saida maior que a entrada; o SEM CLIENTE aceita tambem o contrario (o explosivo descarrega na
+  pedreira), e o liquido e a diferenca. O ticket troca os rotulos para `ENTRADA <CARREGADO>` /
+  `SAIDA <TARA>` quando a saida pesa menos. O site ja estimava com `Math.abs`.
 
 ## Pesagem sem cliente na nuvem: o reenvio vazio nao apaga
 

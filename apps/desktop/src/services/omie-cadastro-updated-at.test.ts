@@ -398,3 +398,53 @@ describe("upsert de transportadoras OMIE: quando o updated_at anda", () => {
     database.close();
   });
 });
+
+describe("upsert de produto do OMIE: texto embaralhado", () => {
+  it("conserta o nome que chega embaralhado e o produto ja gravado errado", () => {
+    // Pedreira Ibiuna, 06/11/2026: "Rachão" chegou do OMIE como "RachÃ£o".
+    const database = openDesktopDatabase({ databasePath: ":memory:" });
+    runDesktopMigrations(database);
+    database
+      .prepare(
+        `INSERT INTO companies (id, legal_name, trade_name, created_at, updated_at)
+         VALUES ('company-1', 'KyberRock LTDA', 'KyberRock', datetime('now'), datetime('now'))`
+      )
+      .run();
+    const product = {
+      id: 9001,
+      code: "62",
+      description: "RachÃ£o",
+      brand: "PÃ³ de Pedra",
+      unit: "TON",
+      ncm: "25171000",
+      ean: null,
+      unitPriceCents: 5500,
+      itemType: "04"
+    };
+    const apply = () =>
+      applyOmieReferenceData(database, "company-1", {
+        products: [product]
+      } as Parameters<typeof applyOmieReferenceData>[2]);
+
+    apply();
+    const row = database
+      .prepare("SELECT description, brand FROM products WHERE omie_product_id = 9001")
+      .get() as { description: string; brand: string };
+    expect(row).toEqual({ description: "Rachão", brand: "Pó de Pedra" });
+
+    // Produto que ja estava gravado errado e consertado na passada seguinte, e o carimbo
+    // anda para o conserto chegar nas outras balancas.
+    database
+      .prepare(
+        "UPDATE products SET description = 'RachÃ£o', updated_at = '2020-01-01T00:00:00.000Z' WHERE omie_product_id = 9001"
+      )
+      .run();
+    apply();
+    const fixed = database
+      .prepare("SELECT description, updated_at FROM products WHERE omie_product_id = 9001")
+      .get() as { description: string; updated_at: string };
+    expect(fixed.description).toBe("Rachão");
+    expect(fixed.updated_at).not.toBe("2020-01-01T00:00:00.000Z");
+    database.close();
+  });
+});

@@ -167,7 +167,7 @@ export const documentationSections: DocumentationSection[] = [
       "Confira peso liquido, valor, credito, frete e transporte antes de confirmar. Ao confirmar, o cupom sai e o pedido vai para a fila do OMIE."
     ],
     details: [
-      "O peso liquido e a diferenca entre a saida e a entrada. Saida menor ou igual a entrada e erro: corrija antes de fechar.",
+      "O peso liquido e a diferenca entre a saida e a entrada. Saida menor ou igual a entrada e erro: corrija antes de fechar. A excecao e o SEM CLIENTE, que aceita o caminhao que chega cheio e sai vazio (explosivo).",
       "Na fila de operacoes abertas, as cargas ja concluidas pelo carregador sobem para o topo, na ordem em que ele concluiu.",
       "Se a mesma placa ja estiver aberta, o sistema avisa para evitar duplicidade — confirme se nao e a mesma viagem.",
       "Duplo clique na linha (ou o botao de ficha) abre a operacao inteira. Com a operacao em andamento, Editar operacao libera cliente, produto, preco por tonelada, frete, placa, motorista, transportadora, forma e condicao de pagamento e o tipo de fechamento.",
@@ -175,6 +175,7 @@ export const documentationSections: DocumentationSection[] = [
       "Cancelar exige motivo. O cancelamento e auditado, estorna credito quando aplicavel e cancela o pedido no OMIE se ele ja tiver subido — desde que ainda nao esteja faturado.",
       "A busca das operacoes concluidas aceita cliente, CNPJ/CPF com ou sem pontuacao, produto, placa ou motorista.",
       "Caminhao que so passa pela balanca, sem cliente (transporte interno, caminhao da propria pedreira): escolha o cliente SEM CLIENTE no campo Cliente da Nova entrada. Ele ja vem cadastrado. A pesagem dispensa preco, credito e cadastro do OMIE, sai a R$ 0,00 e NAO vai ao OMIE. Para tira-lo da lista, inative-o em Cadastros > Clientes.",
+      "Caminhao de explosivo (registro da detonacao): escolha o cliente SEM CLIENTE e o produto EXPLOSIVO, que tambem ja vem cadastrado e so aparece na lista com o SEM CLIENTE. O caminhao pode entrar cheio e sair vazio: o ticket sai com o peso liquido, sem valor, para arquivar com a documentacao.",
       "Toda lista de escolha do aplicativo — cliente, produto, placa, motorista, transportadora — funciona ESCREVENDO. Ao abrir, a lista mostra so os primeiros cadastros em ordem alfabetica; escreva o nome, o nome fantasia, o CNPJ/CPF ou a placa e a lista passa a mostrar so o que corresponde, com o mais parecido no topo. O rodape diz quantos cadastros casaram, entao quando aparecer 'mostrando 50 de 312' e so escrever mais uma letra em vez de rolar."
     ],
     keywords: [
@@ -1346,6 +1347,22 @@ export const documentationFaqs: DocumentationFaq[] = [
       "kanban",
       "ordem de servico",
       "etapa"
+    ]
+  },
+  {
+    question: "Como pesar o caminhao de explosivo e tirar o ticket?",
+    answer:
+      "Na Nova entrada escolha o cliente SEM CLIENTE e o produto EXPLOSIVO (ele so aparece com o SEM CLIENTE). Pese a entrada com o caminhao cheio e a saida depois de descarregar: com o SEM CLIENTE a saida pode pesar menos que a entrada. O ticket sai com entrada, saida e liquido, sem valor, e a pesagem nao vai ao OMIE.",
+    category: "operacao",
+    sectionId: "weighing",
+    keywords: [
+      "explosivo",
+      "detonacao",
+      "explosao",
+      "ticket",
+      "sem cliente",
+      "descarga",
+      "sem valor"
     ]
   },
   {

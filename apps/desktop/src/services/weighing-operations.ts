@@ -24,11 +24,14 @@ import { cancelPendingOmieJobs, enqueueSyncJob } from "./sync-queue.js";
 import { CreditService } from "./credit.js";
 import { buildOmieIntegrationCode } from "@kyberrock/omie-client";
 import {
+  assertProductAllowedForCustomer,
   formatEmailListForOmie,
   isNoCustomerId,
+  isNoCustomerOnlyProductId,
   NO_CUSTOMER_BILLING_MESSAGE,
   NO_CUSTOMER_BILLING_STATUS,
   OMIE_INVOICE_EMAIL_FIELD_MAX_LENGTH,
+  weighingNetWeightKg,
   OMIE_ORDER_INVOICE_EMAIL_FIELD_MAX_LENGTH
 } from "@kyberrock/shared";
 import type { OperationStatus } from "@kyberrock/shared";
@@ -616,7 +619,10 @@ export function createWeighingOperation(
   if (product.is_active !== 1 || product.blocked === 1) {
     throw new Error("Produto inativo ou bloqueado nao pode iniciar pesagem.");
   }
-  if (!isFinishedGoodsProduct(product)) {
+  // EXPLOSIVO e registro, nao venda: nao e produto do OMIE e so vale com o cliente SEM
+  // CLIENTE (ver no-customer.ts). Fora ele, so produto acabado do OMIE abre pesagem.
+  assertProductAllowedForCustomer(input.productId, input.customerId);
+  if (!isNoCustomerOnlyProductId(input.productId) && !isFinishedGoodsProduct(product)) {
     throw new Error("Somente produtos OMIE tipo 04 - produtos acabados podem iniciar pesagem.");
   }
 
@@ -822,7 +828,11 @@ export function closeWeighingOperation(
     throw new Error("Operation has no entry weight.");
   }
 
-  const netWeightKg = calculateNetWeightKg(operation.entryWeightKg, input.exitWeightKg);
+  const netWeightKg = calculateNetWeightKg(
+    operation.entryWeightKg,
+    input.exitWeightKg,
+    operation.customerId
+  );
   const productTotalCents = calculateProductTotalCents(netWeightKg, operation.unitPriceCents);
   const freightJson = resolveFreightRuleForClose(database, operation);
   const freightTotalCents = calculateFreightTotalCents(freightJson, netWeightKg);
@@ -2727,7 +2737,7 @@ export function updateWeighingOperationProduct(
   if (product.is_active !== 1 || product.blocked === 1) {
     throw new Error("Produto inativo ou bloqueado nao pode ser selecionado.");
   }
-  if (!isFinishedGoodsProduct(product)) {
+  if (!isNoCustomerOnlyProductId(input.newProductId) && !isFinishedGoodsProduct(product)) {
     throw new Error("Somente produtos OMIE tipo 04 - produtos acabados podem ser selecionados.");
   }
 
@@ -2739,6 +2749,7 @@ export function updateWeighingOperationProduct(
   if (!customerId) {
     throw new Error("Operacao sem cliente vinculado.");
   }
+  assertProductAllowedForCustomer(input.newProductId, customerId);
 
   const priceDetails = new PricingService(database).getPriceDetailsForCustomerProduct(
     customerId,
@@ -2875,6 +2886,7 @@ export function updateWeighingOperationCustomer(
   if (!productId) {
     throw new Error("Operacao sem produto vinculado.");
   }
+  assertProductAllowedForCustomer(productId, input.newCustomerId);
 
   const priceDetails = new PricingService(database).getPriceDetailsForCustomerProduct(
     input.newCustomerId,
@@ -3171,7 +3183,8 @@ export function updateWeighingOperationDetails(
   if (product.is_active !== 1 || product.blocked === 1) {
     throw new Error("Produto inativo ou bloqueado nao pode ser selecionado.");
   }
-  if (!isFinishedGoodsProduct(product)) {
+  assertProductAllowedForCustomer(productId, customerId);
+  if (!isNoCustomerOnlyProductId(productId) && !isFinishedGoodsProduct(product)) {
     throw new Error("Somente produtos OMIE tipo 04 - produtos acabados podem ser selecionados.");
   }
 
@@ -3429,12 +3442,25 @@ export function updateWeighingOperationDetails(
   return getWeighingOperation(database, input.operationId);
 }
 
-function calculateNetWeightKg(entryWeightKg: number, exitWeightKg: number): number {
-  if (exitWeightKg <= entryWeightKg) {
-    throw new Error("Exit weight must be greater than entry weight.");
+/**
+ * Venda exige saida maior que a entrada; SEM CLIENTE aceita tambem o caminhao que chega cheio e
+ * sai vazio (explosivo descarregado na pedreira) — ver `weighingNetWeightKg`.
+ */
+function calculateNetWeightKg(
+  entryWeightKg: number,
+  exitWeightKg: number,
+  customerId: string | null | undefined
+): number {
+  const netWeightKg = weighingNetWeightKg(entryWeightKg, exitWeightKg, customerId);
+  if (netWeightKg === null) {
+    throw new Error(
+      isNoCustomerId(customerId)
+        ? "Peso de saida igual ao de entrada: nao ha carga a registrar."
+        : "Exit weight must be greater than entry weight."
+    );
   }
 
-  return Math.round((exitWeightKg - entryWeightKg) * 1000) / 1000;
+  return Math.round(netWeightKg * 1000) / 1000;
 }
 
 function calculateProductTotalCents(

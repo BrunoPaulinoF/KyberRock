@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { isNoCustomerOnlyProductId } from "@kyberrock/shared";
+
 import type { DesktopDatabase } from "../database/sqlite.js";
 import { isSellableProduct } from "./product-classification.js";
 
@@ -269,11 +271,15 @@ export function listProductDefaultPriceSummaries(
     .all(companyId)
     .filter((row) => {
       const r = row as {
+        product_id: string;
         omie_product_id: number | null;
         item_type: string | null;
         fiscal_recommendations_json: string | null;
         product_is_active: number;
       };
+      // EXPLOSIVO e so registro (sai sempre a R$ 0,00 com o SEM CLIENTE): nao tem preco a
+      // cadastrar, entao fica fora da tela de precos.
+      if (isNoCustomerOnlyProductId(r.product_id)) return false;
       return isSellableProduct({
         omieProductId: r.omie_product_id,
         itemType: r.item_type,

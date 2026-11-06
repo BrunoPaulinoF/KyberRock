@@ -1,21 +1,29 @@
 import { describe, expect, it } from "vitest";
 
-import { NO_CUSTOMER_BILLING_STATUS, noCustomerIdFor } from "@kyberrock/shared";
+import {
+  NO_CUSTOMER_BILLING_STATUS,
+  noCustomerExplosiveProductIdFor,
+  noCustomerIdFor
+} from "@kyberrock/shared";
 
 import { runDesktopMigrations } from "../database/migrate";
 import { openDesktopDatabase, type DesktopDatabase } from "../database/sqlite";
 import { ensureInitialDesktopIdentity } from "./bootstrap";
+import { CacheStore } from "./cache-store";
 import type { CustomerRow } from "./customers";
 import { checkCustomerOmieReadiness } from "./omie-customer-readiness";
 import { PricingService } from "./pricing";
-import { upsertCloudCustomers } from "./supabase-sync";
+import { listProductDefaultPriceSummaries } from "./product-prices";
+import { upsertCloudCustomers, upsertCloudProducts } from "./supabase-sync";
 import { resolveSituation } from "./weighing-billing-situation";
 import {
   buildOmieBillingJob,
   closeWeighingOperation,
   createWeighingOperation,
   getOperationOmieIssue,
-  listClosedOperationsNotInOmie
+  listClosedOperationsNotInOmie,
+  updateWeighingOperationCustomer,
+  updateWeighingOperationProduct
 } from "./weighing-operations";
 
 /**
@@ -121,6 +129,144 @@ describe("cadastro SEM CLIENTE", () => {
     }
   });
 });
+
+/**
+ * Pedreira Ibiuna, 28/10/2026: pesar o caminhao de explosivo e tirar o ticket com o peso, sem
+ * valor, para arquivar com a documentacao da detonacao. O cliente e o SEM CLIENTE; o produto e
+ * o EXPLOSIVO, que nao existe no OMIE e chega da nuvem.
+ */
+describe("produto EXPLOSIVO", () => {
+  it("chega da nuvem e so aparece na lista de produto com o SEM CLIENTE", () => {
+    const database = createDatabase();
+    try {
+      createIdentity(database);
+      insertCatalog(database);
+      const explosiveId = receiveExplosiveFromCloud(database);
+
+      const store = new CacheStore(database);
+      store.loadAll("company-1");
+      const ids = (includeNoCustomerOnlyProducts: boolean) =>
+        store
+          .query({
+            entityType: "product",
+            productFiscalType: "finished_goods",
+            includeNoCustomerOnlyProducts
+          })
+          .rows.map((row) => (row as { id: string }).id);
+
+      expect(ids(true)).toEqual(expect.arrayContaining(["product-1", explosiveId]));
+      expect(ids(false)).toEqual(["product-1"]);
+      // Nao tem preco a cadastrar: fica fora da tela de precos.
+      expect(
+        listProductDefaultPriceSummaries(database, "company-1").map((row) => row.productId)
+      ).not.toContain(explosiveId);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("pesa com o SEM CLIENTE: ticket com o peso, sem valor e sem OMIE", () => {
+    const database = createDatabase();
+    try {
+      const identity = createIdentity(database);
+      const customerId = receiveNoCustomerFromCloud(database).id;
+      insertCatalog(database);
+      const explosiveId = receiveExplosiveFromCloud(database);
+
+      const opened = createWeighingOperation(database, {
+        identity,
+        customerId,
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: explosiveId,
+        entryWeightKg: 9_000
+      });
+      const closed = closeWeighingOperation(database, {
+        operationId: opened.id,
+        exitWeightKg: 6_500
+      });
+
+      expect(closed.productDescription).toBe("EXPLOSIVO");
+      expect(closed.netWeightKg).toBe(2_500);
+      expect(closed.totalCents).toBe(0);
+      expect(closed.omieBillingStatus).toBe(NO_CUSTOMER_BILLING_STATUS);
+      expect(buildOmieBillingJob(database, opened.id)).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
+  it("recusa o EXPLOSIVO com cliente de verdade, na entrada e nas trocas", () => {
+    const database = createDatabase();
+    try {
+      const identity = createIdentity(database);
+      const noCustomerId = receiveNoCustomerFromCloud(database).id;
+      insertCatalog(database);
+      const explosiveId = receiveExplosiveFromCloud(database);
+      database
+        .prepare(
+          `INSERT INTO customers (id, company_id, source, legal_name, trade_name, sync_status, created_at, updated_at)
+           VALUES ('cliente-1', 'company-1', 'local', 'Cliente Real', 'Cliente Real', 'synced', datetime('now'), datetime('now'))`
+        )
+        .run();
+
+      expect(() =>
+        createWeighingOperation(database, {
+          identity,
+          customerId: "cliente-1",
+          vehicleId: "vehicle-1",
+          driverId: "driver-1",
+          productId: explosiveId,
+          entryWeightKg: 9_000
+        })
+      ).toThrow("so para registro");
+
+      const opened = createWeighingOperation(database, {
+        identity,
+        customerId: noCustomerId,
+        vehicleId: "vehicle-1",
+        driverId: "driver-1",
+        productId: explosiveId,
+        entryWeightKg: 9_000
+      });
+      // Trocar o cliente de uma pesagem de EXPLOSIVO por um cliente de verdade.
+      expect(() =>
+        updateWeighingOperationCustomer(database, {
+          operationId: opened.id,
+          newCustomerId: "cliente-1"
+        })
+      ).toThrow("so para registro");
+      // E o caminho de volta: SEM CLIENTE pode trocar para um produto de venda.
+      expect(
+        updateWeighingOperationProduct(database, {
+          operationId: opened.id,
+          newProductId: "product-1"
+        }).productId
+      ).toBe("product-1");
+    } finally {
+      database.close();
+    }
+  });
+});
+
+/** A linha que a migracao `202611060001_produto_explosivo` grava na nuvem, chegando pelo pull. */
+function receiveExplosiveFromCloud(database: DesktopDatabase): string {
+  const id = noCustomerExplosiveProductIdFor("company-1");
+  upsertCloudProducts(database, "company-1", [
+    {
+      id,
+      company_id: "company-1",
+      omie_product_id: null,
+      code: "EXPLOSIVO",
+      description: "EXPLOSIVO",
+      unit: "T",
+      is_active: true,
+      created_at: "2026-11-06T12:00:00.000Z",
+      updated_at: "2026-11-06T12:00:00.000Z"
+    }
+  ]);
+  return id;
+}
 
 function createDatabase(): DesktopDatabase {
   const database = openDesktopDatabase({ databasePath: ":memory:" });

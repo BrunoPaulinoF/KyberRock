@@ -15,7 +15,11 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const desktop = path.resolve(here, "../../../apps/desktop/src/services");
 
 describe("regras copiadas do desktop", () => {
-  for (const file of ["payment-condition-parser.ts", "payment-condition-match.ts"]) {
+  for (const file of [
+    "payment-condition-parser.ts",
+    "payment-condition-match.ts",
+    "omie-text.ts"
+  ]) {
     it(`${file} e igual ao do desktop`, () => {
       expect(readFileSync(path.join(here, file), "utf8")).toBe(
         readFileSync(path.join(desktop, file), "utf8")

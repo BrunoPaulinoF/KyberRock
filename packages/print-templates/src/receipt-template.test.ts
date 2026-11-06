@@ -27,6 +27,19 @@ import {
 } from "./receipt-template";
 
 describe("buildReceiptLines", () => {
+  it("caminhao que chega cheio e sai vazio (explosivo, SEM CLIENTE) troca tara e carregado", () => {
+    const lines = buildReceiptLines({
+      ...baseInput(),
+      entryWeightKg: 9_000,
+      exitWeightKg: 6_500,
+      netWeightKg: 2_500
+    });
+
+    expect(lines).toContain("ENTRADA <CARREGADO>: 9,000 <TON>");
+    expect(lines).toContain("SAIDA <TARA>: 6,500 <TON>");
+    expect(lines).toContain("LIQUIDO: 2,500 <TON>");
+  });
+
   it("includes freight when it exists", () => {
     const lines = buildReceiptLines({
       ...baseInput(),

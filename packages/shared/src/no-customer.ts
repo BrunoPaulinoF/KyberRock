@@ -36,3 +36,67 @@ export function noCustomerIdFor(companyId: string): string {
 export function isNoCustomerId(customerId: string | null | undefined): boolean {
   return typeof customerId === "string" && customerId.startsWith(NO_CUSTOMER_ID_PREFIX);
 }
+
+/**
+ * Produto "EXPLOSIVO": registro do explosivo usado na detonacao, pedido da Pedreira Ibiuna
+ * em 28/10/2026 ("pesar os caminhoes de explosivos e tirar um ticket com o peso para
+ * arquivar com a documentacao quando houver explosao — sem valor, so para registrar o que
+ * usou").
+ *
+ * Nao e produto do OMIE, nem de venda: e um cadastro proprio do KyberRock que, como o SEM
+ * CLIENTE, ja nasce na NUVEM (migracao `202611060001_produto_explosivo`, uma linha por
+ * empresa) e chega as balancas pelo pull de cadastro. O id e `explosivo-<company_id>` e e
+ * ele — nunca o nome — que o identifica.
+ *
+ * So vale com o cliente SEM CLIENTE: com ele a pesagem sai a R$ 0,00 e nao vai ao OMIE. Com
+ * um cliente de verdade nao ha preco a cobrar nem codigo do OMIE para o pedido, entao a
+ * balanca recusa a combinacao (na abertura, na troca de produto e na troca de cliente).
+ */
+export const NO_CUSTOMER_EXPLOSIVE_PRODUCT_ID_PREFIX = "explosivo-";
+
+export const NO_CUSTOMER_ONLY_PRODUCT_MESSAGE =
+  "O produto EXPLOSIVO e so para registro: use com o cliente SEM CLIENTE (sai sem valor e nao vai ao OMIE).";
+
+export function noCustomerExplosiveProductIdFor(companyId: string): string {
+  const normalized = companyId.trim();
+  if (!normalized) {
+    throw new Error("Empresa nao identificada para o produto EXPLOSIVO.");
+  }
+  return `${NO_CUSTOMER_EXPLOSIVE_PRODUCT_ID_PREFIX}${normalized}`;
+}
+
+/** Produto que so pode ser pesado com o cliente SEM CLIENTE (hoje, o EXPLOSIVO). */
+export function isNoCustomerOnlyProductId(productId: string | null | undefined): boolean {
+  return (
+    typeof productId === "string" && productId.startsWith(NO_CUSTOMER_EXPLOSIVE_PRODUCT_ID_PREFIX)
+  );
+}
+
+/** Recusa produto de registro (EXPLOSIVO) com cliente de verdade. */
+export function assertProductAllowedForCustomer(
+  productId: string | null | undefined,
+  customerId: string | null | undefined
+): void {
+  if (isNoCustomerOnlyProductId(productId) && !isNoCustomerId(customerId)) {
+    throw new Error(NO_CUSTOMER_ONLY_PRODUCT_MESSAGE);
+  }
+}
+
+/**
+ * Peso liquido da pesagem, ou `null` quando os dois pesos nao formam uma pesagem valida.
+ *
+ * Venda: o caminhao entra vazio e sai carregado, entao a saida tem de pesar MAIS que a
+ * entrada. SEM CLIENTE tambem aceita o contrario — o caminhao de explosivo chega cheio,
+ * descarrega na pedreira e sai vazio —, e ai vale a diferenca entre os dois. Nao ha valor
+ * nem pedido nessa pesagem, entao a direcao nao muda nada alem do ticket.
+ */
+export function weighingNetWeightKg(
+  entryWeightKg: number,
+  exitWeightKg: number,
+  customerId: string | null | undefined
+): number | null {
+  const difference = exitWeightKg - entryWeightKg;
+  if (difference > 0) return difference;
+  if (difference < 0 && isNoCustomerId(customerId)) return -difference;
+  return null;
+}

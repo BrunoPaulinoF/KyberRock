@@ -19,6 +19,7 @@ import {
   type OmieRequester
 } from "./omie-sync-core.ts";
 import { normalizeDocument } from "../_shared/document.ts";
+import { repairMojibake } from "../_shared/omie-text.ts";
 import { classifyOmieCustomer } from "../_shared/omie-customer-classification.ts";
 import {
   formatOmieDate,
@@ -1112,7 +1113,8 @@ function mapOmieCustomerRaw(item: OmieCustomerRaw): OmieCustomer | null {
   if (!idValue) return null;
   const id = toNumber(idValue);
   if (id === null) return null;
-  const name = pickFirst(item.razao_social, item.razaoSocial);
+  // Texto que o OMIE devolve embaralhado ("RachÃ£o") chega consertado: ver _shared/omie-text.ts.
+  const name = repairMojibake(pickFirst(item.razao_social, item.razaoSocial));
   if (!name) return null;
 
   const phoneDdd = pickFirst(item.telefone1_ddd, item.telefone1Ddd);
@@ -1129,7 +1131,7 @@ function mapOmieCustomerRaw(item: OmieCustomerRaw): OmieCustomer | null {
     id,
     integrationCode: pickFirst(item.codigo_cliente_integracao, item.codigoClienteIntegracao),
     name,
-    tradeName: pickFirst(item.nome_fantasia, item.nomeFantasia),
+    tradeName: repairMojibake(pickFirst(item.nome_fantasia, item.nomeFantasia)),
     document: pickFirst(item.cnpj_cpf, item.cnpjCpf),
     stateRegistration: pickFirst(item.inscricao_estadual, item.inscricaoEstadual),
     municipalRegistration: pickFirst(item.inscricao_municipal, item.inscricaoMunicipal),
@@ -1291,16 +1293,17 @@ function mapOmieProductRaw(item: OmieProductRaw): OmieProduct | null {
     id: productId,
     code: pickFirst(item.codigo),
     integrationCode: pickFirst(item.codigo_produto_integracao, item.codigoProdutoIntegracao),
-    description: item.descricao,
-    detailedDescription: pickFirst(item.descr_detalhada, item.descrDetalhada),
+    // Texto que o OMIE devolve embaralhado ("RachÃ£o") chega consertado: ver _shared/omie-text.ts.
+    description: repairMojibake(item.descricao),
+    detailedDescription: repairMojibake(pickFirst(item.descr_detalhada, item.descrDetalhada)),
     unit: pickFirst(item.unidade),
     ncm: pickFirst(item.ncm),
     ean: pickFirst(item.ean),
     unitPriceCents,
     familyCode: pickFirstAsString(item.codigo_familia, item.codigoFamilia),
-    familyDescription: pickFirst(item.descricao_familia, item.descricaoFamilia),
-    brand: pickFirst(item.marca),
-    model: pickFirst(item.modelo),
+    familyDescription: repairMojibake(pickFirst(item.descricao_familia, item.descricaoFamilia)),
+    brand: repairMojibake(pickFirst(item.marca)),
+    model: repairMojibake(pickFirst(item.modelo)),
     internalNotes: pickFirst(item.obs_internas, item.obsInternas),
     grossWeightKg: toNumber(pickFirst(item.peso_bruto, item.pesoBruto)),
     netWeightKg: toNumber(pickFirst(item.peso_liq, item.pesoLiq)),
