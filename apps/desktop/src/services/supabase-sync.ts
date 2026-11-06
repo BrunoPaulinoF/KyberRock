@@ -93,6 +93,7 @@ import {
   isOmieUnknownCadastroCodeFault,
   isOmieAlreadyBilledFault
 } from "./omie-fault-classifier.js";
+import { repairMojibake } from "./omie-text.js";
 import { provisionPaymentTermsFromOmieMirror } from "./payment-terms.js";
 import { pruneMissingUnitDevices, upsertUnitDevices } from "./unit-devices.js";
 
@@ -7433,16 +7434,18 @@ ${OMIE_PRODUCT_SET_SQL},
       product.id,
       product.integrationCode ?? null,
       product.code || `PROD_${product.id}`,
-      product.description,
-      product.detailedDescription ?? null,
+      // A nuvem ja conserta texto embaralhado do OMIE ("RachÃ£o"); repetir aqui cobre
+      // a balanca enquanto a funcao da nuvem nao foi publicada. Ver omie-text.ts.
+      repairMojibake(product.description),
+      repairMojibake(product.detailedDescription ?? null),
       product.unit || "UN",
       product.ncm,
       product.ean,
       product.unitPriceCents,
       product.familyCode ?? null,
-      product.familyDescription ?? null,
-      product.brand ?? null,
-      product.model ?? null,
+      repairMojibake(product.familyDescription ?? null),
+      repairMojibake(product.brand ?? null),
+      repairMojibake(product.model ?? null),
       product.internalNotes ?? null,
       product.grossWeightKg ?? null,
       product.netWeightKg ?? null,
