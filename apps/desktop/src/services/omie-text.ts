@@ -1,5 +1,5 @@
 /**
- * Conserta texto "embaralhado" que chega do OMIE ("RachÃ£o" no lugar de "Rachão",
+ * Conserta texto que chega do OMIE: acento "embaralhado" ("RachÃ£o" no lugar de "Rachão",
  * "PÃ³ de Pedra" no lugar de "Pó de Pedra").
  *
  * O defeito e conhecido: o texto foi gravado em UTF-8 e, em algum ponto antes de
@@ -87,4 +87,54 @@ export function repairMojibake(value: string | null | undefined): string | null 
   // Sem "Ã", "Â" e companhia nao ha o que consertar: o caso comum sai sem regex.
   if (!/[Â-ô]/.test(value)) return value;
   return value.replace(MOJIBAKE_SEQUENCE, decodeSequence);
+}
+
+// Os sinais que o OMIE devolve em codigo HTML: 27 produtos da Pedreira Ibiuna chegavam com
+// `&quot;` no lugar das aspas ("DISCO 9&quot;X1/16&quot;") e clientes com `&amp;` e `&apos;`.
+const NAMED_ENTITIES: Record<string, string> = {
+  quot: '"',
+  amp: "&",
+  apos: "'",
+  lt: "<",
+  gt: ">",
+  nbsp: " "
+};
+
+const HTML_ENTITY = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z]+));/g;
+
+function decodeEntity(match: string, decimal?: string, hex?: string, name?: string): string {
+  if (name !== undefined) return NAMED_ENTITIES[name.toLowerCase()] ?? match;
+  const codePoint = decimal !== undefined ? Number(decimal) : parseInt(hex ?? "", 16);
+  // Codigo invalido (zero, fora do Unicode ou metade de par substituto) fica como veio.
+  if (
+    !Number.isInteger(codePoint) ||
+    codePoint <= 0 ||
+    codePoint > 0x10ffff ||
+    (codePoint >= 0xd800 && codePoint <= 0xdfff)
+  ) {
+    return match;
+  }
+  return String.fromCodePoint(codePoint);
+}
+
+/**
+ * Troca o codigo HTML pelo sinal (`&quot;` -> `"`, `&amp;` -> `&`, `&#39;` -> `'`). Uma passada
+ * so: `&amp;quot;` vira `&quot;` e para ai, como faria um navegador. Codigo desconhecido fica
+ * como veio.
+ */
+export function decodeHtmlEntities(value: string): string;
+export function decodeHtmlEntities(value: string | null): string | null;
+export function decodeHtmlEntities(value: string | undefined): string | undefined;
+export function decodeHtmlEntities(value: string | null | undefined): string | null | undefined {
+  if (!value || !value.includes("&")) return value;
+  return value.replace(HTML_ENTITY, decodeEntity);
+}
+
+/** Texto do OMIE pronto para a tela e o cupom: sem acento embaralhado e sem codigo HTML. */
+export function cleanOmieText(value: string): string;
+export function cleanOmieText(value: string | null): string | null;
+export function cleanOmieText(value: string | undefined): string | undefined;
+export function cleanOmieText(value: string | null | undefined): string | null | undefined {
+  if (!value) return value;
+  return decodeHtmlEntities(repairMojibake(value));
 }
