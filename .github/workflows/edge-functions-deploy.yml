@@ -124,7 +124,10 @@ jobs:
           for fn in ${{ steps.targets.outputs.functions }}; do
             echo "::group::deploy $fn"
             # --use-api: bundle no servidor, sem depender de Docker no runner.
-            supabase functions deploy "$fn" --project-ref "$PROJECT_REF" --use-api
+            # --yes: a CLI (`version: latest`) passou a pedir confirmacao antes de
+            # implantar e, sem terminal, recusa com "Nothing was changed" — foi o que
+            # derrubou o deploy do merge #374 em 06/11/2026.
+            supabase functions deploy "$fn" --project-ref "$PROJECT_REF" --use-api --yes
             echo "::endgroup::"
           done
 
