@@ -429,6 +429,16 @@ export function boletoNeedsReissue(
   return boletoDeliveryProblem(invoice, today) !== null;
 }
 
+/**
+ * O boleto pedido pelo painel pode usar o vencimento da fatura? Nao quando ele ja passou: o
+ * Mercado Pago recusa vencimento no passado ("Invalid date_of_expiration"), e o botao Reemitir de
+ * uma fatura vencida falhava sempre. Nesse caso o boleto sai vencendo no dia, como na regua de
+ * cobranca — sem mexer no vencimento da fatura, que e o que conta para o bloqueio.
+ */
+export function boletoDueDateIsPast(invoiceDueDate: string, today: string): boolean {
+  return invoiceDueDate < today;
+}
+
 export interface CollectionNoticeInput {
   issuerName: string;
   companyName: string;

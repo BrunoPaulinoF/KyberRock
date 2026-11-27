@@ -1568,7 +1568,7 @@ const COLLECTION_NOTICES: Record<
  * sem mexer no vencimento da fatura (o bloqueio conta do original). O Mercado Pago pede
  * vencimento "entre 1 e 30 dias" da emissao; se recusar o mesmo dia, tenta o dia seguinte.
  */
-async function reissueBoletoForToday(
+export async function reissueBoletoForToday(
   supabase: SupabaseClient,
   input: {
     settings: BillingSettings;
