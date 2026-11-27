@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   boletoDeliveryProblem,
+  boletoDueDateIsPast,
   boletoNeedsReissue,
   buildBlockNoticeMessage,
   buildFinalNoticeMessage,
@@ -431,5 +432,13 @@ describe("regua de cobranca: boleto e mensagens", () => {
     expect(message).toContain("para amanha, 31/10/2026");
     expect(message).toContain("Boleto com vencimento em:* 30/10/2026");
     expect(message).toContain("2379...");
+  });
+});
+
+describe("boletoDueDateIsPast", () => {
+  it("so troca o vencimento do boleto quando o da fatura ja passou", () => {
+    expect(boletoDueDateIsPast("2026-11-25", "2026-11-27")).toBe(true);
+    expect(boletoDueDateIsPast("2026-11-25", "2026-11-25")).toBe(false);
+    expect(boletoDueDateIsPast("2026-12-25", "2026-11-27")).toBe(false);
   });
 });

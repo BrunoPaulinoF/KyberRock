@@ -31,6 +31,7 @@ import {
   markOverdueInvoices,
   recordBillingEvent,
   refreshInvoicePayment,
+  reissueBoletoForToday,
   renderInvoicePdf,
   runBillingCycle,
   sendInvoiceWhatsapp,
@@ -45,7 +46,11 @@ import {
   resolveBillingConfig,
   upcomingBillingPeriod
 } from "../_shared/billing-cycle.ts";
-import { missingBillingFields, resolveBillingCustomer } from "../_shared/billing-invoice.ts";
+import {
+  boletoDueDateIsPast,
+  missingBillingFields,
+  resolveBillingCustomer
+} from "../_shared/billing-invoice.ts";
 import { cancelPayment } from "../_shared/mercado-pago.ts";
 
 /**
@@ -625,12 +630,16 @@ async function handleIssueBoleto(
   payload: Record<string, unknown>
 ): Promise<Response> {
   const { invoice, company, settings } = await loadInvoiceContext(supabase, payload.invoiceId);
-  const result = await issueBoletoForInvoice(supabase, {
-    settings,
-    company,
-    invoice,
-    reissue: payload.reissue === true
-  });
+  const today = billingToday();
+  // Fatura vencida: o Mercado Pago recusa o vencimento original, entao o boleto vence no dia.
+  const result = boletoDueDateIsPast(invoice.due_date, today)
+    ? await reissueBoletoForToday(supabase, { settings, company, invoice, today })
+    : await issueBoletoForInvoice(supabase, {
+        settings,
+        company,
+        invoice,
+        reissue: payload.reissue === true
+      });
   if (!result.issued) return jsonResponse({ error: result.error ?? "Boleto nao emitido." }, 400);
   return jsonResponse({ ok: true, invoice: result.invoice });
 }
